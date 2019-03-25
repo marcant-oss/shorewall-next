@@ -132,7 +132,7 @@ net     eth0            130.252.100.255 routefilter</programlisting>
     <title>See ALSO</title>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Variables">http://www.shorewall.net/configuration_file_basics.htm#Variables</ulink></para>
+    url="/configuration_file_basics.htm#Variables">http://www.shorewall.org/configuration_file_basics.htm#Variables</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

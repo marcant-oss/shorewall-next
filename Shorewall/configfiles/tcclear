@@ -4,7 +4,7 @@
 # Add commands below that you want to be executed before Shorewall clears
 # the traffic shaping configuration.
 #
-# See http://shorewall.net/shorewall_extension_scripts.htm for additional
+# See http://shorewall.org/shorewall_extension_scripts.htm for additional
 # information.
 #
 ###############################################################################

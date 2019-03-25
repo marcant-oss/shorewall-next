@@ -1,6 +1,6 @@
 For instructions on using these sample configurations, please see
 
-http://www.shorewall.net/two-interface.htm
+http://www.shorewall.org/two-interface.htm
 
     Shorewall Samples
     Copyright (C) 2006-2015 by the following authors:

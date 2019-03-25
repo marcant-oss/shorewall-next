@@ -4,7 +4,7 @@
 #     This program is under GPL [http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt]
 #     (c) 2007-2016 - Tom Eastep (teastep@shorewall.net)
 #
-#       Complete documentation is available at http://shorewall.net
+#       Complete documentation is available at http://shorewall.org
 #
 #       This program is part of Shorewall.
 #

@@ -106,7 +106,7 @@
           <para>Name of <emphasis>interface</emphasis>. Each interface may be
           listed only once in this file. You may NOT specify the name of an
           alias (e.g., eth0:0) here; see <ulink
-          url="/FAQ.htm#faq18">http://www.shorewall.net/FAQ.htm#faq18</ulink></para>
+          url="/FAQ.htm#faq18">http://www.shorewall.org/FAQ.htm#faq18</ulink></para>
 
           <para>You may NOT specify wildcards here, e.g. if you have multiple
           ppp interfaces, you need to put them all in here!</para>
@@ -288,10 +288,10 @@
     <para>tc-hfsc (7)</para>
 
     <para><ulink
-    url="/traffic_shaping.htm">http://www.shorewall.net/traffic_shaping.htm</ulink></para>
+    url="/traffic_shaping.htm">http://www.shorewall.org/traffic_shaping.htm</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.net/configuration_file_basics.htm#Pairs</ulink></para>
+    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para><ulink
     url="http://ace-host.stuart.id.au/russell/files/tc/doc/estimators.txt">http://ace-host.stuart.id.au/russell/files/tc/doc/estimators.txt</ulink></para>

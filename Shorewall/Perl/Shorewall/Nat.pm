@@ -5,7 +5,7 @@
 #
 #     (c) 2007-2019 - Tom Eastep (teastep@shorewall.net)
 #
-#       Complete documentation is available at http://shorewall.net
+#       Complete documentation is available at http://shorewall.org
 #
 #       This program is part of Shorewall.
 #
@@ -561,7 +561,7 @@ sub open_snat_for_output( $ ) {
 #
 # For information about entries in this file, type "man shorewall-snat"
 #
-# See http://shorewall.net/manpages/shorewall-snat.html for additional information
+# See http://shorewall.org/manpages/shorewall-snat.html for additional information
 EOF
 	} else {
 	    print $snat <<'EOF';
@@ -570,7 +570,7 @@ EOF
 #
 # For information about entries in this file, type "man shorewall6-snat"
 #
-# See http://shorewall.net/manpages6/shorewall6-snat.html for additional information
+# See http://shorewall.org/manpages6/shorewall6-snat.html for additional information
 EOF
 	}
 

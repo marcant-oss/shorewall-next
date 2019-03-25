@@ -771,10 +771,10 @@
     <title>See ALSO</title>
 
     <para><ulink
-    url="/traffic_shaping.htm">http://www.shorewall.net/traffic_shaping.htm</ulink></para>
+    url="/traffic_shaping.htm">http://www.shorewall.org/traffic_shaping.htm</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.net/configuration_file_basics.htm#Pairs</ulink></para>
+    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>tc-hfsc(7)</para>
 

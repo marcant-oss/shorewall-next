@@ -219,7 +219,7 @@
                   <para>Для работы с этой функцией ядро и iptables должны поддерживать цель CONNMARK и сравнение connmark. Расширение цели ROUTE не требуется.</para>
 
                   <warning>
-                    <para>В iptables 1.3.1 есть ошибка в реализации CONNMARK и iptables-save/iptables-restore. Поэтому при настройке нескольких провайдеров команда <command>shorewall restore</command> может быть не выполнена. Если это имеет место, примените исправление iptables, доступное по адресу <ulink url="http://shorewall.net/pub/shorewall/contrib/iptables/CONNMARK.diff">http://shorewall.net/pub/shorewall/contrib/iptables/CONNMARK.diff</ulink>.</para>
+                    <para>В iptables 1.3.1 есть ошибка в реализации CONNMARK и iptables-save/iptables-restore. Поэтому при настройке нескольких провайдеров команда <command>shorewall restore</command> может быть не выполнена. Если это имеет место, примените исправление iptables, доступное по адресу <ulink url="http://shorewall.org/pub/shorewall/contrib/iptables/CONNMARK.diff">http://shorewall.org/pub/shorewall/contrib/iptables/CONNMARK.diff</ulink>.</para>
                   </warning>
 
                   <important>

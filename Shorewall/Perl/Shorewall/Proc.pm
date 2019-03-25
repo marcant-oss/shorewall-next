@@ -5,7 +5,7 @@
 #
 #     (c) 2007-2016 - Tom Eastep (teastep@shorewall.net)
 #
-#       Complete documentation is available at http://shorewall.net
+#       Complete documentation is available at http://shorewall.org
 #
 #       This program is part of Shorewall.
 #

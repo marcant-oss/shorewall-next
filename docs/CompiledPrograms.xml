@@ -282,7 +282,7 @@
 #
 #     (c) 2006 - Tom Eastep (teastep@shorewall.net)
 #
-#       Shorewall documentation is available at http://www.shorewall.net
+#       Shorewall documentation is available at http://www.shorewall.org
 #
 #       This program is free software; you can redistribute it and/or modify
 #       it under the terms of Version 2 of the GNU General Public License
@@ -367,7 +367,7 @@ clean:
 
           <note>
             <para>The above Makefile is available at <ulink
-            url="http://www1.shorewall.net/pub/shorewall/contrib/Shorewall-lite/">http://www.shorewall.net/pub/shorewall/contrib/Shorewall-lite/</ulink></para>
+            url="http://www1.shorewall.net/pub/shorewall/contrib/Shorewall-lite/">http://www.shorewall.org/pub/shorewall/contrib/Shorewall-lite/</ulink></para>
           </note>
 
           <note>

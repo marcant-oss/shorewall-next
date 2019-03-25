@@ -65,7 +65,7 @@
     <para>There are ftwall init scripts for use with
     <trademark>SUSE</trademark> and <trademark>Debian</trademark> Linux at
     <ulink
-    url="http://shorewall.net/pub/shorewall/contrib/ftwall">http://shorewall.net/pub/shorewall/contrib/ftwall</ulink>.</para>
+    url="http://shorewall.org/pub/shorewall/contrib/ftwall">http://shorewall.org/pub/shorewall/contrib/ftwall</ulink>.</para>
   </tip>
 
   <para>Shorewall versions 2.2.0 and later also include support for the ipp2p

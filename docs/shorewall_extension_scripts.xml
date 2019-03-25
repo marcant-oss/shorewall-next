@@ -198,7 +198,7 @@ esac</programlisting><caution>
         often used when the interface is managed by dhclient which has no
         standardized location/name for its lease database. Scripts for use
         with dhclient on several distributions are available at <ulink
-        url="http://www.shorewall.net/pub/shorewall/contrib/findgw/">http://www.shorewall.net/pub/shorewall/contrib/findgw/</ulink></para>
+        url="http://www.shorewall.org/pub/shorewall/contrib/findgw/">http://www.shorewall.org/pub/shorewall/contrib/findgw/</ulink></para>
       </listitem>
 
       <listitem>

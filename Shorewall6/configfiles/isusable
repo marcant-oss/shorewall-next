@@ -7,9 +7,9 @@
 # The script is invoked inside a function that accepts an interface
 # name as a single argument. The file below is designed to work with
 # both swping and lsm as described at
-# http://www.shorewall.net/MultiISP.html
+# http://www.shorewall.org/MultiISP.html
 #
-# See http://shorewall.net/shorewall_extension_scripts.htm for additional
+# See http://shorewall.org/shorewall_extension_scripts.htm for additional
 # information.
 #
 ###############################################################################
