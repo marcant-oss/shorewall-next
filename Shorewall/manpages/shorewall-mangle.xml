@@ -41,7 +41,7 @@
 
       <para>If you use multiple internet providers with the 'track' option, in
       /etc/shorewall/providers be sure to read the restrictions at <ulink
-      url="/MultiISP.html">http://www.shorewall.net/MultiISP.html</ulink>.</para>
+      url="/MultiISP.html">http://www.shorewall.org/MultiISP.html</ulink>.</para>
     </important>
 
     <para>The columns in the file are as follows (where the column name is
@@ -1145,7 +1145,7 @@ Normal-Service       =&gt; 0x00</programlisting>
           destination icmp-type(s). ICMP types may be specified as a numeric
           type, a numeric type and code separated by a slash (e.g., 3/4), or a
           typename. See <ulink
-          url="/configuration_file_basics.htm#ICMP">http://www.shorewall.net/configuration_file_basics.htm#ICMP</ulink>.</para>
+          url="/configuration_file_basics.htm#ICMP">http://www.shorewall.org/configuration_file_basics.htm#ICMP</ulink>.</para>
 
           <para>If the protocol is <emphasis role="bold">ipp2p</emphasis>,
           this column is interpreted as an ipp2p option without the leading
@@ -1724,16 +1724,16 @@ Normal-Service       =&gt; 0x00</programlisting>
     <title>See ALSO</title>
 
     <para><ulink
-    url="/traffic_shaping.htm">http://www.shorewall.net/traffic_shaping.htm</ulink></para>
+    url="/traffic_shaping.htm">http://www.shorewall.org/traffic_shaping.htm</ulink></para>
 
     <para><ulink
-    url="/MultiISP.html">http://www.shorewall.net/MultiISP.html</ulink></para>
+    url="/MultiISP.html">http://www.shorewall.org/MultiISP.html</ulink></para>
 
     <para><ulink
-    url="/PacketMarking.html">http://www.shorewall.net/PacketMarking.html</ulink></para>
+    url="/PacketMarking.html">http://www.shorewall.org/PacketMarking.html</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.net/configuration_file_basics.htm#Pairs</ulink></para>
+    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

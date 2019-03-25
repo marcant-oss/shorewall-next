@@ -380,6 +380,6 @@ REJECT(icmp-proto-unreachable):notice:IPv6,tunneling loc             net        
     <title>SEE ALSO</title>
 
     <para><ulink
-    url="/shorewall_logging.htm">http://www.shorewall.net/shorewall_logging.html</ulink></para>
+    url="/shorewall_logging.htm">http://www.shorewall.org/shorewall_logging.html</ulink></para>
   </refsect1>
 </refentry>

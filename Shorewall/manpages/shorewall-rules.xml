@@ -630,7 +630,7 @@
                 <para>Added in Shorewall 4.5.9.3. Queues matching packets to a
                 back end logging daemon via a netlink socket then continues to
                 the next rule. See <ulink
-                url="/shorewall_logging.html">http://www.shorewall.net/shorewall_logging.html</ulink>.</para>
+                url="/shorewall_logging.html">http://www.shorewall.org/shorewall_logging.html</ulink>.</para>
 
                 <para>The <replaceable>nflog-parameters</replaceable> are a
                 comma-separated list of up to 3 numbers:</para>
@@ -1760,7 +1760,7 @@
           interpreted as the destination icmp-type(s). ICMP types may be
           specified as a numeric type, a numeric type and code separated by a
           slash (e.g., 3/4), or a typename. See <ulink
-          url="/configuration_file_basics.htm#ICMP">http://www.shorewall.net/configuration_file_basics.htm#ICMP</ulink>.
+          url="/configuration_file_basics.htm#ICMP">http://www.shorewall.org/configuration_file_basics.htm#ICMP</ulink>.
           Note that prior to Shorewall 4.4.19, only a single ICMP type may be
           listed.</para>
 
@@ -1889,7 +1889,7 @@
           url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5).</para>
 
           <para>See <ulink
-          url="/PortKnocking.html">http://www.shorewall.net/PortKnocking.html</ulink>
+          url="/PortKnocking.html">http://www.shorewall.org/PortKnocking.html</ulink>
           for an example of using an entry in this column with a user-defined
           action rule.</para>
 
@@ -2689,10 +2689,10 @@
     url="shorewall-logging.html">shorewall-logging(5)</ulink></para>
 
     <para><ulink
-    url="/ipsets.html">http://www.shorewall.net/ipsets.html</ulink></para>
+    url="/ipsets.html">http://www.shorewall.org/ipsets.html</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.net/configuration_file_basics.htm#Pairs</ulink></para>
+    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

@@ -8,7 +8,7 @@
     <title>Guide de configuration Shorewall</title>
 
     <subtitle>Version Française de <foreignphrase lang="en"><ulink
-    url="http://www.shorewall.net/shorewall_setup_guide.html">Shorewall Setup
+    url="http://www.shorewall.org/shorewall_setup_guide.html">Shorewall Setup
     Guide</ulink></foreignphrase></subtitle>
 
     <authorgroup>
@@ -1042,7 +1042,7 @@ loc      eth2           detect</programlisting>
       role="bold">0.0.0.0/0</emphasis>.</para>
 
       <para>Un utilisateur de Shorewall a proposé cette très utile <ulink
-      url="http://shorewall.net/pub/shorewall/contrib/IPSubNetMask.html">représentation
+      url="http://shorewall.org/pub/shorewall/contrib/IPSubNetMask.html">représentation
       graphique</ulink> de ces informations.</para>
 
       <para>Dans la suite, nous utiliserons la notation <emphasis

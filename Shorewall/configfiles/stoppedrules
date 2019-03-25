@@ -4,9 +4,9 @@
 # For information about entries in this file, type "man shorewall-stoppedrules"
 #
 # The manpage is also online at
-# http://www.shorewall.net/manpages/shorewall-stoppedrules.html
+# http://www.shorewall.org/manpages/shorewall-stoppedrules.html
 #
-# See http://shorewall.net/starting_and_stopping_shorewall.htm for additional
+# See http://shorewall.org/starting_and_stopping_shorewall.htm for additional
 # information.
 #
 ###############################################################################

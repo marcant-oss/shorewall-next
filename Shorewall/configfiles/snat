@@ -3,7 +3,7 @@
 #
 # For information about entries in this file, type "man shorewall-snat"
 #
-# See http://shorewall.net/manpages/shorewall-snat.html for more information
+# See http://shorewall.org/manpages/shorewall-snat.html for more information
 #
 ###########################################################################################################################################
 #ACTION			SOURCE			DEST		PROTO	PORT	IPSEC	MARK	USER	SWITCH	ORIGDEST	PROBABILITY

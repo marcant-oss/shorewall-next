@@ -293,7 +293,7 @@
                 the iptaccount utility are only available when <ulink
                 url="http://xtables-addons.sourceforge.net/">xtables-addons</ulink>
                 is installed. See <ulink
-                url="/Accounting.html#perIP">http://www.shorewall.net/Accounting.html#perIP</ulink>
+                url="/Accounting.html#perIP">http://www.shorewall.org/Accounting.html#perIP</ulink>
                 for additional information.</para>
               </listitem>
             </varlistentry>
@@ -794,7 +794,7 @@
     url="shorewall-logging.htm">shorewall-logging(5)</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.net/configuration_file_basics.htm#Pairs</ulink></para>
+    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

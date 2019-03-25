@@ -97,7 +97,7 @@ loc     eth2            -</programlisting>
           <para>Logical name of interface. Each interface may be listed only
           once in this file. You may NOT specify the name of a "virtual"
           interface (e.g., eth0:0) here; see <ulink
-          url="/FAQ.htm#faq18">http://www.shorewall.net/FAQ.htm#faq18</ulink>.
+          url="/FAQ.htm#faq18">http://www.shorewall.org/FAQ.htm#faq18</ulink>.
           If the <option>physical</option> option is not specified, then the
           logical name is also the name of the actual interface.</para>
 
@@ -624,7 +624,7 @@ loc     eth2            -</programlisting>
                 <para>Defines the zone as <firstterm>dynamic</firstterm>.
                 Requires ipset match support in your iptables and kernel. See
                 <ulink
-                url="/Dynamic.html">http://www.shorewall.net/Dynamic.html</ulink>
+                url="/Dynamic.html">http://www.shorewall.org/Dynamic.html</ulink>
                 for further information.</para>
               </listitem>
             </varlistentry>
@@ -691,7 +691,7 @@ loc     eth2            -</programlisting>
                 refers to the name given in this option. It is useful when you
                 want to specify the same wildcard port name on two or more
                 bridges. See <ulink
-                url="/bridge-Shorewall-perl.html#Multiple">http://www.shorewall.net/bridge-Shorewall-perl.html#Multiple</ulink>.</para>
+                url="/bridge-Shorewall-perl.html#Multiple">http://www.shorewall.org/bridge-Shorewall-perl.html#Multiple</ulink>.</para>
 
                 <para>If the <emphasis>interface</emphasis> name is a wildcard
                 name (ends with '+'), then the physical
@@ -1007,7 +1007,7 @@ loc     eth2            -</programlisting>
               <listitem>
                 <para>Incoming requests from this interface may be remapped
                 via UPNP (upnpd). See <ulink
-                url="/UPnP.html">http://www.shorewall.net/UPnP.html</ulink>.
+                url="/UPnP.html">http://www.shorewall.org/UPnP.html</ulink>.
                 Supported in IPv4 and in IPv6 in Shorewall 5.1.4 and
                 later.</para>
               </listitem>
@@ -1127,7 +1127,7 @@ net     ppp0      -</programlisting>
     <title>See ALSO</title>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.net/configuration_file_basics.htm#Pairs</ulink></para>
+    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

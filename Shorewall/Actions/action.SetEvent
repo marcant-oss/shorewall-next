@@ -13,7 +13,7 @@
 #               address (dst)
 # Disposition - Disposition for any event generated.
 #
-# For additional information, see http://www.shorewall.net/Events.html
+# For additional information, see http://www.shorewall.org/Events.html
 #
 
 DEFAULTS -,ACCEPT,src

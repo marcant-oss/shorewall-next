@@ -237,7 +237,7 @@
               </footnote>. If you have a bridge configuration where you want
             to control connections through the bridge, you will want to visit
             <ulink
-            url="http://www.shorewall.net/bridge-Shorewall-perl.html">http://www.shorewall.net/bridge-Shorewall-perl.html</ulink><footnote>
+            url="http://www.shorewall.org/bridge-Shorewall-perl.html">http://www.shorewall.org/bridge-Shorewall-perl.html</ulink><footnote>
                 <para>Kernel 2.6.20 or later is required.</para>
               </footnote>.</para>
           </listitem>

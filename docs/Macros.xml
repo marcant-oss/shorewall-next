@@ -510,7 +510,7 @@ ACCEPT          $FW             loc             tcp     135,139,445</programlist
           url="manpages/shorewall_exclusion.html">shorewall-exclusion</ulink>(5).</para>
 
           <para>See <ulink
-          url="http://shorewall.net/PortKnocking.html">http://shorewall.net/PortKnocking.html</ulink>
+          url="http://shorewall.org/PortKnocking.html">http://shorewall.org/PortKnocking.html</ulink>
           for an example of using an entry in this column with a user-defined
           action rule.</para>
         </listitem>

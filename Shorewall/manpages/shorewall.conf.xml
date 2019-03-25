@@ -841,7 +841,7 @@
           <command>restart</command> commands. If set to <option>No</option>
           (the default), the generated script will delete any Docker-generated
           rules when executing those commands. See<ulink url="/Docker.html">
-          http://www.shorewall.net/Docker.html</ulink> for additional
+          http://www.shorewall.org/Docker.html</ulink> for additional
           information.</para>
         </listitem>
       </varlistentry>
@@ -1043,7 +1043,7 @@ net     all  DROP   info</programlisting>then the chain name is 'net-all'
           <para>Added in Shorewall 4.5.4. Specifies the pathname of the
           directory containing the <firstterm>GeoIP Match</firstterm>
           database. See <ulink
-          url="/ISO-3661.html">http://www.shorewall.net/ISO-3661.html</ulink>.
+          url="/ISO-3661.html">http://www.shorewall.org/ISO-3661.html</ulink>.
           If not specified, the default value is
           <filename>/usr/share/xt_geoip/LE</filename> which is the default
           location of the little-endian database.</para>
@@ -2012,7 +2012,7 @@ LOG:info:,bar                        net                    fw</programlisting>
           <option>blackhole</option>, <option>unreachable</option> or
           <option>prohibit</option> to set the type of route to be created.
           See <ulink
-          url="/MultiISP.html#null_routing">http://www.shorewall.net/MultiISP.html#null_routing</ulink>.</para>
+          url="/MultiISP.html#null_routing">http://www.shorewall.org/MultiISP.html#null_routing</ulink>.</para>
         </listitem>
       </varlistentry>
 

@@ -8,7 +8,7 @@
     <title>Installation et mise à jour de Shorewall</title>
 
     <subtitle>Version française de <foreignphrase lang="en"><ulink
-    url="http://www.shorewall.net/Install.html">Shorewall Installation and
+    url="http://www.shorewall.org/Install.html">Shorewall Installation and
     Upgrade</ulink></foreignphrase></subtitle>
 
     <authorgroup>
@@ -121,7 +121,7 @@
         paquetage de Jack Coates adapté pour <emphasis
         role="bold"><trademark>Mandriva</trademark></emphasis>. Il sont tous
         disponibles sur la <ulink
-        url="http://www.shorewall.net/download.htm">page de
+        url="http://www.shorewall.org/download.htm">page de
         téléchargement</ulink>.</para>
 
         <para>Si vous tentez d'installer le mauvais paquetage, il ne
