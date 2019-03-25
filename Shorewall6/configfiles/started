@@ -11,7 +11,7 @@
 # may do so indirectly by running /sbin/shorewall6 with the 'nolock'
 # option.
 #
-# See http://shorewall.net/shorewall_extension_scripts.htm for additional
+# See http://shorewall.org/shorewall_extension_scripts.htm for additional
 # information.
 #
 ###############################################################################

@@ -7,7 +7,7 @@
 #
 #	On most distributions, this file should be called /etc/init.d/shorewall.
 #
-#	Complete documentation is available at http://shorewall.net
+#	Complete documentation is available at http://shorewall.org
 #
 #       This program is part of Shorewall.
 #

@@ -438,10 +438,10 @@ c:a,b     ip</programlisting>
     <title>See ALSO</title>
 
     <para><ulink
-    url="/Multiple_Zones.html">http://www.shorewall.net/Multiple_Zones.html</ulink>.</para>
+    url="/Multiple_Zones.html">http://www.shorewall.org/Multiple_Zones.html</ulink>.</para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.net/configuration_file_basics.htm#Pairs</ulink></para>
+    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

@@ -3,7 +3,7 @@
 #
 # For information about entries in this file, type "man shorewall-nat"
 #
-# For additional information, see http://shorewall.net/NAT.htm
+# For additional information, see http://shorewall.org/NAT.htm
 #
 ###############################################################################
 #EXTERNAL	INTERFACE	INTERNAL	ALLINTS		LOCAL

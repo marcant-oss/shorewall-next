@@ -1027,7 +1027,7 @@
 
     <para>The <option>trace</option> and <option>debug</option> options are
     used for debugging. See <ulink
-    url="/starting_and_stopping_shorewall.htm#Trace">http://www.shorewall.net/starting_and_stopping_shorewall.htm#Trace</ulink>.</para>
+    url="/starting_and_stopping_shorewall.htm#Trace">http://www.shorewall.org/starting_and_stopping_shorewall.htm#Trace</ulink>.</para>
 
     <para>The <option>nolock</option> option prevents the command from
     attempting to acquire the Shorewall lockfile. It is useful if you need to
@@ -3226,7 +3226,7 @@
 
     <simplelist>
       <member><ulink
-      url="/starting_and_stopping_shorewall.htm">http://www.shorewall.net/starting_and_stopping_shorewall.htm</ulink>
+      url="/starting_and_stopping_shorewall.htm">http://www.shorewall.org/starting_and_stopping_shorewall.htm</ulink>
       - Describes operational aspects of Shorewall.</member>
 
       <member><ulink url="shorewall-files.html">shorewall-files(5)</ulink> -

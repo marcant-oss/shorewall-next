@@ -4,7 +4,7 @@
 # For information about entries in this file, type "man shorewall6-hosts"
 #
 # The manpage is also online at
-# http://www.shorewall.net/manpages6/shorewall6-hosts.html
+# http://www.shorewall.org/manpages6/shorewall6-hosts.html
 #
 ###############################################################################
 #ZONE		HOSTS				OPTIONS

@@ -4,7 +4,7 @@
 # For information about entries in this file, type "man shorewall6-tunnels"
 #
 # The manpage is also online at
-# http://www.shorewall.net/manpages6/shorewall6-tunnels.html
+# http://www.shorewall.org/manpages6/shorewall6-tunnels.html
 #
 ###############################################################################
 #TYPE			ZONE		GATEWAY			GATEWAY_ZONE

@@ -4,7 +4,7 @@
 # Add commands below that you want to be executed after Shorewall has
 # processed the 'clear' command.
 #
-# See http://shorewall.net/shorewall_extension_scripts.htm for additional
+# See http://shorewall.org/shorewall_extension_scripts.htm for additional
 # information.
 #
 ###############################################################################
