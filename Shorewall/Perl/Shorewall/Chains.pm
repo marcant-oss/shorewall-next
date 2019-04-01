@@ -5747,10 +5747,25 @@ sub validate_helper( $;$ ) {
 
 	    my $protonum = -1;
 
-	    fatal_error "Unknown PROTO ($proto)" unless defined ( $protonum = resolve_proto( $proto ) );
+	    fatal_error "Unknown PROTO ($proto)" unless $proto eq '-' || defined ( $protonum = resolve_proto( $proto ) );
 
-	    unless ( $protonum == $helper_proto ) {
-		fatal_error "The $helper_base helper requires PROTO=" . (proto_name $helper_proto );
+	    if ( reftype( $helper_proto ) ) {
+		#
+		# More than one protocol allowed with this helper, so $helper_proto is an array reference
+		#
+		my $found;
+		my $names = '';
+
+		for ( @$helper_proto ) {
+		    $names = $names ? join( ',', $names, proto_name( $_ ) ) : proto_name( $_ );
+		    $found = 1 if $protonum == $_;
+		}
+
+		fatal_error "The $helper_base helper requires PROTO to be one of '$names'" unless $found;
+	    } else {
+		unless ( $protonum == $helper_proto ) {
+		    fatal_error "The $helper_base helper requires PROTO=" . (proto_name( $helper_proto ) );
+		}
 	    }
 	}
     } else {
