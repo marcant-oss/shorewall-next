@@ -4991,10 +4991,10 @@ sub do_proto( $$$;$ )
 
 			$invert = $sports =~ s/^!// ? '! ' : '';
 
-			if ( $ports =~ /^\+/ ) {
+			if ( $sports =~ /^\+/ ) {
 			    $output .= $invert;
 			    $output .= '-m set ';
-			    $output .= get_set_flags( $ports, 'src' );
+			    $output .= get_set_flags( $sports, 'src' );
 			} elsif ( $multiport ) {
 			    if ( port_count( $sports ) > 15 ) {
 				if ( $restricted ) {
@@ -5207,8 +5207,8 @@ sub do_iproto( $$$ )
 			fatal_error "'=' in the SOURCE PORT(S) column requires one or more ports in the DEST PORT(S) column" if $sports eq '=';
 			$invert = $sports =~ s/^!// ? '! ' : '';
 
-			if ( $ports =~ /^\+/ ) {
-			    push @output, set => ${invert} . get_set_flags( $ports, 'src' );
+			if ( $sports =~ /^\+/ ) {
+			    push @output, set => ${invert} . get_set_flags( $sports, 'src' );
 			} elsif ( $multiport ) {
 			    if ( port_count( $sports ) > 15 ) {
 				if ( $restricted ) {
