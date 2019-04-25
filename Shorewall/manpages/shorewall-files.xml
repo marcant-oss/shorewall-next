@@ -720,9 +720,9 @@ DNAT { source=net dest=loc:10.0.0.1 proto=tcp dport=80 mark=88 }</programlisting
   <refsect1>
     <title>Time Columns</title>
 
-    <para>Several of the files include a TIME column that allows you to specify
-    times when the rule is to be applied. Contents of this column is a list of
-    <replaceable>timeelement</replaceable>s separated by apersands
+    <para>Several of the files include a TIME column that allows you to
+    specify times when the rule is to be applied. Contents of this column is a
+    list of <replaceable>timeelement</replaceable>s separated by apersands
     (&amp;).</para>
 
     <para>Each <replaceable>timeelement</replaceable> is one of the
@@ -898,11 +898,10 @@ DNAT { source=net dest=loc:10.0.0.1 proto=tcp dport=80 mark=88 }</programlisting
 
     <para>here are times when you would like to enable or disable one or more
     rules in the configuration without having to do a <command>shorewall
-    reload</command> or <command>shorewall restart</command>. This may be
-    accomplished using the SWITCH column in <ulink
-    url="manpages/shorewall-rules.html">shorewall-rules</ulink> (5) or <ulink
-    url="manpages6/shorewall6-rules.html">shorewall6-rules</ulink> (5). Using
-    this column requires that your kernel and iptables include
+    reload</command>. This may be accomplished using the SWITCH column in
+    <ulink url="manpages/shorewall-rules.html">shorewall-rules</ulink> (5) or
+    <ulink url="manpages6/shorewall6-rules.html">shorewall6-rules</ulink> (5).
+    Using this column requires that your kernel and iptables include
     <firstterm>Condition Match Support</firstterm> and you must be running
     Shorewall 4.4.24 or later. See the output of <command>shorewall show
     capabilities</command> and <command>shorewall version</command> to
@@ -930,7 +929,7 @@ DNAT { source=net dest=loc:10.0.0.1 proto=tcp dport=80 mark=88 }</programlisting
     role="bold">on</emphasis>. If you precede the switch name with ! (e.g.,
     !switch1), then the rule is enabled only when the switch is <emphasis
     role="bold">off</emphasis>. Switch settings are retained over
-    <command>shorewall restart</command>.</para>
+    <command>shorewall reload</command>.</para>
 
     <para>Shorewall requires that switch names:</para>
 

@@ -1583,7 +1583,7 @@ Normal-Service       =&gt; 0x00</programlisting>
 
         <listitem>
           <para>Added in Shorewall 5.1.0 and allows enabling and disabling the
-          rule without requiring <command>shorewall restart</command>.</para>
+          rule without requiring <command>shorewall reload</command>.</para>
 
           <para>The rule is enabled if the value stored in
           <filename>/proc/net/nf_condition/<replaceable>switch-name</replaceable></filename>
@@ -1614,7 +1614,7 @@ Normal-Service       =&gt; 0x00</programlisting>
           </simplelist>
 
           <para>Switch settings are retained over <command>shorewall
-          restart</command>.</para>
+          reload</command>.</para>
 
           <para>When the <replaceable>switch-name</replaceable> is followed by
           <option>=0</option> or <option>=1</option>, then the switch is
