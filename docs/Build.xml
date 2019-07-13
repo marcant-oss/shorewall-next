@@ -46,7 +46,7 @@
   <section>
     <title>Git Taxonomy</title>
 
-    <para>The Shorewall Git tree at Sourceforge serves as the master
+    <para>The Shorewall Git tree at Gitlab serves as the master
     repository for Shorewall 4.4 and later versions. It is not possible to
     simply export a directory from Git and run the
     <command>install.sh</command> script in that directory. A build step is
@@ -56,7 +56,7 @@
     <para>My local git repositories are:</para>
 
     <section>
-      <title>trunk (clone of Code)</title>
+      <title>code (clone of Code)</title>
 
       <para>The development branch of each product is kept here.</para>
 
@@ -91,7 +91,7 @@
     </section>
 
     <section>
-      <title>trunk/docs</title>
+      <title>code/docs</title>
 
       <para>The stable release XML documents. Depending on the point in the
       release cycle, these documents may also apply to the current development
@@ -101,7 +101,7 @@
     <section>
       <title>tools (Clone of Tools)</title>
 
-      <para>This is where the release and build tools are kept. There are two
+      <para>This is where the release and build tools are kept. There are four
       subordinate directories:</para>
 
       <variablelist>
@@ -110,6 +110,24 @@
 
           <listitem>
             <para>Tools for building and uploading new releases.</para>
+          </listitem>
+        </varlistentry>
+
+      <variablelist>
+        <varlistentry>
+          <term>tools/files</term>
+
+          <listitem>
+            <para>Files that are used during the release process.</para>
+          </listitem>
+        </varlistentry>
+
+      <variablelist>
+        <varlistentry>
+          <term>tools/testing</term>
+
+          <listitem>
+            <para>Tools for testing.</para>
           </listitem>
         </varlistentry>
 
@@ -167,7 +185,7 @@
       <title>build45, build46 and build50</title>
 
       <para>These are the scripts that respectively build Shorewall 4.5,
-      Shorewall 4.6 and Shorewall 5.0 packages from Git.</para>
+      Shorewall 4.6 and Shorewall 5.[012] packages from Git.</para>
 
       <para>The scripts copy content from Git using the <command>git
       archive</command> command. They then use that content to build the
@@ -432,7 +450,7 @@
           <term><emphasis>products</emphasis></term>
 
           <listitem>
-            <para>specifes the products to upload. If not given, all products
+            <para>specifies the products to upload. If not given, all products
             are uploaded. This option is generally given only when uploading a
             patch release.</para>
 
@@ -559,12 +577,12 @@
         </listitem>
 
         <listitem>
-          <para>OPENWRT - OpenWRT (Shorewall-core, Shorewall6-lite ad
-          Shorewall6-lite only)</para>
+          <para>OPENWRT - OpenWRT (Shorewall-core, Shorewall-lite,
+          Shorewall6-lite and Shorewall-init only)</para>
         </listitem>
       </itemizedlist>
 
-      <para>See the <ulink url="Insall.htm">installation article</ulink> for
+      <para>See the <ulink url="Install.htm">installation article</ulink> for
       additional information</para>
     </section>
   </section>
