@@ -721,7 +721,13 @@ sub process_a_policy1($$$$$$$) {
 
     require_capability 'AUDIT_TARGET', ":audit", "s" if $audit;
 
-    my ( $policy, $pactions ) = split( /:/, $originalpolicy, 2 );
+    my ( $policy, $pactions );
+
+    if ( $originalpolicy =~ /^NFQUEUE\((.*?)\)(?::?(.*))/ ) {
+	( $policy, $pactions ) = ( "NFQUEUE($1)", $2 );
+    } else {
+	( $policy, $pactions ) = split( /:/, $originalpolicy, 2 );
+    }
 
     fatal_error "Invalid or missing POLICY ($originalpolicy)" unless $policy;
 
