@@ -1610,8 +1610,8 @@ sub merge_levels ($$) {
 
     return $subordinate if $subordinate =~ /^(?:FORMAT|COMMENT|DEFAULTS?)$/;
 
-    my @supparts = split /:/, $superior;
-    my @subparts = split /:/, $subordinate;
+    my @supparts = split_list2( $superior ,    'Action' );
+    my @subparts = split_list2( $subordinate , 'Action' );
 
     my $subparts = @subparts;
 
