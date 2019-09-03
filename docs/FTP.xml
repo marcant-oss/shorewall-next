@@ -431,7 +431,7 @@ CT:helper:ftp           loc             -               tcp     21</programlisti
     <para><filename>/etc/shorewall/rules:</filename></para>
 
     <programlisting>#ACTION         SOURCE         DEST                 PROTO     DPORT
-DNAT            net            loc:192.168.1.2:21   tcp       12345  { helper=ftp }the</programlisting>
+DNAT            net            loc:192.168.1.2:21   tcp       12345  { helper=ftp }</programlisting>
 
     <para>That entry will accept ftp connections on port 12345 from the net
     and forward them to host 192.168.1..2 and port 21 in the loc zone.</para>
