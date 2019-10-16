@@ -364,6 +364,12 @@ ACCEPT     vpn:134.28.54.2  $FW</programlisting>
       <programlisting>#ZONE   TYPE    OPTIONS                 IN_OPTIONS              OUT_OPTIONS
 vpn     ipsec   mode=tunnel             <emphasis role="bold">mss=1400</emphasis></programlisting>
 
+      <para>Note that if you are using ipcomp, you should omit the mode
+      specification:</para>
+
+      <programlisting>#ZONE   TYPE    OPTIONS                 IN_OPTIONS              OUT_OPTIONS
+vpn     ipsec   -                       <emphasis role="bold">mss=1400</emphasis></programlisting>
+
       <para>You should also set FASTACCEPT=No in shorewall.conf to ensure that
       both the SYN and SYN,ACK packets have their MSS field adjusted.</para>
 
