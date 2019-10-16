@@ -694,7 +694,7 @@ use constant { UNIQUE      => 1,       # Simple header matches - only allowed on
 	       CONTROL     => 16,      # Unsed internally by the compiler - does not contribute to the iptables rule
 	       COMPLEX     => 32,      # Currently means 'contrack --cstate'
 	       NFACCT      => 64,      # nfacct match
-	       EXPENSIVE   => 128,     # Has high rule-processing cost in the kernel
+	       EXPENSIVE   => 128,     # Has high match-processing cost in the kernel
 	       RECENT      => 256,     # recent match
 	   };
 
@@ -1222,8 +1222,8 @@ sub transform_rule( $;\$ ) {
 	    $option = $2;
 	} elsif ( $input =~ s/^(!\s+)?--([^\s]+)\s*// ) {
 	    $invert = '!' if $1;
-	    my $opt = $option = $2;
-	    fatal_error "Unrecognized iptables option ($opt}" unless $option = $aliases{$option};
+	    my $opt = $2;
+	    fatal_error "Unrecognized iptables option ($opt}" unless $option = $aliases{$opt};
 	} else {
 	    fatal_error "Unrecognized iptables option string ($input)";
 	}
