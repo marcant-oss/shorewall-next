@@ -611,8 +611,8 @@ sub process_policy_actions( $$$ ) {
 #
 # Verify an NFQUEUE specification and return the appropriate ip[6]tables target
 #
-sub handle_nfqueue( $$ ) {
-    my ($params, $allow_bypass ) = @_;
+sub handle_nfqueue( $ ) {
+    my ($params) = @_;
     my ( $action, $bypass, $fanout );
     my ( $queue1, $queue2, $queuenum1, $queuenum2 );
 
@@ -625,7 +625,6 @@ sub handle_nfqueue( $$ ) {
 
 	if ( supplied $queue ) {
 	    if ( $queue eq 'bypass' ) {
-		fatal_error "'bypass' is not allowed in this context" unless $allow_bypass;
 		fatal_error "Invalid NFQUEUE options (bypass,$bypass)" if supplied $bypass;
 		return 'NFQUEUE --queue-bypass';
 	    }
@@ -653,7 +652,6 @@ sub handle_nfqueue( $$ ) {
 
     if ( supplied $bypass ) {
 	fatal_error "Invalid NFQUEUE option ($bypass)" if $bypass ne 'bypass';
-	fatal_error "'bypass' is not allowed in this context" unless $allow_bypass;
 
 	$bypass =' --queue-bypass';
     } else {
@@ -742,9 +740,7 @@ sub process_a_policy1($$$$$$$) {
     my $pactionref = process_policy_actions( $originalpolicy, $policy, $pactions );
 
     if ( defined $queue ) {
-	$policy = handle_nfqueue( $queue,
-				  0 # Don't allow 'bypass'
-	    );
+	$policy = handle_nfqueue( $queue );
     } elsif ( $policy eq 'NONE' ) {
 	fatal_error "NONE policy not allowed with \"all\""
 	    if $clientwild || $serverwild;
@@ -2704,9 +2700,7 @@ sub process_rule ( $$$$$$$$$$$$$$$$$$$$ ) {
 	$macro_nest_level--;
 	goto EXIT;
     } elsif ( $actiontype & NFQ ) {
-	$action = handle_nfqueue( $param,
-				  1 # Allow 'bypass'
-	    );
+	$action = handle_nfqueue( $param );
     } elsif ( $actiontype & SET ) {
 	require_capability( 'IPSET_MATCH', 'SET and UNSET rules', '' );
 	fatal_error "$action rules require a set name parameter" unless $param;
