@@ -1141,7 +1141,7 @@
           setting in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).</para>
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
 
           <para>When no <replaceable>verbosity</replaceable> is specified,
           each instance of this option causes 1 to be added to the effective
@@ -1162,7 +1162,7 @@
           setting in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).</para>
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
 
           <para>Each instance of this option causes 1 to be subtracted from
           the effective verbosity.</para>
@@ -1199,7 +1199,7 @@
           defined in the <ulink
           url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6-interfaces.html">shorewall6-interfaces</ulink>(5))file.
+          url="/manpages/shorewall-interfaces.html">shorewall6-interfaces</ulink>(5))file.
           A <emphasis>host-list</emphasis> is comma-separated list whose
           elements are host or network addresses.<caution>
               <para>The <command>add</command> command is not very robust. If
@@ -1214,7 +1214,7 @@
           <para>Beginning with Shorewall 4.5.9, the <emphasis
           role="bold">dynamic_shared</emphasis> zone option (<ulink
           url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5),<ulink
-          url="???">shorewall6-zones</ulink>(5)) allows a single ipset to
+          url="/manpages/shorewall-zones.html">shorewall6-zones</ulink>(5)) allows a single ipset to
           handle entries for multiple interfaces. When that option is
           specified for a zone, the <command>add</command> command has the
           alternative syntax in which the <replaceable>zone</replaceable> name
@@ -1332,7 +1332,7 @@
           set to Yes in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).</para>
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
         </listitem>
       </varlistentry>
 
@@ -1440,7 +1440,7 @@
           set to Yes in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).</para>
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
         </listitem>
       </varlistentry>
 
@@ -1458,7 +1458,7 @@
           defined in the <ulink
           url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6-interfaces.html">shorewall6-interfaces</ulink>(5)
+          url="/manpages/shorewall-interfaces.html">shorewall6-interfaces</ulink>(5)
           file. A <emphasis>host-list</emphasis> is comma-separated list whose
           elements are a host or network address.</para>
 
@@ -1466,7 +1466,7 @@
           role="bold">dynamic_shared</emphasis> zone option (<ulink
           url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5),
           <ulink
-          url="/manpages6/shorewall6-zones.html">shorewall6-zones</ulink>(5))
+          url="/manpages/shorewall-zones.html">shorewall6-zones</ulink>(5))
           allows a single ipset to handle entries for multiple interfaces.
           When that option is specified for a zone, the
           <command>delete</command> command has the alternative syntax in
@@ -1493,7 +1493,7 @@
           command removes any routes added from <ulink
           url="/manpages/shorewall-routes.html">shorewall-routes</ulink>(5)
           (<ulink
-          url="/manpages/shorewall6-routes.html">shorewall6-routes</ulink>(5))and
+          url="/manpages/shorewall-routes.html">shorewall6-routes</ulink>(5))and
           any traffic shaping configuration for the interface.</para>
         </listitem>
       </varlistentry>
@@ -1554,7 +1554,7 @@
           adds any route specified in <ulink
           url="/manpages/shorewall-routes.html">shorewall-routes</ulink>(5)
           (<ulink
-          url="/manpages/shorewall6-routes.html">shorewall6-routes</ulink>(5))
+          url="/manpages/shorewall-routes.html">shorewall6-routes</ulink>(5))
           and installs the interface's traffic shaping configuration, if
           any.</para>
         </listitem>
@@ -1599,7 +1599,7 @@
           given then the file specified by RESTOREFILE in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)) is
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)) is
           assumed.</para>
         </listitem>
       </varlistentry>
@@ -1684,7 +1684,7 @@
           specified by the BLACKLIST_LOGLEVEL setting in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink> (5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).
           This command requires that the firewall be in the started state and
           that DYNAMIC_BLACKLIST=Yes in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf
@@ -1700,7 +1700,7 @@
           <para>Monitors the log file specified by the LOGFILE option in
           <ulink url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5))
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5))
           and produces an audible alarm when new Shorewall messages are
           logged. The <emphasis role="bold">-m</emphasis> option causes the
           MAC address of each packet source to be displayed if that
@@ -1723,7 +1723,7 @@
           specified by the BLACKLIST_LOGLEVEL setting in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink> (5),
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).
           This command requires that the firewall be in the started state and
           that DYNAMIC_BLACKLIST=Yes in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf
@@ -1878,13 +1878,13 @@
                 INLINE_MATCHES is set to Yes in <ulink
                 url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
                 (<ulink
-                url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5))..</para>
+                url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5))..</para>
 
                 <para>The <option>-C</option> option was added in Shorewall
                 4.6.5 and is only meaningful when AUTOMAKE=Yes in <ulink
                 url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
                 (<ulink
-                url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).
+                url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).
                 If an existing firewall script is used and if that script was
                 the one that generated the current running configuration, then
                 the running netfilter configuration will be reloaded as is so
@@ -2006,7 +2006,7 @@
           <replaceable>system</replaceable> is omitted, then the FIREWALL
           option setting in <ulink
           url="shorewall.conf.html">shorewall.conf</ulink>(5) (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf(5)</ulink>) is
+          url="/manpages/shorewall.conf.html">shorewall6.conf(5)</ulink>) is
           assumed. In that case, if you want to specify a
           <replaceable>directory</replaceable>, then the <option>-D</option>
           option must be given.</para>
@@ -2071,8 +2071,8 @@
           Beginning with Shorewall 5.0.13, if
           <replaceable>system</replaceable> is omitted, then the FIREWALL
           option setting in <ulink
-          url="shorewall6.conf.html">shorewall6.conf(5)</ulink> (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)) is
+          url="/manpages/shorewall.conf.html">shorewall6.conf(5)</ulink> (<ulink
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)) is
           assumed. In that case, if you want to specify a
           <replaceable>directory</replaceable>, then the <option>-D</option>
           option must be given.</para>
@@ -2104,7 +2104,7 @@
           set to Yes in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).</para>
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
         </listitem>
       </varlistentry>
 
@@ -2144,8 +2144,8 @@
           Beginning with Shorewall 5.0.13, if
           <replaceable>system</replaceable> is omitted, then the FIREWALL
           option setting in <ulink
-          url="shorewall6.conf.html">shorewall6.conf(5)</ulink> (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)) is
+          url="/manpages/shorewall.conf.html">shorewall6.conf(5)</ulink> (<ulink
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)) is
           assumed. In that case, if you want to specify a
           <replaceable>directory</replaceable>, then the <option>-D</option>
           option must be given.</para>
@@ -2177,7 +2177,7 @@
           set to Yes in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5).</para>
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5).</para>
         </listitem>
       </varlistentry>
 
@@ -2304,7 +2304,7 @@
           restored from the file specified by the RESTOREFILE option in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).</para>
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
 
           <caution>
             <para>If your iptables ruleset depends on variables that are
@@ -2460,7 +2460,7 @@
           in the file specified by the RESTOREFILE option in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).</para>
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
 
           <para>The <option>-C</option> option, added in Shorewall 4.6.5,
           causes the iptables packet and byte counters to be saved along with
@@ -2477,7 +2477,7 @@
           the SAVE_IPSETS option in <ulink
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink> (5)
           (<ulink
-          url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).
           This command may be used to proactively save your ipset contents in
           the event that a system failure occurs prior to issuing a
           <command>stop</command> command.</para>
@@ -2645,7 +2645,7 @@
                 accounting counters (<ulink
                 url="/manpages/shorewall-accounting.html">shorewall-accounting</ulink>
                 (5), <ulink
-                url="/manpages6/shorewall6-accounting.html">shorewall6-accounting</ulink>(5)).</para>
+                url="/manpages/shorewall-accounting.html">shorewall6-accounting</ulink>(5)).</para>
               </listitem>
             </varlistentry>
 
@@ -2669,7 +2669,7 @@
                 file specified by the LOGFILE option in <ulink
                 url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
                 (<ulink
-                url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).
+                url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).
                 The <emphasis role="bold">-m</emphasis> option causes the MAC
                 address of each packet source to be displayed if that
                 information is available.</para>
@@ -2851,7 +2851,7 @@
                   in <ulink
                   url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
                   (<ulink
-                  url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5))
+                  url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5))
                   will be restored if that saved configuration exists and has
                   been modified more recently than the files in
                   /etc/shorewall. When <emphasis role="bold">-f</emphasis> is
@@ -2862,7 +2862,7 @@
                   option was added to <ulink
                   url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
                   (<ulink
-                  url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).
+                  url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).
                   When LEGACY_FASTSTART=No, the modification times of files in
                   /etc/shorewall are compared with that of
                   /var/lib/shorewall/firewall (the compiled script that last
@@ -2881,7 +2881,7 @@
                   overriding the AUTOMAKE setting in <ulink
                   url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
                   (<ulink
-                  url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).
+                  url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).
                   When both <option>-f</option> and <option>-c</option>are
                   present, the result is determined by the option that appears
                   last.</para>
@@ -2897,7 +2897,7 @@
                   INLINE_MATCHES is set to Yes in <ulink
                   url="/manpages/shorewall.conf.html">shorewall.conf(5)</ulink>
                   (<ulink
-                  url="/manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5)).</para>
+                  url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
 
                   <para>The <option>-C</option> option was added in Shorewall
                   4.6.5 and is only meaningful when the <option>-f</option>

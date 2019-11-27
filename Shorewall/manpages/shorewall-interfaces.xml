@@ -155,7 +155,7 @@ loc     eth2            -</programlisting>
           <para>Beginning with Shorewall 4.5.17, if you specify a zone for the
           'lo' interface, then that zone must be defined as type
           <option>local</option> in <ulink
-          url="/manpages6/shorewall6-zones.html">shorewall6-zones</ulink>(5).</para>
+          url="/manpages/shorewall-zones.html">shorewall6-zones</ulink>(5).</para>
         </listitem>
       </varlistentry>
 

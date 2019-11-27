@@ -545,7 +545,7 @@
                 the<replaceable>
                 ip6tables-</replaceable><replaceable>target</replaceable> as a
                 builtin action in <ulink
-                url="/manpages6/shorewall6-actions.html">shorewall-actions</ulink>(5).</para>
+                url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5).</para>
 
                 <important>
                   <para>If you specify REJECT as the
