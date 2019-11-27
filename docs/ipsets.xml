@@ -28,6 +28,8 @@
 
       <year>2017</year>
 
+      <year>2019</year>
+
       <holder>Thomas M. Eastep</holder>
     </copyright>
 
@@ -182,7 +184,7 @@ ACCEPT       net:+sshok       $FW      tcp      22</programlisting></para>
     together with the ipsets supporting dynamic zones are saved. Shorewall6
     support for the SAVE_IPSETS option was also added in 4.6.4. When
     SAVE_IPSETS=Yes in <ulink
-    url="manpages6/shorewall6.conf.html">shorewall6.conf(5)</ulink>, only ipv6
+    url="manpages/shorewall.conf.html">shorewall6.conf(5)</ulink>, only ipv6
     ipsets are saved. For Shorewall, if SAVE_IPSETS=ipv4 in <ulink
     url="manpages/shorewall.conf.html">shorewall.conf(5)</ulink>, then only
     ipv4 ipsets are saved. Both features require ipset version 5 or
@@ -201,9 +203,9 @@ ACCEPT       net:+sshok       $FW      tcp      22</programlisting></para>
     <para>Ipset support in Shorewall6 was added in Shorewall 4.4.21.</para>
 
     <para>Beginning with Shorewall 4.6.4, SAVE_IPSETS is available in <ulink
-    url="manpages6/shorewall6.conf.html">shorewall6-conf(5)</ulink>. When set
-    to Yes, the ipv6 ipsets will be saved. You can also save selective ipsets
-    by setting SAVE_IPSETS to a comma-separated list of ipset names.</para>
+    url="manpages/shorewall.conf.html">shorewall6-conf(5)</ulink>. When set to
+    Yes, the ipv6 ipsets will be saved. You can also save selective ipsets by
+    setting SAVE_IPSETS to a comma-separated list of ipset names.</para>
 
     <para>Prior to Shorewall 4.6.4, SAVE_IPSETS=Yes in <ulink
     url="manpages/shorewall.conf.html">shorewall.conf(5)</ulink> won't work
@@ -221,7 +223,7 @@ ACCEPT       net:+sshok       $FW      tcp      22</programlisting></para>
 
     <para>If you configure SAVE_IPSETS in <ulink
     url="manpages/shorewall.conf.html">shorewall.conf(5)</ulink> and/or <ulink
-    url="manpages6/shorewall6.conf.html">shorewall6.conf(5)</ulink> then do
-    not set SAVE_IPSETS in shorewall-init.</para>
+    url="manpages/shorewall.conf.html">shorewall6.conf(5)</ulink> then do not
+    set SAVE_IPSETS in shorewall-init.</para>
   </section>
 </article>

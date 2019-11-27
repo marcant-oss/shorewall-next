@@ -276,7 +276,7 @@
 
     <para>By setting the LOGTAGONLY option to Yes in <ulink
     url="/manpages/shorewall.conf.html">shorewall.conf(5)</ulink> or <ulink
-    url="/manpages6/shorewall6.conf.html">shorewall6.conf(5)</ulink>, the
+    url="/manpages/shorewall.conf.html">shorewall6.conf(5)</ulink>, the
     disposition ('DROP' in the above example) will be omitted. Consider the
     following rule:</para>
 
@@ -373,7 +373,7 @@ REJECT(icmp-proto-unreachable):notice:IPv6,tunneling loc             net        
     <para>Beginning with Shorewall 4.6.4, you can configure the backend using
     the LOG_BACKEND option in <ulink
     url="manpages/shorewall.conf.html">shorewall.conf(5)</ulink> and <ulink
-    url="manpages6/shorewall6.conf.html">shorewall6.conf(5)</ulink>.</para>
+    url="manpages/shorewall.conf.html">shorewall6.conf(5)</ulink>.</para>
   </refsect1>
 
   <refsect1>
