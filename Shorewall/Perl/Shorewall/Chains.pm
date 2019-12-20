@@ -536,6 +536,9 @@ our $ipset_rules;
 #
 use constant { ALL_COMMANDS => 1, NOT_RESTORE => 2 };
 
+#
+# Chain optimization flags
+#
 use constant { DONT_OPTIMIZE => 1 , DONT_DELETE => 2, DONT_MOVE => 4, RETURNS => 8, RETURNS_DONT_MOVE => 12 };
 
 our %dscpmap = ( CS0  => 0x00,
@@ -1422,7 +1425,7 @@ sub compatible( $$ ) {
 	}
     }
     #
-    # Don't combine chains where each specifies
+    # Don't combine rules where each specifies
     #    -m policy and the policies are different
     # or when one specifies
     #    -m multiport
