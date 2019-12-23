@@ -7655,11 +7655,13 @@ sub isolate_source_interface( $ ) {
 		) {
 	    $iiface = $1;
 	    $inets  = $2;
+	    $inets =~ s/\]-\[/-/;
 	} elsif ( $source =~ /:/ ) {
 	    if ( $source =~ /^\[(?:.+),\[(?:.+)\]$/ ){
 		$inets = $source;
 	    } elsif ( $source =~ /^\[(.+)\]$/ ) {
 		$inets = $1;
+		$inets =~ s/\]-\[/-/;
 	    } else {
 		$inets = $source;
 	    }
@@ -7777,6 +7779,7 @@ sub isolate_dest_interface( $$$$ ) {
 	if ( $dest =~ /^(.+?):(\[(?:.+),\[(?:.+)\])$/ ) {
 	    $diface = $1;
 	    $dnets  = $2;
+	    $dnets =~ s/\]-\[/-/;
 	} elsif (  $dest =~ /^(.+?):\[(.+)\]\s*$/ ||
 		   $dest =~ /^(.+?):(!?\+.+)$/    ||
 		   $dest =~ /^(.+?):(!?[&%].+)$/  ||
@@ -7789,6 +7792,7 @@ sub isolate_dest_interface( $$$$ ) {
 		$dnets = $dest;
 	    } elsif ( $dest =~ /^\[(.+)\]$/ ) {
 		$dnets = $1;
+	        $dnets =~ s/\]-\[/-/;
 	    } else {
 		$dnets = $dest;
 	    }

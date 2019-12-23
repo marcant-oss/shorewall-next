@@ -316,9 +316,9 @@ sub process_one_masq1( $$$$$$$$$$$ )
 				fatal_error "Invalid IPv6 Address ($addr)" unless $addr =~ /^\[(.+)\]$/;
 
 				$addr = $1;
+				$addr =~ s/\]-\[/-/;
 
 				if ( $addr =~ /^(.+)-(.+)$/ ) {
-				    fatal_error "Correct address range syntax is '[<addr1>-<addr2>]'" if $addr =~ /]-\[/;
 				    validate_range( $1, $2 );
 				} else {
 				    validate_address $addr, 0;
@@ -930,7 +930,7 @@ sub handle_nat_rule( $$$$$$$$$$$$$ ) {
 
 		if ( $server =~ /^\[(.+)\]$/ ) {
 		    $server = $1;
-		    fatal_error "Correct address range syntax is '[<addr1>-<addr2>]'" if $server =~ /]-\[/;
+		    $server =~ s/\]-\[/-/;
 		    assert( $server =~ /^(.+)-(.+)$/ );
 		    ( $addr1, $addr2 ) = ( $1, $2 );
 		}
