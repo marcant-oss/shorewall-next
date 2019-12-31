@@ -66,8 +66,8 @@
     following<programlisting>warning: shorewall-3.2.1-1.noarch.rpm: V3 DSA signature: NOKEY, key ID 6c562ac4</programlisting></para>
 
     <para>download the <ulink
-    url="https://lists.shorewall.net/shorewall.gpg.key">Shorewall GPG
-    key</ulink> and run this command:</para>
+    url="https://shorewall.org/shorewall.gpg.key">Shorewall GPG key</ulink>
+    and run this command:</para>
 
     <programlisting><command>rpm --import shorewall.gpg.key</command></programlisting>
   </note>
