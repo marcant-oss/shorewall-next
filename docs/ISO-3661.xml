@@ -84,7 +84,7 @@
     any future ability to install the database at another location, Shorewall
     supports a GEOIPDIR option in <ulink
     url="manpages/shorewall.conf.html">shorewall.conf</ulink> (5) and <ulink
-    url="manpages6/shorewall6.conf.html">shorewall6.conf</ulink> (5). The
+    url="manpages/shorewall.conf.html">shorewall6.conf</ulink> (5). The
     default value of that option is
     <filename>/usr/share/xt_geoip/LE</filename>.</para>
 

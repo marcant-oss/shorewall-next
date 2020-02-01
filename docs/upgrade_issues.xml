@@ -771,7 +771,7 @@
         <para>If your <ulink
         url="manpages/shorewall-params.html">/etc/shorewall/params</ulink> (or
         <ulink
-        url="manpages6/shorewall6-params.html">/etc/shorewall6/params</ulink>)
+        url="manpages/shorewall-params.html">/etc/shorewall6/params</ulink>)
         file sends output to Standard Output, you need to be aware that the
         output will be redirected to Standard Error beginning with Shorewall
         4.4.16.</para>
@@ -782,7 +782,7 @@
         deprecated. With EXPORTPARAMS=No, the variables set by <ulink
         url="manpages/shorewall-params.html">/etc/shorewall/params</ulink>
         (<ulink
-        url="manpages6/shorewall6-params.html">/etc/shorewall6/params</ulink>)
+        url="manpages/shorewall-params.html">/etc/shorewall6/params</ulink>)
         at compile time are now available in the compiled firewall
         script.</para>
       </listitem>
