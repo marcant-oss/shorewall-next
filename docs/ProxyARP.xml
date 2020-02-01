@@ -311,7 +311,7 @@ shorewall start</programlisting>
     <itemizedlist>
       <listitem>
         <para>The configuration file is /etc/shorewall6/proxyndp (see <ulink
-        url="manpages6/shorewall6-proxyndp.html">shorewall6-proxyndp
+        url="manpages/shorewall-proxyndp.html">shorewall6-proxyndp
         </ulink>(5)).</para>
       </listitem>
 
