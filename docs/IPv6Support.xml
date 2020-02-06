@@ -178,7 +178,7 @@
             <para>Set KEEP_RT_TABLES=No in <ulink
             url="manpages/shorewall.conf.html">shorewall.conf</ulink>(5) and
             set KEEP_RT_TABLES=Yes in <ulink
-            url="manpages6/shorewall6.conf.html">shorewall6.conf</ulink>(5).</para>
+            url="manpages/shorewall.conf.html">shorewall6.conf</ulink>(5).</para>
           </listitem>
         </itemizedlist>
 
@@ -469,9 +469,9 @@ ACCEPT          net:wlan0:&lt;2002:ce7c:92b4::3&gt;   $FW             tcp     22
           <para>The Linux IPv6 stack does not support balancing (multi-hop)
           routes. Thehe <option>balance</option> and <option>fallback</option>
           options in <ulink
-          url="manpages6/shorewall6-providers.html">shorewall6-providers</ulink>(5)
+          url="manpages/shorewall-providers.html">shorewall6-providers</ulink>(5)
           and USE_DEFAULT_RT=Yes in <ulink
-          url="manpages6/shorewall.conf.html">shorewall6.conf</ulink>(5) are
+          url="manpages/shorewall.conf.html">shorewall6.conf</ulink>(5) are
           supported, but at most one provider can have the
           <option>balance</option> option and at most one provider can have
           the <option>fallback</option> option.</para>

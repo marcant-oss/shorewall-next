@@ -131,9 +131,8 @@
         <member><ulink url="manpages/shorewall-proxyarp.html">proxyarp</ulink>
         - Define Proxy ARP (IPv4)</member>
 
-        <member><ulink
-        url="manpages6/shorewall-proxyndp.html">proxyndp</ulink> - Define
-        Proxy NDP (IPv6)</member>
+        <member><ulink url="manpages/shorewall-proxyndp.html">proxyndp</ulink>
+        - Define Proxy NDP (IPv6)</member>
 
         <member><ulink url="manpages/shorewall-rtrules.html">rtrules</ulink> -
         Define routing rules.</member>
@@ -179,7 +178,7 @@
         values for global Shorewall options.</member>
 
         <member><ulink
-        url="manpages6/shorewall6.conf.html">shorewall6.conf</ulink> - Specify
+        url="manpages/shorewall.conf.html">shorewall6.conf</ulink> - Specify
         values for global Shorewall6 options.</member>
 
         <member><ulink
@@ -212,7 +211,7 @@
       <simplelist>
         <member><ulink url="manpages/shorewall.html">shorewall</ulink> -
         /sbin/shorewall, /sbin/shorewall6/, /sbin/shorewall-lite and
-        /sbin/shorewall6-line command syntax and semantics.</member>
+        /sbin/shorewall6-lite command syntax and semantics.</member>
       </simplelist>
     </blockquote>
   </section>

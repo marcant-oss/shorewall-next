@@ -545,7 +545,7 @@
                 the<replaceable>
                 ip6tables-</replaceable><replaceable>target</replaceable> as a
                 builtin action in <ulink
-                url="/manpages6/shorewall6-actions.html">shorewall-actions</ulink>(5).</para>
+                url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5).</para>
 
                 <important>
                   <para>If you specify REJECT as the
@@ -674,15 +674,15 @@
                 the keyword <emphasis role="bold">bypass</emphasis> can be
                 given. By default, if no userspace program is listening on an
                 NFQUEUE, then all packets that are to be queued are dropped.
-                When this option is used, the NFQUEUE rule is silently
-                bypassed instead. The packet will move on to the next rule.
-                Also beginning in Shorewall 4.6.10, a second queue number
-                (<replaceable>queuenumber2</replaceable>) may be specified.
-                This specifies a range of queues to use. Packets are then
-                balanced across the given queues. This is useful for multicore
-                systems: start multiple instances of the userspace program on
-                queues x, x+1, .. x+n and use "x:x+n". Packets belonging to
-                the same connection are put into the same nfqueue.</para>
+                When this option is used, the NFQUEUE rule behaves like ACCEPT
+                instead. Also beginning in Shorewall 4.6.10, a second queue
+                number (<replaceable>queuenumber2</replaceable>) may be
+                specified. This specifies a range of queues to use. Packets
+                are then balanced across the given queues. This is useful for
+                multicore systems: start multiple instances of the userspace
+                program on queues x, x+1, .. x+n and use "x:x+n". Packets
+                belonging to the same connection are put into the same
+                nfqueue.</para>
 
                 <para>Beginning with Shorewall 5.1.0, queuenumber2 may be
                 followed by the letter 'c' to indicate that the CPU ID will be
