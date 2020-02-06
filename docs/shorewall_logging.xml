@@ -431,7 +431,7 @@ sync=1</programlisting>
     <para>Beginning with Shorewall 4.6.4, you can configure the backend using
     the LOG_BACKEND option in <ulink
     url="manpages/shorewall.conf.html">shorewall.conf(5)</ulink> and <ulink
-    url="manpages6/shorewall6.conf.html">shorewall6.conf(5)</ulink>.</para>
+    url="manpages/shorewall.conf.html">shorewall6.conf(5)</ulink>.</para>
   </section>
 
   <section id="Syslog-ng">
@@ -477,7 +477,7 @@ sync=1</programlisting>
 
       <para>By setting the LOGTAGONLY option to Yes in <ulink
       url="manpages/shorewall.conf.html">shorewall.conf(5)</ulink> or <ulink
-      url="manpages6/shorewall6.conf.html">shorewall6.conf(5)</ulink>, the
+      url="manpages/shorewall.conf.html">shorewall6.conf(5)</ulink>, the
       disposition ('DROP' in the above example) will be omitted. Consider the
       following rule:</para>
 
@@ -511,7 +511,7 @@ REJECT(icmp-proto-unreachable):notice:IPv6,tunneling loc             net        
 
       <para><ulink
       url="manpages/shorewall.conf.html">shorewall.conf(5)</ulink> and <ulink
-      url="manpages6/shorewall6.conf.html">shorewall6.conf(5)</ulink> have a
+      url="manpages/shorewall.conf.html">shorewall6.conf(5)</ulink> have a
       number of options whose values are log levels. Beginning with Shorewall
       5.0.0, these specifcations may include a log tag as described <link
       linkend="LogTags">above</link>.</para>

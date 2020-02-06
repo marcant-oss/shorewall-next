@@ -54,9 +54,7 @@
     <quote>tcpflags</quote> and <quote>maclist</quote>.</para>
 
     <para>The columns in the accounting file are described in <ulink
-    url="manpages/shorewall-accounting.html">shorewall-accounting</ulink> (5)
-    and <ulink
-    url="manpages6/shorewall6-accounting.html">shorewall6-accounting</ulink>
+    url="manpages/shorewall-accounting.html">shorewall-accounting</ulink>
     (5).</para>
 
     <para>In all columns except ACTION and CHAIN, the values <quote>-</quote>,

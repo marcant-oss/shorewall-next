@@ -536,6 +536,9 @@ our $ipset_rules;
 #
 use constant { ALL_COMMANDS => 1, NOT_RESTORE => 2 };
 
+#
+# Chain optimization flags
+#
 use constant { DONT_OPTIMIZE => 1 , DONT_DELETE => 2, DONT_MOVE => 4, RETURNS => 8, RETURNS_DONT_MOVE => 12 };
 
 our %dscpmap = ( CS0  => 0x00,
@@ -1422,7 +1425,7 @@ sub compatible( $$ ) {
 	}
     }
     #
-    # Don't combine chains where each specifies
+    # Don't combine rules where each specifies
     #    -m policy and the policies are different
     # or when one specifies
     #    -m multiport
@@ -4991,10 +4994,10 @@ sub do_proto( $$$;$ )
 
 			$invert = $sports =~ s/^!// ? '! ' : '';
 
-			if ( $ports =~ /^\+/ ) {
+			if ( $sports =~ /^\+/ ) {
 			    $output .= $invert;
 			    $output .= '-m set ';
-			    $output .= get_set_flags( $ports, 'src' );
+			    $output .= get_set_flags( $sports, 'src' );
 			} elsif ( $multiport ) {
 			    if ( port_count( $sports ) > 15 ) {
 				if ( $restricted ) {
@@ -5207,8 +5210,8 @@ sub do_iproto( $$$ )
 			fatal_error "'=' in the SOURCE PORT(S) column requires one or more ports in the DEST PORT(S) column" if $sports eq '=';
 			$invert = $sports =~ s/^!// ? '! ' : '';
 
-			if ( $ports =~ /^\+/ ) {
-			    push @output, set => ${invert} . get_set_flags( $ports, 'src' );
+			if ( $sports =~ /^\+/ ) {
+			    push @output, set => ${invert} . get_set_flags( $sports, 'src' );
 			} elsif ( $multiport ) {
 			    if ( port_count( $sports ) > 15 ) {
 				if ( $restricted ) {
@@ -7667,11 +7670,13 @@ sub isolate_source_interface( $ ) {
 		) {
 	    $iiface = $1;
 	    $inets  = $2;
+	    $inets =~ s/\]-\[/-/;
 	} elsif ( $source =~ /:/ ) {
 	    if ( $source =~ /^\[(?:.+),\[(?:.+)\]$/ ){
 		$inets = $source;
 	    } elsif ( $source =~ /^\[(.+)\]$/ ) {
 		$inets = $1;
+		$inets =~ s/\]-\[/-/;
 	    } else {
 		$inets = $source;
 	    }
@@ -7789,6 +7794,7 @@ sub isolate_dest_interface( $$$$ ) {
 	if ( $dest =~ /^(.+?):(\[(?:.+),\[(?:.+)\])$/ ) {
 	    $diface = $1;
 	    $dnets  = $2;
+	    $dnets =~ s/\]-\[/-/;
 	} elsif (  $dest =~ /^(.+?):\[(.+)\]\s*$/ ||
 		   $dest =~ /^(.+?):(!?\+.+)$/    ||
 		   $dest =~ /^(.+?):(!?[&%].+)$/  ||
@@ -7801,6 +7807,7 @@ sub isolate_dest_interface( $$$$ ) {
 		$dnets = $dest;
 	    } elsif ( $dest =~ /^\[(.+)\]$/ ) {
 		$dnets = $1;
+	        $dnets =~ s/\]-\[/-/;
 	    } else {
 		$dnets = $dest;
 	    }

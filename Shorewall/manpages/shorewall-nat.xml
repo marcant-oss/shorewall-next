@@ -35,7 +35,7 @@
       in many cases, Proxy ARP (<ulink
       url="/manpages/shorewall-proxyarp.html">shorewall-proxyarp</ulink>(5))
       or Proxy-NDP(<ulink
-      url="/manpages6/shorewall6-proxyndp.html">shorewall6-proxyndp</ulink>(5))
+      url="/manpages/shorewall-proxyndp.html">shorewall6-proxyndp</ulink>(5))
       is a better solution that one-to-one NAT.</para>
     </warning>
 
