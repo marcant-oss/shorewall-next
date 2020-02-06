@@ -348,7 +348,7 @@ ZONE_BITS=0
 #  For information about the settings in this file, type "man shorewall6.conf"
 #
 #  Manpage also online at
-#  http://www.shorewall.org/manpages6/shorewall6.conf.html
+#  http://www.shorewall.org/manpages/shorewall.conf.html
 ###############################################################################
 #		       S T A R T U P   E N A B L E D
 ###############################################################################
