@@ -8716,7 +8716,7 @@ sub save_docker_rules($) {
     emit( qq(if [ -n "\$g_docker" ]; then),
 	  qq(    $tool -t nat -S DOCKER | tail -n +2 > \${VARDIR}/.nat_DOCKER),
 	  qq(    $tool -t nat -S OUTPUT | tail -n +2 | fgrep DOCKER > \${VARDIR}/.nat_OUTPUT),
-	  qq(    $tool -t nat -S POSTROUTING | tail -n +2 | fgrep -v SHOREWALL > \${VARDIR}/.nat_POSTROUTING),
+	  qq(    $tool -t nat -S POSTROUTING | tail -n +2 | fgrep -v SHOREWALL | fgrep -v LIBVIRT > \${VARDIR}/.nat_POSTROUTING),
 	  qq(    $tool -t filter -S DOCKER | tail -n +2 > \${VARDIR}/.filter_DOCKER),
 	  qq(    [ -n "\$g_dockeringress" ] && $tool -t filter -S DOCKER-INGRESS   | tail -n +2 > \${VARDIR}/.filter_DOCKER-INGRESS),
 	  qq(    [ -n "\$g_dockeruser" ]    && $tool -t filter -S DOCKER-USER      | tail -n +2 > \${VARDIR}/.filter_DOCKER-USER),
