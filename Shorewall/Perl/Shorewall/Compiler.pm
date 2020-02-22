@@ -270,10 +270,10 @@ sub generate_script_2() {
 	    );
 	emit( 'chain_exists DOCKER-INGRESS   && g_dockeringress=Yes' );
 	emit( 'chain_exists DOCKER-USER      && g_dockeruser=Yes' );
-	emit( 'if chain_exists DOCKER-ISOLATION; then',
-	      '    g_dockernetwork=One',
-	      'elif chain_exists DOCKER-ISOLATION-STAGE-1; then',
+	emit( 'if chain_exists DOCKER-ISOLATION-STAGE-1; then',
 	      '    g_dockernetwork=Two',
+	      'elif chain_exists DOCKER-ISOLATION; then',
+	      '    g_dockernetwork=One',
 	      'fi' );
     }
 
