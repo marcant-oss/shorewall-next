@@ -8713,6 +8713,9 @@ sub save_docker_rules($) {
 	  qq(            ;;),
 	  qq(        Two\)),
 	  qq(            rm -f \${VARDIR}/.filter_DOCKER-ISOLATION*),
+	  qq(            if chain_exists DOCKER_ISOLATION; then),
+	  qq(                $tool -t filter -S DOCKER-ISOLATION | tail -n +2 > \${VARDIR}/.filter_DOCKER-ISOLATION),
+          qq(            fi),
 	  qq(            $tool -t filter -S DOCKER-ISOLATION-STAGE-1 | tail -n +2 > \${VARDIR}/.filter_DOCKER-ISOLATION-STAGE-1),
 	  qq(            $tool -t filter -S DOCKER-ISOLATION-STAGE-2 | tail -n +2 > \${VARDIR}/.filter_DOCKER-ISOLATION-STAGE-2),
 	  qq(            ;;),
@@ -9238,7 +9241,7 @@ sub create_netfilter_load( $ ) {
 		    } elsif ( $name eq 'DOCKER-ISOLATION' ) {
 			ensure_cmd_mode;
 			emit( '[ "$g_dockernetwork" = One ] && echo ":DOCKER-ISOLATION - [0:0]" >&3' );
-		    } elsif ( $name =~ /^DOCKER-ISOLATION-/ ) {
+		    } elsif ( $name =~ /^DOCKER-ISOLATION/ ) {
 			ensure_cmd_mode;
 			emit( qq([ "\$g_dockernetwork" = Two ] && echo ":$name - [0:0]" >&3) );
 		    } elsif ( $name eq 'DOCKER-INGRESS' ) {
@@ -9454,7 +9457,7 @@ sub create_stop_load( $ ) {
 		    } elsif ( $name eq 'DOCKER-ISOLATION' ) {
 			ensure_cmd_mode;
 			emit( '[ -n "$g_dockernetwork" ] && echo ":DOCKER-ISOLATION - [0:0]" >&3' );
-		    } elsif ( $name =~ /^DOCKER-ISOLATION-/ ) {
+		    } elsif ( $name =~ /^DOCKER-ISOLATION/ ) {
 			ensure_cmd_mode;
 			emit( qq([ "\$g_dockernetwork" = Two ] && echo ":$name - [0:0]" >&3) );
 		    } elsif ( $name eq 'DOCKER-INGRESS' ) {
