@@ -679,18 +679,10 @@ sub create_docker_rules() {
 
     my $chainref = $filter_table->{FORWARD};
 
-    add_commands( $chainref, '[ -n "$g_dockeringress" ] && echo "-A FORWARD -j DOCKER-INGRESS" >&3', );
-    add_commands( $chainref, '[ -n "$g_dockeruser" ]    && echo "-A FORWARD -j DOCKER-USER"    >&3', );
-    add_commands( $chainref ,
-		  '',
-		  'case "$g_dockernetwork" in',
-		  '    One)',
-		  '        echo "-A FORWARD -j DOCKER-ISOLATION" >&3',
-		  '        ;;',
-		  '    Two)',
-		  '        echo "-A FORWARD -j DOCKER-ISOLATION-STAGE-1" >&3',
-		  '        ;;',
-		  'esac' );
+    add_commands( $chainref, '[ -n "$g_dockeringress" ]  && echo "-A FORWARD -j DOCKER-INGRESS" >&3' );
+    add_commands( $chainref, '[ -n "$g_dockeruser" ]     && echo "-A FORWARD -j DOCKER-USER" >&3' );
+    add_commands( $chainref, '[ -n "$g_dockeriso" ]      && echo "-A FORWARD -j DOCKER-ISOLATION" >&3' );
+    add_commands( $chainref, '[ -n "$g_dockerisostage" ] && echo "-A FORWARD -j DOCKER-ISOLATION-STAGE-1" >&3' );
 
     if ( my $dockerref = known_interface('docker0') ) {
 	add_commands( $chainref, 'if [ -n "$g_docker" ]; then' );
