@@ -1143,16 +1143,30 @@ sub set_rule_option( $$$ ) {
 	#
 	# Consider each subtype as a separate type
 	#
-	my ( $invert, $subtype, $val, $rest ) = split ' ', $value;
+	if ( have_capability( 'OLD_CONNTRACK_MATCH' ) ) {
+	    my ( $subtype, $invert, $val, $rest ) = split ' ', $value;
 
-	if ( $invert eq '!' ) {
-	    assert( ! supplied $rest );
-	    $option = join( ' ', $option, $invert, $subtype );
-	    $value  = $val;
+	    if ( $invert eq '!' ) {
+		assert( ! supplied $rest );
+		$option = join( ' ', $option, $subtype );
+		$value  = join( ' ', $invert, $val );
+	    } else {
+		assert( ! supplied $val );
+		$option  = join( ' ', $invert , $option );
+		$value   = $invert;
+	    }
 	} else {
-	    assert( ! supplied $val );
-	    $option  = join( ' ', $option, $invert );
-	    $value   = $subtype;
+	    my ( $invert, $subtype, $val, $rest ) = split ' ', $value;
+
+	    if ( $invert eq '!' ) {
+		assert( ! supplied $rest );
+		$option = join( ' ', $option, $invert, $subtype );
+		$value  = $val;
+	    } else {
+		assert( ! supplied $val );
+		$option  = join( ' ', $option, $invert );
+		$value   = $subtype;
+	    }
 	}
 
 	$opttype = EXCLUSIVE;
