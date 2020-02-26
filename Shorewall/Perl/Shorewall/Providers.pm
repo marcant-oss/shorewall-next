@@ -1180,14 +1180,14 @@ CEOF
 	emit "fi\n";
 
 	if ( get_interface_option( $interface, 'used_address_variable' ) ) {
-	    my $variable = interface_address( $interface );
+	    my $variable = get_interface_address( $interface );
 
-	    emit( "echo \$$variable > \${VARDIR}/${physical}.address" );
+	    emit( "echo $variable > \${VARDIR}/${physical}.address" );
 	}
 
 	if ( get_interface_option( $interface, 'used_gateway_variable' ) ) {
-	    my $variable = interface_gateway( $interface );
-	    emit( qq(echo "\$$variable" > \${VARDIR}/${physical}.gateway\n) );
+	    my $variable = get_interface_gateway( $interface );
+	    emit( qq(echo "$variable" > \${VARDIR}/${physical}.gateway\n) );
 	}
     } else {
 	emit( qq(progress_message "Provider $table ($number) Started") );
@@ -2323,22 +2323,22 @@ sub handle_optional_interfaces() {
 		emit( 'fi' );
 
 		if ( get_interface_option( $interface, 'used_address_variable' ) ) {
-		    my $variable = interface_address( $interface );
+		    my $variable = get_interface_address( $interface );
 
 		    emit( '',
 			  "if [ -f \${VARDIR}/${physical}.address ]; then",
-			  "    if [ \$(cat \${VARDIR}/${physical}.address) != \$$variable ]; then",
+			  "    if [ \$(cat \${VARDIR}/${physical}.address) != $variable ]; then",
 			  '        g_forcereload=Yes',
 			  '    fi',
 			  'fi' );
 		}
 
 		if ( get_interface_option( $interface, 'used_gateway_variable' ) ) {
-		    my $variable = interface_gateway( $interface );
+		    my $variable = get_interface_gateway( $interface );
 
 		    emit( '',
 			  "if [ -f \${VARDIR}/${physical}.gateway ]; then",
-			  "    if [ \$(cat \${VARDIR}/${physical}.gateway) != \"\$$variable\" ]; then",
+			  "    if [ \$(cat \${VARDIR}/${physical}.gateway) != \"$variable\" ]; then",
 			  '        g_forcereload=Yes',
 			  '    fi',
 			  'fi' );
