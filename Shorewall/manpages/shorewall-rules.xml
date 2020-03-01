@@ -2342,7 +2342,7 @@
         <listitem>
           <para>Added in Shorewall 4.4.24 and allows enabling and disabling
           the rule without requiring <command>shorewall
-          restart</command>.</para>
+          reload</command>.</para>
 
           <para>The rule is enabled if the value stored in
           <filename>/proc/net/nf_condition/<replaceable>switch-name</replaceable></filename>
@@ -2373,7 +2373,7 @@
           </simplelist>
 
           <para>Switch settings are retained over <command>shorewall
-          restart</command>.</para>
+          reload</command>.</para>
 
           <para>Beginning with Shorewall 4.5.10, when the
           <replaceable>switch-name</replaceable> is followed by
