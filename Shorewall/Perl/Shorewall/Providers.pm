@@ -594,7 +594,7 @@ sub process_a_provider( $ ) {
     unless ( $options eq '-' ) {
 	for my $option ( split_list $options, 'option' ) {
 	    if ( $option eq 'track' ) {
-		require_capability( 'MANGLE_ENABLED' , q(The 'track' option) , 's' );
+		require_mangle_capability( 'MANGLE_ENABLED' , q(The 'track' option) , 's' );
 		$track = 1;
 	    } elsif ( $option eq 'notrack' ) {
 		$track = 0;
@@ -714,7 +714,7 @@ sub process_a_provider( $ ) {
     $mark = ( $lastmark += ( 1 << $config{PROVIDER_OFFSET} ) ) if $mark eq '-' && $track;
 
     if ( $mark ne '-' ) {
-	require_capability( 'MANGLE_ENABLED' , 'Provider marks' , '' );
+	require_mangle_capability( 'MANGLE_ENABLED' , 'Provider marks' , '' );
 
 	if ( $tproxy && ! $local ) {
 	    $val = $globals{TPROXY_MARK};
