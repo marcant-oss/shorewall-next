@@ -248,10 +248,10 @@
 
             <listitem>
               <programlisting><command>cd &lt;export directory&gt;</command>
-<command>/sbin/shorewall load firewall</command></programlisting>
+<command>/sbin/shorewall remote-start firewall</command></programlisting>
 
               <para>The <ulink
-              url="starting_and_stopping_shorewall.htm#Load"><command>load</command></ulink>
+              url="starting_and_stopping_shorewall.htm#Load"><command>remote-start</command></ulink>
               command compiles a firewall script from the configuration files
               in the current working directory (using <command>shorewall
               compile -e</command>), copies that file to the remote system via
@@ -260,7 +260,8 @@
 
               <para>Example (firewall's DNS name is 'gateway'):</para>
 
-              <para><command>/sbin/shorewall load gateway</command><note>
+              <para><command>/sbin/shorewall remote-start
+              gateway</command><note>
                   <para>Although scp and ssh are used by default, you can use
                   other utilities by setting RSH_COMMAND and RCP_COMMAND in
                   <filename>/etc/shorewall/shorewall.conf</filename>.</para>
@@ -283,15 +284,15 @@
           then:</para>
 
           <programlisting><command>cd &lt;export directory&gt;</command>
-<command>/sbin/shorewall reload firewall</command></programlisting>
+<command>/sbin/shorewall remote-reload firewall</command></programlisting>
 
           <para>The <ulink
-          url="manpages/shorewall.html"><command>reload</command></ulink>
+          url="manpages/shorewall.html"><command>remote-reload</command></ulink>
           command compiles a firewall script from the configuration files in
           the current working directory (using <command>shorewall compile
           -e</command>), copies that file to the remote system via scp and
-          restarts Shorewall Lite on the remote system via ssh. The <emphasis
-          role="bold">reload</emphasis> command also supports the '-c'
+          reloads Shorewall Lite on the remote system via ssh. The <emphasis
+          role="bold">remote-reload</emphasis> command also supports the '-c'
           option.</para>
         </listitem>
       </orderedlist>
@@ -491,17 +492,18 @@
 
             <blockquote>
               <programlisting><command>cd &lt;export directory&gt;</command>
-<command>/sbin/shorewall load &lt;firewall system&gt;</command>
+<command>/sbin/shorewall remote-start &lt;firewall system&gt;</command>
 </programlisting>
 
               <para>Example (firewall's DNS name is 'gateway'):</para>
 
-              <para><command>/sbin/shorewall load gateway</command></para>
+              <para><command>/sbin/shorewall remote-start
+              gateway</command></para>
             </blockquote>
 
-            <para>The first time that you issue a <command>load</command>
-            command, Shorewall will use ssh to run
-            <filename>/usr/share/shorewall-lite/shorecap</filename> on the
+            <para>The first time that you issue a
+            <command>remote-start</command> command, Shorewall will use ssh to
+            run <filename>/usr/share/shorewall-lite/shorecap</filename> on the
             remote firewall to create a capabilities file in the firewall's
             administrative direction. See <link
             linkend="Shorecap">below</link>.</para>
@@ -521,7 +523,7 @@
             then:</para>
 
             <programlisting><command>cd &lt;export directory&gt;</command>
-<command>/sbin/shorewall reload firewall</command></programlisting>
+<command>/sbin/shorewall remote-reload firewall</command></programlisting>
 
             <para>The <ulink
             url="starting_and_stopping_shorewall.htm#Reload"><command>reload</command></ulink>
@@ -542,8 +544,8 @@
 <command>scp capabilities &lt;admin system&gt;:&lt;this system's config dir&gt;</command></programlisting>
 
             <para>Or simply use the -c option the next time that you use the
-            <command>reload</command> command (e.g., <command>shorewall reload
-            -c gateway</command>).</para>
+            <command>remote-reload</command> command (e.g., <command>shorewall
+            remote-reload -c gateway</command>).</para>
           </listitem>
         </orderedlist>
       </section>
