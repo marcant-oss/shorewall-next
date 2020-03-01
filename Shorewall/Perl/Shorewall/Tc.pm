@@ -2455,7 +2455,7 @@ sub setup_tc( $ ) {
 		}
 	    }
 	} elsif ( -f ( my $fn = find_file( 'tcrules' ) ) ) {
-	    warning_message "The tcrules file is no longer supported -- use '$product update' to convert $fn to an equivalent 'mangle' file";
+	    warning_message "The tcrules file is no longer supported -- use '$shorewallrc{product} update' to convert $fn to an equivalent 'mangle' file";
 	}
 
 	if ( my $fn = open_file( 'mangle', 1, 1 ) ) {
