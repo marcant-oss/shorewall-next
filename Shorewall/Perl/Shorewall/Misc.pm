@@ -97,7 +97,7 @@ sub setup_ecn()
     if ( my $fn = open_file 'ecn' ) {
 
 	first_entry( sub { progress_message2 "$doing $fn...";
-			   require_capability 'MANGLE_ENABLED', 'Entries in the ecn file', '';
+			   require_mangle_capability 'MANGLE_ENABLED', 'Entries in the ecn file', '';
 			   warning_message 'ECN will not be applied to forwarded packets' unless have_capability 'MANGLE_FORWARD';
 		       } );
 
