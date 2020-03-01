@@ -4603,7 +4603,11 @@ sub New_Conntrack_Match() {
 }
 
 sub Old_Conntrack_Match() {
-    ! qt1( "$iptables $iptablesw -A $sillyname -m conntrack ! --ctorigdst 1.2.3.4" );
+    if ( $family == F_IPV4 ) {
+	! qt1( "$iptables $iptablesw -A $sillyname -m conntrack ! --ctorigdst 1.2.3.4" );
+    } else {
+	! qt1( "$iptables $iptablesw -A $sillyname -m conntrack ! --ctorigdst ::1" );
+    }
 }
 
 sub Multiport() {

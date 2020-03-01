@@ -148,7 +148,8 @@ g_compiled=
 g_file=
 g_docker=
 g_dockeringress=
-g_dockernetwork=
+g_dockeriso=
+g_dockerisostage=
 g_forcereload=
 g_fallback=
 
