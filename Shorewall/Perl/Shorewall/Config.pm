@@ -162,6 +162,7 @@ our @EXPORT = qw(
 
 		 have_capability
 		 require_capability
+		 require_mangle_capability
 		 report_used_capabilities
 		 kernel_version
 
@@ -804,7 +805,7 @@ sub add_variables( \% );
 #   2. The compiler can run multiple times in the same process so it has to be
 #      able to re-initialize its dependent modules' state.
 #
-sub initialize( $;$$$) {
+sub initialize($;$$$) {
     ( $family, $export, my ( $shorewallrc, $shorewallrc1 ) ) = @_;
 
     if ( $family == F_IPV4 ) {
@@ -5267,6 +5268,16 @@ sub require_capability( $$$ ) {
     fatal_error "$description require${singular} $capdesc{$capability} in your kernel and iptables" unless have_capability $capability, 1;
 }
 
+sub require_mangle_capability( $$$ ) {
+    my ( $capability, $description, $singular ) = @_;
+
+    if ( $config{MANGLE_ENABLED} ) {
+	&require_capability( @_ );
+    } else {
+	fatal_error "$description " . ( $singular ?  'is' : 'are' ) . " not available when MANGLE_ENABLED=No in $shorewallrc{product}.conf";
+    }
+}
+
 #
 # Return Kernel Version
 #
@@ -6611,6 +6622,7 @@ sub get_configuration( $$$ ) {
     if ( supplied $config{ACCOUNTING_TABLE} ) {
 	my $value = $config{ACCOUNTING_TABLE};
 	fatal_error "Invalid ACCOUNTING_TABLE setting ($value)" unless $value eq 'filter' || $value eq 'mangle';
+	fatal_error "ACCOUNTING_TABLE=mangle not allowed with MANGLE_ENABLED=No" if $value eq 'mangle' and ! $config{MANGLE_ENABLED};
     } else {
 	$config{ACCOUNTING_TABLE} = 'filter';
     }
@@ -6686,7 +6698,7 @@ sub get_configuration( $$$ ) {
 
     $config{IPSET} = '' if supplied $config{IPSET} && $config{IPSET} eq 'ipset';
 
-    require_capability 'MARK' , 'FORWARD_CLEAR_MARK=Yes', 's', if $config{FORWARD_CLEAR_MARK};
+    require_mangle_capability 'MARK' , 'FORWARD_CLEAR_MARK=Yes', 's', if $config{FORWARD_CLEAR_MARK};
 
     numeric_option 'TC_BITS'         , 8, 0;
     numeric_option 'MASK_BITS'       , 8, 0;
@@ -6930,7 +6942,7 @@ sub get_configuration( $$$ ) {
 
     if ( $config{TC_ENABLED} ) {
 	fatal_error "TC_ENABLED=$config{TC_ENABLED} is not allowed with MANGLE_ENABLED=No" unless $config{MANGLE_ENABLED};
-	require_capability 'MANGLE_ENABLED', "TC_ENABLED=$config{TC_ENABLED}", 's';
+	require_mangle_capability 'MANGLE_ENABLED', "TC_ENABLED=$config{TC_ENABLED}", 's';
     }
 
     if ( supplied( $val = $config{TC_PRIOMAP} ) ) {
@@ -7013,9 +7025,10 @@ sub get_configuration( $$$ ) {
     }
 
     require_capability( 'MULTIPORT'       , "Shorewall $globals{VERSION}" , 's' );
-    require_capability( 'RECENT_MATCH'    , 'MACLIST_TTL' , 's' )           if $config{MACLIST_TTL};
-    require_capability( 'XCONNMARK'       , 'HIGH_ROUTE_MARKS=Yes' , 's' )  if $config{PROVIDER_OFFSET} > 0;
-    require_capability( 'MANGLE_ENABLED'  , 'Traffic Shaping' , 's'      )  if $config{TC_ENABLED};
+    require_capability( 'RECENT_MATCH'    , 'MACLIST_TTL' , 's'                 ) if $config{MACLIST_TTL};
+
+    require_mangle_capability( 'XCONNMARK'       , 'HIGH_ROUTE_MARKS=Yes' , 's' )  if $config{PROVIDER_OFFSET} > 0;
+    require_mangle_capability( 'MANGLE_ENABLED'  , 'Traffic Shaping' , 's'      )  if $config{TC_ENABLED};
 
     if ( $config{WARNOLDCAPVERSION} ) {
 	if ( $capabilities{CAPVERSION} ) {
