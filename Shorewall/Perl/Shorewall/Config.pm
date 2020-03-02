@@ -5274,7 +5274,7 @@ sub require_mangle_capability( $$$ ) {
     if ( $config{MANGLE_ENABLED} ) {
 	&require_capability( @_ );
     } else {
-	fatal_error "$description " . ( $singular ?  'is' : 'are' ) . " not available when MANGLE_ENABLED=No in $shorewallrc{product}.conf";
+	fatal_error "$description " . ( $singular ?  'is' : 'are' ) . " not available when MANGLE_ENABLED=No in $shorewallrc{PRODUCT}.conf";
     }
 }
 
@@ -6959,9 +6959,7 @@ sub get_configuration( $$$ ) {
     }
 
     default 'RESTOREFILE'           , 'restore';
-
     default 'DROP_DEFAULT'          , 'none';
-
     default 'REJECT_DEFAULT'        , 'none';
     default 'BLACKLIST_DEFAULT'     , 'none';
     default 'QUEUE_DEFAULT'         , 'none';
@@ -7026,9 +7024,8 @@ sub get_configuration( $$$ ) {
 
     require_capability( 'MULTIPORT'       , "Shorewall $globals{VERSION}" , 's' );
     require_capability( 'RECENT_MATCH'    , 'MACLIST_TTL' , 's'                 ) if $config{MACLIST_TTL};
-
-    require_mangle_capability( 'XCONNMARK'       , 'HIGH_ROUTE_MARKS=Yes' , 's' )  if $config{PROVIDER_OFFSET} > 0;
-    require_mangle_capability( 'MANGLE_ENABLED'  , 'Traffic Shaping' , 's'      )  if $config{TC_ENABLED};
+    require_capability( 'XCONNMARK'       , 'HIGH_ROUTE_MARKS=Yes' , 's'        ) if $config{PROVIDER_OFFSET} > 0;
+    require_capability( 'MANGLE_ENABLED'  , 'Traffic Shaping' , 's'             ) if $config{TC_ENABLED};
 
     if ( $config{WARNOLDCAPVERSION} ) {
 	if ( $capabilities{CAPVERSION} ) {
