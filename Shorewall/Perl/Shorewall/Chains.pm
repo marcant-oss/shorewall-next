@@ -9249,7 +9249,7 @@ sub create_netfilter_load( $ ) {
 			emit( '[ -n "$g_dockeriso" ] && echo ":DOCKER-ISOLATION - [0:0]" >&3' );
 		    } elsif ( $name =~ /^DOCKER-ISOLATION/ ) {
 			ensure_cmd_mode;
-			emit( qq([ "\$g_dockerisostage" = Two ] && echo ":$name - [0:0]" >&3) );
+			emit( qq([ -n "\$g_dockerisostage" ] && echo ":$name - [0:0]" >&3) );
 		    } elsif ( $name eq 'DOCKER-INGRESS' ) {
 			ensure_cmd_mode;
 			emit( '[ -n "$g_dockeringress" ] && echo ":DOCKER-INGRESS - [0:0]" >&3' );
