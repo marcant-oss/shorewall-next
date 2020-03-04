@@ -270,8 +270,8 @@ sub generate_script_2() {
 	    );
 	emit( 'chain_exists DOCKER-INGRESS && g_dockeringress=Yes' );
 	emit( 'chain_exists DOCKER-USER && g_dockeruser=Yes' );
-	emit( 'chain_exists DOCKER-ISOLATION && dockeriso=Yes' );
-	emit( 'chain_exists DOCKER-ISOLATION-STAGE-1 && dockerisostage=Yes' );
+	emit( 'chain_exists DOCKER-ISOLATION && g_dockeriso=Yes' );
+	emit( 'chain_exists DOCKER-ISOLATION-STAGE-1 && g_dockerisostage=Yes' );
     }
 
     pop_indent;
