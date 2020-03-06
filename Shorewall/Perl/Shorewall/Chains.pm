@@ -1143,16 +1143,30 @@ sub set_rule_option( $$$ ) {
 	#
 	# Consider each subtype as a separate type
 	#
-	my ( $invert, $subtype, $val, $rest ) = split ' ', $value;
+	if ( have_capability( 'OLD_CONNTRACK_MATCH' ) ) {
+	    my ( $subtype, $invert, $val, $rest ) = split ' ', $value;
 
-	if ( $invert eq '!' ) {
-	    assert( ! supplied $rest );
-	    $option = join( ' ', $option, $invert, $subtype );
-	    $value  = $val;
+	    if ( $invert eq '!' ) {
+		assert( ! supplied $rest );
+		$option = join( ' ', $option, $subtype );
+		$value  = join( ' ', $invert, $val );
+	    } else {
+		assert( ! supplied $val );
+		$option  = join( ' ', $invert , $option );
+		$value   = $invert;
+	    }
 	} else {
-	    assert( ! supplied $val );
-	    $option  = join( ' ', $option, $invert );
-	    $value   = $subtype;
+	    my ( $invert, $subtype, $val, $rest ) = split ' ', $value;
+
+	    if ( $invert eq '!' ) {
+		assert( ! supplied $rest );
+		$option = join( ' ', $option, $invert, $subtype );
+		$value  = $val;
+	    } else {
+		assert( ! supplied $val );
+		$option  = join( ' ', $option, $invert );
+		$value   = $subtype;
+	    }
 	}
 
 	$opttype = EXCLUSIVE;
@@ -3369,13 +3383,13 @@ sub initialize_chain_table($) {
 	add_commands( $chainref, '[ -f ${VARDIR}/.nat_DOCKER ] && cat ${VARDIR}/.nat_DOCKER >&3' );
 	$chainref = new_standard_chain( 'DOCKER-INGRESS'   );
 	set_optflags( $chainref, DONT_OPTIMIZE | DONT_DELETE | DONT_MOVE );
-	add_commands( $chainref, '[ -f ${VARDIR}/.filter_DOCKER-INGRESS           ] && cat ${VARDIR}/.filter_DOCKER-INGRESS   >&3' );
-	$chainref = new_standard_chain( 'DOCKER-USER'   );
+	add_commands( $chainref, '[ -f ${VARDIR}/.filter_DOCKER-INGRESS ] && cat ${VARDIR}/.filter_DOCKER-INGRESS >&3' );
+	$chainref = new_standard_chain( 'DOCKER-USER'      );
 	set_optflags( $chainref, DONT_OPTIMIZE | DONT_DELETE | DONT_MOVE );
-	add_commands( $chainref, '[ -f ${VARDIR}/.filter_DOCKER-USER              ] && cat ${VARDIR}/.filter_DOCKER-USER      >&3' );
+	add_commands( $chainref, '[ -f ${VARDIR}/.filter_DOCKER-USER ] && cat ${VARDIR}/.filter_DOCKER-USER >&3' );
 	$chainref = new_standard_chain( 'DOCKER-ISOLATION' );
 	set_optflags( $chainref, DONT_OPTIMIZE | DONT_DELETE | DONT_MOVE );
-	add_commands( $chainref, '[ -f ${VARDIR}/.filter_DOCKER-ISOLATION         ] && cat ${VARDIR}/.filter_DOCKER-ISOLATION >&3' );
+	add_commands( $chainref, '[ -f ${VARDIR}/.filter_DOCKER-ISOLATION ] && cat ${VARDIR}/.filter_DOCKER-ISOLATION >&3' );
 	$chainref = new_standard_chain( 'DOCKER-ISOLATION-STAGE-1' );
 	set_optflags( $chainref, DONT_OPTIMIZE | DONT_DELETE | DONT_MOVE );
 	add_commands( $chainref, '[ -f ${VARDIR}/.filter_DOCKER-ISOLATION-STAGE-1 ] && cat ${VARDIR}/.filter_DOCKER-ISOLATION-STAGE-1 >&3' );
@@ -8718,20 +8732,15 @@ sub save_docker_rules($) {
 	  qq(    $tool -t nat -S OUTPUT | tail -n +2 | fgrep DOCKER > \${VARDIR}/.nat_OUTPUT),
 	  qq(    $tool -t nat -S POSTROUTING | tail -n +2 | fgrep -v SHOREWALL | fgrep -v LIBVIRT > \${VARDIR}/.nat_POSTROUTING),
 	  qq(    $tool -t filter -S DOCKER | tail -n +2 > \${VARDIR}/.filter_DOCKER),
-	  qq(    [ -n "\$g_dockeringress" ] && $tool -t filter -S DOCKER-INGRESS   | tail -n +2 > \${VARDIR}/.filter_DOCKER-INGRESS),
-	  qq(    [ -n "\$g_dockeruser" ]    && $tool -t filter -S DOCKER-USER      | tail -n +2 > \${VARDIR}/.filter_DOCKER-USER),
+	  qq(    rm -f \${VARDIR}/.filter_DOCKER-*),
+	  qq(    [ -n "\$g_dockeringress"  ] && $tool -t filter -S DOCKER-INGRESS   | tail -n +2 > \${VARDIR}/.filter_DOCKER-INGRESS),
+	  qq(    [ -n "\$g_dockeruser"     ] && $tool -t filter -S DOCKER-USER      | tail -n +2 > \${VARDIR}/.filter_DOCKER-USER),
+	  qq(    [ -n "\$g_dockeriso"      ] && $tool -t filter -S DOCKER-ISOLATION | tail -n +2 > \${VARDIR}/.filter_DOCKER-ISOLATION),
 	  qq(),
-	  qq(    case "\$g_dockernetwork" in),
-	  qq(        One\)),
-	  qq(            rm -f \${VARDIR}/.filter_DOCKER-ISOLATION*),
-	  qq(            $tool -t filter -S DOCKER-ISOLATION | tail -n +2 > \${VARDIR}/.filter_DOCKER-ISOLATION),
-	  qq(            ;;),
-	  qq(        Two\)),
-	  qq(            rm -f \${VARDIR}/.filter_DOCKER-ISOLATION*),
-	  qq(            $tool -t filter -S DOCKER-ISOLATION-STAGE-1 | tail -n +2 > \${VARDIR}/.filter_DOCKER-ISOLATION-STAGE-1),
-	  qq(            $tool -t filter -S DOCKER-ISOLATION-STAGE-2 | tail -n +2 > \${VARDIR}/.filter_DOCKER-ISOLATION-STAGE-2),
-	  qq(            ;;),
-	  qq(    esac),
+	  qq(    if [ -n "\$g_dockerisostage" ]; then),
+	  qq(        $tool -t filter -S DOCKER-ISOLATION-STAGE-1 | tail -n +2 > \${VARDIR}/.filter_DOCKER-ISOLATION-STAGE-1),
+	  qq(        $tool -t filter -S DOCKER-ISOLATION-STAGE-2 | tail -n +2 > \${VARDIR}/.filter_DOCKER-ISOLATION-STAGE-2),
+	  qq(    fi),
 	  qq(),
 	);
 
@@ -9252,10 +9261,10 @@ sub create_netfilter_load( $ ) {
 			emit( '[ -n "$g_docker" ] && echo ":DOCKER - [0:0]" >&3' );
 		    } elsif ( $name eq 'DOCKER-ISOLATION' ) {
 			ensure_cmd_mode;
-			emit( '[ "$g_dockernetwork" = One ] && echo ":DOCKER-ISOLATION - [0:0]" >&3' );
-		    } elsif ( $name =~ /^DOCKER-ISOLATION-/ ) {
+			emit( '[ -n "$g_dockeriso" ] && echo ":DOCKER-ISOLATION - [0:0]" >&3' );
+		    } elsif ( $name =~ /^DOCKER-ISOLATION/ ) {
 			ensure_cmd_mode;
-			emit( qq([ "\$g_dockernetwork" = Two ] && echo ":$name - [0:0]" >&3) );
+			emit( qq([ -n "\$g_dockerisostage" ] && echo ":$name - [0:0]" >&3) );
 		    } elsif ( $name eq 'DOCKER-INGRESS' ) {
 			ensure_cmd_mode;
 			emit( '[ -n "$g_dockeringress" ] && echo ":DOCKER-INGRESS - [0:0]" >&3' );
@@ -9367,11 +9376,11 @@ sub preview_netfilter_load() {
 			print "\n";
 		    } elsif ( $name eq 'DOCKER-ISOLATION' ) {
 			ensure_cmd_mode1;
-			print( '[ "$g_dockernetwork" = One ] && echo ":DOCKER-ISOLATION - [0:0]" >&3' );
+			print( '[ -n "$g_dockeriso" ] && echo ":DOCKER-ISOLATION - [0:0]" >&3' );
 			print "\n";
-		    } elsif ( $name =~ /^DOCKER-ISOLATION-/ ) {
+		    } elsif ( $name =~ /^DOCKER-ISOLATION/ ) {
 			ensure_cmd_mode1;
-			print( qq([ "\$g_dockernetwork" = Two ] && echo ":$name - [0:0]" >&3) );
+			print( qq([ "\$g_dockeisostage" ] && echo ":$name - [0:0]" >&3) );
 			print "\n";
 		    } elsif ( $name eq 'DOCKER-INGRESS' ) {
 			ensure_cmd_mode1;
@@ -9468,10 +9477,10 @@ sub create_stop_load( $ ) {
 			emit( '[ -n "$g_docker" ] && echo ":DOCKER - [0:0]" >&3' );
 		    } elsif ( $name eq 'DOCKER-ISOLATION' ) {
 			ensure_cmd_mode;
-			emit( '[ -n "$g_dockernetwork" ] && echo ":DOCKER-ISOLATION - [0:0]" >&3' );
-		    } elsif ( $name =~ /^DOCKER-ISOLATION-/ ) {
+			emit( '[ -n "$g_dockeriso" ] && echo ":DOCKER-ISOLATION - [0:0]" >&3' );
+		    } elsif ( $name =~ /^DOCKER-ISOLATION/ ) {
 			ensure_cmd_mode;
-			emit( qq([ "\$g_dockernetwork" = Two ] && echo ":$name - [0:0]" >&3) );
+			emit( qq([ -n "\$g_dockerisostage" ] && echo ":$name - [0:0]" >&3) );
 		    } elsif ( $name eq 'DOCKER-INGRESS' ) {
 			ensure_cmd_mode;
 			emit( '[ -n "$g_dockeringress" ] && echo ":DOCKER-INGRESS - [0:0]" >&3' );

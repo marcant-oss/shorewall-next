@@ -114,8 +114,6 @@ if ( ( $targets{$action} || 0 ) & NATRULE ) {
 
 if ( $command & $RESET_CMD ) {
     require_capability 'MARK_ANYWHERE', '"reset"', 's';
-
-    print "Resetting....\n";
     
     my $mark = $globals{EVENT_MARK};
     #
