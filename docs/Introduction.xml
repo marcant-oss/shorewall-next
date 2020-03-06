@@ -16,7 +16,7 @@
     <pubdate><?dbtimestamp format="Y/m/d"?></pubdate>
 
     <copyright>
-      <year>2003-2015</year>
+      <year>2003-2020</year>
 
       <year>2019</year>
 
@@ -173,18 +173,22 @@ dmz     ipv4</programlisting>
     file. In the three-interface sample, the three zones are defined using
     that file as follows:</para>
 
-    <programlisting>#ZONE      INTERFACE     OPTIONS
-net        NET_IF        dhcp,routefilter
-loc        LOC_IF
-dmz        DMZ_IF</programlisting>
+    <programlisting>#ZONE   INTERFACE       OPTIONS
+net     NET_IF          tcpflags,dhcp,nosmurfs,routefilter,logmartians,sourceroute=0,physical=eth0
+loc     LOC_IF          tcpflags,nosmurfs,routefilter,logmartians,physical=eth1
+dmz     DMZ_IF          tcpflags,nosmurfs,routefilter,logmartians,physical=eth2</programlisting>
 
     <para>The above file defines the <emphasis>net</emphasis> zone as all IPv4
     hosts interfacing to the firewall through NET_IF, the
     <emphasis>loc</emphasis> zone as all IPv4 hosts interfacing through LOC_IF
     and the <emphasis>dmz</emphasis> as all IPv4 hosts interfacing through
-    DMZ_IF. It is important to note that the composition of a zone is defined
-    in terms of a combination of addresses <emphasis
-    role="bold">and</emphasis> interfaces. When using the <ulink
+    eth2. The interface names shown in the INTERFACE column are <emphasis>
+    logical</emphasis> names which are used throughout the configuration to
+    refer to the individual interfaces. The actual interface names are
+    specified using the <emphasis role="bold">physical</emphasis> option. It
+    is important to note that the composition of a zone is defined in terms of
+    a combination of addresses <emphasis role="bold">and</emphasis>
+    interfaces. When using the <ulink
     url="manpages/shorewall-interfaces.html"><filename>/etc/shorewall/interfaces</filename></ulink>
     file to define a zone, all addresses are included; when you want to define
     a zone that contains a limited subset of the IPv4 address space, you use
@@ -193,10 +197,12 @@ dmz        DMZ_IF</programlisting>
     file or you may use the nets= option in
     <filename>/etc/shorewall/interfaces</filename>:</para>
 
-    <programlisting>#ZONE      INTERFACE     BROADCAST     OPTIONS
-net        NET_IF        detect        dhcp,routefilter,nets=(!192.168.0.0/23),physical=eth0
-loc        LOC_IF        detect        nets=(192.168.0.0/24),physical=eth1
-dmz        DMZ_IF        detect        nets=(192.168.1.0/24),physical=eth2</programlisting>
+    <programlisting>#ZONE   INTERFACE       OPTIONS
+net     NET_IF          tcpflags,dhcp,nosmurfs,routefilter,logmartians,sourceroute=0,physical=eth0
+loc     LOC_IF          tcpflags,nosmurfs,routefilter,logmartians,physical=eth1,<emphasis
+        role="bold">nets=172.20.1.0/24</emphasis>
+dmz     DMZ_IF          tcpflags,nosmurfs,routefilter,logmartians,physical=eth2
+</programlisting>
 
     <para>The above file defines the <emphasis>net</emphasis> zone as all IPv4
     hosts interfacing to the firewall through eth0 <emphasis>except</emphasis>
