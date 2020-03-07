@@ -21,9 +21,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg rep="norepeat">options</arg>
 
       <arg choice="plain"><option>add {</option></arg>
@@ -39,9 +36,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>allow</option></arg>
@@ -51,9 +45,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
 
       <arg>options</arg>
 
@@ -66,9 +57,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
 
       <arg>options</arg>
 
@@ -106,9 +94,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg
@@ -117,9 +102,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
 
       <arg>options</arg>
 
@@ -159,9 +141,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg rep="norepeat">options</arg>
 
       <arg choice="plain"><option>delete {</option></arg>
@@ -177,9 +156,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>disable</option></arg>
@@ -191,9 +167,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>drop</option></arg>
@@ -203,8 +176,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -222,9 +193,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>enable</option></arg>
@@ -235,9 +203,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6]</command>
-
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
 
       <arg>options</arg>
 
@@ -252,9 +217,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>forget</option></arg>
@@ -265,8 +227,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>help</option></arg>
@@ -274,8 +234,6 @@
 
     <cmdsynopsis>
       <command>shorewall[-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -285,8 +243,6 @@
 
     <cmdsynopsis>
       <command>shorewall[-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -304,8 +260,6 @@
     <cmdsynopsis>
       <command>shorewall[-lite]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>iprange</option></arg>
@@ -316,8 +270,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -330,9 +282,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>logdrop</option></arg>
@@ -342,8 +291,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -357,9 +304,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>logreject</option></arg>
@@ -369,8 +313,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -394,9 +336,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>reenable</option></arg>
@@ -408,9 +347,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>reject</option></arg>
@@ -420,9 +356,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
 
       <arg>options</arg>
 
@@ -448,10 +381,6 @@
     <cmdsynopsis>
       <command>shorewall[6]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
-      <arg>options</arg>
-
       <arg choice="plain"><option>remote-getcaps</option></arg>
 
       <arg><option>-s</option></arg>
@@ -471,8 +400,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -496,8 +423,6 @@
     <cmdsynopsis>
       <command>shorewall[6]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>remote-start</option></arg>
@@ -519,8 +444,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -544,8 +467,6 @@
     <cmdsynopsis>
       <command>shorewall[6]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>remote-restart</option></arg>
@@ -568,9 +489,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg
@@ -580,9 +498,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
 
       <arg>options</arg>
 
@@ -608,9 +523,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg
@@ -621,9 +533,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
 
       <arg>options</arg>
 
@@ -636,9 +545,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6]</command>
-
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
 
       <arg>options</arg>
 
@@ -656,8 +562,6 @@
     <cmdsynopsis>
       <command>shorewall[6]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>safe-start</option></arg>
@@ -674,9 +578,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg
@@ -688,9 +589,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><option>savesets</option></arg>
@@ -698,8 +596,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -712,8 +608,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -734,8 +628,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -761,8 +653,6 @@
     <cmdsynopsis>
       <command>shorewall[6]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="req"><option>show | list | ls </option></arg>
@@ -773,8 +663,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -787,8 +675,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="req"><option>show | list | ls </option></arg>
@@ -799,8 +685,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -814,8 +698,6 @@
     <cmdsynopsis>
       <command>shorewall[6]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="req"><option>show | list | ls </option></arg>
@@ -826,8 +708,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -841,8 +721,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="req"><option>show | list | ls </option></arg>
@@ -852,8 +730,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -867,8 +743,7 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
+      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -892,9 +767,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
-
       <arg>options</arg>
 
       <arg
@@ -904,8 +776,6 @@
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
 
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
-
       <arg>options</arg>
 
       <arg choice="plain"><arg
@@ -914,9 +784,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6]</command>
-
-      <arg
-      choice="opt"><option>trace</option>|<option>debug</option><arg><option>nolock</option></arg></arg>
 
       <arg>options</arg>
 
@@ -929,8 +796,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -955,8 +820,6 @@
 
     <cmdsynopsis>
       <command>shorewall[6][-lite]</command>
-
-      <arg choice="opt"><option>trace</option>|<option>debug</option></arg>
 
       <arg>options</arg>
 
@@ -1025,16 +888,7 @@
   <refsect1>
     <title>Options</title>
 
-    <para>The <option>trace</option> and <option>debug</option> options are
-    used for debugging. See <ulink
-    url="/starting_and_stopping_shorewall.htm#Trace">http://www.shorewall.org/starting_and_stopping_shorewall.htm#Trace</ulink>.</para>
-
-    <para>The <option>nolock</option> option prevents the command from
-    attempting to acquire the Shorewall lockfile. It is useful if you need to
-    include <command>shorewall</command> commands in
-    <filename>/etc/shorewall/started</filename>.</para>
-
-    <para>Other <replaceable>options</replaceable> are:</para>
+    <para>The <replaceable>options</replaceable> are:</para>
 
     <variablelist>
       <varlistentry>
@@ -1176,6 +1030,40 @@
           <para>Causes all progress messages to be timestamped.</para>
         </listitem>
       </varlistentry>
+
+      <varlistentry>
+        <term>-T</term>
+
+        <listitem>
+          <para>If the command invokes the generated firewall script, the
+          script's execution will be traced to standard error. This option
+          replaces the earlier <emphasis role="bold">trace</emphasis>
+          keyword.</para>
+
+          <caution>
+            <para>If both -T and -D are specified, only the last one specified
+            will be in effect.</para>
+          </caution>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term>-D</term>
+
+        <listitem>
+          <para>If the command invokes the generated firewall script,
+          individual invocations of the ip[6]tables utility will be used to
+          configure the ruleset rather than ip[6]tables-restore. This is
+          useful for diagnosing ip[6]tables-restore failures on a *COMMIT
+          command. The option replaces the earlier <emphasis
+          role="bold">debug</emphasis> keyword.</para>
+
+          <caution>
+            <para>If both -T and -D are specified, only the last one specified
+            will be in effect.</para>
+          </caution>
+        </listitem>
+      </varlistentry>
     </variablelist>
   </refsect1>
 
@@ -1214,11 +1102,12 @@
           <para>Beginning with Shorewall 4.5.9, the <emphasis
           role="bold">dynamic_shared</emphasis> zone option (<ulink
           url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5),<ulink
-          url="/manpages/shorewall-zones.html">shorewall6-zones</ulink>(5)) allows a single ipset to
-          handle entries for multiple interfaces. When that option is
-          specified for a zone, the <command>add</command> command has the
-          alternative syntax in which the <replaceable>zone</replaceable> name
-          precedes the <replaceable>host-list</replaceable>.</para>
+          url="/manpages/shorewall-zones.html">shorewall6-zones</ulink>(5))
+          allows a single ipset to handle entries for multiple interfaces.
+          When that option is specified for a zone, the <command>add</command>
+          command has the alternative syntax in which the
+          <replaceable>zone</replaceable> name precedes the
+          <replaceable>host-list</replaceable>.</para>
         </listitem>
       </varlistentry>
 
@@ -1294,7 +1183,7 @@
         <term><emphasis role="bold">check</emphasis> [-<option>e</option>]
         [-<option>d</option>] [-<option>p</option>] [-<option>r</option>]
         [-<option>T</option>] [-<option>i</option>]
-        [<replaceable>directory</replaceable>]</term>
+        [-D][<replaceable>directory</replaceable>]</term>
 
         <listitem>
           <para>Not available with Shorewall[6]-lite.</para>
@@ -1333,6 +1222,10 @@
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
           url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
+
+          <para>The <emphasis role="bold">-D </emphasis>option was added in
+          Shoewall 5.2.4 and causes the compiler to write a large amount of
+          debugging information to standard output.</para>
         </listitem>
       </varlistentry>
 
@@ -1383,8 +1276,9 @@
       <varlistentry>
         <term><emphasis role="bold">compile </emphasis>[-<option>e</option>]
         [-<option>c</option>] [-<option>d</option>] [-<option>p</option>]
-        [-<option>T</option>] [-<option>i</option>] [<replaceable> directory
-        </replaceable>] [<replaceable> pathname</replaceable> ]</term>
+        [-<option>T</option>] [-<option>i</option>] [-D] [<replaceable>
+        directory </replaceable>] [<replaceable> pathname</replaceable>
+        ]</term>
 
         <listitem>
           <para>Not available with shorewall[6]-lite.</para>
@@ -1441,6 +1335,10 @@
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
           url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)).</para>
+
+          <para>The <emphasis role="bold">-D </emphasis>option was added in
+          Shoewall 5.2.4 and causes the compiler to write a large amount of
+          debugging information to standard output.</para>
         </listitem>
       </varlistentry>
 
@@ -1700,16 +1598,16 @@
           <para>Monitors the log file specified by the LOGFILE option in
           <ulink url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
-          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5))
-          and produces an audible alarm when new Shorewall messages are
-          logged. The <emphasis role="bold">-m</emphasis> option causes the
-          MAC address of each packet source to be displayed if that
-          information is available. The
-          <replaceable>refresh-interval</replaceable> specifies the time in
-          seconds between screen refreshes. You can enter a negative number by
-          preceding the number with "--" (e.g., <command>shorewall logwatch --
-          -30</command>). In this case, when a packet count changes, you will
-          be prompted to hit any key to resume screen refreshes.</para>
+          url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)) and
+          produces an audible alarm when new Shorewall messages are logged.
+          The <emphasis role="bold">-m</emphasis> option causes the MAC
+          address of each packet source to be displayed if that information is
+          available. The <replaceable>refresh-interval</replaceable> specifies
+          the time in seconds between screen refreshes. You can enter a
+          negative number by preceding the number with "--" (e.g.,
+          <command>shorewall logwatch -- -30</command>). In this case, when a
+          packet count changes, you will be prompted to hit any key to resume
+          screen refreshes.</para>
         </listitem>
       </varlistentry>
 
@@ -1824,7 +1722,8 @@
         <term><emphasis role="bold">reload </emphasis>[-<option>n</option>]
         [-<option>p</option>] [-<option>d</option>] [-<option>f</option>]
         [-<option>c</option>] [-<option>T</option>] [-<option>i</option>]
-        [-<option>C</option>] [ <replaceable>directory</replaceable> ]</term>
+        [-<option>C</option>] [-D] [ <replaceable>directory</replaceable>
+        ]</term>
 
         <listitem>
           <para>This command was re-implemented in Shorewall 5.0.0. The
@@ -1889,6 +1788,10 @@
                 the one that generated the current running configuration, then
                 the running netfilter configuration will be reloaded as is so
                 as to preserve the iptables packet and byte counters.</para>
+
+                <para>The <emphasis role="bold">-D </emphasis>option was added
+                in Shoewall 5.2.4 and causes the compiler to write a large
+                amount of debugging information to standard output.</para>
               </listitem>
             </varlistentry>
 
@@ -2071,7 +1974,8 @@
           Beginning with Shorewall 5.0.13, if
           <replaceable>system</replaceable> is omitted, then the FIREWALL
           option setting in <ulink
-          url="/manpages/shorewall.conf.html">shorewall6.conf(5)</ulink> (<ulink
+          url="/manpages/shorewall.conf.html">shorewall6.conf(5)</ulink>
+          (<ulink
           url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)) is
           assumed. In that case, if you want to specify a
           <replaceable>directory</replaceable>, then the <option>-D</option>
@@ -2144,7 +2048,8 @@
           Beginning with Shorewall 5.0.13, if
           <replaceable>system</replaceable> is omitted, then the FIREWALL
           option setting in <ulink
-          url="/manpages/shorewall.conf.html">shorewall6.conf(5)</ulink> (<ulink
+          url="/manpages/shorewall.conf.html">shorewall6.conf(5)</ulink>
+          (<ulink
           url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5)) is
           assumed. In that case, if you want to specify a
           <replaceable>directory</replaceable>, then the <option>-D</option>
@@ -2178,6 +2083,10 @@
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
           url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5).</para>
+
+          <para>The <emphasis role="bold">-D </emphasis>option was added in
+          Shoewall 5.2.4 and causes the compiler to write a large amount of
+          debugging information to standard output.</para>
         </listitem>
       </varlistentry>
 
@@ -2204,7 +2113,8 @@
         <term><emphasis role="bold">restart </emphasis>[-<option>n</option>]
         [-<option>p</option>] [-<option>d</option>] [-<option>f</option>]
         [-<option>c</option>] [-<option>T</option>] [-<option>i</option>]
-        [-<option>C</option>] [ <replaceable>directory</replaceable> ]</term>
+        [-<option>C</option>] [-D] [ <replaceable>directory</replaceable>
+        ]</term>
 
         <listitem>
           <para>Beginning with Shorewall 5.0.0, this command performs a true
@@ -2264,6 +2174,10 @@
                 the one that generated the current running configuration, then
                 the running netfilter configuration will be reloaded as is so
                 as to preserve the iptables packet and byte counters.</para>
+
+                <para>The <emphasis role="bold">-D </emphasis>option was added
+                in Shoewall 5.2.4 and causes the compiler to write a large
+                amount of debugging information to standard output.</para>
               </listitem>
             </varlistentry>
 
@@ -2831,8 +2745,8 @@
         <term><emphasis role="bold">start </emphasis><emphasis role="bold">
         </emphasis>[-<option>n</option>] [-<option>p</option>]
         [-<option>d</option>] [-<option>f</option>] [-<option>c</option>]
-        [-<option>T</option>] [-<option>i</option>] [-<option>C</option>] [
-        <replaceable>directory</replaceable> ]</term>
+        [-<option>T</option>] [-<option>i</option>] [-<option>C</option>] [-D]
+        [ <replaceable>directory</replaceable> ]</term>
 
         <listitem>
           <para><variablelist>
@@ -2906,6 +2820,11 @@
                   option was also specified in the <emphasis
                   role="bold">save</emphasis> command, then the packet and
                   byte counters will be restored.</para>
+
+                  <para>The <emphasis role="bold">-D </emphasis>option was
+                  added in Shoewall 5.2.4 and causes the compiler to write a
+                  large amount of debugging information to standard
+                  output.</para>
                 </listitem>
               </varlistentry>
 
