@@ -834,15 +834,27 @@
         role="bold">Yes</emphasis>|<emphasis role="bold">No</emphasis>]</term>
 
         <listitem>
-          <para>Added in Shorewall 5.0.6. When set to <option>Yes</option>,
-          the generated script will save Docker-generated rules before and
-          restore them after executing the <command>start</command>,
-          <command>stop</command>, <command>reload</command> and
-          <command>restart</command> commands. If set to <option>No</option>
-          (the default), the generated script will delete any Docker-generated
-          rules when executing those commands. See<ulink url="/Docker.html">
+          <para>Added in Shorewall 5.0.6; IPv4 only. When set to
+          <option>Yes</option>, the generated script will save
+          Docker-generated rules before and restore them after executing the
+          <command>start</command>, <command>stop</command>,
+          <command>reload</command> and <command>restart</command> commands.
+          If set to <option>No</option> (the default), the generated script
+          will delete any Docker-generated rules when executing those
+          commands. See<ulink url="/Docker.html">
           http://www.shorewall.org/Docker.html</ulink> for additional
           information.</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><emphasis
+        role="bold">DOCKER_BRIDGE=</emphasis>[<emphasis>bridgename</emphasis>]</term>
+
+        <listitem>
+          <para>Added in Shorewall 5.2.4; IPv4 only. Specifies the name of the
+          default Docker bridge. If not specified, the value 'docker0' is
+          assumed.</para>
         </listitem>
       </varlistentry>
 
