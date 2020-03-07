@@ -8712,6 +8712,8 @@ sub emitr1( $$ ) {
 sub save_docker_rules($) {
     my $tool = $_[0];
 
+    my $bridge = $config{DOCKER_BRIDGE};
+
     emit( qq(if [ -n "\$g_docker" ]; then),
 	  qq(    $tool -t nat -S DOCKER | tail -n +2 > \${VARDIR}/.nat_DOCKER),
 	  qq(    $tool -t nat -S OUTPUT | tail -n +2 | fgrep DOCKER > \${VARDIR}/.nat_OUTPUT),
@@ -8729,10 +8731,10 @@ sub save_docker_rules($) {
 	  qq(),
 	);
 
-    if ( known_interface( 'docker0' ) ) {
+    if ( known_interface( $bridge ) ) {
 	emit( qq(    $tool -t filter -S FORWARD | grep '^-A FORWARD.*[io] br-[a-z0-9]\\{12\\}' > \${VARDIR}/.filter_FORWARD) );
     } else {
-	emit( qq(    $tool -t filter -S FORWARD | egrep '^-A FORWARD.*[io] (docker0|br-[a-z0-9]{12})' > \${VARDIR}/.filter_FORWARD) );
+	emit( qq(    $tool -t filter -S FORWARD | egrep "^-A FORWARD.\*\[io\] ($bridge|br-\[a-z0-9\]\{12\})" > \${VARDIR}/.filter_FORWARD) );
     }
 
     emit( q(    [ -s ${VARDIR}/.filter_FORWARD ] || rm -f ${VARDIR}/.filter_FORWARD),
