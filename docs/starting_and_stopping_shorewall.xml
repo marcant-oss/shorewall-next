@@ -214,8 +214,10 @@
     <programlisting>shorewall trace check -r</programlisting>
 
     <para>This produces a large amount of diagnostic output to standard out
-    during the compilation step. If entered on a command that doesn't invoke
-    the compiler, <emphasis role="bold">trace</emphasis> is ignored.</para>
+    during the compilation step. If the command invokes the compiled firewall
+    script, then that script's execution is traced to standard error. If
+    entered on a command that invokes neither the compiler nor the compiled
+    script, <emphasis role="bold">trace</emphasis> is ignored.</para>
 
     <para>Commands that invoke a compiled fireawll script can have the word
     debug inserted immediately after the command.</para>
