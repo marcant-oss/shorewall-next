@@ -54,6 +54,8 @@ usage() {
     echo "   -c               Save/restore iptables counters"
     echo "   -V <verbosity>   Set verbosity explicitly"
     echo "   -R <file>        Override RESTOREFILE setting"
+    echo "   -T               Trace execution"
+    echo "   -D               Debug iptables"
     exit $1
 }
 
@@ -109,20 +111,6 @@ reload_command() {
 # E X E C U T I O N    B E G I N S   H E R E				       #
 ################################################################################
 #
-# Start trace if first arg is "debug" or "trace"
-#
-g_debug_iptables=
-
-if [ $# -gt 1 ]; then
-    if [ "x$1" = "xtrace" ]; then
-	set -x
-	shift
-    elif [ "x$1" = "xdebug" ]; then
-	g_debug_iptables=Yes
-	shift
-    fi
-fi
-#
 # Map VERBOSE to VERBOSITY for compatibility with old Shorewall[6]-lite installations
 #
 [ -z "$VERBOSITY" ] && [ -n "$VERBOSE" ] && VERBOSITY=$VERBOSE
@@ -152,6 +140,7 @@ g_dockeriso=
 g_dockerisostage=
 g_forcereload=
 g_fallback=
+g_debug_iptables=
 
 [ -n "$SERVICEDIR" ] && SUBSYSLOCK=
 
@@ -257,6 +246,14 @@ while [ $finished -eq 0 -a $# -gt 0 ]; do
 
 			RESTOREFILE=$option
 			option=
+			;;
+		    T*)
+			set -x;
+			option=${option#T}
+			;;
+		    D*)
+			g_debug_iptables=Yes
+			option=${option#D}
 			;;
 		    *)
 			usage 1

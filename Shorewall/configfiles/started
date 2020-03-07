@@ -8,7 +8,7 @@
 # signaling that the firewall is completely up).
 #
 # This script should not change the firewall configuration directly but
-# may do so indirectly by running /sbin/shorewall with the 'nolock'
+# may do so indirectly by running /sbin/shorewall with the -N
 # option.
 #
 # See http://shorewall.org/shorewall_extension_scripts.htm for additional

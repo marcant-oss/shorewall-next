@@ -92,18 +92,20 @@ startup_error() # $* = Error Message
 #
 run_it() {
     local script
-    local options
+    local options='-'
 
     export VARDIR
 
     script=$1
     shift
 
-    if [ x$1 = xtrace -o x$1 = xdebug ]; then
-	options="$1 -"
-	shift;
+
+    if [ "$g_debugging" = debug ]; then
+	options='-D'
+    elif [ "$g_debugging" = trace ]; then
+	options='-T'
     else
-	options='-'
+	options='-';
     fi
 
     [ -n "$g_noroutes" ]   && options=${options}n
@@ -736,8 +738,8 @@ truncate() # $1 = length
 
 #
 # Call this function to assert mutual exclusion with Shorewall. If you invoke the
-# /sbin/shorewall program while holding mutual exclusion, you should pass "nolock" as
-# the first argument. Example "shorewall nolock refresh"
+# /sbin/shorewall program while holding mutual exclusion, you should pass -N as
+# the first argument. Example "shorewall -N refresh"
 #
 # This function uses the lockfile utility from procmail if it exists.
 # Otherwise, it uses a somewhat race-prone algorithm to attempt to simulate the
