@@ -42,6 +42,7 @@ usage() {
     echo "   up <interface>"
     echo "   savesets <file>"
     echo "   call <function> [ <parameter> ... ]"
+    echo "   help"
     echo "   version"
     echo "   info"
     echo
