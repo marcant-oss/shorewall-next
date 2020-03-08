@@ -20,6 +20,8 @@
     <copyright>
       <year>2006-2010</year>
 
+      <year>2020</year>
+
       <holder>Thomas M. Eastep</holder>
     </copyright>
 
@@ -227,10 +229,10 @@
 
             <listitem>
               <programlisting><command>cd &lt;export directory&gt;</command>
-<command>/sbin/shorewall load firewall</command></programlisting>
+<command>/sbin/shorewall remote-startfirewall</command></programlisting>
 
               <para>The <ulink
-              url="starting_and_stopping_shorewall.htm#Load"><command>load</command></ulink>
+              url="starting_and_stopping_shorewall.htm#Load"><command>remote-start</command></ulink>
               command compiles a firewall script from the configuration files
               in the current working directory (using <command>shorewall
               compile -e</command>), copies that file to the remote system via
@@ -239,7 +241,8 @@
 
               <para>Example (firewall's DNS name is 'gateway'):</para>
 
-              <para><command>/sbin/shorewall load gateway</command><note>
+              <para><command>/sbin/shorewall remote-start
+              gateway</command><note>
                   <para>Although scp and ssh are used by default, you can use
                   other utilities by setting RSH_COMMAND and RCP_COMMAND in
                   <filename>/etc/shorewall/shorewall.conf</filename>.</para>
@@ -261,119 +264,16 @@
           then:</para>
 
           <programlisting><command>cd &lt;export directory&gt;</command>
-<command>/sbin/shorewall reload firewall</command></programlisting>
+<command>/sbin/shorewall remote-reload firewall</command></programlisting>
 
           <para>The <ulink
-          url="manpages/shorewall.html"><command>reload</command></ulink>
+          url="manpages/shorewall.html"><command>remote-reload</command></ulink>
           command compiles a firewall script from the configuration files in
           the current working directory (using <command>shorewall compile
           -e</command>), copies that file to the remote system via scp and
           restarts Shorewall Lite on the remote system via ssh. The <emphasis
-          role="bold">reload</emphasis> command also supports the '-c'
+          role="bold">remote-reload</emphasis> command also supports the '-c'
           option.</para>
-
-          <para>I personally place a <filename>Makefile</filename> in each
-          export directory as follows:</para>
-
-          <blockquote>
-            <programlisting>#     Shorewall Packet Filtering Firewall Export Directory Makefile - V3.3
-#
-#     This program is under GPL [http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt]
-#
-#     (c) 2006 - Tom Eastep (teastep@shorewall.net)
-#
-#       Shorewall documentation is available at http://www.shorewall.org
-#
-#       This program is free software; you can redistribute it and/or modify
-#       it under the terms of Version 2 of the GNU General Public License
-#       as published by the Free Software Foundation.
-#
-#       This program is distributed in the hope that it will be useful,
-#       but WITHOUT ANY WARRANTY; without even the implied warranty of
-#       MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#       GNU General Public License for more details.
-#
-#       You should have received a copy of the GNU General Public License
-#       along with this program; if not, write to the Free Software
-#       Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-################################################################################
-# Place this file in each export directory. Modify each copy to set HOST
-# to the name of the remote firewall corresponding to the directory.
-#
-#       To make the 'firewall' script, type "make".
-# 
-#       Once the script is compiling correctly, you can install it by
-#       typing "make install".
-#  
-################################################################################
-#                             V A R I A B L E S
-#
-# Files in the export directory on which the firewall script does not depend
-#
-IGNOREFILES =  firewall% Makefile% trace% %~
-#
-# Remote Firewall system
-#
-HOST = gateway
-#
-# Save some typing
-#
-LITEDIR = /var/lib/shorewall-lite
-#
-# Set this if the remote system has a non-standard modules directory
-#
-MODULESDIR=
-#
-# Default target is the firewall script
-#
-################################################################################
-#                                T A R G E T S
-#
-all: firewall
-#
-# Only generate the capabilities file if it doesn't already exist
-#
-capabilities: 
-        ssh root@$(HOST) "MODULESDIR=$(MODULESDIR) /usr/share/shorewall-lite/shorecap &gt; $(LITEDIR)/capabilities"
-        scp root@$(HOST):$(LITEDIR)/capabilities .
-#
-# Compile the firewall script. Using the 'wildcard' function causes "*" to be expanded so that
-# 'filter-out' will be presented with the list of files in this directory rather than "*"
-#
-firewall: $(filter-out $(IGNOREFILES) capabilities , $(wildcard *) ) capabilities
-        shorewall compile -e . firewall
-#
-# Only reload on demand.
-#
-install: firewall
-        scp firewall firewall.conf root@$(HOST):$(LITEDIR)
-        ssh root@$(HOST) "/sbin/shorewall-lite restart"
-#
-# Save running configuration
-#
-save:
-        ssh root@$(HOST) "/sbin/shorewall-lite save"
-#
-# Remove generated files
-#
-clean: 
-        rm -f capabilities firewall firewall.conf reload
-</programlisting>
-          </blockquote>
-
-          <para>That way, after I've changed the configuration, I can simply
-          type <command>make</command> or <emphasis role="bold">make
-          install</emphasis>.</para>
-
-          <note>
-            <para>The above Makefile is available at <ulink
-            url="http://www1.shorewall.net/pub/shorewall/contrib/Shorewall-lite/">http://www.shorewall.org/pub/shorewall/contrib/Shorewall-lite/</ulink></para>
-          </note>
-
-          <note>
-            <para>I omit trace% because I often trace compiler execution while
-            I'm debugging new versions of Shorewall.</para>
-          </note>
         </listitem>
       </orderedlist>
 
@@ -410,63 +310,63 @@ clean:
       run Debian or one of its derivatives (see <link
       linkend="Debian">above</link>).</para>
 
-      <para>The <filename>/sbin/shorewall-lite</filename> program included
+      <para>The <filename>/sbin/shorewall-lite</filename> program (which is a
+      symbolic link pointing to <filename>/sbin/shorewall</filename>) included
       with Shorewall Lite supports the same set of commands as the
       <filename>/sbin/shorewall</filename> program in a full Shorewall
       installation with the following exceptions:</para>
 
       <blockquote>
         <simplelist>
-          <member>add</member>
+          <member>action</member>
+
+          <member>actions</member>
+
+          <member>check</member>
 
           <member>compile</member>
 
-          <member>delete</member>
+          <member>export</member>
 
-          <member>refresh</member>
+          <member>macro</member>
 
-          <member>reload</member>
+          <member>macros</member>
 
-          <member>try</member>
+          <member>remote-getrc</member>
 
-          <member>safe-start</member>
+          <member>remote-getcaps</member>
+
+          <member>remote-reload</member>
+
+          <member>remote-restart</member>
+
+          <member>remote-start</member>
+
+          <member>safe-reload</member>
 
           <member>safe-restart</member>
 
-          <member>show actions</member>
+          <member>safe-start</member>
 
-          <member>show macros</member>
+          <member>try</member>
+
+          <member>update</member>
         </simplelist>
-      </blockquote>
-
-      <para>On systems with only Shorewall Lite installed, I recommend that
-      you create a symbolic link <filename>/sbin/shorewall</filename> and
-      point it at <filename>/sbin/shorewall-lite</filename>. That way, you can
-      use <command>shorewall</command> as the command regardless of which
-      product is installed.</para>
-
-      <blockquote>
-        <programlisting><command>ln -sf shorewall-lite /sbin/shorewall</command></programlisting>
       </blockquote>
 
       <section>
         <title>Module Loading</title>
 
-        <para>As with a normal Shorewall configuration, the shorewall.conf
-        file can specify LOAD_HELPERS_ONLY which determines if the
-        <filename>modules</filename> file (LOAD_HELPERS_ONLY=No) or
-        <filename>helpers</filename> file (LOAD_HELPERS_ONLY=Yes) is used.
-        Normally, the file on the firewall system is used. If you want to
-        specify modules at compile time on the Administrative System, then you
-        must place a copy of the appropriate file
-        (<filename>modules</filename> or <filename>helpers</filename>) in the
-        firewall's configuration directory before compilation.</para>
+        <para>Normally, the <filename>helpers</filename> file on the firewall
+        system is used. If you want to specify modules at compile time on the
+        Administrative System, then you must place a copy of the
+        <filename>helpers</filename> file in the firewall's configuration
+        directory before compilation.</para>
 
         <para>In Shorewall 4.4.17, the EXPORTMODULES option was added to
         shorewall.conf (and shorewall6.conf). When EXPORTMODULES=Yes, any
-        <filename>modules</filename> or <filename>helpers</filename> file
-        found on the CONFIG_PATH on the Administrative System during
-        compilation will be used.</para>
+        <filename>helpers</filename> file found on the CONFIG_PATH on the
+        Administrative System during compilation will be used.</para>
       </section>
 
       <section id="Converting">
@@ -503,10 +403,6 @@ clean:
 
           <listitem>
             <para>Install Shorewall Lite on the firewall system.</para>
-
-            <para>If you are running Debian or one of its derivatives like
-            Ubuntu then edit <filename>/etc/default/shorewall-lite</filename>
-            and set startup=1.</para>
           </listitem>
 
           <listitem>
@@ -753,52 +649,126 @@ clean:
     kernel/iptables capabilities of the target system. Here is a sample
     file:</para>
 
-    <blockquote>
-      <programlisting>#
-# Shorewall detected the following iptables/netfilter capabilities - Tue Jul 15 07:28:12 PDT 2008
+    <programlisting>
+# Shorewall 5.2.3.3 detected the following iptables/netfilter capabilities - Mon 16 Sep 2019 01:32:20 PM PDT
 #
-NAT_ENABLED=Yes
-MANGLE_ENABLED=Yes
-MULTIPORT=Yes
-XMULTIPORT=Yes
-CONNTRACK_MATCH=Yes
-POLICY_MATCH=Yes
-PHYSDEV_MATCH=Yes
-PHYSDEV_BRIDGE=Yes
-LENGTH_MATCH=Yes
-IPRANGE_MATCH=Yes
-RECENT_MATCH=Yes
-OWNER_MATCH=Yes
-IPSET_MATCH=Yes
-CONNMARK=Yes
-XCONNMARK=Yes
-CONNMARK_MATCH=Yes
-XCONNMARK_MATCH=Yes
-RAW_TABLE=Yes
-IPP2P_MATCH=
-CLASSIFY_TARGET=Yes
-ENHANCED_REJECT=Yes
-KLUDGEFREE=Yes
-MARK=Yes
-XMARK=Yes
-MANGLE_FORWARD=Yes
-COMMENTS=Yes
+ACCOUNT_TARGET=
 ADDRTYPE=Yes
-TCPMSS_MATCH=Yes
+AMANDA_HELPER=
+ARPTABLESJF=
+AUDIT_TARGET=Yes
+BASIC_EMATCH=Yes
+BASIC_FILTER=Yes
+CAPVERSION=50200
+CHECKSUM_TARGET=Yes
+CLASSIFY_TARGET=Yes
+COMMENTS=Yes
+CONDITION_MATCH=
+CONNLIMIT_MATCH=Yes
+CONNMARK_MATCH=Yes
+CONNMARK=Yes
+CONNTRACK_MATCH=Yes
+CPU_FANOUT=Yes
+CT_TARGET=Yes
+DSCP_MATCH=Yes
+DSCP_TARGET=Yes
+EMULTIPORT=Yes
+ENHANCED_REJECT=Yes
+EXMARK=Yes
+FLOW_FILTER=Yes
+FTP0_HELPER=
+FTP_HELPER=Yes
+FWMARK_RT_MASK=Yes
+GEOIP_MATCH=
+GOTO_TARGET=Yes
+H323_HELPER=
 HASHLIMIT_MATCH=Yes
+HEADER_MATCH=
+HELPER_MATCH=Yes
+IFACE_MATCH=
+IMQ_TARGET=
+IPMARK_TARGET=
+IPP2P_MATCH=
+IPRANGE_MATCH=Yes
+IPSET_MATCH_COUNTERS=Yes
+IPSET_MATCH_NOMATCH=Yes
+IPSET_MATCH=Yes
+IPSET_V5=Yes
+IPTABLES_S=Yes
+IRC0_HELPER=
+IRC_HELPER=Yes
+KERNELVERSION=41900
+KLUDGEFREE=Yes
+LENGTH_MATCH=Yes
+LOGMARK_TARGET=
+LOG_TARGET=Yes
+MANGLE_ENABLED=Yes
+MANGLE_FORWARD=Yes
+MARK_ANYWHERE=Yes
+MARK=Yes
+MASQUERADE_TGT=Yes
+MULTIPORT=Yes
+NAT_ENABLED=Yes
+NAT_INPUT_CHAIN=Yes
+NETBIOS_NS_HELPER=
+NETMAP_TARGET=Yes
+NEW_CONNTRACK_MATCH=Yes
+NEW_TOS_MATCH=Yes
+NFACCT_MATCH=Yes
+NFLOG_SIZE=Yes
+NFLOG_TARGET=Yes
 NFQUEUE_TARGET=Yes
+OLD_CONNTRACK_MATCH=
+OLD_HL_MATCH=
+OLD_IPP2P_MATCH=
+OLD_IPSET_MATCH=
+OWNER_MATCH=Yes
+OWNER_NAME_MATCH=Yes
+PERSISTENT_SNAT=Yes
+PHYSDEV_BRIDGE=Yes
+PHYSDEV_MATCH=Yes
+POLICY_MATCH=Yes
+PPTP_HELPER=
+RAW_TABLE=Yes
 REALM_MATCH=Yes
-CAPVERSION=40190</programlisting>
-    </blockquote>
+REAP_OPTION=Yes
+RECENT_MATCH=Yes
+RESTORE_WAIT_OPTION=Yes
+RPFILTER_MATCH=Yes
+SANE0_HELPER=
+SANE_HELPER=
+SIP0_HELPER=
+SIP_HELPER=
+SNMP_HELPER=
+STATISTIC_MATCH=Yes
+TARPIT_TARGET=
+TCPMSS_MATCH=Yes
+TCPMSS_TARGET=Yes
+TFTP0_HELPER=
+TFTP_HELPER=
+TIME_MATCH=Yes
+TPROXY_TARGET=Yes
+UDPLITEREDIRECT=
+ULOG_TARGET=
+WAIT_OPTION=Yes
+XCONNMARK_MATCH=Yes
+XCONNMARK=Yes
+XMARK=Yes
+XMULTIPORT=Yes</programlisting>
 
     <para>As you can see, the file contains a simple list of shell variable
     assignments — the variables correspond to the capabilities listed by the
     <command>shorewall show capabilities</command> command and they appear in
     the same order as the output of that command.</para>
 
-    <para>To aid in creating this file, Shorewall Lite includes a
-    <command>shorecap</command> program. The program is installed in the
-    <filename class="directory">/usr/share/shorewall-lite/</filename>
+    <para>The capabilities file can be generated automatically from the
+    administrative system by using the <command>remote-getcaps</command>
+    command. Should that option fail for any reason, the file can be generated
+    manually on the remote firewall.</para>
+
+    <para>To aid in creating this file on the remote firewall, Shorewall Lite
+    includes a <command>shorecap</command> program. The program is installed
+    in the <filename class="directory">/usr/share/shorewall-lite/</filename>
     directory and may be run as follows:</para>
 
     <blockquote>
@@ -825,41 +795,52 @@ CAPVERSION=40190</programlisting>
     <command>show capabilities</command> command shows the kernel's current
     capabilities; it does not attempt to load additional kernel
     modules.</para>
+
+    <para>Once generated, the file can be copied manually to the
+    administrative system.</para>
   </section>
 
   <section id="Running">
     <title>Running compiled programs directly</title>
 
-    <para>Compiled firewall programs are complete shell programs that support
-    the following command line forms:</para>
+    <para>Compiled firewall programs are complete shell programs that may be
+    run directly. Here is the output from the program's help command
+    (Shorewall version 5.2.4)</para>
 
-    <blockquote>
-      <simplelist>
-        <member><command>&lt;program&gt; [ -q ] [ -v ] [ -n ]
-        start</command></member>
+    <programlisting>&lt;program&gt; [ options ] &lt;command&gt;
 
-        <member><command>&lt;program&gt; [ -q ] [ -v ] [ -n ]
-        stop</command></member>
+&lt;command&gt; is one of:
+   start
+   stop
+   clear
+   disable &lt;interface&gt;
+   down &lt;interface&gt;
+   enable &lt;interface&gt;
+   reset
+   reenable &lt;interface&gt;
+   refresh
+   reload
+   restart
+   run &lt;command&gt; [ &lt;parameter&gt; ... ]
+   status
+   up &lt;interface&gt;
+   savesets &lt;file&gt;
+   call &lt;function&gt; [ &lt;parameter&gt; ... ]
+   help
+   version
+   info
 
-        <member><command>&lt;program&gt; [ -q ] [ -v ] [ -n ]
-        clear</command></member>
+Options are:
 
-        <member><command>&lt;program&gt; [ -q ] [ -v ] [ -n ]
-        refresh</command></member>
-
-        <member><command>&lt;program&gt; [ -q ] [ -v ] [ -n ]
-        reset</command></member>
-
-        <member><command>&lt;program&gt; [ -q ] [ -v ] [ -n ]
-        restart</command></member>
-
-        <member><command>&lt;program&gt; [ -q ] [ -v ] [ -n ]
-        status</command></member>
-
-        <member><command>&lt;program&gt; [ -q ] [ -v ] [ -n ]
-        version</command></member>
-      </simplelist>
-    </blockquote>
+   -v and -q        Standard Shorewall verbosity controls
+   -n               Don't update routing configuration
+   -p               Purge Conntrack Table
+   -t               Timestamp progress Messages
+   -c               Save/restore iptables counters
+   -V &lt;verbosity&gt;   Set verbosity explicitly
+   -R &lt;file&gt;        Override RESTOREFILE setting
+   -T               Trace execution
+</programlisting>
 
     <para>The options have the same meanings as when they are passed to
     <filename>/sbin/shorewall</filename> itself. The default VERBOSITY level
