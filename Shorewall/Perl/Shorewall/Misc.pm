@@ -675,8 +675,6 @@ sub process_stoppedrules() {
 # Generate the rules required when DOCKER=Yes
 #
 sub create_docker_rules() {
-    my $bridge = $config{DOCKER_BRIDGE};
-
     add_commands( $nat_table->{PREROUTING} , '[ -n "$g_docker" ] && echo "-A PREROUTING -m addrtype --dst-type LOCAL -j DOCKER" >&3' );
 
     my $chainref = $filter_table->{FORWARD};
@@ -686,13 +684,13 @@ sub create_docker_rules() {
     add_commands( $chainref, '[ -n "$g_dockeriso" ]      && echo "-A FORWARD -j DOCKER-ISOLATION" >&3' );
     add_commands( $chainref, '[ -n "$g_dockerisostage" ] && echo "-A FORWARD -j DOCKER-ISOLATION-STAGE-1" >&3' );
 
-    if ( my $dockerref = known_interface( $bridge ) ) {
+    if ( my $dockerref = known_interface('docker0') ) {
 	add_commands( $chainref, 'if [ -n "$g_docker" ]; then' );
 	incr_cmd_level( $chainref );
-	add_ijump( $chainref, j => 'DOCKER', o => $bridge );
-	add_ijump( $chainref, j => 'ACCEPT', o => $bridge , state_imatch 'ESTABLISHED,RELATED' );
-	add_ijump( $chainref, j => 'ACCEPT', i => $bridge , o => "! $bridge" );
-	add_ijump( $chainref, j => 'ACCEPT', i => $bridge , o => $bridge ) if $dockerref->{options}{routeback};
+	add_ijump( $chainref, j => 'DOCKER', o => 'docker0' );
+	add_ijump( $chainref, j => 'ACCEPT', o => 'docker0', state_imatch 'ESTABLISHED,RELATED' );
+	add_ijump( $chainref, j => 'ACCEPT', i => 'docker0', o => '! docker0' );
+	add_ijump( $chainref, j => 'ACCEPT', i => 'docker0', o => 'docker0' ) if $dockerref->{options}{routeback};
 	decr_cmd_level( $chainref );
 	add_commands( $chainref, 'fi' );
 
