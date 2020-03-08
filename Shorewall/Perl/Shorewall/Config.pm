@@ -1010,7 +1010,6 @@ sub initialize($;$$$) {
 	  PERL_HASH_SEED => undef ,
 	  USE_NFLOG_SIZE => undef ,
 	  RENAME_COMBINED => undef ,
-	  DOCKER_BRIDGE => undef ,
 	  #
 	  # Packet Disposition
 	  #
@@ -6570,9 +6569,6 @@ sub get_configuration( $$$ ) {
 	fatal_error "DOCKER=Yes is not allowed in Shorewall6" if $family == F_IPV6;
 	require_capability( 'IPTABLES_S', 'DOCKER=Yes', 's' );
 	require_capability( 'ADDRTYPE', '  DOCKER=Yes', 's' );
-	default( 'DOCKER_BRIDGE' , 'docker0' );
-    } elsif ( $family == F_IPV6 ) {
-	warning_message( "DOCKER_BRIDGE=$val ignored by shorewall6" ) if supplied( $val = $config{DOCKER_BRIDGE} );
     }
 
     if ( supplied( $val = $config{RESTART} ) ) {
