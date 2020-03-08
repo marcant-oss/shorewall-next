@@ -4323,7 +4323,6 @@ usage() # $1 = exit status
 	echo "   iptrace <ip6tables match expression>"
     fi
 
-    ecko "   load [ -s ] [ -c ] [ -r <root user> ] [ -T ] [ -i ] [ <directory> ] <system>"
     echo "   logdrop <address> ..."
     echo "   logreject <address> ..."
     echo "   logwatch [<refresh interval>]"
