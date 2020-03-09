@@ -20,6 +20,8 @@
     <copyright>
       <year>2012</year>
 
+      <year>2020</year>
+
       <holder>Thomas M. Eastep</holder>
     </copyright>
 
@@ -295,23 +297,23 @@ ip link set ifb0 up</programlisting>
 
     <para>The mangle file classifies upload packets:</para>
 
-    <programlisting>#MARK            SOURCE         DEST          PROTO     DPORT       SPORT      USER    TEST
+    <programlisting>#ACTION          SOURCE         DEST          PROTO     DPORT       SPORT      USER    TEST
 RESTORE:T        -              -             -         -           -          -       !0:C
 CONTINUE:T       -              -             -         -           -          -       !0
-2:T              -              -             icmp
-1:T              -              -             udp       $UDP_VOIP   -          -       0
-1:T              $IP_VOIP       -             -         -           -          -       0
-1:T              -              $IP_VOIP      -         -           -          -       0
-2:T              -              -             tcp       $TCP_PRIO   -          -       0
-2:T              -              -             udp       $UDP_PRIO   -          -       0
-2:T              -              -             tcp       -           $TCP_PRIO  -       0
-2:T              -              -             udp       -           $UDP_PRIO  -       0
-3:T              -              -             tcp       $TCP_NORMAL -          -       0
-4:T              -              -             ipp2p:all -           -          -       0
-5:T              -              -             tcp       $TCP_BULK   -          -       0
-5:T              -              -             tcp       -           $TCP_BULK  -       0
-5:T              -              -             udp       $UDP_BULK   -          -       0
-5:T              -              -             udp       -           $UDP_BULK  -       0
+MARK(2):T        -              -             icmp
+MARK(1):T        -              -             udp       $UDP_VOIP   -          -       0
+MARK(1):T        $IP_VOIP       -             -         -           -          -       0
+MARK(1):T        -              $IP_VOIP      -         -           -          -       0
+MARK(2):T        -              -             tcp       $TCP_PRIO   -          -       0
+MARK(2):T        -              -             udp       $UDP_PRIO   -          -       0
+MARK(2):T        -              -             tcp       -           $TCP_PRIO  -       0
+MARK(2):T        -              -             udp       -           $UDP_PRIO  -       0
+MARK(3):T        -              -             tcp       $TCP_NORMAL -          -       0
+MARK(4):T        -              -             ipp2p:all -           -          -       0
+MARK(5):T        -              -             tcp       $TCP_BULK   -          -       0
+MARK(5):T        -              -             tcp       -           $TCP_BULK  -       0
+MARK(5):T        -              -             udp       $UDP_BULK   -          -       0
+MARK(5):T        -              -             udp       -           $UDP_BULK  -       0
 SAVE:T           -              -             -         -           -          -      !0</programlisting>
   </section>
 
