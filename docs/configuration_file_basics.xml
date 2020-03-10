@@ -18,7 +18,7 @@
     <pubdate><?dbtimestamp format="Y/m/d"?></pubdate>
 
     <copyright>
-      <year>2001-2019</year>
+      <year>2001-2020</year>
 
       <holder>Thomas M. Eastep</holder>
     </copyright>
@@ -56,7 +56,7 @@
     Shorewall</ulink> is required reading for being able to use this article
     effectively. For information about setting up your first Shorewall-based
     firewall, see the <ulink url="GettingStarted.html">Quickstart
-    Guides</ulink>.in</para>
+    Guides</ulink>.</para>
   </section>
 
   <section id="Files">
@@ -327,6 +327,39 @@
     page for that file is 'shorewall.conf':</para>
 
     <programlisting>man shorewall.conf</programlisting>
+
+    <para>Parts of this and other articles are also available as
+    manpages:</para>
+
+    <itemizedlist>
+      <listitem>
+        <para>shorewall-addresses(5)</para>
+      </listitem>
+
+      <listitem>
+        <para>shorewall-exclusion(5)</para>
+      </listitem>
+
+      <listitem>
+        <para>shorewall-files(5)</para>
+      </listitem>
+
+      <listitem>
+        <para>shorewall-ipsets(5)</para>
+      </listitem>
+
+      <listitem>
+        <para>shorewall-logging(5)</para>
+      </listitem>
+
+      <listitem>
+        <para>shorewall-names(5)</para>
+      </listitem>
+
+      <listitem>
+        <para>shorewall-nesting(5)</para>
+      </listitem>
+    </itemizedlist>
   </section>
 
   <section id="Comments">
@@ -534,7 +567,7 @@ ACCEPT      net:\
         readability as in:</para>
 
         <simplelist>
-          <member><emphasis role="bold">{ proto=&gt;udp, port=1024
+          <member><emphasis role="bold">{ proto=&gt;udp, dport=1024
           }</emphasis></member>
         </simplelist>
       </listitem>
@@ -545,13 +578,14 @@ ACCEPT      net:\
 
         <simplelist>
           <member><emphasis role="bold">; proto:udp,
-          port:1024</emphasis></member>
+          dport:1024</emphasis></member>
         </simplelist>
 
         <important>
           <para>This form is incompatible with INLINE_MATCHES=Yes. See the
           INLINE_MATCHES option in <ulink
-          url="manpages/shorewall.conf.html">shorewall.conf(5)</ulink>.</para>
+          url="manpages/shorewall.conf.html">shorewall.conf(5)</ulink>, if you
+          are running a version of Shorewall earlier than 5.0..</para>
         </important>
       </listitem>
     </itemizedlist>
@@ -1509,16 +1543,15 @@ SSH(ACCEPT)    net:$MYIP      $FW
       <programlisting>    /etc/shorewall/params
  
         NET_IF=eth0
-        NET_BCAST=130.252.100.255
         NET_OPTIONS=routefilter,routefilter
  
     /etc/shorewall/interfaces record:
 
-        net $NET_IF $NET_BCAST $NET_OPTIONS
+        net $NET_IF $NET_OPTIONS
  
     The result will be the same as if the record had been written
  
-        net eth0 130.252.100.255 routefilter,routefilter
+        net eth0 routefilter,routefilter
  </programlisting>
     </blockquote>
 
@@ -2193,7 +2226,7 @@ SSH(ACCEPT)    net:$MYIP      $FW
 
     <important>
       <para>Beginning with Shorewall 4.5.11, the compiler's environmental
-      variables are search last rather than first.</para>
+      variables are searched last rather than first.</para>
     </important>
 
     <para>If the <replaceable>variable</replaceable> is still not
@@ -2704,9 +2737,10 @@ POP(ACCEPT)     loc                  net:pop.gmail.com</programlisting>
   <section id="IPRanges">
     <title>IP Address Ranges</title>
 
-    <para>If you kernel and iptables have iprange match support, you may use
-    IP address ranges in Shorewall configuration file entries; IP address
-    ranges have the syntax &lt;<emphasis>low IP
+    <para>If you kernel and iptables have <emphasis>iprange</emphasis>
+    <emphasis>match</emphasis> <emphasis>support</emphasis>, you may use IP
+    address ranges in Shorewall configuration file entries; IP address ranges
+    have the syntax &lt;<emphasis>low IP
     address</emphasis>&gt;-&lt;<emphasis>high IP address</emphasis>&gt;.
     Example: 192.168.1.5-192.168.1.12.</para>
 
@@ -2714,16 +2748,15 @@ POP(ACCEPT)     loc                  net:pop.gmail.com</programlisting>
     the <command>shorewall show capabilities</command> command:</para>
 
     <programlisting>&gt;~ <command>shorewall show capabilities</command>
-... 
 Shorewall has detected the following iptables/netfilter capabilities:
-   NAT: Available
-   Packet Mangling: Available
-   Multi-port Match: Available
-   Connection Tracking Match: Available
-   Packet Type Match: Not available
-   Policy Match: Available
-   Physdev Match: Available
-   <emphasis role="bold">IP range Match: Available &lt;--------------</emphasis></programlisting>
+   ACCOUNT Target (ACCOUNT_TARGET): Not available
+   Address Type Match (ADDRTYPE): Available
+   Amanda Helper: Available
+...
+   IPMARK Target (IPMARK_TARGET): Not available
+   IPP2P Match (IPP2P_MATCH): Not available
+   <emphasis role="bold">IP range Match(IPRANGE_MATCH): Available</emphasis> <emphasis
+        role="bold">&lt;================</emphasis></programlisting>
   </section>
 
   <section id="Ports">
@@ -2860,7 +2893,7 @@ neighbour-solicitation        =&gt; 135
 neighbour-advertisement       =&gt; 136
 redirect                      =&gt; 137</programlisting>
 
-    <para>Shorewall 4.4 does not accept lists if ICMP (ICMP6) types prior to
+    <para>Shorewall 4.4 does not accept lists of ICMP (ICMP6) types prior to
     Shorewall 4.4.19.</para>
   </section>
 
