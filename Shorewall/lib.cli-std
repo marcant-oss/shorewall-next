@@ -503,7 +503,7 @@ compiler() {
     [ -n "$g_timestamp" ]      && options="$options --timestamp"
     [ -n "$g_test" ]           && options="$options --test"
     [ -n "$g_preview" ]        && options="$options --preview"
-    [ "$g_debugging" = trace ] && options="$options --debug"
+    [ -n "$g_trace" ]          && options="$options --debug"
     [ -n "$g_confess" ]        && options="$options --confess"
     [ -n "$g_update" ]         && options="$options --update"
     [ -n "$g_annotate" ]       && options="$options --annotate"
@@ -531,7 +531,7 @@ compiler() {
     #
     # Only use the pager if 'trace' or -r was specified and -d was not
     #
-    [ "$g_debugging" != trace -a -z "$g_preview" ] || [ -n "$g_debug" ] && g_pager=
+    [ -z "$g_trace" -a -z "$g_preview" ] || [ -n "$g_debug" ] && g_pager=
 
     case $PERL_HASH_SEED in
 	random)
@@ -615,6 +615,10 @@ start_command() {
 			    g_counters=Yes
 			    option=${option#C}
 			    ;;
+			D*)
+			    g_trace=Yes
+			    option=${option#D}
+			    ;;
 			*)
 			    option_error $option
 			    ;;
@@ -660,14 +664,14 @@ start_command() {
 
     if [ -n "$AUTOMAKE" ]; then
 	[ -n "$g_nolock" ] || mutex_on
-	run_it $g_firewall $g_debugging start
+	run_it $g_firewall start
 	rc=$?
 	[ -n "$g_nolock" ] || mutex_off
     else
 	g_file="${VARDIR}/.start"
-	if compiler $g_debugging $g_nolock compile "$g_file"; then
+	if compiler compile "$g_file"; then
 	    [ -n "$g_nolock" ] || mutex_on
-	    run_it ${VARDIR}/.start $g_debugging start
+	    run_it ${VARDIR}/.start start
 	    rc=$?
 	    [ -n "$g_nolock" ] || mutex_off
 	else
@@ -721,6 +725,10 @@ compile_command() {
 			    g_confess=Yes
 			    option=${option#T}
 			    ;;
+			D*)
+			    g_trace=Yes
+			    option=${option#D}
+			    ;;
 			-)
 			    finished=1
 			    option=
@@ -768,7 +776,7 @@ compile_command() {
 
     [ "x$g_file" = x- ] && g_doing=''
 
-    compiler $g_debugging compile "$g_file"
+    compiler compile "$g_file"
 }
 
 #
@@ -815,6 +823,10 @@ check_command() {
 			    g_confess=Yes
 			    option=${option#T}
 			    ;;
+			D*)
+			    g_trace=Yes
+			    option=${option#D}
+			    ;;
 			*)
 			    option_error $option
 			    ;;
@@ -851,7 +863,7 @@ check_command() {
 
     g_doing="Checking"
 
-    compiler $g_debugging $g_nolock check
+    compiler check
 }
 
 #
@@ -906,6 +918,10 @@ update_command() {
 			A*)
 			    option=${option#A}
 			    ;;
+			D*)
+			    g_trace=Yes
+			    option=${option#D}
+			    ;;
 			*)
 			    option_error $option
 			    ;;
@@ -942,7 +958,7 @@ update_command() {
 
     g_doing="Updating"
 
-    compiler $g_debugging $g_nolock check
+    compiler check
 }
 
 #
@@ -999,6 +1015,10 @@ restart_command() {
 			    g_counters=Yes
 			    option=${option#C}
 			    ;;
+			D*)
+			    g_trace=Yes
+			    option=${option#D}
+			    ;;
 			*)
 			    option_error $option
 			    ;;
@@ -1044,9 +1064,9 @@ restart_command() {
     g_file="${VARDIR}/.${COMMAND}"
 
     if [ -z "$g_fast" ]; then
-	if compiler $g_debugging $g_nolock compile "$g_file"; then
+	if compiler compile "$g_file"; then
 	    [ -n "$g_nolock" ] || mutex_on
-	    run_it ${VARDIR}/.${COMMAND} $g_debugging ${COMMAND}
+	    run_it ${VARDIR}/.${COMMAND} ${COMMAND}
 	    rc=$?
 	    [ -n "$g_nolock" ] || mutex_off
 	else
@@ -1056,7 +1076,7 @@ restart_command() {
     else
 	[ -x $g_firewall ] || fatal_error "No $g_firewall file found"
 	[ -n "$g_nolock" ] || mutex_on
-	run_it $g_firewall $g_debugging $COMMAND
+	run_it $g_firewall $COMMAND
 	rc=$?
 	[ -n "$g_nolock" ] || mutex_off
     fi
@@ -1197,7 +1217,7 @@ safe_commands() {
 
     g_file="${VARDIR}/.$command"
 
-    if ! compiler $g_debugging nolock compile "$g_file"; then
+    if ! compiler compile "$g_file"; then
 	status=$?
 	exit $status
     fi
@@ -1223,7 +1243,7 @@ safe_commands() {
 
     [ -n "$g_nolock" ] || mutex_on
 
-    if run_it ${VARDIR}/.$command $g_debugging $command; then
+    if run_it ${VARDIR}/.$command $command; then
 
 	printf "Do you want to accept the new firewall configuration? [y/n] "
 
@@ -1334,7 +1354,7 @@ try_command() {
 
     g_file="${VARDIR}/.$command"
 
-    if ! compiler $g_debugging $g_nolock compile "$g_file"; then
+    if ! compiler compile "$g_file"; then
 	status=$?
 	exit $status
     fi
@@ -1356,7 +1376,7 @@ try_command() {
 
     [ -n "$g_nolock" ] || mutex_on
 
-    if run_it ${VARDIR}/.$command $g_debugging $command && [ -n "$timeout" ]; then
+    if run_it ${VARDIR}/.$command $command && [ -n "$timeout" ]; then
 	sleep $timeout
 
 	if [ "$command" = "reload" ]; then
@@ -1606,6 +1626,10 @@ remote_commands() # $* = original arguments less the command.
 			    g_confess=Yes
 			    option=${option#T}
 			    ;;
+			D*)
+			    g_trace=Yes
+			    option=${option#D}
+			    ;;
 			*)
 			    option_error $option
 			    ;;
@@ -1697,7 +1721,7 @@ remote_commands() # $* = original arguments less the command.
 
     exitstatus=0
 
-    if compiler $g_debugging compiler "$g_file"; then
+    if compiler compiler "$g_file"; then
 	progress_message3 "Copying $file and ${file}.conf to ${system}:${litedir}..."
 	if rcp_command "$g_shorewalldir/firewall $g_shorewalldir/firewall.conf" ${litedir};  then
 	    save=$(find_file save);
@@ -1712,20 +1736,20 @@ remote_commands() # $* = original arguments less the command.
 		progress_message3 "Copy complete"
 
 		if [ $COMMAND = remote-reload ]; then
-		    if rsh_command "$program $g_debugging $verbose $timestamp reload"; then
+		    if rsh_command "$program $verbose $timestamp reload"; then
 			progress_message3 "System $system reloaded"
 		    else
 			exitstatus=$?
 			savit=
 		    fi
 		elif [ $COMMAND = remote-restart ]; then
-		    if rsh_command "$program $g_debugging $verbose $timestamp restart"; then
+		    if rsh_command "$program $verbose $timestamp restart"; then
 			progress_message3 "System $system restarted"
 		    else
 			exitstatus=$?
 			saveit=
 		    fi
-		elif rsh_command "$program $g_debugging $verbose $timestamp start"; then
+		elif rsh_command "$program $verbose $timestamp start"; then
 		    progress_message3 "System $system started"
 		else
 		    exitstatus=$?
@@ -1733,7 +1757,7 @@ remote_commands() # $* = original arguments less the command.
 		fi
 
 		if [ -n "$saveit" ]; then
-		    if rsh_command "$program $g_debugging $verbose $timestamp save"; then
+		    if rsh_command "$program $verbose $timestamp save"; then
 			progress_message3 "Configuration on system $system saved"
 		    else
 			exitstatus=$?
@@ -1816,7 +1840,7 @@ export_command() # $* = original arguments less the command.
 
     g_file="$g_shorewalldir/firewall"
 
-    if compiler $g_debugging compile "$g_file" && \
+    if compiler compile "$g_file" && \
 	echo "Copying $file and ${file}.conf to ${target#*@}..." && \
 	scp $g_shorewalldir/firewall $g_shorewalldir/firewall.conf $target
     then
@@ -1831,7 +1855,7 @@ export_command() # $* = original arguments less the command.
 run_command() {
     if [ -x $g_firewall ] ; then
 	uptodate $g_firewall || echo "   WARNING: $g_firewall is not up to date" >&2
-	run_it $g_firewall $g_debugging $@
+	run_it $g_firewall $@
     else
 	fatal_error "$g_firewall does not exist or is not executable"
     fi

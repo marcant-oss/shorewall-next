@@ -4120,9 +4120,9 @@ start_command() {
 
 	if [ -x $g_firewall ]; then
 	    if [ -n "$g_fast" -a -x ${VARDIR}/${RESTOREFILE} -a ! $g_firewall -nt ${VARDIR}/${RESTOREFILE} ]; then
-		run_it ${VARDIR}/${RESTOREFILE} $g_debugging restore
+		run_it ${VARDIR}/${RESTOREFILE} restore
 	    else
-		run_it $g_firewall $g_debugging start
+		run_it $g_firewall start
 	    fi
 	    rc=$?
 	else
@@ -4256,7 +4256,7 @@ restart_command() {
     [ -n "$g_nolock" ] || mutex_on
 
     if [ -x $g_firewall ]; then
-	run_it $g_firewall $g_debugging $COMMAND
+	run_it $g_firewall $COMMAND
 	rc=$?
     else
 	error_message "$g_firewall is missing or is not executable"
@@ -4270,7 +4270,7 @@ restart_command() {
 
 run_command() {
     if [ -x $g_firewall ] ; then
-	run_it $g_firewall $g_debugging $@
+	run_it $g_firewall $@
     else
 	fatal_error "$g_firewall does not exist or is not executable"
     fi
@@ -4287,7 +4287,13 @@ ecko() {
 #
 usage() # $1 = exit status
 {
-    echo "Usage: $(basename $0) [debug|trace] [nolock] [ -q ] [ -v[-1|{0-2}] ] [ -t ] <command>"
+    echo "Usage: $(basename $0) [ -T ] [ -D ] [ -N ] [ -q ] [ -v[-1|{0-2}] ] [ -t ] <command>"
+    echo "   -T : Direct the generated script to produce a shell trace to standard error"
+    echo "   -D : Debug iptables commands"
+    echo "   -N : Don't take the master shorewall lock"
+    echo "   -q : Standard Shorewall verbosity control"
+    echo "   -v : Standard Shorewall verbosity control"
+    echo "   -t : Timestamp all messages"
     echo "where <command> is one of:"
     echo "   add <interface>[:<host-list>] ... <zone>"
     echo "   allow <address> ..."
@@ -4317,7 +4323,6 @@ usage() # $1 = exit status
 	echo "   iptrace <ip6tables match expression>"
     fi
 
-    ecko "   load [ -s ] [ -c ] [ -r <root user> ] [ -T ] [ -i ] [ <directory> ] <system>"
     echo "   logdrop <address> ..."
     echo "   logreject <address> ..."
     echo "   logwatch [<refresh interval>]"
@@ -4415,20 +4420,16 @@ usage() # $1 = exit status
 # here if that lib is loaded below.
 #
 shorewall_cli() {
-    g_debugging=
-
-    if [ $# -gt 0 ] && [ "x$1" = "xdebug" -o "x$1" = "xtrace" ]; then
-	g_debugging=$1
-	shift
-    fi
-
     g_nolock=
-
+    #
+    # We'll keep this around for a while so we don't break people's started scripts
+    #
     if [ $# -gt 0 ] && [ "$1" = "nolock" ]; then
 	g_nolock=nolock
 	shift
     fi
 
+    g_debugging=
     g_noroutes=
     g_purge=
     g_ipt_options="-nv"
@@ -4456,6 +4457,7 @@ shorewall_cli() {
     g_blacklistipset=
     g_disconnect=
     g_havemutex=
+    g_trace=
 
     VERBOSE=
     VERBOSITY=1
@@ -4587,6 +4589,17 @@ shorewall_cli() {
 			    finished=1
 			    option=
 			    ;;
+			T*)
+			    g_debugging=trace
+			    option=${option#T}
+			    ;;
+			D*)
+			    g_debugging=debug
+			    option=${option#D}
+			    ;;
+			N*)
+			    g_nolock=nolock
+			    ;;
 			*)
 			    option_error $option
 			    ;;
@@ -4639,7 +4652,7 @@ shorewall_cli() {
 	    get_config
 	    [ -x $g_firewall ] || fatal_error "$g_product has never been started"
 	    [ -n "$g_nolock" ] || mutex_on
-	    run_it $g_firewall $g_debugging $COMMAND
+	    run_it $g_firewall $COMMAND
 	    [ -n "$g_nolock" ] || mutex_off
 	    ;;
 	reset)
@@ -4648,7 +4661,7 @@ shorewall_cli() {
 	    shift
 	    [ -n "$g_nolock" ] || mutex_on
 	    [ -x $g_firewall ] || fatal_error "$g_product has never been started"
-	    run_it $g_firewall $g_debugging reset $@
+	    run_it $g_firewall reset $@
 	    [ -n "$g_nolock" ] || mutex_off
 	    ;;
 	reload|restart)
@@ -4661,7 +4674,7 @@ shorewall_cli() {
 	    only_root
 	    get_config Yes
 	    if product_is_started; then
-		run_it $g_firewall $g_debugging $@
+		run_it $g_firewall $@
 	    else
 		fatal_error "$g_product is not running"
 	    fi
@@ -4816,7 +4829,7 @@ shorewall_cli() {
 		    # It isn't a function visible to this script -- try
 		    # the compiled firewall
 		    #
-		    run_it $g_firewall $g_debugging call $@
+		    run_it $g_firewall call $@
 		fi
 	    else
 		missing_argument
