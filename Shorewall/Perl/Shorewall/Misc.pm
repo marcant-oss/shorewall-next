@@ -675,6 +675,8 @@ sub process_stoppedrules() {
 # Generate the rules required when DOCKER=Yes
 #
 sub create_docker_rules() {
+    my $bridge = $config{DOCKER_BRIDGE};
+
     add_commands( $nat_table->{PREROUTING} , '[ -n "$g_docker" ] && echo "-A PREROUTING -m addrtype --dst-type LOCAL -j DOCKER" >&3' );
 
     my $chainref = $filter_table->{FORWARD};
@@ -684,13 +686,13 @@ sub create_docker_rules() {
     add_commands( $chainref, '[ -n "$g_dockeriso" ]      && echo "-A FORWARD -j DOCKER-ISOLATION" >&3' );
     add_commands( $chainref, '[ -n "$g_dockerisostage" ] && echo "-A FORWARD -j DOCKER-ISOLATION-STAGE-1" >&3' );
 
-    if ( my $dockerref = known_interface('docker0') ) {
+    if ( my $dockerref = known_interface( $bridge ) ) {
 	add_commands( $chainref, 'if [ -n "$g_docker" ]; then' );
 	incr_cmd_level( $chainref );
-	add_ijump( $chainref, j => 'DOCKER', o => 'docker0' );
-	add_ijump( $chainref, j => 'ACCEPT', o => 'docker0', state_imatch 'ESTABLISHED,RELATED' );
-	add_ijump( $chainref, j => 'ACCEPT', i => 'docker0', o => '! docker0' );
-	add_ijump( $chainref, j => 'ACCEPT', i => 'docker0', o => 'docker0' ) if $dockerref->{options}{routeback};
+	add_ijump( $chainref, j => 'DOCKER', o => $bridge );
+	add_ijump( $chainref, j => 'ACCEPT', o => $bridge , state_imatch 'ESTABLISHED,RELATED' );
+	add_ijump( $chainref, j => 'ACCEPT', i => $bridge , o => "! $bridge" );
+	add_ijump( $chainref, j => 'ACCEPT', i => $bridge , o => $bridge ) if $dockerref->{options}{routeback};
 	decr_cmd_level( $chainref );
 	add_commands( $chainref, 'fi' );
 
@@ -2532,6 +2534,7 @@ sub compile_stop_firewall( $$$$ ) {
     my $input   = $filter_table->{INPUT};
     my $output  = $filter_table->{OUTPUT};
     my $forward = $filter_table->{FORWARD};
+    my $absentminded = $config{ ADMINISABSENTMINDED };
 
     emit <<'EOF';
 #
@@ -2539,7 +2542,7 @@ sub compile_stop_firewall( $$$$ ) {
 #
 stop_firewall() {
 EOF
-    $output->{policy} = 'ACCEPT' if $config{ADMINISABSENTMINDED};
+    $output->{policy} = 'ACCEPT' if $absentminded;
 
     if ( $family == F_IPV4 ) {
 	emit <<'EOF';
@@ -2698,7 +2701,7 @@ EOF
     #
     create_docker_rules if $config{DOCKER};
 
-    if ( $config{ADMINISABSENTMINDED} ) {
+    if ( $absentminded ) {
 	add_ijump $filter_table ->{$_}, j => 'ACCEPT', state_imatch 'ESTABLISHED,RELATED' for qw/INPUT FORWARD/;
     }
 
@@ -2707,7 +2710,7 @@ EOF
 	add_ijump $input, j => 'ACCEPT', d => IPv6_LINKLOCAL;
 	add_ijump $input, j => 'ACCEPT', d => IPv6_MULTICAST;
 
-	unless ( $config{ADMINISABSENTMINDED} ) {
+	unless ( $absentminded ) {
 	    add_ijump $output, j => 'ACCEPT', d => IPv6_LINKLOCAL;
 	    add_ijump $output, j => 'ACCEPT', d => IPv6_MULTICAST;
 	}
@@ -2721,12 +2724,25 @@ EOF
     
     process_stoppedrules;
 
+    if ( $family == F_IPV6 ) {
+	my $chain = new_action_chain( 'filter', 'AllowICMPs' );
+
+	for my $type ( 1, 2, 3, 4, 130, 131, 132, 133, 134, 135, 136, 137, 141, 142, 143, 148, 149, 151, 152, 153 ) {
+	    add_ijump( $chain, j => 'ACCEPT', p => IPv6_ICMP . " --icmpv6-type $type" );
+	}
+
+	for $chain ( $input, $output, $forward ) {
+	    next if $chain eq $output && $absentminded;
+	    add_ijump( $chain, j => 'AllowICMPs', p => IPv6_ICMP );
+	}
+    }
+
     if ( have_capability 'IFACE_MATCH' ) {
 	add_ijump $input,  j => 'ACCEPT', iface => '--dev-in --loopback';
-	add_ijump $output, j => 'ACCEPT', iface => '--dev-out --loopback' unless $config{ADMINISABSENTMINDED};
+	add_ijump $output, j => 'ACCEPT', iface => '--dev-out --loopback' unless $absentminded;
     } else {
 	add_ijump $input,  j => 'ACCEPT', i => loopback_interface;
-	add_ijump $output, j => 'ACCEPT', o => loopback_interface unless $config{ADMINISABSENTMINDED};
+	add_ijump $output, j => 'ACCEPT', o => loopback_interface unless $absentminded;
     }
 
     my $interfaces = find_interfaces_by_option 'dhcp';
@@ -2736,7 +2752,7 @@ EOF
 
 	for my $interface ( @$interfaces ) {
 	    add_ijump $input,  j => 'ACCEPT', p => "udp --dport $ports", imatch_source_dev( $interface );
-	    add_ijump $output, j => 'ACCEPT', p => "udp --dport $ports", imatch_dest_dev( $interface ) unless $config{ADMINISABSENTMINDED};
+	    add_ijump $output, j => 'ACCEPT', p => "udp --dport $ports", imatch_dest_dev( $interface ) unless $absentminded;
 	    #
 	    # This might be a bridge
 	    #
