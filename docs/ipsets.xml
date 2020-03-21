@@ -30,6 +30,8 @@
 
       <year>2019</year>
 
+      <year>2020</year>
+
       <holder>Thomas M. Eastep</holder>
     </copyright>
 
@@ -160,11 +162,11 @@ ACCEPT       net:+sshok       $FW      tcp      22</programlisting></para>
       </listitem>
 
       <listitem>
-        <para>You cannot use an ipset in <ulink
+        <para>You can use an ipset in <ulink
         url="manpages/shorewall-stoppedulres.html">shorewall-stoppedrules</ulink>
-        (5) (<ulink
-        url="manpages/shorewall-routestopped.html">shorewall-routestopped</ulink>
-        (5)).</para>
+        (5), but SAVE_IPSET={Yes|ipv4} will not save such a set during 'stop'
+        processing. Use Shorewall-init to save/restore your ipsets in this
+        case (see below).</para>
       </listitem>
 
       <listitem>
