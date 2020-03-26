@@ -27,7 +27,7 @@
 
     <para>This file is used to define dynamic NAT (Masquerading) and to define
     Source NAT (SNAT). It superseded <ulink
-    url="/manpages/shorewall-masq.html">shorewall-masq</ulink>(5) in Shorewall
+    url="shorewall-masq.html">shorewall-masq</ulink>(5) in Shorewall
     5.0.14.</para>
 
     <warning>
@@ -39,9 +39,9 @@
       <para>If you have more than one ISP link, adding entries to this file
       will <emphasis role="bold">not</emphasis> force connections to go out
       through a particular link. You must use entries in <ulink
-      url="/manpages/shorewall-rtrules.html">shorewall-rtrules</ulink>(5) or
+      url="shorewall-rtrules.html">shorewall-rtrules</ulink>(5) or
       PREROUTING entries in <ulink
-      url="/manpages/shorewall-mangle.html">shorewall-mangle</ulink>(5) to do
+      url="shorewall-mangle.html">shorewall-mangle</ulink>(5) to do
       that.</para>
     </warning>
 
@@ -68,9 +68,9 @@
               <listitem>
                 <para>where <replaceable>action</replaceable> is an action
                 declared in <ulink
-                url="/manpages/shorewall-actions.html">shorewall-actions(5)</ulink>
+                url="shorewall-actions.html">shorewall-actions(5)</ulink>
                 with the <option>nat</option> option. See <ulink
-                url="/Actions.html">www.shorewall.net/Actions.html</ulink> for
+                url="../Actions.html">https://shorewall.org/Actions.html</ulink> for
                 further information.</para>
               </listitem>
             </varlistentry>
@@ -165,7 +165,7 @@
                 <para>If you specify an address here, matching packets will
                 have their source address set to that address. If
                 ADD_SNAT_ALIASES is set to Yes or yes in <ulink
-                url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
+                url="shorewall.conf.html">shorewall.conf</ulink>(5)
                 then Shorewall will automatically add this address to the
                 INTERFACE named in the first column (IPv4 only).</para>
 
@@ -237,11 +237,11 @@
 
           <para>Normally Masq/SNAT rules are evaluated after those for
           one-to-one NAT (defined in <ulink
-          url="/manpages/shorewall-nat.html">shorewall-nat</ulink>(5)). If you
+          url="shorewall-nat.html">shorewall-nat</ulink>(5)). If you
           want the rule to be applied before one-to-one NAT rules, follow the
           action name with "+": This feature should only be required if you
           need to insert rules in this file that preempt entries in <ulink
-          url="/manpages/shorewall-nat.html">shorewall-nat</ulink>(5).</para>
+          url="shorewall-nat.html">shorewall-nat</ulink>(5).</para>
         </listitem>
       </varlistentry>
 
@@ -279,7 +279,7 @@
           networks. Multiple interfaces may be listed when the ACTION is
           MASQUERADE, but this is usually just your internet interface. If
           ADD_SNAT_ALIASES=Yes in <ulink
-          url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5), you
+          url="shorewall.conf.html">shorewall.conf</ulink>(5), you
           may add ":" and a <emphasis>digit</emphasis> to indicate that you
           want the alias added with that name (e.g., eth0:0). This will allow
           the alias to be displayed with ifconfig. <emphasis role="bold">That
@@ -291,16 +291,16 @@
           interfaces. </para>
 
           <para>Each interface must match an entry in <ulink
-          url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
           Shorewall allows loose matches to wildcard entries in <ulink
-          url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
           For example, <filename class="devicefile">ppp0</filename> in this
           file will match a <ulink
-          url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5)
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)
           entry that defines <filename
           class="devicefile">ppp+</filename>.</para>
 
-          <para>Where <ulink url="/4.4/MultiISP.html#Shared">more that one
+          <para>Where <ulink url="../4.4/MultiISP.html#Shared">more that one
           internet provider share a single interface</ulink>, the provider is
           specified by including the provider name or number in
           parentheses:</para>
@@ -315,7 +315,7 @@
           addresses to indicate that you only want to change the source IP
           address for packets being sent to those particular destinations.
           Exclusion is allowed (see <ulink
-          url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5))
+          url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5))
           as are ipset names preceded by a plus sign '+';</para>
 
           <para>If you wish to inhibit the action of ADD_SNAT_ALIASES for this
@@ -342,7 +342,7 @@
           <para>If you wish to restrict this entry to a particular protocol
           then enter the protocol name (from protocols(5)) or number here. See
           <ulink
-          url="/manpages/shorewall-rules.html">shorewall-rules(5)</ulink> for
+          url="shorewall-rules.html">shorewall-rules(5)</ulink> for
           details.</para>
 
           <para>Beginning with Shorewall 4.5.12, this column can accept a
@@ -831,7 +831,7 @@
     <title>See ALSO</title>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
+    url="../configuration_file_basics.htm#Pairs">https://shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

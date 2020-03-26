@@ -5,7 +5,7 @@
 # run-time extension scripts. The file will be copied into the generated
 # firewall script.
 #
-# See http://shorewall.org/shorewall_extension_scripts.htm for additional
+# See https://shorewall.org/shorewall_extension_scripts.htm for additional
 # information.
 #
 ###############################################################################

@@ -4,7 +4,7 @@
 # Replace the 'cat' command below to filter the output of
 # 'show connections'.
 #
-# See http://shorewall.org/shorewall_extension_scripts.htm for additional
+# See https://shorewall.org/shorewall_extension_scripts.htm for additional
 # information.
 #
 ###############################################################################

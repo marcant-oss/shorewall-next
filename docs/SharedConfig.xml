@@ -171,7 +171,7 @@ DEFAULT_PAGER=/usr/bin/less
 #
 #  For information about the settings in this file, type "man shorewall.conf"
 #
-#  Manpage also online at http://www.shorewall.org/manpages/shorewall.conf.html
+#  Manpage also online at https://shorewall.org/manpages/shorewall.conf.html
 ###############################################################################
 #		       S T A R T U P   E N A B L E D
 ###############################################################################
@@ -348,7 +348,7 @@ ZONE_BITS=0
 #  For information about the settings in this file, type "man shorewall6.conf"
 #
 #  Manpage also online at
-#  http://www.shorewall.org/manpages/shorewall.conf.html
+#  https://shorewall.org/manpages/shorewall.conf.html
 ###############################################################################
 #		       S T A R T U P   E N A B L E D
 ###############################################################################
@@ -529,7 +529,7 @@ if [ $g_family = 4 ]; then
     STATISTICAL=No	   # Don't use statistical load balancing
     LISTS=70.90.191.124	   # IP address of lists.shorewall.net (MX)
     MAIL=70.90.191.122	   # IP address of mail.shorewall.net  (IMAPS)
-    SERVER=70.90.191.125   # IP address of www.shorewall.org
+    SERVER=70.90.191.125   # IP address of shorewall.org
     PROXY=		   # Use TPROXY for local web access
     ALL=0.0.0.0/0	   # Entire address space
     LOC_ADDR=172.20.1.253  # IP address of the local LAN interface
@@ -553,7 +553,7 @@ else
     STATISTICAL=No			      # Don't use statistical load balancing
     LISTS=[2001:470:b:227::42]		      # IP address of lists.shorewall.net (MX and HTTPS)
     MAIL=[2001:470:b:227::45]		      # IP address of mail.shorewall.net  (IMAPS and HTTPS)
-    SERVER=[2001:470:b:227::43]		      # IP address of www.shorewall.org   (HTTP, FTP and RSYNC)
+    SERVER=[2001:470:b:227::43]		      # IP address of shorewall.org   (HTTP, FTP and RSYNC)
     PROXY=3				      # Use TPROXY for local web access
     ALL=[::]/0				      # Entire address space
     LOC_ADDR=[2601:601:a000:16f0::1]	      # IP address of the local LAN interface

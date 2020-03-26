@@ -409,7 +409,7 @@ CT:helper:ftp           loc             -               tcp     21</programlisti
 
     <para>For an overview of Netfilter Helpers and Shorewall's support for
     dealing with them, see <ulink
-    url="Helpers.html">http://www.shorewall.org/Helpers.html</ulink>.</para>
+    url="Helpers.html">https://shorewall.org/Helpers.html</ulink>.</para>
 
     <para>See <ulink
     url="https://home.regit.org/netfilter-en/secure-use-of-helpers/">https://home.regit.org/netfilter-en/secure-use-of-helpers/</ulink>

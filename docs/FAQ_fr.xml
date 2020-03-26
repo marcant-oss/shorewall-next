@@ -8,7 +8,7 @@
     <title>FAQ Shorewall</title>
 
     <subtitle>Version Française de <foreignphrase lang="en"><ulink
-    url="http://www.shorewall.org/FAQ.html">Shorewall
+    url="https://shorewall.org/FAQ.html">Shorewall
     FAQs</ulink></foreignphrase></subtitle>
 
     <authorgroup>
@@ -792,7 +792,7 @@ de deboguage de l'interface newnat.</programlisting></para>
         <title>(FAQ 4c) Comment utiliser Shorewall avec PortSentry?</title>
 
         <para><ulink
-        url="http://www.shorewall.org/pub/shorewall/contrib/PortsentryHOWTO.txt"><emphasis
+        url="https://shorewall.org/pub/shorewall/contrib/PortsentryHOWTO.txt"><emphasis
         role="bold">Answer:</emphasis> Vous trouverez ici la
         description</ulink> d'une bonne intégration de Shorewall et
         PortSentry.</para>
@@ -945,7 +945,7 @@ LOGBURST=""</programlisting>
         qui peuvent vous aider:</para>
 
         <literallayout>
-          <ulink url="http://www.shorewall.org/pub/shorewall/parsefw/">http://www.shorewall.org/pub/shorewall/parsefw/</ulink>
+          <ulink url="https://shorewall.org/pub/shorewall/parsefw/">https://shorewall.org/pub/shorewall/parsefw/</ulink>
           <ulink url="http://www.fireparse.com">http://www.fireparse.com</ulink>
           <ulink url="http://cert.uni-stuttgart.de/projects/fwlogwatch">http://cert.uni-stuttgart.de/projects/fwlogwatch</ulink>
           <ulink url="http://www.logwatch.org">http://www.logwatch.org</ulink>

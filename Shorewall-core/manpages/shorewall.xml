@@ -3170,7 +3170,7 @@
 
     <simplelist>
       <member><ulink
-      url="/starting_and_stopping_shorewall.htm">http://www.shorewall.org/starting_and_stopping_shorewall.htm</ulink>
+      url="/starting_and_stopping_shorewall.htm">https://shorewall.org/starting_and_stopping_shorewall.htm</ulink>
       - Describes operational aspects of Shorewall.</member>
 
       <member><ulink url="shorewall-files.html">shorewall-files(5)</ulink> -

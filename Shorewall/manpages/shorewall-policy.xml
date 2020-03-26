@@ -27,15 +27,15 @@
 
     <para>This file defines the high-level policy for connections between
     zones defined in <ulink
-    url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5).</para>
+    url="shorewall-zones.html">shorewall-zones</ulink>(5).</para>
 
     <important>
       <para>The order of entries in this file is important</para>
 
       <para>This file determines what to do with a new connection request if
       we don't get a match from the <ulink
-      url="/manpages/shorewall-blrules.html">shorewall-blrules</ulink>(5) or
-      <ulink url="/manpages/shorewall-rules.html">shorewall-rules</ulink>(5)
+      url="shorewall-blrules.html">shorewall-blrules</ulink>(5) or
+      <ulink url="shorewall-rules.html">shorewall-rules</ulink>(5)
       files. For each source/destination pair, the file is processed in order
       until a match is found ("all" will match any source or
       destination).</para>
@@ -45,7 +45,7 @@
       <para>Intra-zone policies are pre-defined</para>
 
       <para>For $FW and for all of the zones defined in <ulink
-      url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5), the
+      url="shorewall-zones.html">shorewall-zones</ulink>(5), the
       POLICY for connections from the zone to itself is ACCEPT (with no
       logging or TCP connection rate limiting) but may be overridden by an
       entry in this file. The overriding entry must be explicit (specifying
@@ -53,7 +53,7 @@
       4.5.17 or later).</para>
 
       <para>Similarly, if you have IMPLICIT_CONTINUE=Yes in <ulink
-      url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5), then the
+      url="shorewall.conf.html">shorewall.conf</ulink>(5), then the
       implicit policy to/from any sub-zone is CONTINUE. These implicit
       CONTINUE policies may also be overridden by an explicit entry in this
       file.</para>
@@ -72,7 +72,7 @@
 
         <listitem>
           <para>Source zone. Must be the name of a zone defined in <ulink
-          url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5),
+          url="shorewall-zones.html">shorewall-zones</ulink>(5),
           $FW, "all" or "all+".</para>
 
           <para>Support for <emphasis role="bold">all+</emphasis> was added in
@@ -100,7 +100,7 @@
 
         <listitem>
           <para>Destination zone. Must be the name of a zone defined in <ulink
-          url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5),
+          url="shorewall-zones.html">shorewall-zones</ulink>(5),
           $FW, "all" or "all+". If the DEST is a bport zone, then the SOURCE
           must be "all", "all+", another bport zone associated with the same
           bridge, or it must be an ipv4 zone that is associated with only the
@@ -146,7 +146,7 @@
             <listitem>
               <para>The word "None" or "none". This causes any default action
               defined in <ulink
-              url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5) to
+              url="shorewall.conf.html">shorewall.conf</ulink>(5) to
               be omitted for this policy.</para>
             </listitem>
 
@@ -171,7 +171,7 @@
           the policy-action list can be prefixed with a plus sign ("+")
           indicating that the listed actions are in addition to those listed
           in the related _DEFAULT setting in <ulink
-          url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5).</para>
+          url="shorewall.conf.html">shorewall.conf</ulink>(5).</para>
 
           <para>Possible policies are:</para>
 
@@ -207,7 +207,7 @@
               <listitem>
                 <para>Added in Shorewall 5.1.1 and requires that the
                 DYNAMIC_BLACKLIST setting in <ulink
-                url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
+                url="shorewall.conf.html">shorewall.conf</ulink>(5)
                 specifies ipset-based dynamic blacklisting. The SOURCE IP
                 address is added to the blacklist ipset and the connection
                 request is ignored.</para>
@@ -259,7 +259,7 @@
                 might also match (where the source or destination zone in
                 those rules is a superset of the SOURCE or DEST in this
                 policy). See <ulink
-                url="/manpages/shorewall-nesting.html">shorewall-nesting</ulink>(5)
+                url="shorewall-nesting.html">shorewall-nesting</ulink>(5)
                 for additional information.</para>
               </listitem>
             </varlistentry>
@@ -299,7 +299,7 @@
           url="http://www.netfilter.org/projects/ulogd/index.html">http://www.netfilter.org/projects/ulogd/index.html</ulink>).</para>
 
           <para>For a description of logging, see <ulink
-          url="/shorewall_logging.html">shorewall-logging(5)</ulink>.</para>
+          url="../shorewall_logging.html">shorewall-logging(5)</ulink>.</para>
 
           <para>If you don't want to log but need to specify the following
           column, place "-" here.</para>
@@ -446,7 +446,7 @@
     <title>See ALSO</title>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
+    url="../configuration_file_basics.htm#Pairs">https://shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>
