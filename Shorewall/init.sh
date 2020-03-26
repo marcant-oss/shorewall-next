@@ -7,7 +7,7 @@ RCDLINKS="2,S41 3,S41 6,K41"
 #
 #	On most distributions, this file should be called /etc/init.d/shorewall.
 #
-#	Complete documentation is available at http://shorewall.org
+#	Complete documentation is available at https://shorewall.org
 #
 #	This program is free software; you can redistribute it and/or modify
 #	it under the terms of the GNU General Public License as published by the

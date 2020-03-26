@@ -136,10 +136,10 @@
     <title>See ALSO</title>
 
     <para><ulink
-    url="/ProxyARP.htm">http://www.shorewall.org/ProxyARP.htm</ulink></para>
+    url="../ProxyARP.htm">https://shorewall.org/ProxyARP.htm</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
+    url="../configuration_file_basics.htm#Pairs">https://shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

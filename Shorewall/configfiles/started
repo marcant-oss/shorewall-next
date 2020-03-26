@@ -11,7 +11,7 @@
 # may do so indirectly by running /sbin/shorewall with the -N
 # option.
 #
-# See http://shorewall.org/shorewall_extension_scripts.htm for additional
+# See https://shorewall.org/shorewall_extension_scripts.htm for additional
 # information.
 #
 ###############################################################################

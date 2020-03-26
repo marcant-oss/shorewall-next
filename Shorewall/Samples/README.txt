@@ -1,6 +1,6 @@
 For instructions on using these sample configurations, please see
 
-http://www.shorewall.org/shorewall_quickstart_guide.htm
+https://shorewall.org/shorewall_quickstart_guide.htm
 
     Shorewall Samples
     Copyright (C) 2006 by the following authors:

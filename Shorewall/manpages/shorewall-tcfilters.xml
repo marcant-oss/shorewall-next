@@ -72,10 +72,10 @@
         <listitem>
           <para>The name or number of an <returnvalue>interface</returnvalue>
           defined in <ulink
-          url="/manpages/shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5)
+          url="shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5)
           followed by a <replaceable>class</replaceable> number defined for
           that interface in <ulink
-          url="/manpages/shorewall-tcclasses.html">shorewall-tcclasses</ulink>(5).</para>
+          url="shorewall-tcclasses.html">shorewall-tcclasses</ulink>(5).</para>
         </listitem>
       </varlistentry>
 
@@ -89,11 +89,11 @@
           Beginning with Shorewall 4.6.0, an ipset name (prefixed with '+')
           may be used if your kernel and ip6tables have the <firstterm>Basic
           Ematch</firstterm> capability and you set BASIC_FILTERS=Yes in
-          <ulink url="/manpages/shorewall.conf.html">shorewall.conf
+          <ulink url="shorewall.conf.html">shorewall.conf
           (5)</ulink>. The ipset name may optionally be followed by a number
           or a comma separated list of src and/or dst enclosed in square
           brackets ([...]). See <ulink
-          url="/manpages/shorewall-ipsets.html">shorewall-ipsets(5)</ulink>
+          url="shorewall-ipsets.html">shorewall-ipsets(5)</ulink>
           for details.</para>
         </listitem>
       </varlistentry>
@@ -108,16 +108,16 @@
           Beginning with Shorewall 4.6.0, an ipset name (prefixed with '+')
           may be used if your kernel and ip6tables have the <firstterm>Basic
           Ematch</firstterm> capability and you set BASIC_FILTERS=Yes in
-          <ulink url="/manpages/shorewall.conf.html">shorewall.conf
+          <ulink url="shorewall.conf.html">shorewall.conf
           (5)</ulink>. The ipset name may optionally be followed by a number
           or a comma separated list of src and/or dst enclosed in square
           brackets ([...]). See <ulink
-          url="/manpages/shorewall-ipsets.html">shorewall-ipsets(5)</ulink>
+          url="shorewall-ipsets.html">shorewall-ipsets(5)</ulink>
           for details.</para>
 
           <para>You may exclude certain hosts from the set already defined
           through use of an <emphasis>exclusion</emphasis> (see <ulink
-          url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
+          url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
         </listitem>
       </varlistentry>
 
@@ -355,16 +355,16 @@
     <title>See ALSO</title>
 
     <para><ulink
-    url="/traffic_shaping.htm">http://www.shorewall.org/traffic_shaping.htm</ulink></para>
+    url="../traffic_shaping.htm">https://shorewall.org/traffic_shaping.htm</ulink></para>
 
     <para><ulink
-    url="/MultiISP.html">http://www.shorewall.org/MultiISP.html</ulink></para>
+    url="../MultiISP.html">https://shorewall.org/MultiISP.html</ulink></para>
 
     <para><ulink
-    url="/PacketMarking.html">http://www.shorewall.org/PacketMarking.html</ulink></para>
+    url="../PacketMarking.html">https://shorewall.org/PacketMarking.html</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
+    url="../configuration_file_basics.htm#Pairs">https://shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

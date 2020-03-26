@@ -3,7 +3,7 @@
 #
 # For information about entries in this file, type "man shorewall6-maclist"
 #
-# For additional information, see http://shorewall.org/MAC_Validation.html
+# For additional information, see https://shorewall.org/MAC_Validation.html
 #
 ###############################################################################
 #DISPOSITION	INTERFACE		MAC			ADDRESSES

@@ -43,7 +43,7 @@
     available with current microprocessors from both
     <trademark>Intel</trademark> and <trademark>AMD</trademark>. For an
     overview of KVM, please see my <ulink
-    url="http://www.shorewall.org/Linuxfest-2008.pdf">2008 Linuxfest Northwest
+    url="https://shorewall.org/Linuxfest-2008.pdf">2008 Linuxfest Northwest
     presentation</ulink>.</para>
 
     <para>I use KVM to implement a number of virtual machines running various
@@ -78,7 +78,7 @@
 
     <para>The bridge is configured using the script described in my Linuxfest
     presentation linked above. The script may be found at <ulink
-    url="http://www.shorewall.org/pub/shorewall/contrib/kvm/kvm">http://www.shorewall.org/pub/shorewall/contrib/kvm/kvm</ulink>.</para>
+    url="https://shorewall.org/pub/shorewall/contrib/kvm/kvm">https://shorewall.org/pub/shorewall/contrib/kvm/kvm</ulink>.</para>
 
     <para>With this configuration, and with only a single network interface on
     the laptop, this is just a simple <ulink
@@ -90,6 +90,6 @@
 
     <para>For additional information about this setup, including the Shorewall
     configuration, see <ulink
-    url="MultiISP.html#Shared">http://www.shorewall.org/MultiISP.html#Shared</ulink></para>
+    url="MultiISP.html#Shared">https://shorewall.org/MultiISP.html#Shared</ulink></para>
   </section>
 </article>

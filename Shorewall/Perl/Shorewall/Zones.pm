@@ -5,7 +5,7 @@
 #
 #     (c) 2007-2019 - Tom Eastep (teastep@shorewall.net)
 #
-#       Complete documentation is available at http://shorewall.org
+#       Complete documentation is available at https://shorewall.org
 #
 #       This program is part of Shorewall.
 #
@@ -1241,7 +1241,7 @@ sub process_interface( $$ ) {
     fatal_error "Invalid INTERFACE ($originalinterface)" if ! $interface || defined $extra;
 
     if ( supplied $port ) {
-	fatal_error qq("Virtual" interfaces are not supported -- see http://www.shorewall.org/Shorewall_and_Aliased_Interfaces.html) if $port =~ /^\d+$/;
+	fatal_error qq("Virtual" interfaces are not supported -- see https://shorewall.org/Shorewall_and_Aliased_Interfaces.html) if $port =~ /^\d+$/;
 	require_capability( 'PHYSDEV_MATCH', 'Bridge Ports', '');
 	fatal_error "Your iptables is not recent enough to support bridge ports" unless $globals{KLUDGEFREE};
 

@@ -3165,7 +3165,7 @@ redirect                      =&gt; 137</programlisting>
     reload</command> or <command>shorewall restart</command>. This may be
     accomplished using the SWITCH column in <ulink
     url="manpages/shorewall-rules.html">shorewall-rules</ulink> (5) or <ulink
-    url="manpages6/shorewall6-rules.html">shorewall6-rules</ulink> (5). Using
+    url="manpages/shorewall-rules.html">shorewall6-rules</ulink> (5). Using
     this column requires that your kernel and iptables include
     <firstterm>Condition Match Support</firstterm> and you must be running
     Shorewall 4.4.24 or later. See the output of <command>shorewall show

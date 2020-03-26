@@ -26,7 +26,7 @@
     <title>Description</title>
 
     <para>This file was introduced in Shorewall 4.6.0 and replaces <ulink
-    url="/manpages/shorewall-tcrules.html">shorewall-tcrules(5)</ulink>. This
+    url="shorewall-tcrules.html">shorewall-tcrules(5)</ulink>. This
     file is only processed by the compiler if:</para>
 
     <para>Entries in this file cause packets to be marked as a means of
@@ -34,14 +34,14 @@
 
     <important>
       <para>Unlike rules in the <ulink
-      url="/manpages/shorewall-rules.html">shorewall-rules</ulink>(5) file,
+      url="shorewall-rules.html">shorewall-rules</ulink>(5) file,
       evaluation of rules in this file will continue after a match. So the
       final mark for each packet will be the one assigned by the LAST tcrule
       that matches.</para>
 
       <para>If you use multiple internet providers with the 'track' option, in
       /etc/shorewall/providers be sure to read the restrictions at <ulink
-      url="/MultiISP.html">http://www.shorewall.org/MultiISP.html</ulink>.</para>
+      url="../MultiISP.html">https://shorewall.org/MultiISP.html</ulink>.</para>
     </important>
 
     <para>The columns in the file are as follows (where the column name is
@@ -131,7 +131,7 @@
           <para>Unless otherwise specified for the particular
           <replaceable>command</replaceable>, the default chain is PREROUTING
           when MARK_IN_FORWARD_CHAIN=No in <ulink
-          url="/manpages/shorewall.conf.html">shorewall.conf(5)</ulink>, and
+          url="shorewall.conf.html">shorewall.conf(5)</ulink>, and
           FORWARD when MARK_IN_FORWARD_CHAIN=Yes.</para>
 
           <para>A <replaceable>chain-designator</replaceable> may not be
@@ -226,11 +226,11 @@
                 <para>When using Shorewall's built-in traffic shaping tool,
                 the <emphasis>major</emphasis> class is the device number (the
                 first device in <ulink
-                url="/manpages/shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5)
+                url="shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5)
                 is major class 1, the second device is major class 2, and so
                 on) and the <emphasis>minor</emphasis> class is the class's
                 MARK value in <ulink
-                url="/manpages/shorewall-tcclasses.html">shorewall-tcclasses</ulink>(5)
+                url="shorewall-tcclasses.html">shorewall-tcclasses</ulink>(5)
                 preceded by the number 1 (MARK 1 corresponds to minor class
                 11, MARK 5 corresponds to minor class 15, MARK 22 corresponds
                 to minor class 122, etc.).</para>
@@ -319,7 +319,7 @@
                 configuration described at <ulink
                 url="http://www.loadbalancer.org/blog/setting-up-haproxy-with-transparent-mode-on-centos-6-x">http://www.loadbalancer.org/blog/setting-up-haproxy-with-transparent-mode-on-centos-6-x</ulink>,
                 place this entry in <ulink
-                url="/manpages/shorewall-providers.html">shorewall-providers(5)</ulink>:</para>
+                url="shorewall-providers.html">shorewall-providers(5)</ulink>:</para>
 
                 <programlisting>#NAME    NUMBER   MARK    DUPLICATE  INTERFACE GATEWAY         OPTIONS               COPY
 TProxy   1        -       -          lo        -               tproxy</programlisting>
@@ -386,7 +386,7 @@ DIVERTHA        -               -               tcp</programlisting>
               <listitem>
                 <para>Added in Shorewall 5.0.6 as an alternative to entries in
                 <ulink
-                url="/manpages/shorewall-ecn.html">shorewall-ecn(5)</ulink>.
+                url="shorewall-ecn.html">shorewall-ecn(5)</ulink>.
                 If a PROTO is specified, it must be 'tcp' (6). If no PROTO is
                 supplied, TCP is assumed. This action causes all ECN bits in
                 the TCP header to be cleared.</para>
@@ -421,7 +421,7 @@ DIVERTHA        -               -               tcp</programlisting>
                 specified at the end of the rule. If the target is not one
                 known to Shorewall, then it must be defined as a builtin
                 action in <ulink
-                url="/manpages/shorewall-actions.html">shorewall-actions</ulink>
+                url="shorewall-actions.html">shorewall-actions</ulink>
                 (5).</para>
 
                 <para>The following rules are equivalent:</para>
@@ -564,7 +564,7 @@ INLINE                eth0              -                 ;; -p tcp -j MARK --se
                 <para>This error message may be eliminated by adding the
                 <replaceable>target</replaceable> as a builtin action in
                 <ulink
-                url="/manpages/shorewall-actions.html">shorewall-actions(5)</ulink>.</para>
+                url="shorewall-actions.html">shorewall-actions(5)</ulink>.</para>
               </listitem>
             </varlistentry>
 
@@ -589,7 +589,7 @@ INLINE                eth0              -                 ;; -p tcp -j MARK --se
                 <para>This error message may be eliminated by adding the
                 <replaceable>target</replaceable> as a builtin action in
                 <ulink
-                url="/manpages/shorewall-actions.html">shorewall-actions(5)</ulink>.</para>
+                url="shorewall-actions.html">shorewall-actions(5)</ulink>.</para>
               </listitem>
             </varlistentry>
 
@@ -632,7 +632,7 @@ INLINE                eth0              -                 ;; -p tcp -j MARK --se
                 then the assigned mark values are 0x200, 0x300 and 0x400 in
                 equal proportions. If no mask is specified, then ( 2 **
                 MASK_BITS ) - 1 is assumed (MASK_BITS is set in <ulink
-                url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
+                url="shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
               </listitem>
             </varlistentry>
 
@@ -804,7 +804,7 @@ Normal-Service       =&gt; 0x00</programlisting>
               <listitem>
                 <para>Transparently redirects a packet without altering the IP
                 header. Requires a tproxy provider to be defined in <ulink
-                url="/manpages/shorewall-providers.html">shorewall-providers</ulink>(5).</para>
+                url="shorewall-providers.html">shorewall-providers</ulink>(5).</para>
 
                 <para>There are three parameters to TPROXY - neither is
                 required:</para>
@@ -863,7 +863,7 @@ Normal-Service       =&gt; 0x00</programlisting>
                 <para>where <replaceable>interface</replaceable> is the
                 logical name of an <replaceable>interface</replaceable>
                 defined in <ulink
-                url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
+                url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
                 Matches packets entering the firewall from the named
                 interface. May not be used in CLASSIFY rules or in rules using
                 the :T chain qualifier.</para>
@@ -894,7 +894,7 @@ Normal-Service       =&gt; 0x00</programlisting>
                 <para>Matches traffic whose source IP address matches one of
                 the listed addresses and that does not match an address listed
                 in the <replaceable>exclusion</replaceable> (see <ulink
-                url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
+                url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
 
                 <para><emphasis role="bold">This form will not match traffic
                 that originates on the firewall itself unless either
@@ -998,12 +998,12 @@ Normal-Service       =&gt; 0x00</programlisting>
               <listitem>
                 <para>where <replaceable>interface</replaceable> is the
                 logical name of an interface defined in <ulink
-                url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
+                url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
                 Matches packets leaving the firewall through the named
                 interface. May not be used in the PREROUTING chain (:P in the
                 mark column or no chain qualifier and MARK_IN_FORWARD_CHAIN=No
                 in <ulink
-                url="/manpages/shorewall.conf">shorewall.conf</ulink>
+                url="shorewall.conf">shorewall.conf</ulink>
                 (5)).</para>
               </listitem>
             </varlistentry>
@@ -1028,7 +1028,7 @@ Normal-Service       =&gt; 0x00</programlisting>
                 <para>Matches traffic whose destination IP address matches one
                 of the listed addresses and that does not match an address
                 listed in the <replaceable>exclusion</replaceable> (see <ulink
-                url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
+                url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
               </listitem>
             </varlistentry>
 
@@ -1040,7 +1040,7 @@ Normal-Service       =&gt; 0x00</programlisting>
                 when both the outgoing interface and destination IP address
                 match. May not be used in the PREROUTING chain (:P in the mark
                 column or no chain qualifier and MARK_IN_FORWARD_CHAIN=No in
-                <ulink url="/manpages/shorewall.conf">shorewall.conf</ulink>
+                <ulink url="shorewall.conf">shorewall.conf</ulink>
                 (5)).</para>
               </listitem>
             </varlistentry>
@@ -1055,7 +1055,7 @@ Normal-Service       =&gt; 0x00</programlisting>
                 <replaceable>exclusion</replaceable>. May not be used in the
                 PREROUTING chain (:P in the mark column or no chain qualifier
                 and MARK_IN_FORWARD_CHAIN=No in <ulink
-                url="/manpages/shorewall.conf">shorewall.conf</ulink>
+                url="shorewall.conf">shorewall.conf</ulink>
                 (5)).</para>
               </listitem>
             </varlistentry>
@@ -1124,7 +1124,7 @@ Normal-Service       =&gt; 0x00</programlisting>
 
         <listitem>
           <para>See <ulink
-          url="/manpages/shorewall-rules.html">shorewall-rules(5)</ulink> for
+          url="shorewall-rules.html">shorewall-rules(5)</ulink> for
           details.</para>
 
           <para>Beginning with Shorewall 4.5.12, this column can accept a
@@ -1145,7 +1145,7 @@ Normal-Service       =&gt; 0x00</programlisting>
           destination icmp-type(s). ICMP types may be specified as a numeric
           type, a numeric type and code separated by a slash (e.g., 3/4), or a
           typename. See <ulink
-          url="/configuration_file_basics.htm#ICMP">http://www.shorewall.org/configuration_file_basics.htm#ICMP</ulink>.</para>
+          url="../configuration_file_basics.htm#ICMP">https://shorewall.org/configuration_file_basics.htm#ICMP</ulink>.</para>
 
           <para>If the protocol is <emphasis role="bold">ipp2p</emphasis>,
           this column is interpreted as an ipp2p option without the leading
@@ -1724,16 +1724,16 @@ Normal-Service       =&gt; 0x00</programlisting>
     <title>See ALSO</title>
 
     <para><ulink
-    url="/traffic_shaping.htm">http://www.shorewall.org/traffic_shaping.htm</ulink></para>
+    url="../traffic_shaping.htm">https://shorewall.org/traffic_shaping.htm</ulink></para>
 
     <para><ulink
-    url="/MultiISP.html">http://www.shorewall.org/MultiISP.html</ulink></para>
+    url="../MultiISP.html">https://shorewall.org/MultiISP.html</ulink></para>
 
     <para><ulink
-    url="/PacketMarking.html">http://www.shorewall.org/PacketMarking.html</ulink></para>
+    url="../PacketMarking.html">https://shorewall.org/PacketMarking.html</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
+    url="../configuration_file_basics.htm#Pairs">https://shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

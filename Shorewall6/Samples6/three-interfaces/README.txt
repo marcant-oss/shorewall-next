@@ -1,6 +1,6 @@
 For instructions on using these sample configurations, please see
 
-http://www.shorewall.org/three-interface.htm
+https://shorewall.org/three-interface.htm
 
     Shorewall Samples
     Copyright (C) 2006-2014 by the following authors:

@@ -27,7 +27,7 @@
 
     <para>Entries in this file govern connection establishment by defining
     exceptions to the policies laid out in <ulink
-    url="/manpages/shorewall-policy.html">shorewall-policy</ulink>(5). By
+    url="shorewall-policy.html">shorewall-policy</ulink>(5). By
     default, subsequent requests and responses are automatically allowed using
     connection tracking. For any particular (source,dest) pair of zones, the
     rules are evaluated in the order in which they appear in this file and the
@@ -86,7 +86,7 @@
 
           <para>There is an implicit rule added at the end of this section
           that invokes the RELATED_DISPOSITION (<ulink
-          url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
+          url="shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
         </listitem>
       </varlistentry>
 
@@ -102,7 +102,7 @@
 
           <para>There is an implicit rule added at the end of this section
           that invokes the INVALID_DISPOSITION (<ulink
-          url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
+          url="shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
         </listitem>
       </varlistentry>
 
@@ -118,7 +118,7 @@
 
           <para>There is an implicit rule added at the end of this section
           that invokes the UNTRACKED_DISPOSITION (<ulink
-          url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
+          url="shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
         </listitem>
       </varlistentry>
 
@@ -143,7 +143,7 @@
 
     <warning>
       <para>If you specify FASTACCEPT=Yes in <ulink
-      url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5) then the
+      url="shorewall.conf.html">shorewall.conf</ulink>(5) then the
       <emphasis role="bold">ALL, ESTABLISHED</emphasis> and <emphasis
       role="bold">RELATED</emphasis> sections must be empty.</para>
 
@@ -223,7 +223,7 @@
               <listitem>
                 <para>like ACCEPT but exempts the rule from being suppressed
                 by OPTIMIZE=1 in <ulink
-                url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5).</para>
+                url="shorewall.conf.html">shorewall.conf</ulink>(5).</para>
               </listitem>
             </varlistentry>
 
@@ -233,7 +233,7 @@
               <listitem>
                 <para>The name of an <emphasis>action</emphasis> declared in
                 <ulink
-                url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5)
+                url="shorewall-actions.html">shorewall-actions</ulink>(5)
                 or in /usr/share/shorewall[6]/actions.std.</para>
               </listitem>
             </varlistentry>
@@ -350,11 +350,11 @@
                 (source zone,destination zone). If the source and/or
                 destination IP address falls into a zone defined later in
                 <ulink
-                url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5)
+                url="shorewall-zones.html">shorewall-zones</ulink>(5)
                 or in a parent zone of the source or destination zones, then
                 this connection request will be passed to the rules defined
                 for that (those) zone(s). See <ulink
-                url="/manpages/shorewall-nesting.html">shorewall-nesting</ulink>(5)
+                url="shorewall-nesting.html">shorewall-nesting</ulink>(5)
                 for additional information.</para>
               </listitem>
             </varlistentry>
@@ -365,7 +365,7 @@
               <listitem>
                 <para>like CONTINUE but exempts the rule from being suppressed
                 by OPTIMIZE=1 in <ulink
-                url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5).</para>
+                url="shorewall.conf.html">shorewall.conf</ulink>(5).</para>
               </listitem>
             </varlistentry>
 
@@ -437,7 +437,7 @@
               <listitem>
                 <para>like DROP but exempts the rule from being suppressed by
                 OPTIMIZE=1 in <ulink
-                url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5).</para>
+                url="shorewall.conf.html">shorewall.conf</ulink>(5).</para>
               </listitem>
             </varlistentry>
 
@@ -468,7 +468,7 @@
                 INLINE(ACCEPT)). Otherwise, you can include it after the
                 semicolon(s). In this case, you must declare the target as a
                 builtin action in <ulink
-                url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5).</para>
+                url="shorewall-actions.html">shorewall-actions</ulink>(5).</para>
 
                 <para>Some considerations when using INLINE:</para>
 
@@ -512,7 +512,7 @@
                 <para>This error message may be eliminated by adding the
                 <replaceable>iptables-</replaceable><replaceable>target</replaceable>
                 as a builtin action in <ulink
-                url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5).</para>
+                url="shorewall-actions.html">shorewall-actions</ulink>(5).</para>
 
                 <important>
                   <para>If you specify REJECT as the
@@ -545,7 +545,7 @@
                 the<replaceable>
                 ip6tables-</replaceable><replaceable>target</replaceable> as a
                 builtin action in <ulink
-                url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5).</para>
+                url="shorewall-actions.html">shorewall-actions</ulink>(5).</para>
 
                 <important>
                   <para>If you specify REJECT as the
@@ -630,7 +630,7 @@
                 <para>Added in Shorewall 4.5.9.3. Queues matching packets to a
                 back end logging daemon via a netlink socket then continues to
                 the next rule. See <ulink
-                url="/shorewall_logging.html">http://www.shorewall.org/shorewall_logging.html</ulink>.</para>
+                url="../shorewall_logging.html">https://shorewall.org/shorewall_logging.html</ulink>.</para>
 
                 <para>The <replaceable>nflog-parameters</replaceable> are a
                 comma-separated list of up to 3 numbers:</para>
@@ -700,7 +700,7 @@
               <listitem>
                 <para>like NFQUEUE but exempts the rule from being suppressed
                 by OPTIMIZE=1 in <ulink
-                url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5).</para>
+                url="shorewall.conf.html">shorewall.conf</ulink>(5).</para>
               </listitem>
             </varlistentry>
 
@@ -732,7 +732,7 @@
               <listitem>
                 <para>like QUEUE but exempts the rule from being suppressed by
                 OPTIMIZE=1 in <ulink
-                url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5).</para>
+                url="shorewall.conf.html">shorewall.conf</ulink>(5).</para>
               </listitem>
             </varlistentry>
 
@@ -801,7 +801,7 @@
               <listitem>
                 <para>like REJECT but exempts the rule from being suppressed
                 by OPTIMIZE=1 in <ulink
-                url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5).</para>
+                url="shorewall.conf.html">shorewall.conf</ulink>(5).</para>
               </listitem>
             </varlistentry>
 
@@ -930,7 +930,7 @@
 
           <para>If the <emphasis role="bold">ACTION</emphasis> names an
           <emphasis>action</emphasis> declared in <ulink
-          url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5)
+          url="shorewall-actions.html">shorewall-actions</ulink>(5)
           or in /usr/share/shorewall/actions.std then:</para>
 
           <itemizedlist>
@@ -961,7 +961,7 @@
           <para>Actions specifying logging may be followed by a log tag (a
           string of alphanumeric characters) which is appended to the string
           generated by the LOGPREFIX (in <ulink
-          url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
+          url="shorewall.conf.html">shorewall.conf</ulink>(5)).</para>
 
           <para>Example: ACCEPT:info:ftp would include 'ftp ' at the end of
           the log prefix generated by the LOGPREFIX setting.</para>
@@ -985,7 +985,7 @@
 
               <listitem>
                 <para>The name of a zone defined in <ulink
-                url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5).
+                url="shorewall-zones.html">shorewall-zones</ulink>(5).
                 When only the zone name is specified, the packet source may be
                 any host in that zone.</para>
 
@@ -1051,9 +1051,9 @@
                 <replaceable>interface</replaceable> must be the name of an
                 interface associated with the named
                 <replaceable>zone</replaceable> in either <ulink
-                url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5)
+                url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)
                 or <ulink
-                url="/manpages/shorewall.hosts.html">shorewall-hosts</ulink>(5).
+                url="shorewall.hosts.html">shorewall-hosts</ulink>(5).
                 Only packets from hosts in the <replaceable>zone</replaceable>
                 that arrive through the named interface will match the
                 rule.</para>
@@ -1075,7 +1075,7 @@
                   <listitem>
                     <para>A host or network IP address. A network address may
                     be followed by exclusion (see <ulink
-                    url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
+                    url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
                   </listitem>
 
                   <listitem>
@@ -1113,7 +1113,7 @@
                     be specified by an ampersand ('&amp;') followed by the
                     logical name of the interface as found in the INTERFACE
                     column of <ulink
-                    url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>
+                    url="shorewall-interfaces.html">shorewall-interfaces</ulink>
                     (5).</para>
                   </listitem>
                 </itemizedlist>
@@ -1135,7 +1135,7 @@
               <listitem>
                 <para>This form matches if the host IP address does not match
                 any of the entries in the exclusion (see <ulink
-                url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
+                url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
               </listitem>
             </varlistentry>
 
@@ -1349,7 +1349,7 @@
 
               <listitem>
                 <para>The name of a zone defined in <ulink
-                url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5).
+                url="shorewall-zones.html">shorewall-zones</ulink>(5).
                 When only the zone name is specified, the packet destination
                 may be any host in that zone.</para>
 
@@ -1415,9 +1415,9 @@
                 <replaceable>interface</replaceable> must be the name of an
                 interface associated with the named
                 <replaceable>zone</replaceable> in either <ulink
-                url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5)
+                url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)
                 or <ulink
-                url="/manpages/shorewall-hosts.html">shorewall-hosts</ulink>(5).
+                url="shorewall-hosts.html">shorewall-hosts</ulink>(5).
                 Only packets to hosts in the <replaceable>zone</replaceable>
                 that are sent through the named interface will match the
                 rule.</para>
@@ -1439,7 +1439,7 @@
                   <listitem>
                     <para>A host or network IP address. A network address may
                     be followed by exclusion (see <ulink
-                    url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
+                    url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
                   </listitem>
 
                   <listitem>
@@ -1471,7 +1471,7 @@
                     be specified by an ampersand ('&amp;') followed by the
                     logical name of the interface as found in the INTERFACE
                     column of <ulink
-                    url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>
+                    url="shorewall-interfaces.html">shorewall-interfaces</ulink>
                     (5).</para>
                   </listitem>
                 </itemizedlist>
@@ -1499,7 +1499,7 @@
               <listitem>
                 <para>This form matches if the host IP address does not match
                 any of the entries in the exclusion (see <ulink
-                url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
+                url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5)).</para>
               </listitem>
             </varlistentry>
 
@@ -1760,7 +1760,7 @@
           interpreted as the destination icmp-type(s). ICMP types may be
           specified as a numeric type, a numeric type and code separated by a
           slash (e.g., 3/4), or a typename. See <ulink
-          url="/configuration_file_basics.htm#ICMP">http://www.shorewall.org/configuration_file_basics.htm#ICMP</ulink>.
+          url="../configuration_file_basics.htm#ICMP">https://shorewall.org/configuration_file_basics.htm#ICMP</ulink>.
           Note that prior to Shorewall 4.4.19, only a single ICMP type may be
           listed.</para>
 
@@ -1868,7 +1868,7 @@
           firewall interface can be specified by an ampersand ('&amp;')
           followed by the logical name of the interface as found in the
           INTERFACE column of <ulink
-          url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>
           (5).</para>
 
           <para>For other actions, this column may be included and may contain
@@ -1886,10 +1886,10 @@
           role="bold">192.168.1.0/24!192.168.1.16/28</emphasis> specifies the
           addresses 192.168.1.0-182.168.1.15 and 192.168.1.32-192.168.1.255.
           See <ulink
-          url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5).</para>
+          url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5).</para>
 
           <para>See <ulink
-          url="/PortKnocking.html">http://www.shorewall.org/PortKnocking.html</ulink>
+          url="../PortKnocking.html">https://shorewall.org/PortKnocking.html</ulink>
           for an example of using an entry in this column with a user-defined
           action rule.</para>
 
@@ -2426,7 +2426,7 @@
           </simplelist>
 
           <para>If the HELPERS option is specified in <ulink
-          url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5), then
+          url="shorewall.conf.html">shorewall.conf</ulink>(5), then
           any module specified in this column must be listed in the HELPERS
           setting.</para>
         </listitem>
@@ -2547,21 +2547,21 @@
           example:</para>
 
           <para><ulink
-          url="/manpages/shorewall-zones.html">shorewall-zones</ulink>(5):<programlisting>        #ZONE       TYPE    OPTIONS
+          url="shorewall-zones.html">shorewall-zones</ulink>(5):<programlisting>        #ZONE       TYPE    OPTIONS
         fw          firewall
         net         ipv4
         dmz         ipv4
         loc         ipv4</programlisting></para>
 
           <para><ulink
-          url="/manpages/shorewall-interfaces.html">shorewall-interfaces</ulink>(5):<programlisting>        #ZONE       INTERFACE       BROADCAST      OPTIONS
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5):<programlisting>        #ZONE       INTERFACE       BROADCAST      OPTIONS
         net         ppp0
         loc         eth1            detect
         dmz         eth2            detect
         -           ppp+                           # Addresses are assigned from 192.168.3.0/24</programlisting></para>
 
           <para><ulink
-          url="/manpages/shorewall-hosts.html">shorewall-host</ulink>(5):<programlisting>        #ZONE       HOST(S)              OPTIONS
+          url="shorewall-hosts.html">shorewall-host</ulink>(5):<programlisting>        #ZONE       HOST(S)              OPTIONS
         loc         ppp+:192.168.3.0/24</programlisting></para>
 
           <para>rules:</para>
@@ -2651,7 +2651,7 @@
           <programlisting>        -A fw2net -p 6 -m mickey-mouse --name test -m set --match-set set1 src -m mickey-mouse --name test2 -j SECCTX --name test3</programlisting>
 
           <para>Note that SECCTX must be defined as a builtin action in <ulink
-          url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5):</para>
+          url="shorewall-actions.html">shorewall-actions</ulink>(5):</para>
 
           <programlisting>        #ACTION            OPTIONS
         SECCTX             builtin</programlisting>
@@ -2689,10 +2689,10 @@
     url="shorewall-logging.html">shorewall-logging(5)</ulink></para>
 
     <para><ulink
-    url="/ipsets.html">http://www.shorewall.org/ipsets.html</ulink></para>
+    url="../ipsets.html">https://shorewall.org/ipsets.html</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
+    url="../configuration_file_basics.htm#Pairs">https://shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

@@ -10,7 +10,7 @@
 #     Modified by Tom Eastep for integration into the Shorewall distribution
 #     published under GPL Version 2#
 #
-#       Complete documentation is available at http://shorewall.org
+#       Complete documentation is available at https://shorewall.org
 #
 #       This program is part of Shorewall.
 #
@@ -2284,11 +2284,11 @@ sub open_mangle_for_output( $ ) {
 #
 # For information about entries in this file, type "man shorewall-mangle"
 #
-# See http://shorewall.org/traffic_shaping.htm for additional information.
+# See https://shorewall.org/traffic_shaping.htm for additional information.
 # For usage in selecting among multiple ISPs, see
-# http://shorewall.org/MultiISP.html
+# https://shorewall.org/MultiISP.html
 #
-# See http://shorewall.org/PacketMarking.html for a detailed description of
+# See https://shorewall.org/PacketMarking.html for a detailed description of
 # the Netfilter/Shorewall packet marking mechanism.
 ##############################################################################################################################################################
 #ACTION         SOURCE          DEST            PROTO   DEST    SOURCE  USER    TEST    LENGTH  TOS     CONNBYTES       HELPER  PROBABILITY     DSCP    SWITCH
@@ -2300,11 +2300,11 @@ EOF
 #
 # For information about entries in this file, type "man shorewall6-mangle"
 #
-# See http://shorewall.org/traffic_shaping.htm for additional information.
+# See https://shorewall.org/traffic_shaping.htm for additional information.
 # For usage in selecting among multiple ISPs, see
-# http://shorewall.org/MultiISP.html
+# https://shorewall.org/MultiISP.html
 #
-# See http://shorewall.org/PacketMarking.html for a detailed description of
+# See https://shorewall.org/PacketMarking.html for a detailed description of
 # the Netfilter/Shorewall packet marking mechanism.
 #
 ######################################################################################################################################################################

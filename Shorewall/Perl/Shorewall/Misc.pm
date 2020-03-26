@@ -5,7 +5,7 @@
 #
 #     (c) 2007-2019 - Tom Eastep (teastep@shorewall.net)
 #
-#       Complete documentation is available at http://shorewall.org
+#       Complete documentation is available at https://shorewall.org
 #
 #       This program is part of Shorewall.
 #
@@ -335,7 +335,7 @@ sub convert_blacklist() {
 #
 # For information about entries in this file, type "man shorewall-blrules"
 #
-# Please see http://shorewall.org/blacklisting_support.htm for additional
+# Please see https://shorewall.org/blacklisting_support.htm for additional
 # information.
 #
 ###################################################################################################################################################################################################
@@ -434,9 +434,9 @@ sub convert_routestopped() {
 # For information about entries in this file, type "man shorewall-stoppedrules"
 #
 # The manpage is also online at
-# http://www.shorewall.org/manpages/shorewall-stoppedrules.html
+# https://shorewall.org/manpages/shorewall-stoppedrules.html
 #
-# See http://shorewall.org/starting_and_stopping_shorewall.htm for additional
+# See https://shorewall.org/starting_and_stopping_shorewall.htm for additional
 # information.
 #
 ###############################################################################

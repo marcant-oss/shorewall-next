@@ -1220,7 +1220,7 @@ fi</programlisting>
         <title>(FAQ 4c) How do I use Shorewall with PortSentry?</title>
 
         <para><ulink
-        url="http://www.shorewall.org/pub/shorewall/contrib/PortsentryHOWTO.txt"><emphasis
+        url="https://shorewall.org/pub/shorewall/contrib/PortsentryHOWTO.txt"><emphasis
         role="bold">Answer:</emphasis> Here's a writeup</ulink> describing a
         nice integration of Shorewall and PortSentry.</para>
       </section>
@@ -1429,7 +1429,7 @@ fi</programlisting>
         that may be helpful:</para>
 
         <literallayout>
-          <ulink url="http://www.shorewall.org/pub/shorewall/parsefw/">http://www.shorewall.org/pub/shorewall/parsefw/</ulink>
+          <ulink url="https://shorewall.org/pub/shorewall/parsefw/">https://shorewall.org/pub/shorewall/parsefw/</ulink>
           <ulink url="http://aaron.marasco.com/linux.html">http://aaron.marasco.com/linux.html</ulink>
           <ulink url="http://cert.uni-stuttgart.de/projects/fwlogwatch">http://cert.uni-stuttgart.de/projects/fwlogwatch</ulink>
           <ulink url="http://www.logwatch.org">http://www.logwatch.org</ulink>
@@ -2939,7 +2939,7 @@ else
       interface. To retain autoconfiguration on the interface when Shorewall6
       starts, specify <emphasis role="bold">forwarding=0</emphasis> in the
       OPTIONS column on the interface's entry in <ulink
-      url="manpages6/shorewall6-interfaces.html">shorewall6-interfaces</ulink>
+      url="manpages/shorewall-interfaces.html">shorewall6-interfaces</ulink>
       (5).</para>
     </section>
 
@@ -3300,9 +3300,9 @@ SNAT(192.168.1.254)    0.0.0.0/0       EXT_IF:192.168.1.1  tcp     www</programl
 
       <para><emphasis role="bold">Answer:</emphasis> If you want to apply
       firewall rules to the traffic passing between bridge ports, see <ulink
-      url="bridge-Shorewall-perl.html">http://www.shorewall.org/bridge-Shorewall-perl.html</ulink>.
+      url="bridge-Shorewall-perl.html">https://shorewall.org/bridge-Shorewall-perl.html</ulink>.
       If you simply want to allow all traffic between ports, then see <ulink
-      url="SimpleBridge.html">http://www.shorewall.org/SimpleBridge.html</ulink>.</para>
+      url="SimpleBridge.html">https://shorewall.org/SimpleBridge.html</ulink>.</para>
     </section>
 
     <section id="faq95">
