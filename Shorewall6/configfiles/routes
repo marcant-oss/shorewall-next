@@ -3,7 +3,7 @@
 #
 # For information about entries in this file, type "man shorewall6-routes"
 #
-# For additional information, see http://www.shorewall.org/MultiISP.html
+# For additional information, see https://shorewall.org/MultiISP.html
 #
 ###############################################################################
 #PROVIDER		DEST			GATEWAY		DEVICE	OPTIONS

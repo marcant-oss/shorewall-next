@@ -161,10 +161,10 @@
     <title>See ALSO</title>
 
     <para><ulink
-    url="/starting_and_stopping_shorewall.htm">http://www.shorewall.org/starting_and_stopping_shorewall.htm</ulink></para>
+    url="../starting_and_stopping_shorewall.htm">https://shorewall.org/starting_and_stopping_shorewall.htm</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
+    url="../configuration_file_basics.htm#Pairs">https://shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

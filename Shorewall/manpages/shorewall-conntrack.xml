@@ -290,7 +290,7 @@
 
               <para>This error message may be eliminated by adding
               <replaceable>target</replaceable> as a builtin action in <ulink
-              url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5).</para>
+              url="shorewall-actions.html">shorewall-actions</ulink>(5).</para>
             </listitem>
 
             <listitem>
@@ -311,7 +311,7 @@
 
               <para>This error message may be eliminated by adding
               <replaceable>target</replaceable> as a builtin action in <ulink
-              url="/manpages/shorewall-actions.html">shorewall-actions</ulink>(5).</para>
+              url="shorewall-actions.html">shorewall-actions</ulink>(5).</para>
             </listitem>
 
             <listitem>
@@ -389,7 +389,7 @@
           <replaceable>interface</replaceable> is an interface to that zone,
           and <replaceable>address-list</replaceable> is a comma-separated
           list of addresses (may contain exclusion - see <ulink
-          url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>
+          url="shorewall-exclusion.html">shorewall-exclusion</ulink>
           (5)).</para>
 
           <para>Beginning with Shorewall 4.5.7, <option>all</option> can be
@@ -411,7 +411,7 @@
           that zone, and <replaceable>address-list</replaceable> is a
           comma-separated list of addresses (may contain exclusion - see
           <ulink
-          url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>
+          url="shorewall-exclusion.html">shorewall-exclusion</ulink>
           (5)).</para>
         </listitem>
       </varlistentry>
@@ -461,7 +461,7 @@
 
                 <para><replaceable>exclusion</replaceable> is described in
                 <ulink
-                url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5).</para>
+                url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5).</para>
               </listitem>
             </varlistentry>
 
@@ -479,7 +479,7 @@
 
               <listitem>
                 <para>See <ulink
-                url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>
+                url="shorewall-exclusion.html">shorewall-exclusion</ulink>
                 (5)</para>
               </listitem>
             </varlistentry>
@@ -508,7 +508,7 @@
           <para>where <replaceable>address-list</replaceable> is a
           comma-separated list of addresses (may contain exclusion - see
           <ulink
-          url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>
+          url="shorewall-exclusion.html">shorewall-exclusion</ulink>
           (5)).</para>
         </listitem>
       </varlistentry>
@@ -557,7 +557,7 @@
 
                 <para><replaceable>exclusion</replaceable> is described in
                 <ulink
-                url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>(5).</para>
+                url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5).</para>
               </listitem>
             </varlistentry>
 
@@ -576,7 +576,7 @@
 
               <listitem>
                 <para>See <ulink
-                url="/manpages/shorewall-exclusion.html">shorewall-exclusion</ulink>
+                url="shorewall-exclusion.html">shorewall-exclusion</ulink>
                 (5)</para>
               </listitem>
             </varlistentry>
@@ -778,7 +778,7 @@ DROP:PO                       -                  2001:1.2.3::4</programlisting><
     <title>See ALSO</title>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
+    url="../configuration_file_basics.htm#Pairs">https://shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>shorewall(8)</para>
   </refsect1>

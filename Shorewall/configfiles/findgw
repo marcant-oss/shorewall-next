@@ -8,7 +8,7 @@
 # The function should echo the IP address of the gateway if it knows what
 # it is; the name of the interface is in $1.
 #
-# See http://shorewall.org/shorewall_extension_scripts.htm for additional
+# See https://shorewall.org/shorewall_extension_scripts.htm for additional
 # information.
 #
 ###############################################################################

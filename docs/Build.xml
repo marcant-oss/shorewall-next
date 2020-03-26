@@ -432,7 +432,7 @@
     <section>
       <title>upload</title>
 
-      <para>This script is used to upload a release to www.shorewall.org. The
+      <para>This script is used to upload a release to https://shorewall.org. The
       command is run in the build directory for the minor release of the
       product.</para>
 

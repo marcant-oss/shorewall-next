@@ -3,7 +3,7 @@
 #
 # For information about entries in this file, type "man shorewall6-actions"
 #
-# Please see http://shorewall.org/Actions.html for additional information.
+# Please see https://shorewall.org/Actions.html for additional information.
 #
 # Place '# ' below the 'C' in COMMENT followed by a comment describing
 # the action.

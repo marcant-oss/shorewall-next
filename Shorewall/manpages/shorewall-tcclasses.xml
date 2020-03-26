@@ -127,7 +127,7 @@
           <para>You may specify the interface number rather than the interface
           name. If the <emphasis role="bold">classify</emphasis> option is
           given for the interface in <ulink
-          url="/manpages/shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5),
+          url="shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5),
           then you must also specify an interface class (an integer that must
           be unique within classes associated with this interface). If the
           classify option is not given, you may still specify a
@@ -141,12 +141,12 @@
 
           <para>Please note that you can only use interface names in here that
           have a bandwidth defined in the <ulink
-          url="/manpages/shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5)
+          url="shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5)
           file.</para>
 
           <para>Normally, all classes defined here are sub-classes of a root
           class that is implicitly defined from the entry in <ulink
-          url="/manpages/shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5).
+          url="shorewall-tcdevices.html">shorewall-tcdevices</ulink>(5).
           You can establish a class hierarchy by specifying a
           <emphasis>parent</emphasis> class -- the number of a class that you
           have previously defined. The sub-class may borrow unused bandwidth
@@ -161,7 +161,7 @@
         <listitem>
           <para>The mark <emphasis>value</emphasis> which is an integer in the
           range 1-255. You set mark values in the <ulink
-          url="/manpages/shorewall-mangle.html">shorewall-mangle</ulink>(5)
+          url="shorewall-mangle.html">shorewall-mangle</ulink>(5)
           file, marking the traffic you want to fit in the classes defined in
           here. You can use the same marks for different interfaces.</para>
 
@@ -424,7 +424,7 @@
                 'occurs' will be the listed RATE multiplied by
                 <emphasis>number</emphasis>. For additional information, see
                 <ulink
-                url="/manpages/shorewall-tcrules.html">shorewall-tcrules</ulink>
+                url="shorewall-tcrules.html">shorewall-tcrules</ulink>
                 (5).</para>
               </listitem>
             </varlistentry>
@@ -771,10 +771,10 @@
     <title>See ALSO</title>
 
     <para><ulink
-    url="/traffic_shaping.htm">http://www.shorewall.org/traffic_shaping.htm</ulink></para>
+    url="../traffic_shaping.htm">https://shorewall.org/traffic_shaping.htm</ulink></para>
 
     <para><ulink
-    url="/configuration_file_basics.htm#Pairs">http://www.shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
+    url="../configuration_file_basics.htm#Pairs">https://shorewall.org/configuration_file_basics.htm#Pairs</ulink></para>
 
     <para>tc-hfsc(7)</para>
 

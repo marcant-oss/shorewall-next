@@ -49,7 +49,7 @@
 
     <para>Исправленные файла 'зоны' ('zones') и 'интерфейсы' ('interfaces')
     доступны по адресу: <ulink
-    url="http://www.shorewall.org/pub/shorewall/3.0/shorewall-3.0.1/errata/one-interface/">http://www.shorewall.org/pub/shorewall/3.0/shorewall-3.0.1/errata/one-interface/</ulink>.</para>
+    url="https://shorewall.org/pub/shorewall/3.0/shorewall-3.0.1/errata/one-interface/">https://shorewall.org/pub/shorewall/3.0/shorewall-3.0.1/errata/one-interface/</ulink>.</para>
 
     <para>Эта проблема исправлена в Shorewall 3.0.2.</para>
   </warning>

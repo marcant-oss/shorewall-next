@@ -5,9 +5,9 @@
 # type "man shorewall6-stoppedrules"
 #
 # The manpage is also online at
-# http://www.shorewall.org/manpages/shorewall6-stoppedrules.html
+# https://shorewall.org/manpages/shorewall-stoppedrules.html
 #
-# See http://shorewall.org/starting_and_stopping_shorewall.htm for additional
+# See https://shorewall.org/starting_and_stopping_shorewall.htm for additional
 # information.
 #
 ###############################################################################

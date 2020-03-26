@@ -930,7 +930,7 @@ loc      eth2</programlisting>
       role="bold">0.0.0.0/0</emphasis>.</para>
 
       <para role="bold">A Shorewall user has contributed a <ulink
-      url="http://shorewall.org/pub/shorewall/contrib/IPSubNetMask.html">useful
+      url="https://shorewall.org/pub/shorewall/contrib/IPSubNetMask.html">useful
       graphical summary</ulink> of the above information.</para>
 
       <para>Later in this guide, you will see the notation <emphasis

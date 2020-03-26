@@ -4,7 +4,7 @@
 # Add commands below that you want to be executed at the beginning of a
 # "shorewall6 stop" command.
 #
-# See http://shorewall.org/shorewall_extension_scripts.htm for additional
+# See https://shorewall.org/shorewall_extension_scripts.htm for additional
 # information.
 #
 ###############################################################################

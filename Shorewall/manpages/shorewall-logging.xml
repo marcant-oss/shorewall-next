@@ -264,7 +264,7 @@
     url="http://logi.cc/en/2010/07/netfilter-log-format/">http://logi.cc/en/2010/07/netfilter-log-format/</ulink>.</para>
 
     <para>For Shorewall-specific information, see <ulink
-    url="/FAQ.htm#faq17">FAQ #17</ulink>.</para>
+    url="../FAQ.htm#faq17">FAQ #17</ulink>.</para>
   </refsect1>
 
   <refsect1>
@@ -275,8 +275,8 @@
     message will include "<emphasis>chain-name</emphasis> junk DROP".</para>
 
     <para>By setting the LOGTAGONLY option to Yes in <ulink
-    url="/manpages/shorewall.conf.html">shorewall.conf(5)</ulink> or <ulink
-    url="/manpages/shorewall.conf.html">shorewall6.conf(5)</ulink>, the
+    url="shorewall.conf.html">shorewall.conf(5)</ulink> or <ulink
+    url="shorewall.conf.html">shorewall6.conf(5)</ulink>, the
     disposition ('DROP' in the above example) will be omitted. Consider the
     following rule:</para>
 
@@ -380,6 +380,6 @@ REJECT(icmp-proto-unreachable):notice:IPv6,tunneling loc             net        
     <title>SEE ALSO</title>
 
     <para><ulink
-    url="/shorewall_logging.htm">http://www.shorewall.org/shorewall_logging.html</ulink></para>
+    url="../shorewall_logging.htm">https://shorewall.org/shorewall_logging.html</ulink></para>
   </refsect1>
 </refentry>

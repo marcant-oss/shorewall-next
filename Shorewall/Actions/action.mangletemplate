@@ -13,7 +13,7 @@
 # 2. Copy this file to /etc/shorewall/action.<action name>
 # 3. Add the desired rules to that file.
 #
-# Please see http://shorewall.org/Actions.html for additional
+# Please see https://shorewall.org/Actions.html for additional
 # information.
 #
 # Columns are the same as in /etc/shorewall/mangle.
