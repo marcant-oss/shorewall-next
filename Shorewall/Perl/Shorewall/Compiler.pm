@@ -978,11 +978,7 @@ sub compiler {
 	#
 	report_used_capabilities;
 
-	if ( $family == F_IPV4 ) {
-	    progress_message3 "Shorewall configuration verified";
-	} else {
-	    progress_message3 "Shorewall6 configuration verified";
-	}
+	progress_message3 "$Product configuration verified";
     }
 
     close_log if $log;
