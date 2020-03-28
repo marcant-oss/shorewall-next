@@ -2036,7 +2036,7 @@ sub finalize_script( $ ) {
 
 	rename $tempfile, $file or fatal_error "Cannot Rename $tempfile to $file: $!";
 	chmod 0700, $file or fatal_error "Cannot secure $file for execute access";
-	progress_message3 "Shorewall configuration compiled to $file" unless $export;
+	progress_message3 "$Product configuration compiled to $file" unless $export;
     }
 }
 
@@ -2058,7 +2058,7 @@ sub finalize_aux_config() {
     close $script;
     $script = 0;
     rename $tempfile, "$file.conf" or fatal_error "Cannot Rename $tempfile to $file.conf: $!";
-    progress_message3 "Shorewall configuration compiled to $file";
+    progress_message3 "$Product configuration compiled to $file";
 }
 
 #
