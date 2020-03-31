@@ -6012,9 +6012,7 @@ sub export_params() {
 	# Don't export pairs from %ENV
 	#
 	if ( defined $ENV{$param} ) {
-	    unless ( $export || $test ) {
-		next if $value eq $ENV{$param};
-	    }
+	    next if $value eq $ENV{$param};
 	} elsif ( exists $ENV{$param} ) {
 	    next unless supplied $value;
 	}
