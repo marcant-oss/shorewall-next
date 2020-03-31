@@ -791,7 +791,15 @@ our %ipsets; # All required IPsets
 #
 our %filecache;
 
+#
+# When we ran
+#
 our $compiletime;
+
+#
+# The -t option was specified to the compile command
+#
+our $test;
 
 sub process_shorewallrc($$);
 sub add_variables( \% );
@@ -805,8 +813,8 @@ sub add_variables( \% );
 #   2. The compiler can run multiple times in the same process so it has to be
 #      able to re-initialize its dependent modules' state.
 #
-sub initialize($;$$$) {
-    ( $family, $export, my ( $shorewallrc, $shorewallrc1 ) ) = @_;
+sub initialize($$;$$$) {
+    ( $family, $export, $test, my ( $shorewallrc, $shorewallrc1 ) ) = @_;
 
     if ( $family == F_IPV4 ) {
 	( $product, $Product, $toolname, $toolNAME ) = qw( shorewall  Shorewall iptables  IPTABLES );
@@ -5999,11 +6007,14 @@ sub export_params() {
 	} else {
 	    $value =~ s/'"'"'/'/g;
 	}
+
 	#
 	# Don't export pairs from %ENV
 	#
 	if ( defined $ENV{$param} ) {
-	    next if $value eq $ENV{$param};
+	    unless ( $export || $test ) {
+		next if $value eq $ENV{$param};
+	    }
 	} elsif ( exists $ENV{$param} ) {
 	    next unless supplied $value;
 	}
