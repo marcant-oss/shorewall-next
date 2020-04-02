@@ -2015,23 +2015,25 @@ sub generate_sha1() {
 #
 # Finalize the script file
 #
-sub finalize_script( $ ) {
-    my $export = $_[0];
+sub finalize_script( $$ ) {
+    my ( $export, $test ) = @_;
     close $script;
     $script = 0;
 
     if ( $file ne '-' ) {
-	my $sha1sum  = generate_sha1;
-	my $sha1sum1 = join( '-', 'sha-lh', substr( $sha1sum, 0, 20 ) );
-	my $sha1sum2 = join( '-', 'sha-rh', substr( $sha1sum, -20   ) );
+	unless ( $test ) {
+	    my $sha1sum  = generate_sha1;
+	    my $sha1sum1 = join( '-', 'sha-lh', substr( $sha1sum, 0, 20 ) );
+	    my $sha1sum2 = join( '-', 'sha-rh', substr( $sha1sum, -20   ) );
 
-	@ARGV = ( $tempfile );
-	$^I = '';
+	    @ARGV = ( $tempfile );
+	    $^I = '';
 
-	while ( <> ) {
-	    s/g_sha1sum1=/g_sha1sum1=$sha1sum1/;
-	    s/g_sha1sum2=/g_sha1sum2=$sha1sum2/;
-	    print;
+	    while ( <> ) {
+		s/g_sha1sum1=/g_sha1sum1=$sha1sum1/;
+		s/g_sha1sum2=/g_sha1sum2=$sha1sum2/;
+		print;
+	    }
 	}
 
 	rename $tempfile, $file or fatal_error "Cannot Rename $tempfile to $file: $!";
