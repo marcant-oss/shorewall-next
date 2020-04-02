@@ -913,7 +913,7 @@ sub compiler {
 	#
 	# Close, rename and secure the script
 	#
-	finalize_script ( $export );
+	finalize_script ( $export, $test );
 	#
 	# And generate the auxilary config file
 	#
