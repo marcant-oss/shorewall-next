@@ -130,7 +130,7 @@
       other packages depend on shorewall-core.</para>
     </section>
 
-    <section id="faq1.4">
+    <section id="faq1.5">
       <title>(FAQ 1.5) After installing the latest version (&gt; 5.1.10.1) of
       Shorewall, when I change my configuration and 'shorewall reload' or
       'shorewall restart', my changes aren't in the running ruleset. Why is
@@ -233,7 +233,7 @@
       new one.</para>
     </section>
 
-    <section id="faq1.4">
+    <section id="faq2.6">
       <title>(FAQ 2 .6) After upgrading to the latest version (&gt; 5.1.10.1)
       of Shorewall, when I change my configuration and 'shorewall reload' or
       'shorewall restart', my changes aren't in the running ruleset. Why is
