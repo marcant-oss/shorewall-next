@@ -129,23 +129,62 @@
       <firstterm>shorewall-core</firstterm> package was added and all of the
       other packages depend on shorewall-core.</para>
     </section>
+
+    <section id="faq1.4">
+      <title>(FAQ 1.5) After installing the latest version (&gt; 5.1.10.1) of
+      Shorewall, when I change my configuration and 'shorewall reload' or
+      'shorewall restart', my changes aren't in the running ruleset. Why is
+      that happening?</title>
+
+      <para><emphasis role="bold">Answer: </emphasis>This happens when:</para>
+
+      <orderedlist>
+        <listitem>
+          <para>You use INCLUDE (?INCLUDE).</para>
+        </listitem>
+
+        <listitem>
+          <para>The included files are in a subdirectory of /etc/shorewall[6]
+          or in a separate directory.</para>
+        </listitem>
+
+        <listitem>
+          <para>You have AUTOMAKE=Yes in <ulink
+          url="manpages/shorewall.conf.html">shorewall[6].conf(5)</ulink>.</para>
+        </listitem>
+      </orderedlist>
+
+      <para>When AUTOMAKE=Yes, the compiler looks for files in each directory
+      in CONFIG_PATH for files that are newer that the last-generated firewall
+      script. If none are found, the old script is used as is. Prior to
+      version 5.1.10.2, that search was recursive so changes in
+      sub-directories of /etc/shorewall[6] were automatically searched. This
+      had performance implications if directories on the CONFIG_PATH were
+      deeply nested. So, beginning with version 5.1.10.2, only the directories
+      themselves are searched. You can restore the pre-5.1.10.2 behavior by
+      setting AUTOMAKE=recursive, or
+      AUTOMAKE=<replaceable>integer</replaceable>, where integer specifies the
+      search depth. If your included files are in a separate directory, then
+      that directory must be added to CONFIG_PATH in order to allow AUTOMAKE
+      to work correctly.</para>
+    </section>
   </section>
 
   <section id="Upgrading">
     <title>Upgrading Shorewall</title>
 
     <section id="faq66">
-      <title>(FAQ 66) I'm trying to upgrade to Shorewall 4.x; which of these
-      packages do I need to install?</title>
+      <title>(FAQ 66) I'm trying to upgrade to Shorewall 4.x or later; which
+      of these packages do I need to install?</title>
 
       <para><emphasis role="bold">Answer:</emphasis> Please see the <ulink
       url="upgrade_issues.htm">upgrade issues.</ulink></para>
     </section>
 
     <section id="faq34">
-      <title>(FAQ 34) I am trying to upgrade to Shorewall 4.4 and I can't find
-      the shorewall-common, shorewall-shell and shorewall-perl packages? Where
-      are they?</title>
+      <title>(FAQ 34) I am trying to upgrade to Shorewall 4.4 or later and I
+      can't find the shorewall-common, shorewall-shell and shorewall-perl
+      packages? Where are they?</title>
 
       <para><emphasis role="bold">Answer</emphasis>:In Shorewall 4.4, the
       <firstterm>shorewall-shell</firstterm> package was discontinued. The
@@ -192,6 +231,16 @@
       4.4.21, there is a <emphasis role="bold">shorewall update</emphasis>
       command that does a smart merge of your existing shorewall.conf and the
       new one.</para>
+    </section>
+
+    <section id="faq1.4">
+      <title>(FAQ 2 .6) After upgrading to the latest version (&gt; 5.1.10.1)
+      of Shorewall, when I change my configuration and 'shorewall reload' or
+      'shorewall restart', my changes aren't in the running ruleset. Why is
+      that happening?</title>
+
+      <para><emphasis role="bold">Answer: </emphasis>See<link
+      linkend="faq1.5"> FAQ 1.5</link>.</para>
     </section>
   </section>
 
