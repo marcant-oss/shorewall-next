@@ -1892,8 +1892,8 @@ sub map_provider_to_interface() {
 
     my $haveoptional;
 
-    for my $providerref ( values %providers ) {
-	if ( $providerref->{optional} ) {
+    for my $provider ( @providers ) {
+	if ( ( my $providerref=$providers{$provider} )->{optional} ) {
 	    unless ( $haveoptional++ ) {
 		emit( 'if [ -n "$interface" ]; then',
 		      '    case $interface in' );
@@ -2054,8 +2054,7 @@ sub compile_updown() {
 	    );
     }
 
-    my @nonshared = ( grep $providers{$_}->{optional},
-		      values %provider_interfaces );
+    my @nonshared = ( grep $providers{$_}->{optional}, sortvaluesiftest %provider_interfaces );
 
     if ( @nonshared ) {
 	my $interfaces = join( '|', map $providers{$_}->{physical}, @nonshared );
@@ -2246,9 +2245,11 @@ sub handle_optional_interfaces() {
     # names but they might derive from wildcard interface entries. Optional interfaces which do not have
     # wildcard physical names are also included in the providers table.
     #
-    for my $providerref ( grep $_->{optional} , values %providers ) {
-	push @interfaces, $providerref->{interface};
-	$wildcards ||= $providerref->{wildcard};
+    for my $provider ( @providers ) {
+	if ( ( my $providerref = $providers{$provider} )->{optional} ) {
+	    push @interfaces, $providerref->{interface};
+	    $wildcards ||= $providerref->{wildcard};
+	}
     }
 
     #
@@ -2296,17 +2297,7 @@ sub handle_optional_interfaces() {
 
 		emit( "$physical)" ), push_indent if $wildcards;
 
-		if ( $provider eq $physical ) {
-		    #
-		    # Just an optional interface, or provider and interface are the same
-		    #
-		    emit qq(if [ -z "\$interface" -o "\$interface" = "$physical" ]; then);
-		} else {
-		    #
-		    # Provider
-		    #
-		    emit qq(if [ -z "\$interface" -o "\$interface" = "$physical" ]; then);
-		}
+		emit qq(if [ -z "\$interface" -o "\$interface" = "$physical" ]; then);
 
 		push_indent;
 

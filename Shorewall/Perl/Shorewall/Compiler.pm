@@ -49,8 +49,6 @@ our $VERSION = 'MODULEVERSION';
 
 our $export;          # True when compiling for export
 
-our $test;            # True when running regression tests
-
 our $family;          # IP address family (4 or 6)
 
 our $have_arptables;  # True if we have arptables rules
@@ -58,8 +56,8 @@ our $have_arptables;  # True if we have arptables rules
 #
 # Initilize the package-globals in the other modules
 #
-sub initialize_package_globals( $$$ ) {
-    Shorewall::Config::initialize($family, $export, $_[1], $_[2]);
+sub initialize_package_globals( $$$$ ) {
+    Shorewall::Config::initialize($family, $export, $_[1], $_[2], $_[3]);
     Shorewall::Chains::initialize ($family, 1, $export );
     Shorewall::Zones::initialize ($family, $_[0]);
     Shorewall::Nat::initialize($family);
@@ -588,7 +586,7 @@ sub compiler {
        ( '',              '',         -1,         '',          0,      '',    -1,             0,        0,         0,        0,        , ''          , '/usr/share/shorewall/shorewallrc', ''            );
 
     $export         = 0;
-    $test           = 0;
+    my $test        = 0;
     $have_arptables = 0;
 
     sub validate_boolean( $ ) {
@@ -641,18 +639,19 @@ sub compiler {
     #
     # Now that we know the address family (IPv4/IPv6), we can initialize the other modules' globals
     #
-    initialize_package_globals( $update, $shorewallrc, $shorewallrc1 );
-
+    initialize_package_globals( $update, $test, $shorewallrc, $shorewallrc1 );
+    #
+    # Rather than continuing to extend the argument list of Config::initialize(),
+    # we use a set of small functions to export settings to the Config module.
+    #
     set_config_path( $config_path ) if $config_path;
-
     set_shorewall_dir( $directory ) if $directory ne '';
-
     $verbosity = 1 if $debug && $verbosity < 1;
-
     set_verbosity( $verbosity );
     set_log($log, $log_verbosity) if $log;
     set_timestamp( $timestamp );
     set_debug( $debug , $confess );
+    set_command( 'compile', 'Compiling', 'Compiled' );
     #
     #                                      S H O R E W A L L R C ,
     #                      S H O R E W A L L . C O N F  A N D  C A P A B I L I T I E S
@@ -670,12 +669,7 @@ sub compiler {
     #
     # Create a temp file to hold the script
     #
-    if ( $scriptfilename ) {
-	set_command( 'compile', 'Compiling', 'Compiled' );
-	create_temp_script( $scriptfilename , $export );
-    } else {
-	set_command( 'check', 'Checking', 'Checked' );
-    }
+    create_temp_script( $scriptfilename , $export ) if $scriptfilename;
     #
     #                                     Z O N E   D E F I N I T I O N
     #                              (Produces no output to the compiled script)
