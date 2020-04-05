@@ -29,6 +29,7 @@ package Shorewall::Zones;
 require Exporter;
 use Shorewall::Config qw(:DEFAULT :internal);
 use Shorewall::IPAddrs;
+use sort 'stable';
 
 use strict;
 
@@ -847,10 +848,10 @@ sub dump_zone_contents() {
 	$entry .= ( " mark=" . in_hex( $zoneref->{mark} ) ) if exists $zoneref->{mark};
 
 	if ( $hostref ) {
-	    for my $type ( keys %$hostref ) {
+	    for my $type ( sortkeysiftest %$hostref ) {
 		my $interfaceref = $hostref->{$type};
 
-		for my $interface ( keys %$interfaceref ) {
+		for my $interface ( sortkeysiftest %$interfaceref ) {
 		    my $iref     = $interfaces{$interface};
 		    my $arrayref = $interfaceref->{$interface};
 
