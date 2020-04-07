@@ -29,6 +29,7 @@ package Shorewall::Zones;
 require Exporter;
 use Shorewall::Config qw(:DEFAULT :internal);
 use Shorewall::IPAddrs;
+use sort 'stable';
 
 use strict;
 
@@ -847,10 +848,10 @@ sub dump_zone_contents() {
 	$entry .= ( " mark=" . in_hex( $zoneref->{mark} ) ) if exists $zoneref->{mark};
 
 	if ( $hostref ) {
-	    for my $type ( keys %$hostref ) {
+	    for my $type ( sortkeysiftest %$hostref ) {
 		my $interfaceref = $hostref->{$type};
 
-		for my $interface ( keys %$interfaceref ) {
+		for my $interface ( sortkeysiftest %$interfaceref ) {
 		    my $iref     = $interfaces{$interface};
 		    my $arrayref = $interfaceref->{$interface};
 
@@ -2320,9 +2321,9 @@ sub find_hosts_by_option( $ ) {
     }
 
     for my $zone ( grep ! ( $zones{$_}{type} & FIREWALL ) , @zones ) {
-	for my $type (keys %{$zones{$zone}{hosts}} ) {
+	for my $type (sortkeysiftest %{$zones{$zone}{hosts}} ) {
 	    my $interfaceref = $zones{$zone}{hosts}->{$type};
-	    for my $interface ( keys %$interfaceref ) {
+	    for my $interface ( sortkeysiftest %$interfaceref ) {
 		my $arrayref = $interfaceref->{$interface};
 		for my $host ( @{$arrayref} ) {
 		    my $ipsec  = $host->{ipsec};
@@ -2350,9 +2351,9 @@ sub find_zone_hosts_by_option( $$ ) {
     my @hosts;
 
     unless ( $zones{$zone}{type} & FIREWALL ) {
-	for my $type (keys %{$zones{$zone}{hosts}} ) {
+	for my $type (sortkeysiftest %{$zones{$zone}{hosts}} ) {
 	    my $interfaceref = $zones{$zone}{hosts}->{$type};
-	    for my $interface ( keys %$interfaceref ) {
+	    for my $interface ( sortkeysiftest %$interfaceref ) {
 		my $arrayref = $interfaceref->{$interface};
 		for my $host ( @{$arrayref} ) {
 		    if ( my $value = $host->{options}{$option} ) {
