@@ -166,11 +166,7 @@ our @EXPORT = qw(
 		 report_used_capabilities
 		 kernel_version
 
-		 compiletime
-
-		 sortkeysiftest
-		 sortvaluesiftest
-		 sortiftest
+                 compiletime
 				       
 		 F_IPV4
 		 F_IPV6
@@ -268,7 +264,6 @@ our %EXPORT_TAGS = ( internal => [ qw( create_temp_script
 				       $debug
 				       $file_format
 				       $comment
-				       $test
 
 				       %config
 				       %origin
@@ -798,8 +793,6 @@ our %filecache;
 
 our $compiletime;
 
-our $test;
-
 sub process_shorewallrc($$);
 sub add_variables( \% );
 #
@@ -811,12 +804,9 @@ sub add_variables( \% );
 #
 #   2. The compiler can run multiple times in the same process so it has to be
 #      able to re-initialize its dependent modules' state.
-####################################################################################################
-# Do not change the required part of this prototype unless you want to take on a lot of additional
-# work (This function is called from build).
-####################################################################################################
-sub initialize($;$$$$) {
-    ( $family, $export, $test, my ( $shorewallrc, $shorewallrc1 ) ) = @_;
+#
+sub initialize($;$$$) {
+    ( $family, $export, my ( $shorewallrc, $shorewallrc1 ) ) = @_;
 
     if ( $family == F_IPV4 ) {
 	( $product, $Product, $toolname, $toolNAME ) = qw( shorewall  Shorewall iptables  IPTABLES );
@@ -861,7 +851,7 @@ sub initialize($;$$$$) {
 		    TC_SCRIPT               => '',
 		    EXPORT                  => 0,
 		    KLUDGEFREE              => '',
-		    VERSION                 => '5.2.4.1',
+		    VERSION                 => '5.2.0-Beta1',
 		    CAPVERSION              => 50200 ,
 		    BLACKLIST_LOG_TAG       => '',
 		    RELATED_LOG_TAG         => '',
@@ -1836,30 +1826,6 @@ sub close_log() {
 #
 sub set_command( $$$ ) {
     ($command, $doing, $done) = @_;
-}
-
-#
-# Return the keys or values of the passed hash. If $test, the keys/values will be sorted by their own values
-#
-sub sortkeysiftest(\%) {
-    my ( $hashref ) =  @_;
-
-    return sort keys %$hashref if $test;
-    return keys %$hashref;
-}
-
-sub sortvaluesiftest(\%) {
-    my ( $hashref ) =  @_;
-
-    return sort values %$hashref if $test;
-    return keys %$hashref;
-}
-
-#
-# Sort a list by the list elements if $test
-#
-sub sortiftest(@) {
-    return $test ? sort @_ : @_;
 }
 
 #
