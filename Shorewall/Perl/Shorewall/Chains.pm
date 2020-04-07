@@ -37,6 +37,7 @@ use Shorewall::Config qw(:DEFAULT :internal);
 use Shorewall::Zones;
 use Shorewall::IPAddrs;
 use strict;
+use sort 'stable';
 
 our @ISA = qw(Exporter);
 our @EXPORT = ( qw(
@@ -3706,6 +3707,24 @@ sub optimize_level0() {
     }
 }
 
+#
+# Conditionally sort a list of chain table entry references by name, if -t was specified
+#
+
+sub keysort(\%) {
+    my $hashref = shift;
+
+    return sort { $a->{name} cmp $b->{name} } keys %$hashref if $test;
+    return keys %$hashref;
+}
+
+sub valuesort(\%) {
+    my $hashref = shift;
+
+    return sort { $a->{name} cmp $b->{name} } values %$hashref if $test;
+    return values %$hashref;
+}
+
 sub optimize_level4( $$ ) {
     my ( $table, $tableref ) = @_;
     my $progress = 1;
@@ -3927,7 +3946,7 @@ sub optimize_level4( $$ ) {
     my @chains  = grep ( $_->{referenced}   &&
 			 ! $_->{optflags}   &&
 			 @{$_->{rules}} < 4 &&
-			 keys %{$_->{references}} == 1 , values %$tableref );
+			 keys %{$_->{references}} == 1 , valuesort %$tableref );
 
     if ( my $chains  = @chains ) {
 	$passes++;
@@ -3936,7 +3955,7 @@ sub optimize_level4( $$ ) {
 
 	for my $chainref ( @chains ) {
 	    my $name = $chainref->{name};
-	    for my $sourceref ( map $tableref->{$_}, keys %{$chainref->{references}} ) {
+	    for my $sourceref ( map $tableref->{$_}, sortkeysiftest %{$chainref->{references}} ) {
 		my $name1 = $sourceref->{name};
 
 		if ( $chainref->{references}{$name1} == 1 ) {
@@ -4066,7 +4085,7 @@ sub optimize_level8( $$$ ) {
 	    #
 	    # First create aliases for each renamed chain and change the {name} member.
 	    #
-	    for my $oldname ( @rename ) {
+	    for my $oldname ( sortiftest @rename ) {
 		my $newname = $renamed{ $oldname } = $rename{ $oldname } . $chainseq++;
 
 		trace( $tableref->{$oldname}, 'RN', 0, " Renamed $newname" ) if $debug;
@@ -4579,7 +4598,7 @@ sub combine_states {
 
 sub optimize_level16( $$$ ) {
     my ( $table, $tableref , $passes ) = @_;
-    my @chains   = ( grep $_->{referenced}, values %{$tableref} );
+    my @chains   = ( grep $_->{referenced}, valuesort %{$tableref} );
     my @chains1  = @chains;
     my $chains   = @chains;
 
@@ -4696,7 +4715,7 @@ sub setup_zone_mss() {
 
 	my $hosts = find_zone_hosts_by_option( $zone, 'mss' );
 
-	for my $hostref ( @$hosts ) {
+	for my $hostref ( $test ? sort { $a->[0] cmp $b->[0] } @$hosts : @$hosts ) {
 	    my $mss         = $hostref->[4];
 	    my @mssmatch    = have_capability( 'TCPMSS_MATCH' ) ? ( tcpmss => "--mss $mss:" ) : ();
 	    my @sourcedev   = imatch_source_dev $hostref->[0];
@@ -7455,13 +7474,13 @@ sub set_global_variables( $$ ) {
     if ( $conditional ) {
 	my ( $interface, @interfaces );
 
-	@interfaces = keys %interfaceaddr;
+	@interfaces = sortkeysiftest %interfaceaddr;
 
 	for $interface ( @interfaces ) {
 	    emit( qq([ -z "\$interface" -o "\$interface" = "$interface" ] && $interfaceaddr{$interface}) );
 	}
 
-	@interfaces = keys %interfacegateways;
+	@interfaces = sortkeysiftest %interfacegateways;
 
 	for $interface ( @interfaces ) {
 	    emit( qq(if [ -z "\$interface" -o "\$interface" = "$interface" ]; then) );
@@ -7471,29 +7490,29 @@ sub set_global_variables( $$ ) {
 	    emit( qq(fi\n) );
 	}
 
-	@interfaces = keys %interfacemacs;
+	@interfaces = sortkeysiftest %interfacemacs;
 
 	for $interface ( @interfaces ) {
 	    emit( qq([ -z "\$interface" -o "\$interface" = "$interface" ] && $interfacemacs{$interface}) );
 	}
     } else {
-	emit $_     for values %interfaceaddr;
-	emit "$_\n" for values %interfacegateways;
-	emit $_     for values %interfacemacs;
+	emit $interfaceaddr{$_}         for sortkeysiftest %interfaceaddr;
+	emit "$interfacegateways{$_}\n" for sortkeysiftest %interfacegateways;
+	emit $interfacemacs{$_}         for sortkeysiftest %interfacemacs;
     }
 
     if ( $setall ) {
-	emit $_ for values %interfaceaddrs;
-	emit $_ for values %interfacenets;
+	emit $interfaceaddr{$_}         for sortkeysiftest %interfaceaddr;
+	emit $interfacenets{$_}         for sortkeysiftest %interfacenets;
 
 	unless ( have_capability( 'ADDRTYPE' ) ) {
 
 	    if ( $family == F_IPV4 ) {
 		emit 'ALL_BCASTS="$(get_all_bcasts) 255.255.255.255"';
-		emit $_ for values %interfacebcasts;
+		emit $interfacebcasts{$_} for sortkeysiftest %interfacebcasts;
 	    } else {
 		emit 'ALL_ACASTS="$(get_all_acasts)"';
-		emit $_ for values %interfaceacasts;
+		emit $interfaceacasts{$_} for sortkeysiftest %interfaceacasts;
 	    }
 	}
     }
@@ -8457,7 +8476,7 @@ sub add_interface_options( $ ) {
 	# Insert jumps to the interface chains into the rules chains
 	#
 	for my $zone1 ( off_firewall_zones ) {
-	    my @input_interfaces   = keys %{zone_interfaces( $zone1 )};
+	    my @input_interfaces   = sortkeysiftest %{zone_interfaces( $zone1 )};
 	    my @forward_interfaces = @input_interfaces;
 
 	    if ( @input_interfaces > 1 ) {
@@ -8543,7 +8562,7 @@ sub add_interface_options( $ ) {
 	for my $zone1 ( firewall_zone, vserver_zones ) {
 	    for my $zone2 ( off_firewall_zones ) {
 		my $chainref = $filter_table->{rules_chain( $zone1, $zone2 )};
-		my @interfaces = keys %{zone_interfaces( $zone2 )};
+		my @interfaces = sortkeysiftest %{zone_interfaces( $zone2 )};
 		my $chain1ref;
 
 		for my $interface ( @interfaces ) {
@@ -8984,7 +9003,7 @@ sub create_save_ipsets() {
 	    #
 	    $ipsets{$_} = 1 for ( @ipsets, @{$globals{SAVED_IPSETS}} );
 
-	    my @sets = keys %ipsets;
+	    my @sets = sortkeysiftest %ipsets;
 
 	    emit( '' ,
 		  '    rm -f $file' ,
@@ -9153,7 +9172,7 @@ sub create_load_ipsets() {
 #
 sub create_nfobjects() {
     
-    my @objects = ( keys %nfobjects );
+    my @objects = ( sortkeysiftest %nfobjects );
 
     if ( @objects ) {
 	if ( $config{NFACCT} ) {
@@ -9168,7 +9187,7 @@ sub create_nfobjects() {
 	}
     }
 
-    for ( keys %nfobjects ) {
+    for ( @objects ) {
 	emit( qq(if ! qt \$NFACCT get $_; then),
 	      qq(    \$NFACCT add $_),
 	      qq(fi\n) );
@@ -9541,7 +9560,7 @@ sub create_stop_load( $ ) {
 }
 
 sub initialize_switches() {
-    if ( keys %switches ) {
+    if ( sortkeysiftest %switches ) {
 	emit( 'if [ $COMMAND = start ]; then' );
 	push_indent;
 	for my $switch ( keys %switches ) {
