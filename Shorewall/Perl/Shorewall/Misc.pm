@@ -34,7 +34,6 @@ use Shorewall::Zones;
 use Shorewall::Chains qw(:DEFAULT :internal);
 use Shorewall::Rules;
 use Shorewall::Proc;
-use sort 'stable';
 
 use strict;
 
@@ -131,7 +130,7 @@ sub setup_ecn()
 	}
 
 	if ( @hosts ) {
-	    my @interfaces = ( sortkeysiftest %interfaces );
+	    my @interfaces = ( keys %interfaces );
 
 	    progress_message "$doing ECN control on @interfaces...";
 
@@ -1323,7 +1322,7 @@ sub setup_mac_lists( $ ) {
 	$maclist_interfaces{ $hostref->[0] } = 1;
     }
 
-    my @maclist_interfaces = ( sortkeysiftest %maclist_interfaces );
+    my @maclist_interfaces = ( keys %maclist_interfaces );
 
     if ( $phase == 1 ) {
 
@@ -1409,7 +1408,7 @@ sub setup_mac_lists( $ ) {
 	#
 	# Generate jumps from the input and forward chains
 	#
-	for my $hostref ( $test ? sort { $a->[0] cmp $b->[0] } @$maclist_hosts : @$maclist_hosts ) {
+	for my $hostref ( @$maclist_hosts ) {
 	    my $interface  = $hostref->[0];
 	    my $ipsec      = $hostref->[1];
 	    my @policy     = $ipsec && have_ipsec ? ( policy => "--pol $ipsec --dir in" ) : ();
@@ -1802,7 +1801,7 @@ sub handle_complex_zone( $$ ) {
 	my $type       = $zoneref->{type};
 	my $source_ref = ( $zoneref->{hosts}{ipsec} ) || {};
 
-	for my $interface ( sortkeysiftest %$source_ref ) {
+	for my $interface ( keys %$source_ref ) {
 	    my $sourcechainref = $filter_table->{forward_chain $interface};
 	    my @interfacematch;
 	    my $interfaceref = find_interface $interface;
@@ -1942,7 +1941,7 @@ sub add_output_jumps( $$$$$$$$ ) {
     my $use_output        = 0;
     my @dest              = imatch_dest_net $net;
     my @ipsec_out_match   = match_ipsec_out $zone , $hostref;
-    my @zone_interfaces   = sortkeysiftest %{zone_interfaces( $zone )};
+    my @zone_interfaces   = keys %{zone_interfaces( $zone )};
 
     if ( @vservers || use_interface_chain( $interface, 'use_output_chain' ) || ( @{$interfacechainref->{rules}} && ! $chain1ref ) || @zone_interfaces > 1 ) {
 	#
@@ -2314,9 +2313,9 @@ sub generate_matrix() {
 	#
 	# Take care of PREROUTING, INPUT and OUTPUT jumps
 	#
-	for my $type ( sortkeysiftest %$source_hosts_ref ) {
+	for my $type ( keys %$source_hosts_ref ) {
 	    my $typeref = $source_hosts_ref->{$type};
-	    for my $interface ( sortkeysiftest %$typeref ) {
+	    for my $interface ( keys %$typeref ) {
 		if ( get_physical( $interface ) eq '+' ) {
 		    #
 		    # Insert the interface-specific jumps before this one which is not interface-specific
@@ -2401,9 +2400,9 @@ sub generate_matrix() {
 
 		my $chainref = $filter_table->{$chain}; #Will be null if $chain is a Netfilter Built-in target like ACCEPT
 
-		for my $type ( sortkeysiftest %{$zone1ref->{hosts}} ) {
+		for my $type ( keys %{$zone1ref->{hosts}} ) {
 		    my $typeref = $zone1ref->{hosts}{$type};
-		    for my $interface ( sortkeysiftest %$typeref ) {
+		    for my $interface ( keys %$typeref ) {
 			for my $hostref ( @{$typeref->{$interface}} ) {
 			    next if $hostref->{options}{sourceonly};
 			    if ( $zone ne $zone1 || $num_ifaces > 1 || $hostref->{options}{routeback} ) {

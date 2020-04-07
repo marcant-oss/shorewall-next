@@ -155,7 +155,7 @@ sub setup_proxy_arp() {
 
 	emit '';
 
-	for my $interface ( sortkeysiftest %reset ) {
+	for my $interface ( keys %reset ) {
 	    unless ( $set{interface} ) {
 		my $physical = get_physical $interface;
 		emit  ( "if [ -f /proc/sys/net/ipv$family/conf/$physical/$proc_file ]; then" ,
@@ -164,7 +164,7 @@ sub setup_proxy_arp() {
 	    }
 	}
 
-	for my $interface ( sortkeysiftest %set ) {
+	for my $interface ( keys %set ) {
 	    my $physical = get_physical $interface;
 	    emit  ( "if [ -f /proc/sys/net/ipv$family/conf/$physical/$proc_file ]; then" ,
 		    "    echo 1 > /proc/sys/net/ipv$family/conf/$physical/$proc_file" );
