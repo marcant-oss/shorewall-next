@@ -3710,15 +3710,7 @@ sub optimize_level0() {
 #
 # Conditionally sort a list of chain table entry references by name, if -t was specified
 #
-
-sub keysort(\%) {
-    my $hashref = shift;
-
-    return sort { $a->{name} cmp $b->{name} } keys %$hashref if $test;
-    return keys %$hashref;
-}
-
-sub valuesort(\%) {
+sub sortchainsiftest(\%) {
     my $hashref = shift;
 
     return sort { $a->{name} cmp $b->{name} } values %$hashref if $test;
@@ -3946,7 +3938,7 @@ sub optimize_level4( $$ ) {
     my @chains  = grep ( $_->{referenced}   &&
 			 ! $_->{optflags}   &&
 			 @{$_->{rules}} < 4 &&
-			 keys %{$_->{references}} == 1 , valuesort %$tableref );
+			 keys %{$_->{references}} == 1 , sortchainsiftest %$tableref );
 
     if ( my $chains  = @chains ) {
 	$passes++;
@@ -4598,7 +4590,7 @@ sub combine_states {
 
 sub optimize_level16( $$$ ) {
     my ( $table, $tableref , $passes ) = @_;
-    my @chains   = ( grep $_->{referenced}, valuesort %{$tableref} );
+    my @chains   = ( grep $_->{referenced}, sortchainsiftest %{$tableref} );
     my @chains1  = @chains;
     my $chains   = @chains;
 
