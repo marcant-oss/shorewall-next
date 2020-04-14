@@ -192,11 +192,19 @@ ACCEPT       net:+sshok       $FW      tcp      22</programlisting></para>
     ipv4 ipsets are saved. Both features require ipset version 5 or
     later.</para>
 
+    <caution>
+      <para>After setting SAVE_IPSETS, it is important to recompile the
+      firewall script (e.g., 'shorewall compile', 'shorewall reload' or
+      'shorewall restart') before rebooting</para>
+    </caution>
+
     <para>Although Shorewall can save the definition of your ipsets and
     restore them when Shorewall starts, in most cases you must use the ipset
     utility to initially create and load your ipsets. The exception is that
     Shorewall will automatically create an empty iphash ipset to back each
-    dynamic zone.</para>
+    dynamic zone. It will also create the ipset required by the
+    DYNAMIC_BLACKLIST=ipset:.. setting in <ulink
+    url="manpages/shorewall.conf.html">shorewall[6].conf(5)</ulink>,</para>
   </section>
 
   <section>
@@ -219,6 +227,32 @@ ACCEPT       net:+sshok       $FW      tcp      22</programlisting></para>
     derivatives). The value of the option is a file name where the contents of
     the ipsets will be save to and restored from. Shorewall-init will create
     any necessary directories during the first 'save' operation.</para>
+
+    <caution>
+      <para>If you set SAVE_IPSETS in /etc/sysconfig/shorewall-init
+      (/etc/default/shorewall-init on Debian and derivatives) when
+      shorewall-init has not been started by systemd, then when the system is
+      going down during reboot, the ipset contents will not be saved. You can
+      work around that as follows:</para>
+
+      <itemizedlist>
+        <listitem>
+          <para>Suppose that you have set
+          SAVE_IPSETS=/var/lib/shorewall/init-save-ipsets.</para>
+        </listitem>
+
+        <listitem>
+          <para>Before rebooting, execute this command:</para>
+
+          <programlisting>ipset save &gt; /var/lib/shorewall/init-save-ipsets</programlisting>
+        </listitem>
+
+        <listitem>
+          <para>Be sure to enable shoewall-init (e.g., <emphasis
+          role="bold">systemctl enable shorewall-init</emphasis>).</para>
+        </listitem>
+      </itemizedlist>
+    </caution>
 
     <para>If you configure Shorewall-init to save/restore ipsets, be sure to
     set SAVE_IPSETS=No in shorewall.conf and shorewall6.conf.</para>
