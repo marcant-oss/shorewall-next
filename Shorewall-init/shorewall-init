@@ -116,7 +116,7 @@ if [ -f "$SYSCONFDIR/shorewall-init" ]; then
     . $SYSCONFDIR/shorewall-init
     if [ -z "$PRODUCTS" ]; then
 	echo "ERROR: No products configured" >&2
-	exit 1
+	exit 6
     fi
 else
     echo "ERROR: ${SYSCONFDIR}/shorewall-init not found" >&2
