@@ -97,7 +97,7 @@ case $0 in
 		    *)
 			exit 0
 			;;
-		esac			
+		esac
 		;;
 	    *)
 		exit 0
