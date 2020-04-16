@@ -90,7 +90,14 @@ case $0 in
 		COMMAND=down
 		;;
 	    *dispatcher.d*)
-		COMMAND="$2"
+		case "$2" in
+		    up|down)
+			COMMAND="$2"
+			;;
+		    *)
+			exit 0
+			;;
+		esac			
 		;;
 	    *)
 		exit 0
