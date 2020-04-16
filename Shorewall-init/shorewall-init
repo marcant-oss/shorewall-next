@@ -28,8 +28,8 @@
 # Check to see if any of the products are running. If so, issue a warning
 # and exits with value 1
 firewall_stopped() {
-    for PRODUCT in $PRODUCTS; do
-	if $PRODUCT status > /dev/null 2>&1; then
+    for product in $PRODUCTS; do
+	if $product status > /dev/null 2>&1; then
 	    echo "   WARNING: $product is running -- ignoring $1 command" >&2
 	    return 1
 	fi
