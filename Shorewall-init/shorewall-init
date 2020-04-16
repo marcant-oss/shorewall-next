@@ -30,7 +30,7 @@
 firewall_stopped() {
     for PRODUCT in $PRODUCTS; do
 	if $PRODUCT status > /dev/null 2>&1; then
-	    echo "   WARNING: $PRODUCT is running -- ignoring $1 command" >&2
+	    echo "   WARNING: $product is running -- ignoring $1 command" >&2
 	    return 1
 	fi
     done
