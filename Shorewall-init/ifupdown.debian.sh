@@ -110,7 +110,7 @@ case $0 in
 	;;
     *)
         #
-        # Debian ifupdown system
+        # Debian ifupdown system - MODE and INTERFACE inherited from the environment
         #
 	INTERFACE="$IFACE"
 
