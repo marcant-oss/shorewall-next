@@ -120,7 +120,14 @@ case $0 in
 	case $0 in
 	    *dispatcher.d*)
 		INTERFACE="$1"
-		COMMAND="$2"
+		case "$2" in
+		    up|down)
+			COMMAND="$2"
+			;;
+		    *)
+			exit 0
+			;;
+		esac
 		;;
 	    *if-up.d*)
 		COMMAND=up
