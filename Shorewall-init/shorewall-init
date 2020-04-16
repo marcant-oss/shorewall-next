@@ -93,7 +93,14 @@ shorewall_stop () {
     printf "Clearing \"Shorewall-based firewalls\": "
     for PRODUCT in $PRODUCTS; do
 	if setstatedir; then
-	    ${STATEDIR}/firewall ${OPTIONS} clear
+	    #
+	    # Run in sub-shell to avoid name collisions
+	    #
+	    (
+		if ! ${STATEDIR}/firewall status > /dev/null 2>&1; then
+		    ${STATEDIR}/firewall ${OPTIONS} clear
+		fi
+	    )
 	fi
     done
 
