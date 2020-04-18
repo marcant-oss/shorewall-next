@@ -169,7 +169,7 @@ if [ -z "$BUILD" ]; then
 	    ;;
 	*)
 	    if [ -f /etc/os-release ]; then
-		eval $(cat /etc/os-release | grep ^ID=)
+		ID=$(grep '^ID=' /etc/os-release | sed 's/ID=//; s/"//g;')
 
 		case $ID in
 		    fedora|rhel|centos|foobar)
@@ -357,12 +357,11 @@ fi
 if [ $HOST = debian ]; then
     if [ -n "${DESTDIR}" ]; then
 	make_parent_directory ${DESTDIR}${ETC}/network/if-up.d 0755
-	make_parent_directory ${DESTDIR}${ETC}/network/if-down.d 0755
 	make_parent_directory ${DESTDIR}${ETC}/network/if-post-down.d 0755
     elif [ $configure -eq 0 ]; then
-	make_parent_directory ${DESTDIR}${CONFDIR}/network/if-up.d 0755
-	make_parent_directory ${DESTDIR}${CONFDIR}/network/if-down.d 0755
-	make_parent_directory ${DESTDIR}${CONFDIR}/network/if-post-down.d 0755
+	make_parent_directory ${CONFDIR}/network/if-up.d 0755
+	make_parent_directory ${CONFDIR}/network/if-post-down.d 0755
+	rm -f ${CONFDIR}/network/if-down.d/shorewall
     fi
 
     if [ ! -f ${DESTDIR}${CONFDIR}/default/$PRODUCT ]; then
@@ -388,7 +387,7 @@ else
 	    elif [ $HOST = openwrt ]; then
 		# Not implemented on OpenWRT
 		/bin/true
-	    else
+	    elif [ "$HOST" != debian ]; then
 		make_parent_directory ${DESTDIR}/${ETC}/NetworkManager/dispatcher.d 0755
 	    fi
 	fi
@@ -417,19 +416,21 @@ if [ $HOST != openwrt ]; then
 fi
 
 if [ -d ${DESTDIR}/etc/NetworkManager ]; then
-    [ $configure -eq 1 ] || make_parent_directory ${DESTDIR}${CONFDIR}/NetworkManager/dispatcher.d 0755
-    install_file ifupdown ${DESTDIR}${ETC}/NetworkManager/dispatcher.d/01-shorewall 0544
+    if [ "$HOST" = debian ]; then
+	rm -f ${DESTDIR}${ETC}/NetworkManager/dispatcher.d/01-shorewall
+    else
+	[ $configure -eq 1 ] || make_parent_directory ${DESTDIR}${CONFDIR}/NetworkManager/dispatcher.d 0755
+	install_file ifupdown ${DESTDIR}${ETC}/NetworkManager/dispatcher.d/01-shorewall 0544
+    fi
 fi
 
 case $HOST in
     debian)
 	if [ $configure -eq 1 ]; then
 	    install_file ifupdown ${DESTDIR}/etc/network/if-up.d/shorewall 0544
-	    install_file ifupdown ${DESTDIR}/etc/network/if-down.d/shorewall 0544
 	    install_file ifupdown ${DESTDIR}/etc/network/if-post-down.d/shorewall 0544
 	else
 	    install_file ifupdown ${DESTDIR}${CONFDIR}/network/if-up.d/shorewall 0544
-	    install_file ifupdown ${DESTDIR}${CONFDIR}/network/if-down.d/shorewall 0544
 	    install_file ifupdown ${DESTDIR}${CONFDIR}/network/if-post-down.d/shorewall 0544
 	fi
 	;;
