@@ -2064,12 +2064,12 @@ sub compile_updown() {
 	push_indent;
 
 	emit( q(if [ "$state" = started ]; then) ,
-	      q(    if [ "$COMMAND" = up ]; then) , 
+	      q(    if [ "$COMMAND" = up ]; then) ,
 	      q(        progress_message3 "Attempting enable on interface $1") ,
 	      q(        COMMAND=enable) ,
 	      q(        detect_configuration $1),
 	      q(        enable_provider $1),
-	      q(    elif [ "$PHASE" != post-down ]; then # pre-down or not Debian) ,
+	      q(    elif [ "$PHASE" != pre-down ]; then # post-down or not Debian) ,
 	      q(        progress_message3 "Attempting disable on interface $1") ,
 	      q(        COMMAND=disable) ,
 	      q(        detect_configuration $1),
