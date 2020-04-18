@@ -127,6 +127,17 @@ esac
 [ -n "$LOGFILE" ] || LOGFILE=/dev/null
 
 for PRODUCT in $PRODUCTS; do
+    if [ -n "$ADDRFAM" -a ${COMMAND} = up ]; then
+	case $PRODUCT in
+	    *6*)
+		[ ${ADDRFAM} = inet6 ] || continue
+		;;
+	    *)
+		[ ${ADDRFAM} = inet ] || continue
+		;;
+	esac
+    fi
+
     setstatedir
 
     if [ -x $VARLIB/$PRODUCT/firewall ]; then
