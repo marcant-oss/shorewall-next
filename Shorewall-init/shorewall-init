@@ -25,6 +25,7 @@
 #
 ###############################################################################
 # set the STATEDIR variable
+
 setstatedir() {
     local statedir
     if [ -f ${CONFDIR}/${PRODUCT}/vardir ]; then
@@ -59,8 +60,9 @@ else
     exit 1
 fi
 
-# Initialize the firewall
-shorewall_start () {
+# Initialize the firewalls
+
+shorewall_init_start () {
     local PRODUCT
     local STATEDIR
 
@@ -86,12 +88,14 @@ shorewall_start () {
     return 0
 }
 
-# Clear the firewall
-shorewall_stop () {
+# Clear the firewalls
+
+shorewall_init_stop () {
     local PRODUCT
     local STATEDIR
 
     printf "Clearing \"Shorewall-based firewalls\": "
+
     for PRODUCT in $PRODUCTS; do
 	if setstatedir; then
 	    #
@@ -119,10 +123,10 @@ shorewall_stop () {
 
 case "$1" in
     start)
-	shorewall_start
+	shorewall_init_start
 	;;
     stop)
-	shorewall_stop
+	shorewall_init_stop
 	;;
     *)
 	echo "Usage: $0 {start|stop}"
