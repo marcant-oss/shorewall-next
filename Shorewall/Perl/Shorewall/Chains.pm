@@ -9065,10 +9065,14 @@ sub create_load_ipsets() {
 	    # Requires V5 or later
 	    #
 	    emit( '' ,
-		  "    for set in \$(\$IPSET save | grep '$select' | cut -d' ' -f2); do" ,
-		  '        $IPSET flush $set' ,
-		  '        $IPSET destroy $set' ,
-		  "    done" ,
+		  '    if  [ -f ${VARDIR}/ipsets.save ]; then' ,
+		  '        while read ${VARDIR}/ipsets.save verb set; do' ,
+		  '            if [ $verb = create ]; then' ,
+		  '                $IPSET flush $set' ,
+		  '                $IPSET destroy $set' ,
+		  '            fi' ,
+		  '        done' ,
+		  '    fi',
 		);
 	} else {
 	    #
