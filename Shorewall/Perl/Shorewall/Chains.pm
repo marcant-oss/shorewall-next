@@ -726,6 +726,7 @@ our %opttype = ( rule          => CONTROL,
 		 'icmpv6-type' => UNIQUE,
 
 		 comment       => CONTROL,
+		 digest        => CONTROL,
 
 		 policy        => MATCH,
 		 state         => EXCLUSIVE,
@@ -3521,6 +3522,33 @@ sub irule_to_string( $ ) {
     $string;
 }
 
+#
+# This one omits the comment
+#
+sub irule_to_string1( $ ) {
+    my ( $ruleref ) = @_;
+
+    return $ruleref->{cmd} if exists $ruleref->{cmd};
+
+    my $string = '';
+
+    for ( grep ! ( get_opttype( $_, 0 ) & ( CONTROL | TARGET ) ), @{$ruleref->{matches}}) {
+	my $value = $ruleref->{$_};
+	if ( reftype $value ) {
+	    $string .= "$_=" . join( ',', @$value ) . ' ';
+	} else {
+	    $string .= "$_=$value ";
+	}
+    }
+
+    if ( $ruleref->{target} ) {
+	$string .= join( ' ', " -$ruleref->{jump}", $ruleref->{target} );
+	$string .= join( '', ' ', $ruleref->{targetopts} ) if $ruleref->{targetopts};
+    }
+
+    $string;
+}
+
 sub calculate_digest( $ ) {
     my $chainref = shift;
     my $rules = '';
@@ -4193,7 +4221,7 @@ sub get_multi_sports( $ ) {
 # Return an array of keys for the passed rule. 'dport', 'comment', and 'origin' are omitted;
 #
 sub get_keys( $ ) {
-    my %skip = ( dport => 1, comment => 1, origin => 1 );
+    my %skip = ( dport => 1, comment => 1, origin => 1, digest => 1 );
 
     sort grep ! $skip{$_},  keys %{$_[0]};
 }
@@ -4374,9 +4402,14 @@ sub delete_duplicates {
     my @rules;
     my $chainref  = shift;
     my $lastrule  = @_;
-    my $baseref   = pop;
     my $ruleref;
     my %skip = ( comment => 1, origin => 1 );
+
+    for ( @_ ) {
+	$_->{digest} = sha1_hex irule_to_string1( $_ );
+    }
+
+    my $baseref   = pop;
 
     while ( @_ ) {
 	my $docheck;
@@ -4384,54 +4417,41 @@ sub delete_duplicates {
 
 	if ( $baseref->{mode} == CAT_MODE && $baseref->{target} ) {
 	    my $ports1;
-	    my @keys1    = sort( grep ! $skip{$_}, keys( %$baseref ) );
+	    my $bad_key;
 	    my $rulenum  = @_;
 	    my $adjacent = 1;
-		
-	    {
-	      RULE:
+	    my $digest   = $baseref->{digest};
 
-		while ( --$rulenum >= 0 ) {
-		    $ruleref = $_[$rulenum];
+	    for ( grep ! $skip{$_}, keys( %$baseref ) ) {
+		$bad_key = 1, last if $bad_match{$_};
+	    }
 
-		    last unless $ruleref->{mode} == CAT_MODE;
+	    while ( --$rulenum >= 0 ) {
+		$ruleref = $_[$rulenum];
 
-		    my @keys2 = sort(grep ! $skip{$_}, keys( %$ruleref ) );
+		last unless $ruleref->{mode} == CAT_MODE;
 
-		    next unless @keys1 == @keys2 ;
+		next unless $digest eq $ruleref->{digest};
 
-		    my $keynum = 0;
+		my $keynum = 0;
 
-		    if ( $adjacent > 0 ) {
-			#
-			# There are no non-duplicate rules between this rule and the base rule
-			#
-			for my $key (  @keys1 ) {
-			    next RULE unless $key eq $keys2[$keynum++];
-			    next RULE unless compare_values( $baseref->{$key}, $ruleref->{$key} );
-			}
-		    } else {
-			#
-			# There are non-duplicate rules between this rule and the base rule
-			#
-			for my $key ( @keys1 ) {
-			    next RULE unless $key eq $keys2[$keynum++];
-			    next RULE unless compare_values( $baseref->{$key}, $ruleref->{$key} );
-			    last RULE if $bad_match{$key};
-			}
-		    }
+		unless ( $adjacent > 0 ) {
 		    #
-		    # This rule is a duplicate
+		    # There are non-duplicate rules between this rule and the base rule
 		    #
-		    $duplicate = 1;
-		    #
-		    # Increment $adjacent so that the continue block won't set it to zero
-		    #
-		    $adjacent++;
-
-		} continue {
-		    $adjacent--;
+		    last if $bad_key;
 		}
+		#
+		# This rule is a duplicate
+		#
+		$duplicate = 1;
+		#
+		# Increment $adjacent so that the continue block won't set it to zero
+		#
+		$adjacent++;
+
+	    } continue {
+		$adjacent--;
 	    }
 	}
 
@@ -4471,7 +4491,7 @@ sub get_conntrack( $ ) {
 # Return an array of keys for the passed rule. 'conntrack',  'comment' & 'origin' are omitted;
 #
 sub get_keys1( $ ) {
-    my %skip = ( comment => 1, origin => 1 , 'conntrack --ctstate' => 1 );
+    my %skip = ( comment => 1, origin => 1 , digest => 1, 'conntrack --ctstate' => 1 );
 
     sort grep ! $skip{$_},  keys %{$_[0]};
 }
