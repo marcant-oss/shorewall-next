@@ -357,11 +357,9 @@ fi
 if [ $HOST = debian ]; then
     if [ -n "${DESTDIR}" ]; then
 	make_parent_directory ${DESTDIR}${ETC}/network/if-up.d 0755
-	make_parent_directory ${DESTDIR}${ETC}/network/if-down.d 0755
 	make_parent_directory ${DESTDIR}${ETC}/network/if-post-down.d 0755
     elif [ $configure -eq 0 ]; then
 	make_parent_directory ${DESTDIR}${CONFDIR}/network/if-up.d 0755
-	make_parent_directory ${DESTDIR}${CONFDIR}/network/if-down.d 0755
 	make_parent_directory ${DESTDIR}${CONFDIR}/network/if-post-down.d 0755
     fi
 
@@ -425,11 +423,10 @@ case $HOST in
     debian)
 	if [ $configure -eq 1 ]; then
 	    install_file ifupdown ${DESTDIR}/etc/network/if-up.d/shorewall 0544
-	    install_file ifupdown ${DESTDIR}/etc/network/if-down.d/shorewall 0544
 	    install_file ifupdown ${DESTDIR}/etc/network/if-post-down.d/shorewall 0544
+	    rm -f ${DESTDIR}/etc/network/if-down.d/shorewall
 	else
 	    install_file ifupdown ${DESTDIR}${CONFDIR}/network/if-up.d/shorewall 0544
-	    install_file ifupdown ${DESTDIR}${CONFDIR}/network/if-down.d/shorewall 0544
 	    install_file ifupdown ${DESTDIR}${CONFDIR}/network/if-post-down.d/shorewall 0544
 	fi
 	;;
