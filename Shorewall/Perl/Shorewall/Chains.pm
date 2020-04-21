@@ -4218,7 +4218,7 @@ sub get_multi_sports( $ ) {
 }
 
 #
-# Return an array of keys for the passed rule. 'dport', 'comment', and 'origin' are omitted;
+# Return an array of keys for the passed rule. 'dport', 'comment', 'origin' and 'digest' are omitted;
 #
 sub get_keys( $ ) {
     my %skip = ( dport => 1, comment => 1, origin => 1, digest => 1 );
@@ -4432,7 +4432,6 @@ sub delete_duplicates {
 		last unless $ruleref->{mode} == CAT_MODE;
 
 		next unless $digest eq $ruleref->{digest};
-		    my $keynum = 0;
 
 		unless ( $adjacent > 0 ) {
 		    #
@@ -4487,7 +4486,7 @@ sub get_conntrack( $ ) {
 }
 
 #
-# Return an array of keys for the passed rule. 'conntrack',  'comment' & 'origin' are omitted;
+# Return an array of keys for the passed rule. 'conntrack',  'comment', 'origin' and 'digest' are omitted;
 #
 sub get_keys1( $ ) {
     my %skip = ( comment => 1, origin => 1 , digest => 1, 'conntrack --ctstate' => 1 );
