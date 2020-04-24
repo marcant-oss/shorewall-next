@@ -2110,7 +2110,7 @@ sub compile_updown() {
 	emit( '        progress_message3 "$g_product attempting $COMMAND"',
 	      '        detect_configuration',
 	      '        define_firewall',
-	      '    elif [ "$PHASE" != pre-down ]; then # Not Debian pre-down phase'
+	      '    else' ,
 	    );
 
 	push_indent;
