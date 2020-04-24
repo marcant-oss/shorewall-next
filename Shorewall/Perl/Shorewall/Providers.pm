@@ -2069,7 +2069,7 @@ sub compile_updown() {
 	      q(        COMMAND=enable) ,
 	      q(        detect_configuration $1),
 	      q(        enable_provider $1),
-	      q(    else ),
+	      q(    else),
 	      q(        progress_message3 "Attempting disable on interface $1") ,
 	      q(        COMMAND=disable) ,
 	      q(        detect_configuration $1),
