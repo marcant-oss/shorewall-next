@@ -429,6 +429,7 @@ case $HOST in
 	if [ $configure -eq 1 ]; then
 	    install_file ifupdown ${DESTDIR}/etc/network/if-up.d/shorewall 0544
 	    install_file ifupdown ${DESTDIR}/etc/network/if-post-down.d/shorewall 0544
+	    rm -f ${DESTDIR}/etc/network/if-down.d/shorewall
 	else
 	    install_file ifupdown ${DESTDIR}${CONFDIR}/network/if-up.d/shorewall 0544
 	    install_file ifupdown ${DESTDIR}${CONFDIR}/network/if-post-down.d/shorewall 0544

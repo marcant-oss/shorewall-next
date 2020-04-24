@@ -2028,7 +2028,7 @@ sub verify_required_interfaces( $ ) {
 
 	push_indent;
 
-	emit( 'start|reload|restore)' );
+	emit( 'start|reload|restore|enable)' );
 
 	push_indent;
 

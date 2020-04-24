@@ -2064,7 +2064,7 @@ sub compile_updown() {
 	push_indent;
 
 	emit( q(if [ "$state" = started ]; then) ,
-	      q(    if [ "$COMMAND" = up ]; then) , 
+	      q(    if [ "$COMMAND" = up ]; then) ,
 	      q(        progress_message3 "Attempting enable on interface $1") ,
 	      q(        COMMAND=enable) ,
 	      q(        detect_configuration $1),
