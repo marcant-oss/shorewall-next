@@ -43,23 +43,6 @@ setstatedir() {
     fi
 }
 
-#
-# This is modified by the installer when ${SHAREDIR} <> /usr/share
-#
-. /usr/share/shorewall/shorewallrc
-
-# check if shorewall-init is configured or not
-if [ -f "$SYSCONFDIR/shorewall-init" ]; then
-    . $SYSCONFDIR/shorewall-init
-    if [ -z "$PRODUCTS" ]; then
-	echo "ERROR: No products configured" >&2
-	exit 1
-    fi
-else
-    echo "ERROR: ${SYSCONFDIR}/shorewall-init not found" >&2
-    exit 1
-fi
-
 # Initialize the firewalls
 
 shorewall_init_start () {
@@ -120,6 +103,23 @@ shorewall_init_stop () {
 
     return 0
 }
+
+#
+# This is modified by the installer when ${SHAREDIR} <> /usr/share
+#
+. /usr/share/shorewall/shorewallrc
+
+# check if shorewall-init is configured or not
+if [ -f "$SYSCONFDIR/shorewall-init" ]; then
+    . $SYSCONFDIR/shorewall-init
+    if [ -z "$PRODUCTS" ]; then
+	echo "ERROR: No products configured" >&2
+	exit 1
+    fi
+else
+    echo "ERROR: ${SYSCONFDIR}/shorewall-init not found" >&2
+    exit 1
+fi
 
 case "$1" in
     start)
