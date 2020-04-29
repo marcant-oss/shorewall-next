@@ -9084,7 +9084,7 @@ sub create_load_ipsets() {
 	    #
 	    emit( '' ,
 		  '    if  [ -f ${VARDIR}/ipsets.save ]; then' ,
-		  '        while read verb set; do' ,
+		  '        while read verb set rest; do' ,
 		  '            if [ $verb = create ]; then' ,
 		  '                $IPSET flush $set' ,
 		  '                $IPSET destroy $set' ,
