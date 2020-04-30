@@ -8893,7 +8893,7 @@ sub ensure_ipsets( @ ) {
     if ( $globals{DBL_TIMEOUT} ne '' && $_[0] eq $globals{DBL_IPSET} ) {
 	shift;
 
-	emit( qq(    if qt \$IPSET list $globals{DBL_IPSET}; then));
+	emit( qq(    if ! qt \$IPSET list $globals{DBL_IPSET}; then));
 
 	push_indent;
 
@@ -9084,12 +9084,12 @@ sub create_load_ipsets() {
 	    #
 	    emit( '' ,
 		  '    if  [ -f ${VARDIR}/ipsets.save ]; then' ,
-		  '        while read ${VARDIR}/ipsets.save verb set; do' ,
+		  '        while read verb set rest; do' ,
 		  '            if [ $verb = create ]; then' ,
 		  '                $IPSET flush $set' ,
 		  '                $IPSET destroy $set' ,
 		  '            fi' ,
-		  '        done' ,
+		  '        done < ${VARDIR}/ipsets.save' ,
 		  '    fi',
 		);
 	} else {
