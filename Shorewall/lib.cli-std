@@ -386,6 +386,7 @@ uptodate() {
 
     [ -n "${find}" ] || return 1
     [ -h "${find}" ] && busybox=Yes
+    find="${find} -L"
 
     for dir in $g_shorewalldir $(split $CONFIG_PATH); do
 	if [ -n "${busybox}" ]; then
