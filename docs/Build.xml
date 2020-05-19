@@ -40,7 +40,11 @@
 
   <note>
     <para>This information is provided primarily for Shorewall developers.
-    Users are expected to install from pre-built tarballs or packages.</para>
+	    Users are expected to install from pre-built tarballs or packages.
+	    In addition to the below, it is also suggested to read the
+	    <ulink url="https://gitlab.com/shorewall/tools/raw/master/files/shorewall-release-process.txt">README file</ulink>
+	    located in the root directory of the tools repository.
+    </para>
   </note>
 
   <section>
@@ -99,6 +103,21 @@
     </section>
 
     <section>
+      <title>release (Clone of Release)</title>
+
+      <para>Added in Shorewall 4.4.22, this directory contains the files that
+      contain release-dependent information (change.txt, releasenotes.txt,
+      .spec files, etc). This is actually a symbolic link to ../release which
+      has its own Git repository.</para>
+    </section>
+
+    <section>
+      <title>testing (Clone of Testing)</title>
+
+      <para> This directory contains the regression library files.</para>
+    </section>
+
+    <section>
       <title>tools (Clone of Tools)</title>
 
       <para>This is where the release and build tools are kept. There are four
@@ -117,7 +136,8 @@
           <term>tools/files</term>
 
           <listitem>
-            <para>Files that are used during the release process.</para>
+		  <para>Files that are used during the release process.
+		  The license and readme files are also kept there.</para>
           </listitem>
         </varlistentry>
 
@@ -145,15 +165,6 @@
       <para>The files from the web site that are maintained in HTML format.
       are kept in this directory.</para>
     </section>
-
-    <section>
-      <title>release (Clone of Release)</title>
-
-      <para>Added in Shorewall 4.4.22, this directory contains the files that
-      contain release-dependent information (change.txt, releasenotes.txt,
-      .spec files, etc). This is actually a symbolic link to ../release which
-      has its own Git repository.</para>
-    </section>
   </section>
 
   <section>
@@ -180,10 +191,11 @@
     </section>
 
     <section>
-      <title>build45, build46 and build50</title>
+      <title>build45, build46, and build</title>
 
       <para>These are the scripts that respectively build Shorewall 4.5,
-      Shorewall 4.6 and Shorewall 5.[012] packages from Git.</para>
+      Shorewall 4.6 and Shorewall 5.[012] packages from Git.
+      Build is actually a symlink to the current build script.</para>
 
       <para>The scripts copy content from Git using the <command>git
       archive</command> command. They then use that content to build the
@@ -297,7 +309,7 @@
       <para>The general form of the build command is:</para>
 
       <blockquote>
-        <para><command>build</command>xx [ -<replaceable>options</replaceable>
+	      <para><command>build</command>[<replaceable>xx</replaceable>] [ -<replaceable>options</replaceable>
         ] <replaceable>release</replaceable> [ <replaceable>prior
         release</replaceable> ]</para>
       </blockquote>
