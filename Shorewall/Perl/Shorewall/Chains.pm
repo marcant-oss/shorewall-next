@@ -4079,7 +4079,7 @@ sub optimize_level8( $$$ ) {
 
 		    if ( $config{RENAME_COMBINED} && $chainref->{name} !~ /^[~%]/ ) {
 			#
-			# For simple use of the BLACKLIST section, we can end up with many identical
+			# For simple use of the blrules file, we can end up with many identical
 			# chains. To distinguish them from other renamed chains, we keep track of
 			# these chains via the 'blacklistsection' member.
 			#
