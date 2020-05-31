@@ -3622,6 +3622,7 @@ reject_command() {
 
 blacklist_command() {
     local family
+    local timeout
 
     [ $# -gt 0 ] || fatal_error "Missing address"
 
@@ -3639,7 +3640,9 @@ blacklist_command() {
 	    ;;
     esac
 
-    if $IPSET -A $g_blacklistipset $@ -exist; then
+    echo "$@" | fgrep -q ' timeout ' || timeout="timeout $g_dbltimeout"
+
+    if $IPSET -A $g_blacklistipset $@ $timeout -exist; then
 	local message
 
 	progress_message2 "$1 Blacklisted"
@@ -3908,8 +3911,26 @@ setup_dbl() {
     case $DYNAMIC_BLACKLIST in
 	ipset*,timeout*)
 	    #
-	    # This utility doesn't need to know about 'timeout=nnn'
+	    # Capture timeout
 	    #
+	    local ifs
+	    local f
+
+	    ifs=$IFS
+	    IFS=','
+
+	    for f in $DYNAMIC_BLACKLIST; do
+		case $f in
+		    timeout=*)
+			g_dbltimeout=${f#timeout=}
+			g_dbltimeout=${g_dbltimeout%%:*}
+			break
+			;;
+		esac
+	    done
+
+	    IFS=$ifs
+
 	    DYNAMIC_BLACKLIST=$(echo $DYNAMIC_BLACKLIST | sed -r 's/,timeout=[[:digit:]]+//')
 	    ;;
     esac
@@ -4458,6 +4479,7 @@ shorewall_cli() {
     g_disconnect=
     g_havemutex=
     g_trace=
+    g_dbltimeout=
 
     VERBOSE=
     VERBOSITY=1
