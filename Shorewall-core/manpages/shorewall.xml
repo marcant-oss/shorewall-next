@@ -2896,8 +2896,7 @@
       </varlistentry>
 
       <varlistentry>
-        <term><emphasis role="bold">stop</emphasis>
-        [-<option>f</option>]</term>
+        <term><emphasis role="bold">stop</emphasis></term>
 
         <listitem>
           <para>Stops the firewall. All existing connections, except those
@@ -2909,12 +2908,6 @@
           from systems listed in <ulink
           url="/manpages/shorewall-routestopped.html">shorewall-routestopped</ulink>(5)
           or by ADMINISABSENTMINDED.</para>
-
-          <para>If <option>-f</option> is given, the command will be processed
-          by the compiled script that executed the last successful <emphasis
-          role="bold">start</emphasis>, <emphasis
-          role="bold">restart</emphasis> or <emphasis
-          role="bold">reload</emphasis> command if that script exists.</para>
         </listitem>
       </varlistentry>
 
