@@ -1165,7 +1165,12 @@
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5). The
           <replaceable>address</replaceable> along with any
           <replaceable>option</replaceable>s are passed to the <command>ipset
-          add</command> command.</para>
+          add</command> command. Probably the most useful
+          <replaceable>option</replaceable> is the <option>timeout</option>
+          option. For example, to permanently blacklist 192.0.2.22, the
+          command would be:</para>
+
+          <programlisting>    shorewall blacklist 192.0.2.22 timeout 0</programlisting>
 
           <para>If the <option>disconnect</option> option is specified in the
           DYNAMIC_BLACKLISTING setting, then the effective VERBOSITY
