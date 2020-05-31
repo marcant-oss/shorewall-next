@@ -8890,7 +8890,7 @@ sub ensure_ipsets( @ ) {
     my $set;
     my $counters = have_capability( 'IPSET_MATCH_COUNTERS' ) ? ' counters' : '';
 
-    if ( $globals{DBL_TIMEOUT} ne '' && $_[0] eq $globals{DBL_IPSET} ) {
+    if ( $_[0] eq $globals{DBL_IPSET} ) {
 	shift;
 
 	emit( qq(    if ! qt \$IPSET list $globals{DBL_IPSET}; then));
@@ -8901,12 +8901,12 @@ sub ensure_ipsets( @ ) {
 	    emit(  q(    #),
 		   q(    # Set the timeout for the dynamic blacklisting ipset),
 		   q(    #),
-		  qq(    \$IPSET -exist create $globals{DBL_IPSET}  hash:net family inet timeout $globals{DBL_TIMEOUT}${counters}) );
+		  qq(    \$IPSET -exist create $globals{DBL_IPSET}  hash:net family inet timeout 0${counters}) );
 	} else {
 	    emit(  q(    #),
 		   q(    # Set the timeout for the dynamic blacklisting ipset),
 		   q(    #),
-		  qq(    \$IPSET -exist create $globals{DBL_IPSET} hash:net family inet6 timeout $globals{DBL_TIMEOUT}${counters}) );
+		  qq(    \$IPSET -exist create $globals{DBL_IPSET} hash:net family inet6 timeout 0${counters}) );
 	}
 
 	pop_indent;
