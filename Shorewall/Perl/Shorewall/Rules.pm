@@ -2888,6 +2888,7 @@ sub process_rule ( $$$$$$$$$$$$$$$$$$$$ ) {
 	    fatal_error "Invalid flags ($flags)"         unless defined $flags && $flags =~ /^(dst|src)(,(dst|src)){0,5}$/;
 
 	    $action = join( ' ', 'SET --' . $xlate{$basictarget} , $setname , $flags );
+	    $log_action = "$basictarget($setname)";
 
 	    if ( supplied $timeout ) {
 		fatal_error "A timeout may only be supplied in an ADD rule" unless $basictarget eq 'ADD';
