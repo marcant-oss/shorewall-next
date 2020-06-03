@@ -6695,7 +6695,7 @@ sub get_configuration( $$$ ) {
 
     if ( supplied( $val = $config{DYNAMIC_BLACKLIST} ) ) {
 	if ( $val =~ /^ipset/ ) {
-	    my %simple_options = ( 'src-dst' => 1, 'disconnect' => 1 );
+	    my %simple_options = ( 'src-dst' => 1, 'disconnect' => 1, 'log' => 1 );
 
 	    my ( $key, $set, $level, $tag, $rest ) = split( ':', $val , 5 );
 
