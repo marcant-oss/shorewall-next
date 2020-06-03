@@ -657,6 +657,30 @@ our %params;
 #
 our %compiler_params;
 #
+# Entries conditionally exported to the compiled script via the aux config file
+#
+our @exported_params = ( qw(
+			 VERBOSITY
+			 LOGFILE
+			 LOGFORMAT
+			 APRTABLES
+			 IPTABLES
+			 IP6TABLES
+			 IP
+			 TC
+			 IPSET
+			 PATH
+			 SHOREWALL_SHELL
+			 SHELL
+			 SUBSYSLOCK
+			 LOCKFILE
+			 RESTOREFILE
+			 RESTART
+			 DYNAMIC_BLACKLIST
+			 PAGER
+			 )
+    );
+#
 # Action parameters
 #
 our %actparams;
@@ -7196,8 +7220,8 @@ sub generate_aux_config() {
 
     emit "#\n# Shorewall auxiliary configuration file created by Shorewall version $globals{VERSION} - $date\n#";
 
-    for my $option ( qw(VERBOSITY LOGFILE LOGFORMAT ARPTABLES IPTABLES IP6TABLES IP TC IPSET PATH SHOREWALL_SHELL SUBSYSLOCK LOCKFILE RESTOREFILE WORKAROUNDS RESTART DYNAMIC_BLACKLIST PAGER) ) {
-	conditionally_add_option $option;
+    for my $param ( @exported_params ) {
+	conditionally_add_option $param;
     }
 
     conditionally_add_option1 'TC_ENABLED';
