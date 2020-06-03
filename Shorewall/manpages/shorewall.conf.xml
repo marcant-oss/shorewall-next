@@ -245,8 +245,8 @@
         <listitem>
           <para>Added in Shorewall 4.4.7. If set to Yes, Shorewall accounting
           is enabled (see <ulink
-          url="shorewall-accounting.html">shorewall-accounting</ulink>(5)).
-          If not specified or set to the empty value, ACCOUNTING=Yes is
+          url="shorewall-accounting.html">shorewall-accounting</ulink>(5)). If
+          not specified or set to the empty value, ACCOUNTING=Yes is
           assumed.</para>
         </listitem>
       </varlistentry>
@@ -271,8 +271,8 @@
         <listitem>
           <para>This parameter determines whether Shorewall automatically adds
           the external address(es) in <ulink
-          url="shorewall-nat.html">shorewall-nat</ulink>(5), and is
-          only available in IPv4 configurations. If the variable is set to
+          url="shorewall-nat.html">shorewall-nat</ulink>(5), and is only
+          available in IPv4 configurations. If the variable is set to
           <emphasis role="bold">Yes</emphasis> or <emphasis
           role="bold">yes</emphasis> then Shorewall automatically adds these
           aliases. If it is set to <emphasis role="bold">No</emphasis> or
@@ -300,8 +300,8 @@
         <listitem>
           <para>This parameter determines whether Shorewall automatically adds
           the SNAT ADDRESS in <ulink
-          url="shorewall-masq.html">shorewall-masq</ulink>(5), and
-          is only available in IPv4 configurations. If the variable is set to
+          url="shorewall-masq.html">shorewall-masq</ulink>(5), and is only
+          available in IPv4 configurations. If the variable is set to
           <emphasis role="bold">Yes</emphasis> or <emphasis
           role="bold">yes</emphasis> then Shorewall automatically adds these
           addresses. If it is set to <emphasis role="bold">No</emphasis> or
@@ -445,8 +445,7 @@
 
                 <listitem>
                   <para>Specify the appropriate helper in the HELPER column in
-                  <ulink
-                  url="shorewall-rules.html">shorewall-rules</ulink>
+                  <ulink url="shorewall-rules.html">shorewall-rules</ulink>
                   (5).</para>
 
                   <note>
@@ -514,8 +513,8 @@
           <para>Added in Shorewall 5.1.1. When USE_DEFAULT_RT=Yes, this option
           determines whether the <option>balance</option> provider option (see
           <ulink
-          url="shorewall-providers.html">shorewall-providers(5)</ulink>)
-          is the default. When BALANCE_PROVIDERS=Yes, then the
+          url="shorewall-providers.html">shorewall-providers(5)</ulink>) is
+          the default. When BALANCE_PROVIDERS=Yes, then the
           <option>balance</option> option is assumed unless the
           <option>fallback</option>, <option>loose</option>,
           <option>load</option> or <option>tproxy</option> option is
@@ -531,8 +530,8 @@
         <listitem>
           <para>Added in Shorewall-4.6.0. When set to <emphasis
           role="bold">Yes</emphasis>, causes entries in <ulink
-          url="shorewall-tcfilters.html">shorewall-tcfilters(5)</ulink>
-          to generate a basic filter rather than a u32 filter. This setting
+          url="shorewall-tcfilters.html">shorewall-tcfilters(5)</ulink> to
+          generate a basic filter rather than a u32 filter. This setting
           requires the <firstterm>Basic Ematch</firstterm> capability in your
           kernel and iptables.</para>
 
@@ -589,8 +588,7 @@
 
           <para>The BLACKLIST_DISPOSITION setting determines the disposition
           of packets sent to the <emphasis role="bold">blacklog</emphasis>
-          target of <ulink
-          url="shorewall-blrules.html">shorewall-blrules
+          target of <ulink url="shorewall-blrules.html">shorewall-blrules
           </ulink>(5), but otherwise does not affect entries in that
           file.</para>
         </listitem>
@@ -652,8 +650,8 @@
           not supply an /etc/shorewall/tcstart file. That way, your traffic
           shaping rules can still use the “fwmark” classifier based on packet
           marking defined in <ulink
-          url="shorewall-tcrules.html">shorewall-tcrules</ulink>(5).
-          If not specified, CLEAR_TC=Yes is assumed.</para>
+          url="shorewall-tcrules.html">shorewall-tcrules</ulink>(5). If not
+          specified, CLEAR_TC=Yes is assumed.</para>
 
           <warning>
             <para>When you specify TC_ENABLED=shared (see below), then you
@@ -943,6 +941,16 @@
                 </important>
               </listitem>
             </varlistentry>
+
+            <varlistentry>
+              <term>log</term>
+
+              <listitem>
+                <para>Added in Shorewall 5.2.5. When specified, successful
+                'blacklist' and 'allow' commands will log a message to the
+                system log.</para>
+              </listitem>
+            </varlistentry>
           </variablelist>
 
           <para>When ipset-based dynamic blacklisting is enabled, the contents
@@ -1159,12 +1167,11 @@ net     all  DROP   info</programlisting>then the chain name is 'net-all'
 
           <para>Subzones are defined by following their name with ":" and a
           list of parent zones (in <ulink
-          url="shorewall-zones.html">shorewall-zones</ulink>(5)).
-          Normally, you want to have a set of special rules for the subzone
-          and if a connection doesn't match any of those subzone-specific
-          rules then you want the parent zone rules and policies to be
-          applied; see <ulink
-          url="shorewall-nesting.html">shorewall-nesting</ulink>(5).
+          url="shorewall-zones.html">shorewall-zones</ulink>(5)). Normally,
+          you want to have a set of special rules for the subzone and if a
+          connection doesn't match any of those subzone-specific rules then
+          you want the parent zone rules and policies to be applied; see
+          <ulink url="shorewall-nesting.html">shorewall-nesting</ulink>(5).
           With IMPLICIT_CONTINUE=Yes, that happens automatically.</para>
 
           <para>If IMPLICIT_CONTINUE=No or if IMPLICIT_CONTINUE is not set,
@@ -1182,10 +1189,10 @@ net     all  DROP   info</programlisting>then the chain name is 'net-all'
         <listitem>
           <para>Added in Shorewall 4.5.13. Shorewall has traditionally passed
           INVALID packets through the NEW section of <ulink
-          url="shorewall-rules.html">shorewall-rules</ulink> (5).
-          When a packet in INVALID state fails to match any rule in the
-          INVALID section, the packet is disposed of based on this setting.
-          The default value is CONTINUE for compatibility with earlier
+          url="shorewall-rules.html">shorewall-rules</ulink> (5). When a
+          packet in INVALID state fails to match any rule in the INVALID
+          section, the packet is disposed of based on this setting. The
+          default value is CONTINUE for compatibility with earlier
           versions.</para>
         </listitem>
       </varlistentry>
@@ -1197,9 +1204,9 @@ net     all  DROP   info</programlisting>then the chain name is 'net-all'
         <listitem>
           <para>Added in Shorewall 4.5.13. Packets in the INVALID state that
           do not match any rule in the INVALID section of <ulink
-          url="shorewall-rules.html">shorewall-rules</ulink> (5) are
-          logged at this level. The default value is empty which means no
-          logging is performed.</para>
+          url="shorewall-rules.html">shorewall-rules</ulink> (5) are logged at
+          this level. The default value is empty which means no logging is
+          performed.</para>
         </listitem>
       </varlistentry>
 
@@ -1482,8 +1489,8 @@ net     all  DROP   info</programlisting>then the chain name is 'net-all'
           sample configurations use this as the default log level and changing
           it will change all packet logging done by the configuration. In any
           configuration file (except <ulink
-          url="shorewall-params.html">shorewall-params(5)</ulink>),
-          $LOG_LEVEL will expand to this value.</para>
+          url="shorewall-params.html">shorewall-params(5)</ulink>), $LOG_LEVEL
+          will expand to this value.</para>
         </listitem>
       </varlistentry>
 
@@ -1635,8 +1642,7 @@ net     all  DROP   info</programlisting>then the chain name is 'net-all'
           <note>
             <para>The setting of LOGFORMAT has an effect of the permitted
             length of zone names. See <ulink
-            url="shorewall-zones.html">shorewall-zones</ulink>
-            (5).</para>
+            url="shorewall-zones.html">shorewall-zones</ulink> (5).</para>
           </note>
 
           <caution>
@@ -1793,8 +1799,8 @@ LOG:info:,bar                        net                    fw</programlisting>
         <listitem>
           <para>The performance of configurations with a large numbers of
           entries in <ulink
-          url="shorewall-maclist.html">shorewall-maclist</ulink>(5)
-          can be improved by setting the MACLIST_TTL variable in <ulink
+          url="shorewall-maclist.html">shorewall-maclist</ulink>(5) can be
+          improved by setting the MACLIST_TTL variable in <ulink
           url="shorewall.conf.html">shorewall[6].conf</ulink>(5).</para>
 
           <para>If your iptables and kernel support the "Recent Match" (see
@@ -1804,15 +1810,14 @@ LOG:info:,bar                        net                    fw</programlisting>
 
           <para>When a new connection arrives from a 'maclist' interface, the
           packet passes through then list of entries for that interface in
-          <ulink
-          url="shorewall-maclist.html">shorewall-maclist</ulink>(5).
-          If there is a match then the source IP address is added to the
-          'Recent' set for that interface. Subsequent connection attempts from
-          that IP address occurring within $MACLIST_TTL seconds will be
-          accepted without having to scan all of the entries. After
-          $MACLIST_TTL from the first accepted connection request from an IP
-          address, the next connection request from that IP address will be
-          checked against the entire list.</para>
+          <ulink url="shorewall-maclist.html">shorewall-maclist</ulink>(5). If
+          there is a match then the source IP address is added to the 'Recent'
+          set for that interface. Subsequent connection attempts from that IP
+          address occurring within $MACLIST_TTL seconds will be accepted
+          without having to scan all of the entries. After $MACLIST_TTL from
+          the first accepted connection request from an IP address, the next
+          connection request from that IP address will be checked against the
+          entire list.</para>
 
           <para>If MACLIST_TTL is not specified or is specified as empty (e.g,
           MACLIST_TTL="" or is specified as zero then 'maclist' lookups will
@@ -2386,13 +2391,12 @@ RCP_COMMAND: scp ${files} ${root}@${system}:${destination}</programlisting>
         <listitem>
           <para>Added in Shorewall 4.4.27. Shorewall has traditionally
           ACCEPTed RELATED packets that don't match any rule in the RELATED
-          section of <ulink
-          url="shorewall-rules.html">shorewall-rules</ulink> (5).
-          Concern about the safety of this practice resulted in the addition
-          of this option. When a packet in RELATED state fails to match any
-          rule in the RELATED section, the packet is disposed of based on this
-          setting. The default value is ACCEPT for compatibility with earlier
-          versions.</para>
+          section of <ulink url="shorewall-rules.html">shorewall-rules</ulink>
+          (5). Concern about the safety of this practice resulted in the
+          addition of this option. When a packet in RELATED state fails to
+          match any rule in the RELATED section, the packet is disposed of
+          based on this setting. The default value is ACCEPT for compatibility
+          with earlier versions.</para>
         </listitem>
       </varlistentry>
 
@@ -2403,9 +2407,9 @@ RCP_COMMAND: scp ${files} ${root}@${system}:${destination}</programlisting>
         <listitem>
           <para>Added in Shorewall 4.4.27. Packets in the related state that
           do not match any rule in the RELATED section of <ulink
-          url="shorewall-rules.html">shorewall-rules</ulink> (5) are
-          logged at this level. The default value is empty which means no
-          logging is performed.</para>
+          url="shorewall-rules.html">shorewall-rules</ulink> (5) are logged at
+          this level. The default value is empty which means no logging is
+          performed.</para>
         </listitem>
       </varlistentry>
 
@@ -2506,8 +2510,7 @@ INLINE          -       -       -       ;; -j REJECT
           <para>Added in Shorewall 4.4.10. The default is No. If set to Yes,
           at least one optional interface must be up in order for the firewall
           to be in the started state. Intended to be used with the <ulink
-          url="shorewall-init.html">Shorewall Init
-          Package</ulink>.</para>
+          url="shorewall-init.html">Shorewall Init Package</ulink>.</para>
         </listitem>
       </varlistentry>
 
@@ -2593,18 +2596,17 @@ INLINE          -       -       -       ;; -j REJECT
           <para>During <emphasis role="bold">shorewall star</emphasis>t, IP
           addresses to be added as a consequence of ADD_IP_ALIASES=Yes and
           ADD_SNAT_ALIASES=Yes are quietly deleted when <ulink
-          url="shorewall-nat.html">shorewall-nat</ulink>(5) and
-          <ulink url="shorewall-masq.html">shorewall-masq</ulink>(5)
-          are processed then are re-added later. This is done to help ensure
-          that the addresses can be added with the specified labels but can
-          have the undesirable side effect of causing routes to be quietly
-          deleted. When RETAIN_ALIASES is set to Yes, existing addresses will
-          not be deleted. Regardless of the setting of RETAIN_ALIASES,
-          addresses added during <emphasis role="bold">shorewall
-          start</emphasis> are still deleted at a subsequent <emphasis
-          role="bold">shorewall [stop</emphasis>, <emphasis
-          role="bold">shorewall reload</emphasis> or <emphasis
-          role="bold">shorewall restart</emphasis>.</para>
+          url="shorewall-nat.html">shorewall-nat</ulink>(5) and <ulink
+          url="shorewall-masq.html">shorewall-masq</ulink>(5) are processed
+          then are re-added later. This is done to help ensure that the
+          addresses can be added with the specified labels but can have the
+          undesirable side effect of causing routes to be quietly deleted.
+          When RETAIN_ALIASES is set to Yes, existing addresses will not be
+          deleted. Regardless of the setting of RETAIN_ALIASES, addresses
+          added during <emphasis role="bold">shorewall start</emphasis> are
+          still deleted at a subsequent <emphasis role="bold">shorewall
+          [stop</emphasis>, <emphasis role="bold">shorewall reload</emphasis>
+          or <emphasis role="bold">shorewall restart</emphasis>.</para>
         </listitem>
       </varlistentry>
 
@@ -2708,9 +2710,9 @@ INLINE          -       -       -       ;; -j REJECT
         <listitem>
           <para>Added in Shorewall 4.4.20. Determines the disposition of
           packets matching the <option>sfilter</option> option (see <ulink
-          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5))
-          and of <firstterm>hairpin</firstterm> packets on interfaces without
-          the <option>routeback</option> option.<footnote>
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)) and
+          of <firstterm>hairpin</firstterm> packets on interfaces without the
+          <option>routeback</option> option.<footnote>
               <para>Hairpin packets are packets that are routed out of the
               same interface that they arrived on.</para>
             </footnote></para>
@@ -2724,9 +2726,9 @@ INLINE          -       -       -       ;; -j REJECT
         <listitem>
           <para>Added on Shorewall 4.4.20. Determines the logging of packets
           matching the <option>sfilter</option> option (see <ulink
-          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5))
-          and of <firstterm>hairpin</firstterm> packets on interfaces without
-          the <option>routeback</option> option.<footnote>
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)) and
+          of <firstterm>hairpin</firstterm> packets on interfaces without the
+          <option>routeback</option> option.<footnote>
               <para>Hairpin packets are packets that are routed out of the
               same interface that they arrived on.</para>
             </footnote> The default is <option>info</option>. If you don't
@@ -2754,9 +2756,9 @@ INLINE          -       -       -       ;; -j REJECT
         <listitem>
           <para>Added in Shorewall 4.4.20. The default setting is DROP which
           causes smurf packets (see the nosmurfs option in <ulink
-          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5))
-          to be dropped. A_DROP causes the packets to be audited prior to
-          being dropped and requires AUDIT_TARGET support in the kernel and
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)) to
+          be dropped. A_DROP causes the packets to be audited prior to being
+          dropped and requires AUDIT_TARGET support in the kernel and
           iptables.</para>
         </listitem>
       </varlistentry>
@@ -2768,8 +2770,8 @@ INLINE          -       -       -       ;; -j REJECT
         <listitem>
           <para>Specifies the logging level for smurf packets (see the
           nosmurfs option in <ulink
-          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)).
-          If set to the empty value ( SMURF_LOG_LEVEL="" ) then smurfs are not
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)). If
+          set to the empty value ( SMURF_LOG_LEVEL="" ) then smurfs are not
           logged.</para>
         </listitem>
       </varlistentry>
@@ -2871,8 +2873,7 @@ INLINE          -       -       -       ;; -j REJECT
           <para>If you set TC_ENABLED=Simple (Shorewall 4.4.6 and later),
           simple traffic shaping using <ulink
           url="shorewall-tcinterfaces.html">shorewall-tcinterfaces</ulink>(5)
-          and <ulink
-          url="shorewall-tcpri.html">shorewall-tcpri</ulink>(5) is
+          and <ulink url="shorewall-tcpri.html">shorewall-tcpri</ulink>(5) is
           enabled.</para>
 
           <para>If you set TC_ENABLED=Internal or internal or leave the option
@@ -2936,10 +2937,10 @@ INLINE          -       -       -       ;; -j REJECT
           <para>Determines the disposition of TCP packets that fail the checks
           enabled by the <emphasis role="bold">tcpflags</emphasis> interface
           option (see <ulink
-          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5))
-          and must have a value of ACCEPT (accept the packet), REJECT (send an
-          RST response) or DROP (ignore the packet). If not set or if set to
-          the empty value (e.g., TCP_FLAGS_DISPOSITION="") then
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)) and
+          must have a value of ACCEPT (accept the packet), REJECT (send an RST
+          response) or DROP (ignore the packet). If not set or if set to the
+          empty value (e.g., TCP_FLAGS_DISPOSITION="") then
           TCP_FLAGS_DISPOSITION=DROP is assumed.</para>
 
           <para>A_DROP and A_REJECT are audited versions of DROP and REJECT
@@ -2968,8 +2969,8 @@ INLINE          -       -       -       ;; -j REJECT
           <para>Added in Shorewall 4.4.3. When set to Yes, causes the
           <option>track</option> option to be assumed on all providers defined
           in <ulink
-          url="shorewall-providers.html">shorewall-providers</ulink>(5).
-          May be overridden on an individual provider through use of the
+          url="shorewall-providers.html">shorewall-providers</ulink>(5). May
+          be overridden on an individual provider through use of the
           <option>notrack</option> option. The default value is 'No'.</para>
 
           <para>Beginning in Shorewall 4.4.6, setting this option to 'Yes'
@@ -3023,10 +3024,10 @@ INLINE          -       -       -       ;; -j REJECT
         <listitem>
           <para>Added in Shorewall 4.5.13. Shorewall has traditionally passed
           UNTRACKED packets through the NEW section of <ulink
-          url="shorewall-rules.html">shorewall-rules</ulink> (5).
-          When a packet in UNTRACKED state fails to match any rule in the
-          UNTRACKED section, the packet is disposed of based on this setting.
-          The default value is CONTINUE for compatibility with earlier
+          url="shorewall-rules.html">shorewall-rules</ulink> (5). When a
+          packet in UNTRACKED state fails to match any rule in the UNTRACKED
+          section, the packet is disposed of based on this setting. The
+          default value is CONTINUE for compatibility with earlier
           versions.</para>
         </listitem>
       </varlistentry>
@@ -3038,9 +3039,9 @@ INLINE          -       -       -       ;; -j REJECT
         <listitem>
           <para>Added in Shorewall 4.5.13. Packets in the UNTRACKED state that
           do not match any rule in the UNTRACKED section of <ulink
-          url="shorewall-rules.html">shorewall-rules</ulink> (5) are
-          logged at this level. The default value is empty which means no
-          logging is performed.</para>
+          url="shorewall-rules.html">shorewall-rules</ulink> (5) are logged at
+          this level. The default value is empty which means no logging is
+          performed.</para>
         </listitem>
       </varlistentry>
 
@@ -3062,8 +3063,8 @@ INLINE          -       -       -       ;; -j REJECT
           <orderedlist>
             <listitem>
               <para>Both the DUPLICATE and the COPY columns in <ulink
-              url="shorewall-providers.html">providers</ulink>(5)
-              file must remain empty (or contain "-").</para>
+              url="shorewall-providers.html">providers</ulink>(5) file must
+              remain empty (or contain "-").</para>
             </listitem>
 
             <listitem>
@@ -3083,9 +3084,9 @@ INLINE          -       -       -       ;; -j REJECT
             <listitem>
               <para>Packets are sent through the main routing table by a rule
               with priority 999. In <ulink
-              url="shorewall-rtrules.html">shorewall-rtrules</ulink>(5),
-              the range 1-998 may be used for inserting rules that bypass the
-              main table.</para>
+              url="shorewall-rtrules.html">shorewall-rtrules</ulink>(5), the
+              range 1-998 may be used for inserting rules that bypass the main
+              table.</para>
             </listitem>
 
             <listitem>
