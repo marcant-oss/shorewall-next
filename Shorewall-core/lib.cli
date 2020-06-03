@@ -2651,6 +2651,7 @@ allow_command() {
 		if [ -n "$g_blacklistipset" ]; then
 		    if qt $IPSET -D $g_blacklistipset $1; then
 			allowed=Yes
+			[ -n "$g_dbllog" ] && mylogger daemon.info "$g_product: $1 Allowed"
 		    fi
 		fi
 
@@ -2667,6 +2668,7 @@ allow_command() {
 	    *)
 		if [ -n "$g_blacklistipset" ]; then
 		    if qt $IPSET -D $g_blacklistipset $1; then
+			[ -n "$g_dbllog" ] && mylogger daemon.info "$g_product: $1 Allowed"
 			allowed=Yes
 		    fi
 		fi
@@ -3646,6 +3648,7 @@ blacklist_command() {
 	local message
 
 	progress_message2 "$1 Blacklisted"
+	[ -n "$g_dbllog" ] && mylogger daemon.info "$g_product: $1 Blacklisted"
 
 	if [ -n "$g_disconnect" ]; then
 	    message="$(conntrack -D -s $1 2>&1)"
@@ -3900,11 +3903,22 @@ setup_dbl() {
     case $DYNAMIC_BLACKLIST in
 	ipset*,src-dst*)
 	    #
-	    # This utility doesn't need to know about 'src-dst'
+	    # Capture 'src-dst'
 	    #
 	    DYNAMIC_BLACKLIST=$(echo $DYNAMIC_BLACKLIST | sed 's/,src-dst//')
 
 	    [ -n "$g_disconnect" ] && g_disconnect=src-dst
+	    ;;
+    esac
+
+    case $DYNAMIC_BLACKLIST in
+	ipset*,log*)
+	    #
+	    # Capture 'log'
+	    #
+	    DYNAMIC_BLACKLIST=$(echo $DYNAMIC_BLACKLIST | sed 's/,log//')
+
+	    g_dbllog=Yes
 	    ;;
     esac
 
@@ -4480,6 +4494,7 @@ shorewall_cli() {
     g_havemutex=
     g_trace=
     g_dbltimeout=
+    g_dbllog=
 
     VERBOSE=
     VERBOSITY=1
