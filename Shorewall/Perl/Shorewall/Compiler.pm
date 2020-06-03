@@ -543,13 +543,13 @@ date > ${VARDIR}/restarted
 
 case $COMMAND in
     start)
-        mylogger kern.info "$g_product started"
+        mylogger daemon.info "$g_product started"
         ;;
     reload)
-        mylogger kern.info "$g_product reloaded"
+        mylogger daemon.info "$g_product reloaded"
         ;;
     restore)
-        mylogger kern.info "$g_product restored"
+        mylogger daemon.info "$g_product restored"
         ;;
 esac
 EOF
