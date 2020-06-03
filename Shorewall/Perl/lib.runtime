@@ -1089,7 +1089,7 @@ clear_firewall() {
 
     set_state "Cleared"
 
-    logger -p kern.info "$g_product Cleared"
+    logger -p daemon.info "$g_product Cleared"
 }
 
 #
@@ -1389,7 +1389,7 @@ clear_firewall() {
 
     set_state "Cleared"
 
-    logger -p kern.info "$g_product Cleared"
+    logger -p daemon.info "$g_product Cleared"
 }
 
 ?endif # IPv6-specific functions.

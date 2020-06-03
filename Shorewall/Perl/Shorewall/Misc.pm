@@ -2809,7 +2809,7 @@ EOF
     emit '
 
     set_state "Stopped"
-    mylogger kern.info "$g_product Stopped"
+    mylogger daemon.info "$g_product Stopped"
 
     case $COMMAND in
     stop|clear)
