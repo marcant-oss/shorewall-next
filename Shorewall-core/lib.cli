@@ -3927,6 +3927,15 @@ setup_dbl() {
     esac
 
     case $DYNAMIC_BLACKLIST in
+	ipset*,noupdate*)
+	    #
+	    # This utility doesn't use this option
+	    #
+	    DYNAMIC_BLACKLIST=$(echo $DYNAMIC_BLACKLIST | sed 's/,noupdate//')
+	    ;;
+    esac
+
+    case $DYNAMIC_BLACKLIST in
 	ipset*,timeout*)
 	    #
 	    # Capture timeout

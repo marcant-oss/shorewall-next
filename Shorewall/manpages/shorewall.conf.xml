@@ -951,6 +951,21 @@
                 system log.</para>
               </listitem>
             </varlistentry>
+
+            <varlistentry>
+              <term>noupdate</term>
+
+              <listitem>
+                <para>Added in Shorewall 5.2.5. Normally, once an address has
+                been blacklisted, each time that a packet is received from the
+                packet, the ipset's entry for the address is updated to reset
+                the timeout to the value specifyed in the
+                <option>timeout</option> option above. Setting the
+                <option>noupdate</option> option, inhibits this resetting of
+                the entry's timeout. This option is ignored when the
+                <option>timeout</option> option is not specified.</para>
+              </listitem>
+            </varlistentry>
           </variablelist>
 
           <para>When ipset-based dynamic blacklisting is enabled, the contents
