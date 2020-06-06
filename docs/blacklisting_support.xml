@@ -250,14 +250,36 @@ DROP            net:200.55.14.18        all
           </important>
         </listitem>
       </varlistentry>
+
+      <varlistentry>
+        <term>log</term>
+
+        <listitem>
+          <para>Added in Shorewall 5.2.5. When specified, successful
+          'blacklist' and 'allow' commands will log a message to the system
+          log.</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term>noupdate</term>
+
+        <listitem>
+          <para>Added in Shorewall 5.2.5. Normally, once an address has been
+          blacklisted, each time that a packet is received from the packet,
+          the ipset's entry for the address is updated to reset the timeout to
+          the value specifyed in the <option>timeout</option> option above.
+          Setting the <option>noupdate</option> option, inhibits this
+          resetting of the entry's timeout. This option is ignored when the
+          <option>timeout</option> option is not specified.</para>
+        </listitem>
+      </varlistentry>
     </variablelist>
 
     <para>When ipset-based dynamic blacklisting is enabled, the contents of
     the blacklist will be preserved over
     <command>stop</command>/<command>reboot</command>/<command>start</command>
-    sequences if SAVE_IPSETS=Yes, SAVE_IPSETS=ipv4 or if
-    <replaceable>setname</replaceable> is included in the list of sets to be
-    saved in SAVE_IPSETS.</para>
+    sequences.</para>
   </section>
 
   <section>
@@ -274,5 +296,44 @@ DROP            net:200.55.14.18        all
     for use in the rules file, macros and filter table actions. Execute the
     <command>shorewall show action BLACKLIST</command> command for
     details.</para>
+  </section>
+
+  <section>
+    <title>BLACKLIST and Fail2ban</title>
+
+    <para>The BLACKLIST command can be used as 'blocktype' in
+    /etc/fail2ban/actions.d/shorewall.conf. Prior to Shorewall 5.2.5, this
+    works best if there is no <emphasis role="bold">timeout</emphasis>
+    specified in the DYNAMIC_BLACKLIST setting or if <emphasis
+    role="bold">timeout=0</emphasis> is given.</para>
+
+    <para>Beginning with Shorewall 5.2.5, Shorewall includes new features that
+    allow fail2ban to work most seamlessly with Shorewall's ipset-based
+    blacklisting:</para>
+
+    <itemizedlist>
+      <listitem>
+        <para>When a <emphasis role="bold">timeout</emphasis> is specified in
+        the DYNAMIC_BLACKLIST setting, the dynamic-blacklisting ipset is
+        created with default timeout 0. As entries are added by BLACKLIST
+        policies or by the <emphasis role="bold">blacklist</emphasis> command,
+        the created entry is given the specified timeout value.</para>
+      </listitem>
+
+      <listitem>
+        <para>The <emphasis role="bold">noupdate</emphasis> option has been
+        added. Specifying this option prevents 'timeout 0' ipset entries from
+        being changed to finite timeout entries as a result of blacklisted ip
+        addresses continuing to send packets to the firewall.</para>
+      </listitem>
+
+      <listitem>
+        <para>The <emphasis role="bold">blacklist!</emphasis> command has been
+        added. specifying that command as the fail2ban 'blocktype' causes
+        entries created by fail2ban to persist until fail2ban unbans them
+        using the Shorewall <emphasis role="bold">allow</emphasis>
+        comand.</para>
+      </listitem>
+    </itemizedlist>
   </section>
 </article>
