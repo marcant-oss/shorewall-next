@@ -3642,7 +3642,11 @@ blacklist_command() {
 	    ;;
     esac
 
-    echo "$@" | fgrep -q ' timeout ' || timeout="timeout $g_dbltimeout"
+    if [ $COMMAND = 'blacklist!' ]; then
+	timeout='timeout 0'
+    else
+	echo "$@" | fgrep -q ' timeout ' || timeout="timeout $g_dbltimeout"
+    fi
 
     if $IPSET -A $g_blacklistipset $@ $timeout -exist; then
 	local message
@@ -4716,7 +4720,7 @@ shorewall_cli() {
 		fatal_error "$g_product is not running"
 	    fi
 	    ;;
-	blacklist)
+	blacklist|blacklist!)
 	    only_root
 	    get_config Yes
 	    shift
