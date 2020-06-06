@@ -735,6 +735,7 @@ sub add_common_rules ( $ ) {
     my $dbl_tag;
     my $dbl_src_target;
     my $dbl_dst_target;
+    my $dbl_options;
 
     if ( $config{REJECT_ACTION} ) {
 	process_reject_action;
@@ -796,9 +797,10 @@ sub add_common_rules ( $ ) {
 
 	if ( $dbl_ipset ) {
 	    if ( $val = $globals{DBL_TIMEOUT} ) {
-		$dbl_src_target = $globals{DBL_OPTIONS} =~ /src-dst/ ? 'dbl_src' : 'dbl_log';
+		$dbl_options    = $globals{DBL_OPTIONS};
+		$dbl_src_target = $dbl_options =~ /src-dst/ ? 'dbl_src' : 'dbl_log';
 
-		my $chainref = set_optflags( new_standard_chain( $dbl_src_target ) , DONT_OPTIMIZE | DONT_DELETE );
+		my $chainref = new_standard_chain( $dbl_src_target );
 
 		log_rule_limit( $dbl_level,
 				$chainref,
@@ -809,11 +811,11 @@ sub add_common_rules ( $ ) {
 				'add',
 				'',
 				$origin{DYNAMIC_BLACKLIST} ) if $dbl_level;
-		add_ijump_extended( $chainref, j => "SET --add-set $dbl_ipset src --exist --timeout $val", $origin{DYNAMIC_BLACKLIST} );
+		add_ijump_extended( $chainref, j => "SET --add-set $dbl_ipset src --exist --timeout $val", $origin{DYNAMIC_BLACKLIST} ) unless $dbl_options =~ /noupdate/;
 		add_ijump_extended( $chainref, j => 'DROP', $origin{DYNAMIC_BLACKLIST} );
 
 		if ( $dbl_src_target eq 'dbl_src' ) {
-		    $chainref = set_optflags( new_standard_chain( $dbl_dst_target = 'dbl_dst' ) , DONT_OPTIMIZE | DONT_DELETE );
+		    $chainref = new_standard_chain( $dbl_dst_target = 'dbl_dst' );
 
 		    log_rule_limit( $dbl_level,
 				    $chainref,
@@ -830,7 +832,7 @@ sub add_common_rules ( $ ) {
 		    $dbl_dst_target = $dbl_src_target;
 		}		    
 	    } elsif ( $dbl_level ) {
-		my $chainref = set_optflags( new_standard_chain( $dbl_src_target = $dbl_dst_target = 'dbl_log' ) , DONT_OPTIMIZE | DONT_DELETE );
+		my $chainref = new_standard_chain( $dbl_src_target = $dbl_dst_target = 'dbl_log' );
 
 		log_rule_limit( $dbl_level,
 				$chainref,
