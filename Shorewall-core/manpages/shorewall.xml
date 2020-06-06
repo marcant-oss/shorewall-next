@@ -48,7 +48,7 @@
 
       <arg>options</arg>
 
-      <arg choice="plain"><option>blacklist</option></arg>
+      <arg choice="plain"><option>blacklist[!]</option></arg>
 
       <arg
       choice="plain"><replaceable>address</replaceable><arg><replaceable>option</replaceable>
@@ -1151,7 +1151,7 @@
       </varlistentry>
 
       <varlistentry>
-        <term><emphasis role="bold">blacklist</emphasis>
+        <term><emphasis role="bold">blacklist[!]</emphasis>
         <replaceable>address</replaceable> [ <replaceable>option</replaceable>
         ... ]</term>
 
@@ -1171,6 +1171,11 @@
           command would be:</para>
 
           <programlisting>    shorewall blacklist 192.0.2.22 timeout 0</programlisting>
+
+          <para>Beginning with Shorewall 5.2.5, the above command can be
+          shortened to:</para>
+
+          <programlisting>    shorewall blacklist! 192.0.2.22</programlisting>
 
           <para>If the <option>disconnect</option> option is specified in the
           DYNAMIC_BLACKLISTING setting, then the effective VERBOSITY

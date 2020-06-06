@@ -338,7 +338,7 @@ get_config() {
 
     if [ -n "$DYNAMIC_BLACKLIST" -a "$(id -u)" = 0 ]; then
 	case $COMMAND in
-	    blacklist|allow|drop|logdrop|reject)
+	    blacklist*|allow|drop|logdrop|reject)
 		setup_dbl
 		;;
 	esac
