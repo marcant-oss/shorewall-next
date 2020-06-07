@@ -298,7 +298,7 @@ DROP            net:200.55.14.18        all
     details.</para>
   </section>
 
-  <section>
+  <section id="fail2ban">
     <title>BLACKLIST and Fail2ban</title>
 
     <para>The BLACKLIST command can be used as 'blocktype' in
@@ -333,6 +333,32 @@ DROP            net:200.55.14.18        all
         entries created by fail2ban to persist until fail2ban unbans them
         using the Shorewall <emphasis role="bold">allow</emphasis>
         comand.</para>
+      </listitem>
+    </itemizedlist>
+
+    <para>There are a couple of additional things to note:</para>
+
+    <itemizedlist>
+      <listitem>
+        <para>The documentation in /etc/fail2ban/action.d/shorewall.conf
+        states that you should set BLACKLIST=All. A better approach when using
+        BLACKLIST as the 'blocktype' is to specify the <emphasis
+        role="bold">disconnect</emphasis> option in the setting of
+        DYNAMIC_BLACKLIST. With BLACKLIST=All, every packet entering the
+        firewall from the net must be checked against the dynamic-blacklisting
+        ipset. That is not required when you specify <emphasis
+        role="bold">disconnect</emphasis>.</para>
+      </listitem>
+
+      <listitem>
+        <para>The <emphasis role="bold">noupdate</emphasis> option allows
+        fail2ban full control when a host is 'unbanned'. The cost of using
+        this option is that after the specified <emphasis
+        role="bold">timeout</emphasis>, the entry for an attacking host will
+        be removed from the dynamic-blacklisting ipset, even if the host has
+        continued the attack while blacklisted. This isn't a great concern, as
+        the first attempt to access an unauthorized service will result in the
+        host being re-blacklisted.</para>
       </listitem>
     </itemizedlist>
   </section>
