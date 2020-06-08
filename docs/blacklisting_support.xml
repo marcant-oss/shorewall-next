@@ -309,7 +309,7 @@ DROP            net:200.55.14.18        all
 
     <para>Beginning with Shorewall 5.2.5, Shorewall includes new features that
     allow fail2ban to work most seamlessly with Shorewall's ipset-based
-    blacklisting:</para>
+    dynamic blacklisting:</para>
 
     <itemizedlist>
       <listitem>
