@@ -1867,6 +1867,9 @@ SSH(ACCEPT)    net:$MYIP      $FW
       </listitem>
     </itemizedlist>
 
+    <para>They may also be used as the parameter to SNAT() in <ulink
+    url="manpages/shorewall-snat.html">shorewall-snat</ulink>(5).</para>
+
     <para>For optional interfaces, if the interface is not usable at the time
     that the firewall starts, one of two approaches are taken, depending on
     the context:</para>
