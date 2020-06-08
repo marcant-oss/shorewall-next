@@ -443,6 +443,7 @@ sub convert_to_policy_chain($$$$$$)
     my ($chainref, $source, $dest, $policy, $provisional, $audit ) = @_;
 
     $chainref->{is_policy}   = 1;
+    $chainref->{wild}        = $source eq 'all' || $dest eq 'all';
     $chainref->{policy}      = $policy;
     $chainref->{provisional} = $provisional;
     $chainref->{audit}       = $audit;
@@ -1147,7 +1148,7 @@ sub complete_policy_chains() {
 		}
 	    }
 
-	    if ( $name =~ /^all[-2]|[-2]all$/ ) {
+	    if ( $chainref->{wild} ) {
 		add_policy_rules $chainref , $policy, $loglevel , $defaults, $config{MULTICAST};
 	    }
 	}
@@ -1252,6 +1253,7 @@ sub finish_chain_section ($$$) {
 	$state )            = @_;
     my $chain               = $chainref->{name};
     my $save_comment        = push_comment;
+    my $wild                = $chainref->{wild} && ! $config{EXPAND_RULES};
     my %state;
 
     $state{$_} = 1 for split ',', $state;
@@ -1262,74 +1264,76 @@ sub finish_chain_section ($$$) {
 
     $chain1ref->{sections}{$_} = 1 for keys %state;
 
-    for ( qw( ESTABLISHED RELATED INVALID UNTRACKED ) ) {
-	if ( $state{$_} ) {
-	    my ( $char, $level, $tag, $target , $origin, $level_origin ) = @{$statetable{$_}};
-	    my $twochains = substr( $chainref->{name}, 0, 1 ) eq $char;
+    unless ( $wild ) {
+	for ( qw( ESTABLISHED RELATED INVALID UNTRACKED ) ) {
+	    if ( $state{$_} ) {
+		my ( $char, $level, $tag, $target , $origin, $level_origin ) = @{$statetable{$_}};
+		my $twochains = substr( $chainref->{name}, 0, 1 ) eq $char;
 
-	    if ( $twochains || $level || $target ne 'ACCEPT' ) {
-		if ( $level ) {
-		    my $chain2ref;
+		if ( $twochains || $level || $target ne 'ACCEPT' ) {
+		    if ( $level ) {
+			my $chain2ref;
+
+			if ( $twochains ) {
+			    $chain2ref = $chainref;
+			} else {
+			    $chain2ref = new_chain( 'filter', "${char}$chainref->{name}" , "${char}$chainref->{logname}" );
+			}
+
+			log_rule_limit( $level,
+					$chain2ref,
+					$chain2ref->{logname},
+					uc $target,
+					$globals{LOGLIMIT},
+					$tag ,
+					'add' ,
+					'',
+					$level_origin );
+
+			$target = ensure_audit_chain( $target ) if ( $targets{$target} || 0 ) & AUDIT;
+
+			add_ijump_extended( $chain2ref, g => $target , $origin ) if $target;
+
+			$target = $chain2ref->{name} unless $twochains;
+		    }
 
 		    if ( $twochains ) {
-			$chain2ref = $chainref;
-		    } else {
-			$chain2ref = new_chain( 'filter', "${char}$chainref->{name}" , "${char}$chainref->{logname}" );
+			add_ijump_extended $chainref, g => $target , $origin if $target;
+			delete $state{$_};
+			last;
 		    }
 
-		    log_rule_limit( $level,
-				    $chain2ref,
-				    $chain2ref->{logname},
-				    uc $target,
-				    $globals{LOGLIMIT},
-				    $tag ,
-				    'add' ,
-				    '',
-				    $level_origin );
+		    if ( $target ) {
+			$target = ensure_audit_chain( $target ) if ( $targets{$target} || 0 ) & AUDIT;
+			#
+			# Always handle ESTABLISHED first
+			#
+			if ( $state{ESTABLISHED} && $_ ne 'ESTABLISHED' ) {
+			    add_ijump( $chain1ref, j => 'ACCEPT', state_imatch 'ESTABLISHED' );
+			    delete $state{ESTABLISHED};
+			}
 
-		    $target = ensure_audit_chain( $target ) if ( $targets{$target} || 0 ) & AUDIT;
+			add_ijump_extended( $chainref, j => $target, $origin, state_imatch $_ );
+		    }
 
-		    add_ijump_extended( $chain2ref, g => $target , $origin ) if $target;
-
-		    $target = $chain2ref->{name} unless $twochains;
-		}
-
-		if ( $twochains ) {
-		    add_ijump_extended $chainref, g => $target , $origin if $target;
 		    delete $state{$_};
-		    last;
 		}
-
-		if ( $target ) {
-		    $target = ensure_audit_chain( $target ) if ( $targets{$target} || 0 ) & AUDIT;
-		    #
-		    # Always handle ESTABLISHED first
-		    #
-		    if ( $state{ESTABLISHED} && $_ ne 'ESTABLISHED' ) {
-			add_ijump( $chain1ref, j => 'ACCEPT', state_imatch 'ESTABLISHED' );
-			delete $state{ESTABLISHED};
-		    }
-
-		    add_ijump_extended( $chainref, j => $target, $origin, state_imatch $_ );
-		}
-
-		delete $state{$_};
-	    }
-	}
-    }
-
-    if ( keys %state ) {
-	my @state;
-
-	unless ( $config{FASTACCEPT} ) {
-	    for ( qw/ESTABLISHED RELATED/ ) {
-		push @state, $_ if $state{$_};
 	    }
 	}
 
-	push( @state, 'UNTRACKED' ),if $state{UNTRACKED} && $globals{UNTRACKED_TARGET} eq 'ACCEPT';
+	if ( keys %state ) {
+	    my @state;
 
-	add_ijump( $chain1ref, j => 'ACCEPT', state_imatch join(',', @state ) ) if @state;
+	    unless ( $config{FASTACCEPT} ) {
+		for ( qw/ESTABLISHED RELATED/ ) {
+		    push @state, $_ if $state{$_};
+		}
+	    }
+
+	    push( @state, 'UNTRACKED' ),if $state{UNTRACKED} && $globals{UNTRACKED_TARGET} eq 'ACCEPT';
+
+	    add_ijump( $chain1ref, j => 'ACCEPT', state_imatch join(',', @state ) ) if @state;
+	}
     }
 
     if ($sections{NEW} ) {
