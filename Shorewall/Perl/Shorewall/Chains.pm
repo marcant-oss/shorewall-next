@@ -320,6 +320,7 @@ our $VERSION = 'MODULEVERSION';
 #    %chain_table { <table> => { <chain1>  => { name         => <chain name>
 #                                               table        => <table name>
 #                                               is_policy    => undef|1 -- if 1, this is a policy chain
+#                                               wild         => undef|1 -- If 1, source or dest is 'all'. Only applies to policy chains
 #                                               provisional  => undef|1 -- See below.
 #                                               referenced   => undef|1 -- If 1, will be written to the iptables-restore-input.
 #                                               builtin      => undef|1 -- If 1, one of Netfilter's built-in chains.
