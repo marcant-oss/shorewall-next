@@ -560,7 +560,8 @@ sub process_zone( \$ ) {
 	@parents = split_list $2, 'zone';
     }
 
-    fatal_error "Invalid zone name ($zone)"      unless $zone =~ /^[a-z]\w*$/i && length $zone <= $globals{MAXZONENAMELENGTH};
+    fatal_error "Invalid zone name ($zone)"      unless $zone =~ /^[a-z]\w*$/i;
+    fatal_error "Zone name ($zone) too long"     unless length $zone <= $globals{MAXZONENAMELENGTH};
     fatal_error "Invalid zone name ($zone)"      if $reservedName{$zone} || $zone =~ /^all2|2all$/;
     fatal_error( "Duplicate zone name ($zone)" ) if $zones{$zone};
 
