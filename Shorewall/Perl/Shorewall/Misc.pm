@@ -2582,13 +2582,13 @@ EOF
     emit <<'EOF';
             case $COMMAND in
 	        start)
-	            mylogger kern.err "ERROR:$g_product start failed"
+	            mylogger daemon.err "ERROR:$g_product start failed"
 	            ;;
 	        reload)
-	            mylogger kern.err "ERROR:$g_product reload failed"
+	            mylogger daemon.err "ERROR:$g_product reload failed"
 	            ;;
                 enable)
-                    mylogger kern.err "ERROR:$g_product 'enable $g_interface' failed"
+                    mylogger daemon.err "ERROR:$g_product 'enable $g_interface' failed"
                     ;;
             esac
 
