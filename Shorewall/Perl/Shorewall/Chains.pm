@@ -894,7 +894,7 @@ sub validate_port( $$ ) {
 
     fatal_error "The separator for a port range is ':', not '-' ($port)" if $port =~ /^\d+-\d+$/;
 
-    fatal_error "Invalid/Unknown $proto port/service ($_[1])" unless defined $value;
+    fatal_error "Invalid/Unknown $proto port/service ($_[1])";
 }
 
 #
