@@ -1109,7 +1109,7 @@ show_blacklists() {
 }
 
 show_actions_sorted() {
-    show_actions | sort
+    show_actions | sort -u -k 1,1
 }
 
 show_macros() {
