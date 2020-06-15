@@ -26,8 +26,8 @@
     <title>Description</title>
 
     <para>This file allows you to define new ACTIONS for use in rules (see
-    <ulink url="shorewall-rules.html">shorewall-rules(5)</ulink>).
-    You define the iptables rules to be performed in an ACTION in
+    <ulink url="shorewall-rules.html">shorewall-rules(5)</ulink>). You define
+    the iptables rules to be performed in an ACTION in
     /etc/shorewall/action.<emphasis>action-name</emphasis>.</para>
 
     <para>Columns are:</para>
@@ -148,8 +148,8 @@
               <listitem>
                 <para>Added in Shorewall 5.0.7. Specifies that this action is
                 to be used in <ulink
-                url="shorewall-mangle.html">shorewall-mangle(5)</ulink>
-                rather than <ulink
+                url="shorewall-mangle.html">shorewall-mangle(5)</ulink> rather
+                than <ulink
                 url="shorewall-rules.html">shorewall-rules(5)</ulink>.</para>
               </listitem>
             </varlistentry>
@@ -160,11 +160,11 @@
               <listitem>
                 <para>Added in Shorewall 5.0.13. Specifies that this action is
                 to be used in <ulink
-                url="shorewall-snat.html">shorewall-snat(5)</ulink>
-                rather than <ulink
-                url="shorewall-rules.html">shorewall-rules(5)</ulink>.
-                The <option>mangle</option> and <option>nat</option> options
-                are mutually exclusive.</para>
+                url="shorewall-snat.html">shorewall-snat(5)</ulink> rather
+                than <ulink
+                url="shorewall-rules.html">shorewall-rules(5)</ulink>. The
+                <option>mangle</option> and <option>nat</option> options are
+                mutually exclusive.</para>
               </listitem>
             </varlistentry>
 
@@ -209,6 +209,24 @@
                 <option>inline</option> or <option>builtin</option> option is
                 specified. A warning is issued if <option>proto</option> is
                 specified along with <option>builtin</option>.</para>
+              </listitem>
+            </varlistentry>
+
+            <varlistentry>
+              <term><option>dport</option>=<replaceable>portorservice</replaceable></term>
+
+              <listitem>
+                <para>Added in Shorewall 5.2.6. Requires that the <emphasis
+                role="bold">proto</emphasis> option be previously given and
+                indicates that this action may only be applied to flows with
+                the specified <replaceable>protocol</replaceable> and
+                <replaceable>portorservice</replaceable>.
+                <replaceable>portorservice</replaceable> may be a valid port
+                number or the name of a service defined in /etc/services to be
+                usable with the specified <replaceable>protocol</replaceable>.
+                If a port or service is specified in the DPORT column of an
+                invocation, then it must match the named
+                <replaceable>portorservice</replaceable>.</para>
               </listitem>
             </varlistentry>
 
