@@ -1001,6 +1001,24 @@ sub determine_action_protocol( $$ ) {
     $proto;
 }
 
+sub determine_action_dport( $$$ ) {
+    my ( $action, $proto, $dport ) = @_;
+
+    if ( my $actiondport = $actions{$action}{dport} ) {
+	if ( $dport eq '-' ) {
+	    $dport = $actiondport;
+	} else {
+	    fatal_error( "The $action action is only usable with destination port $actiondport" ) if $dport =~ /[,]/;
+	    if ( ( my $portnum = validate_port( $proto, $dport ) ) ne '-' ) {
+		fatal_error( "The $action action is only usable with destination port $actiondport"  ) unless $actiondport = $portnum;
+		$dport = $portnum;
+	    }
+	}
+    }
+
+    $dport;
+}
+
 sub add_policy_rules( $$$$$ ) {
     my ( $chainref , $target, $loglevel, $pactions, $dropmulticast ) = @_;
 
@@ -1015,7 +1033,11 @@ sub add_policy_rules( $$$$$ ) {
 		# Policy action is a regular action -- jump to the action chain
 		#
 		if ( ( my $proto = determine_action_protocol( $action, '-' ) ) ne '-' ) {
-		    add_ijump( $chainref, j => use_policy_action( $paction, $chainref->{name} ), p => $proto );
+		    if ( my $dport = determine_action_dport( $action, $proto, '-' ) ) {
+			add_ijump( $chainref, j => use_policy_action( $paction, $chainref->{name} ), p => $proto, dport => $dport );
+		    } else {
+			add_ijump( $chainref, j => use_policy_action( $paction, $chainref->{name} ), p => $proto );
+		    }
 		} else {
 		    add_ijump $chainref, j => use_policy_action( $paction, $chainref->{name} );
 		}
@@ -1501,13 +1523,13 @@ sub external_name( $ ) {
 #
 # Define an Action
 #
-sub new_action( $$$$$$ ) {
+sub new_action( $$$$$$$ ) {
 
-    my ( $action , $type, $options , $actionfile , $state, $proto ) = @_;
+    my ( $action , $type, $options , $actionfile , $state, $proto, $dport ) = @_;
 
     fatal_error "Reserved action name ($action)" if reserved_name( $action );
 
-    $actions{$action} = { file => $actionfile, actchain => '' , type => $type, options => $options , state => $state, proto => $proto };
+    $actions{$action} = { file => $actionfile, actchain => '' , type => $type, options => $options , state => $state, proto => $proto, dport => $dport };
 
     $targets{$action} = $type;
 }
@@ -2102,6 +2124,7 @@ sub process_actions() {
 
 	    my $state = '';
 	    my $proto = 0;
+	    my $dport = 0;
 
 	    if ( $action =~ /:/ ) {
 		warning_message 'Policy Actions are now specified in /etc/shorewall/shorewall.conf';
@@ -2121,6 +2144,10 @@ sub process_actions() {
 		    } elsif ( /^proto=(.+)$/ ) {
 			fatal_error "Unknown Protocol ($1)" unless defined( $proto = resolve_proto( $1 ) );
 			fatal_error "A protocol may not be specified on the REJECT_ACTION ($action)" if $action eq $config{REJECT_ACTION};
+		    } elsif ( /^dport=(.+)$/ ) {
+			fatal_error "The 'dport' option requires the 'proto' option" unless $proto;
+			$dport = validate_port($proto, $1);
+			fatal_error "A destination port may not be specified on the REJECT_ACTION ($action)" if $action eq $config{REJECT_ACTION};
 		    } else {
 			fatal_error "Invalid option ($_)" unless $options{$_};
 			$opts |= $options{$_};
@@ -2142,10 +2169,12 @@ sub process_actions() {
 		    }
 
 		    $proto = $actions{$action}{proto} unless $proto;
+		    $dport = $actions{$action}{dport} unless $dport;
 		    delete $actions{$action};
 		    delete $targets{$action};
 		} elsif ( ( $actiontype & INLINE ) && ( $type == ACTION ) && $opts & NOINLINE_OPT ) {
 		    $proto = $actions{$action}{proto} unless $proto;
+		    $dport = $actions{$action}{dport} unless $dport;
 		    delete $actions{$action};
 		    delete $targets{$action};
 		} else {
@@ -2189,7 +2218,7 @@ sub process_actions() {
 
 		fatal_error "Missing Action File ($actionfile)" unless -f $actionfile;
 
-		new_action ( $action, $type, $opts, $actionfile , $state , $proto );
+		new_action ( $action, $type, $opts, $actionfile , $state , $proto , $dport );
 	    }
 	}
     }
@@ -3068,9 +3097,11 @@ sub process_rule ( $$$$$$$$$$$$$$$$$$$$ ) {
 
     if ( $actiontype & ACTION ) {
 	#
-	# Verify action 'proto', if any
+	# Verify action 'proto', and 'dport' if any
 	#
-	$proto = determine_action_protocol( $basictarget, $proto );
+	if ( ( $proto = determine_action_protocol( $basictarget, $proto ) ) ne '-' ) {
+	    $ports = determine_action_dport( $basictarget, $proto, $ports );
+	}
 	#
 	# Save NAT-oriented column contents
 	#
@@ -4822,9 +4853,11 @@ sub process_mangle_rule1( $$$$$$$$$$$$$$$$$$$ ) {
 	function          => sub() {
 	    fatal_error( qq(Action $cmd may not be used in the mangle file) ) unless $actiontype & MANGLE_TABLE;
 	    #
-	    # Verify action 'proto', if any
+	    # Verify action 'proto' and 'dport' if any
 	    #
-	    $proto = determine_action_protocol( $cmd, $proto );
+	    if ( ( $proto = determine_action_protocol( $cmd, $proto ) ) ne '-' ) {
+		$ports = determine_action_dport( $cmd, $proto, $ports );
+	    }
 	    #
 	    # Create the action:level:tag:param tuple.
 	    #
@@ -5833,9 +5866,11 @@ sub process_snat1( $$$$$$$$$$$$ ) {
 	    if ( $actiontype & ACTION ) {
 		fatal_error( qq(Action $target may not be used in the snat file) ) unless $actiontype & NAT_TABLE;
 		#
-		# Verify action 'proto', if any
+		# Verify action 'proto' and 'dport', if any
 		#
-		$proto = determine_action_protocol( $target, $proto );
+		if ( ( $proto = determine_action_protocol( $target, $proto ) ) ne '-' ) {
+		    $ports = determine_action_dport( $target, $proto, $ports );
+		}
 		#
 		# Create the action:level:tag:param tuple. Since we don't allow logging out of nat POSTROUTING, we store
 		# the interface name in the log tag
