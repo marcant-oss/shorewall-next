@@ -79,13 +79,13 @@
 
         <listitem>
           <para>A FWMARK <emphasis>value</emphasis> used in your <ulink
-          url="shorewall-mangle.html">shorewall-mangle(5)</ulink>
-          file to direct packets to this provider.</para>
+          url="shorewall-mangle.html">shorewall-mangle(5)</ulink> file to
+          direct packets to this provider.</para>
 
           <para>If PROVIDER_OFFSET is non-zero in <ulink
-          url="shorewall.conf.html">shorewall.conf(5)</ulink>, then
-          the value must be a multiple of 2^^PROVIDER_OFFSET. In all cases,
-          the number of significant bits may not exceed PROVIDER_OFFSET +
+          url="shorewall.conf.html">shorewall.conf(5)</ulink>, then the value
+          must be a multiple of 2^^PROVIDER_OFFSET. In all cases, the number
+          of significant bits may not exceed PROVIDER_OFFSET +
           PROVIDER_BITS.</para>
         </listitem>
       </varlistentry>
@@ -111,8 +111,8 @@
         <listitem>
           <para>The name of the network interface to the provider. Must be
           listed in <ulink
-          url="shorewall-interfaces.html">shorewall-interfaces(5)</ulink>.
-          In general, that interface should not have the
+          url="shorewall-interfaces.html">shorewall-interfaces(5)</ulink>. In
+          general, that interface should not have the
           <option>proxyarp</option> or <option>proxyndp</option> option
           specified unless <option>loose</option> is given in the OPTIONS
           column of this entry.</para>
@@ -190,9 +190,8 @@
 
                 <para>Beginning with Shorewall 4.4.3, <option>track</option>
                 defaults to the setting of the TRACK_PROVIDERS option in
-                <ulink
-                url="shorewall.conf.html">shorewall.conf</ulink>
-                (5). If you set TRACK_PROVIDERS=Yes and want to override that
+                <ulink url="shorewall.conf.html">shorewall.conf</ulink> (5).
+                If you set TRACK_PROVIDERS=Yes and want to override that
                 setting for an individual provider, then specify
                 <option>notrack</option> (see below).</para>
               </listitem>
@@ -343,7 +342,7 @@
                 <replaceable>weight</replaceable> is given, a balanced route
                 is added with the weight of this provider equal to the
                 specified <replaceable>weight</replaceable>. If the option is
-                given without a <replaceable>weight</replaceable>, an separate
+                given without a <replaceable>weight</replaceable>, a separate
                 default route is added through the provider's gateway; the
                 route has a metric equal to the provider's NUMBER.</para>
 
