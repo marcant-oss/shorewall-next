@@ -4025,7 +4025,7 @@ get_config() {
 
     ensure_config_path
 
-    [ -f $g_firewall.conf ] && . ${VARDIR}/firewall.conf
+    [ -f ${VARDIR}/firewall.conf ] && . ${VARDIR}/firewall.conf
 
     [ -n "$PATH" ] || PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin:/usr/local/sbin
 
