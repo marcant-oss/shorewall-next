@@ -937,11 +937,28 @@ show_events() {
     fi
 }
 
+sort_actions() {
+    local sep #separates sort keys from the action[.std] record
+    sep="##"
+
+    awk -v sep="$sep" \
+         'BEGIN		  { action = ""; ifrec = ""; nr = 0; };\
+	  /^#/	  	  { next; };\
+	  /^\?(if|IF|If)/ { ifrec = $0; nr = NR; next; };\
+	  /^( |\t|\?)/	  { if ( action != "" ) print action, NR, sep $0; next; };\
+			  { action = $1; };\
+	  nr != 0	  { print action , nr, sep ifrec; nr = 0; };\
+			  { print action , NR, sep $0; }' | sort -k 1,2 | sed "s/^.*${sep}//"
+}
+
 show_actions() {
-    if [ -f ${g_confdir}/actions ]; then
-	cat ${g_sharedir}/actions.std ${g_confdir}/actions | grep -Ev '^[#?[:space:]]|^$'
+    local actions
+    actions=$(find_file actions)
+
+    if [ -f ${actions} ]; then
+	cat ${actions} ${g_sharedir}/actions.std | sort_actions
     else
-	grep -Ev '^[#?[:space:]]|^$' ${g_sharedir}/actions.std
+        sort_actions < ${g_sharedir}/actions.std
     fi
 }
 
@@ -1106,10 +1123,6 @@ show_blacklists() {
     echo "$g_product $SHOREWALL_VERSION blacklist chains at $g_hostname - $(date)"
     echo
     show_bl;
-}
-
-show_actions_sorted() {
-    show_actions | sort -u -k 1,1
 }
 
 show_macros() {
@@ -1543,7 +1556,7 @@ show_command() {
 			    ;;
 			actions)
 			    [ $# -gt 1 ] && too_many_arguments $2
-			    eval show_actions_sorted $g_pager
+			    eval show_actions $g_pager
 			    return
 			    ;;
 			macro)
