@@ -1033,7 +1033,7 @@ sub add_policy_rules( $$$$$ ) {
 		# Policy action is a regular action -- jump to the action chain
 		#
 		if ( ( my $proto = determine_action_protocol( $action, '-' ) ) ne '-' ) {
-		    if ( my $dport = determine_action_dport( $action, $proto, '-' ) ) {
+		    if ( my $dport = determine_action_dport( $action, $proto, '' ) ) {
 			add_ijump( $chainref, j => use_policy_action( $paction, $chainref->{name} ), p => $proto, dport => $dport );
 		    } else {
 			add_ijump( $chainref, j => use_policy_action( $paction, $chainref->{name} ), p => $proto );
