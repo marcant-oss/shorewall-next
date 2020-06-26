@@ -5935,9 +5935,9 @@ sub process_snat( )
 {
     my ($action, $source, $dest, $protos, $ports, $ipsec, $mark, $user, $condition, $origdest, $probability ) =
 	split_line2( 'snat file',
-		     { action => 0, source => 1, dest => 2, proto => 3, port => 4, ipsec => 5, mark => 6, user => 7, switch => 8, origdest => 9, probability => 10 },
+		     { action => 0, source => 1, dest => 2, proto => 3, port => 4, dport => 4, ipsec => 5, mark => 6, user => 7, switch => 8, origdest => 9, probability => 10 },
 		     {},    #Nopad
-		     undef, #Columns
+		     11,    #Columns
 		     1 );   #Allow inline matches
 
     fatal_error 'ACTION must be specified' if $action eq '-';

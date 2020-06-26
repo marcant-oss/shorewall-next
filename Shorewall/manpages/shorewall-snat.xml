@@ -39,8 +39,8 @@
       <para>If you have more than one ISP link, adding entries to this file
       will <emphasis role="bold">not</emphasis> force connections to go out
       through a particular link. You must use entries in <ulink
-      url="shorewall-rtrules.html">shorewall-rtrules</ulink>(5) or
-      PREROUTING entries in <ulink
+      url="shorewall-rtrules.html">shorewall-rtrules</ulink>(5) or PREROUTING
+      entries in <ulink
       url="shorewall-mangle.html">shorewall-mangle</ulink>(5) to do
       that.</para>
     </warning>
@@ -68,10 +68,10 @@
               <listitem>
                 <para>where <replaceable>action</replaceable> is an action
                 declared in <ulink
-                url="shorewall-actions.html">shorewall-actions(5)</ulink>
-                with the <option>nat</option> option. See <ulink
-                url="../Actions.html">https://shorewall.org/Actions.html</ulink> for
-                further information.</para>
+                url="shorewall-actions.html">shorewall-actions(5)</ulink> with
+                the <option>nat</option> option. See <ulink
+                url="../Actions.html">https://shorewall.org/Actions.html</ulink>
+                for further information.</para>
               </listitem>
             </varlistentry>
 
@@ -165,9 +165,9 @@
                 <para>If you specify an address here, matching packets will
                 have their source address set to that address. If
                 ADD_SNAT_ALIASES is set to Yes or yes in <ulink
-                url="shorewall.conf.html">shorewall.conf</ulink>(5)
-                then Shorewall will automatically add this address to the
-                INTERFACE named in the first column (IPv4 only).</para>
+                url="shorewall.conf.html">shorewall.conf</ulink>(5) then
+                Shorewall will automatically add this address to the INTERFACE
+                named in the first column (IPv4 only).</para>
 
                 <para>You may also specify a range of up to 256 IP addresses
                 if you want the SNAT address to be assigned from that range in
@@ -237,10 +237,10 @@
 
           <para>Normally Masq/SNAT rules are evaluated after those for
           one-to-one NAT (defined in <ulink
-          url="shorewall-nat.html">shorewall-nat</ulink>(5)). If you
-          want the rule to be applied before one-to-one NAT rules, follow the
-          action name with "+": This feature should only be required if you
-          need to insert rules in this file that preempt entries in <ulink
+          url="shorewall-nat.html">shorewall-nat</ulink>(5)). If you want the
+          rule to be applied before one-to-one NAT rules, follow the action
+          name with "+": This feature should only be required if you need to
+          insert rules in this file that preempt entries in <ulink
           url="shorewall-nat.html">shorewall-nat</ulink>(5).</para>
         </listitem>
       </varlistentry>
@@ -279,23 +279,23 @@
           networks. Multiple interfaces may be listed when the ACTION is
           MASQUERADE, but this is usually just your internet interface. If
           ADD_SNAT_ALIASES=Yes in <ulink
-          url="shorewall.conf.html">shorewall.conf</ulink>(5), you
-          may add ":" and a <emphasis>digit</emphasis> to indicate that you
-          want the alias added with that name (e.g., eth0:0). This will allow
-          the alias to be displayed with ifconfig. <emphasis role="bold">That
-          is the only use for the alias name; it may not appear in any other
-          place in your Shorewall configuration.</emphasis></para>
+          url="shorewall.conf.html">shorewall.conf</ulink>(5), you may add ":"
+          and a <emphasis>digit</emphasis> to indicate that you want the alias
+          added with that name (e.g., eth0:0). This will allow the alias to be
+          displayed with ifconfig. <emphasis role="bold">That is the only use
+          for the alias name; it may not appear in any other place in your
+          Shorewall configuration.</emphasis></para>
 
           <para>Beginning with Shorewall 5.1.12, SNAT may be performed in the
           nat table's INPUT chain by specifying $FW rather than one or more
-          interfaces. </para>
+          interfaces.</para>
 
           <para>Each interface must match an entry in <ulink
           url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
           Shorewall allows loose matches to wildcard entries in <ulink
-          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5).
-          For example, <filename class="devicefile">ppp0</filename> in this
-          file will match a <ulink
+          url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5). For
+          example, <filename class="devicefile">ppp0</filename> in this file
+          will match a <ulink
           url="shorewall-interfaces.html">shorewall-interfaces</ulink>(5)
           entry that defines <filename
           class="devicefile">ppp+</filename>.</para>
@@ -315,8 +315,8 @@
           addresses to indicate that you only want to change the source IP
           address for packets being sent to those particular destinations.
           Exclusion is allowed (see <ulink
-          url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5))
-          as are ipset names preceded by a plus sign '+';</para>
+          url="shorewall-exclusion.html">shorewall-exclusion</ulink>(5)) as
+          are ipset names preceded by a plus sign '+';</para>
 
           <para>If you wish to inhibit the action of ADD_SNAT_ALIASES for this
           entry then include the ":" but omit the digit:</para>
@@ -341,8 +341,7 @@
         <listitem>
           <para>If you wish to restrict this entry to a particular protocol
           then enter the protocol name (from protocols(5)) or number here. See
-          <ulink
-          url="shorewall-rules.html">shorewall-rules(5)</ulink> for
+          <ulink url="shorewall-rules.html">shorewall-rules(5)</ulink> for
           details.</para>
 
           <para>Beginning with Shorewall 4.5.12, this column can accept a
@@ -356,10 +355,14 @@
       </varlistentry>
 
       <varlistentry>
-        <term><emphasis role="bold">PORT</emphasis> (Optional) -
+        <term><emphasis role="bold">{PORT|DPORT}</emphasis> (Optional) -
         {-|[!]<emphasis>port-name-or-number</emphasis>[,<emphasis>port-name-or-number</emphasis>]...|+<replaceable>ipset</replaceable>}</term>
 
         <listitem>
+          <para>The column was renamed to DPORT in Shorewall 5.2.5.2.
+          Beginning with that release, both PORT and DPORT are accepted in the
+          alternative input format, </para>
+
           <para>If the PROTO column specifies TCP (6), UDP (17), DCCP (33),
           SCTP (132) or UDPLITE (136) then you may list one or more port
           numbers (or names from services(5)) or port ranges separated by
