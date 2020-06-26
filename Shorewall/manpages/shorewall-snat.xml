@@ -359,9 +359,9 @@
         {-|[!]<emphasis>port-name-or-number</emphasis>[,<emphasis>port-name-or-number</emphasis>]...|+<replaceable>ipset</replaceable>}</term>
 
         <listitem>
-          <para>The column was renamed to DPORT in Shorewall 5.2.5.2.
-          Beginning with that release, both PORT and DPORT are accepted in the
-          alternative input format, </para>
+          <para>The column was renamed to DPORT in Shorewall 5.2.6. Beginning
+          with that release, both PORT and DPORT are accepted in the
+          alternative input format,</para>
 
           <para>If the PROTO column specifies TCP (6), UDP (17), DCCP (33),
           SCTP (132) or UDPLITE (136) then you may list one or more port
