@@ -663,7 +663,7 @@ ACCEPT      net:\
           <row>
             <entry>mangle</entry>
 
-            <entry>action,source,dest,proto,dport,sport,user,test,length,tos,connbytes,helper,headers</entry>
+            <entry>action,source,dest,proto,dport,sport,user,test,length,tos,connbytes,helper,headers,probability,dscp,switch</entry>
           </row>
 
           <row>
@@ -736,6 +736,14 @@ ACCEPT      net:\
             <entry>secmarks</entry>
 
             <entry>secmark,chain,source,dest,proto,dport,sport,user,mark</entry>
+          </row>
+
+          <row>
+            <entry>snat</entry>
+
+            <entry>action,source,dest,proto,port,ipsec,mark,user,switch,origdest,probability
+            (Note: 'port' may be specified as 'dport' beginning with Shorewall
+            5.2.5.2).</entry>
           </row>
 
           <row>
