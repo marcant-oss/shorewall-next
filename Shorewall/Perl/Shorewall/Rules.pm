@@ -1800,7 +1800,7 @@ sub isolate_basic_target( $ ) {
 
 sub process_rule ( $$$$$$$$$$$$$$$$$$$$ );
 sub process_mangle_rule1( $$$$$$$$$$$$$$$$$$$ );
-sub process_snat1( $$$$$$$$$$$$ );
+sub process_snat1( $$$$$$$$$$$$$ );
 sub perl_action_helper( $$;$$ );
 
 #
@@ -1994,23 +1994,49 @@ sub process_action(\$\$$) {
 		set_inline_matches( $matches );
 	    }
 	} else {
-	    my ( $action, $source, $dest, $protos, $port, $ipsec, $mark, $user, $condition, $origdest, $probability) =
-		split_line2( 'snat file',
-			     { action =>0,
-			       source => 1,
-			       dest => 2,
-			       proto => 3,
-			       port => 4,
-			       ipsec => 5,
-			       mark => 6,
-			       user => 7,
-			       switch => 8,
-			       origdest => 9,
-			       probability => 10,
-			     },
-			     {},
-			     11,
-			     1 );
+	    my ( $action, $source, $dest, $protos, $port, $sport, $ipsec, $mark, $user, $condition, $origdest, $probability);
+
+	    if ( $file_format == 1 ) {
+		( $action, $source, $dest, $protos, $port, $ipsec, $mark, $user, $condition, $origdest, $probability) =
+		    split_line2( 'snat file',
+				 { action =>0,
+				   source => 1,
+				   dest => 2,
+				   proto => 3,
+				   port => 4,
+				   dport => 4,
+				   ipsec => 5,
+				   mark => 6,
+				   user => 7,
+				   switch => 8,
+				   origdest => 9,
+				   probability => 10,
+				 },
+				 {},
+				 11,
+				 1 );
+		$sport = '-';
+	    } else {
+		( $action, $source, $dest, $protos, $port, $sport, $ipsec, $mark, $user, $condition, $origdest, $probability) =
+		    split_line2( 'snat file',
+				 { action =>0,
+				   source => 1,
+				   dest => 2,
+				   proto => 3,
+				   port => 4,
+				   dport => 4,
+				   sport => 5,
+				   ipsec => 6,
+				   mark => 7,
+				   user => 8,
+				   switch => 9,
+				   origdest => 10,
+				   probability => 11,
+				 },
+				 {},
+				 12,
+				 1 );
+	    }
 
 	    fatal_error 'ACTION must be specified' if $action eq '-';
 
@@ -2026,6 +2052,7 @@ sub process_action(\$\$$) {
 			       $dest,
 			       $proto,
 			       $port,
+			       $sport,
 			       $ipsec,
 			       $mark,
 			       $user,
@@ -5401,8 +5428,8 @@ sub process_mangle_rule( $ ) {
     }
 }
 
-sub process_snat_inline( $$$$$$$$$$$$$$ ) {
-    my ($inline, $chainref, $params, $loglevel, $source, $dest, $protos, $ports, $ipsec, $mark, $user, $condition, $origdest, $probability ) = @_;
+sub process_snat_inline( $$$$$$$$$$$$$$$ ) {
+    my ($inline, $chainref, $params, $loglevel, $source, $dest, $protos, $ports, $sports, $ipsec, $mark, $user, $condition, $origdest, $probability ) = @_;
 
     my ( $level,
 	 $tag )    = split( ':', $loglevel, 2 );
@@ -5421,28 +5448,54 @@ sub process_snat_inline( $$$$$$$$$$$$$$ ) {
 
     progress_message "..Expanding inline action $inlinefile...";
 
-    push_open $inlinefile, 2, 1, undef , 2;
+    push_open $inlinefile, 2, 1, undef , 1;
 
     my $save_comment = push_comment;
 
     while ( read_a_line( NORMAL_READ ) ) {
-	my ( $maction, $msource, $mdest, $mprotos, $mports, $mipsec, $mmark, $muser, $mcondition, $morigdest, $mprobability) =
-	    split_line2( 'snat file',
-			 { action =>0,
-			   source => 1,
-			   dest => 2,
-			   proto => 3,
-			   port => 4,
-			   ipsec => 5,
-			   mark => 6,
-			   user => 7,
-			   switch => 8,
-			   origdest => 9,
-			   probability => 10,
-			 },
-			 {},
-			 11,
-			 1 );
+	my ( $maction, $msource, $mdest, $mprotos, $mports, $msports, $mipsec, $mmark, $muser, $mcondition, $morigdest, $mprobability);
+
+	if ( $file_format == 1 ) {
+	    ( $maction, $msource, $mdest, $mprotos, $mports, $mipsec, $mmark, $muser, $mcondition, $morigdest, $mprobability) =
+		split_line2( 'snat file',
+			     { action =>0,
+			       source => 1,
+			       dest => 2,
+			       proto => 3,
+			       port => 4,
+			       dport => 4,
+			       ipsec => 5,
+			       mark => 6,
+			       user => 7,
+			       switch => 8,
+			       origdest => 9,
+			       probability => 10,
+			     },
+			     {},
+			     11,
+			     1 );
+	    $msports = '-';
+	} else {
+	    ( $maction, $msource, $mdest, $mprotos, $mports, $msports, $mipsec, $mmark, $muser, $mcondition, $morigdest, $mprobability) =
+		split_line2( 'snat file',
+			     { action =>0,
+			       source => 1,
+			       dest => 2,
+			       proto => 3,
+			       port => 4,
+			       dport => 4,
+			       sport => 5,
+			       ipsec => 6,
+			       mark => 7,
+			       user => 8,
+			       switch => 9,
+			       origdest => 10,
+			       probability => 11,
+			     },
+			     {},
+			     12,
+			     1 );
+	}
 
 	fatal_error 'ACTION must be specified' if $maction eq '-';
 
@@ -5470,6 +5523,7 @@ sub process_snat_inline( $$$$$$$$$$$$$$ ) {
 			   $mdest,
 			   $proto,
 			   merge_macro_column( $mports,          $ports ),
+			   merge_macro_column( $msports,         $sports ),
 			   merge_macro_column( $mipsec,          $ipsec ),
 			   merge_macro_column( $mmark,           $mark ),
 			   merge_macro_column( $muser,           $user ),
@@ -5496,8 +5550,8 @@ sub process_snat_inline( $$$$$$$$$$$$$$ ) {
 #
 # Process a record in the snat file
 #
-sub process_snat1( $$$$$$$$$$$$ ) {
-    my ( $chainref, $origaction, $source, $dest, $proto, $ports, $ipsec, $mark, $user, $condition, $origdest, $probability ) = @_;
+sub process_snat1( $$$$$$$$$$$$$ ) {
+    my ( $chainref, $origaction, $source, $dest, $proto, $ports, $sports, $ipsec, $mark, $user, $condition, $origdest, $probability ) = @_;
 
     my $inchain;
     my $inaction;
@@ -5609,7 +5663,7 @@ sub process_snat1( $$$$$$$$$$$$ ) {
     #
     # Handle Protocol, Ports and Condition
     #
-    $baserule .= do_proto( $proto, $ports, '' );
+    $baserule .= do_proto( $proto, $ports, $sports );
     #
     # Handle Mark
     #
@@ -5856,6 +5910,7 @@ sub process_snat1( $$$$$$$$$$$$ ) {
 				 supplied( $destnets ) && $destnets ne '-' ? $inaction || $interface ? join( ':', $interface, $destnets ) : $destnets : $inaction ? '-' : $interface,
 				 $proto,
 				 $ports,
+				 $sports,
 				 $ipsec,
 				 $mark,
 				 $user,
@@ -5968,18 +6023,30 @@ sub process_snat1( $$$$$$$$$$$$ ) {
 
 sub process_snat( )
 {
-    my ($action, $source, $dest, $protos, $ports, $ipsec, $mark, $user, $condition, $origdest, $probability ) =
-	split_line2( 'snat file',
-		     { action => 0, source => 1, dest => 2, proto => 3, port => 4, dport => 4, ipsec => 5, mark => 6, user => 7, switch => 8, origdest => 9, probability => 10 },
-		     {},    #Nopad
-		     11,    #Columns
-		     1 );   #Allow inline matches
+    my ($action, $source, $dest, $protos, $ports, $sports, $ipsec, $mark, $user, $condition, $origdest, $probability );
+
+    if ( $file_format == 1 ) {
+	($action, $source, $dest, $protos, $ports, $ipsec, $mark, $user, $condition, $origdest, $probability ) =
+	    split_line2( 'snat file',
+			 { action => 0, source => 1, dest => 2, proto => 3, port => 4, dport => 4, ipsec => 5, mark => 6, user => 7, switch => 8, origdest => 9, probability => 10 },
+			 {},    #Nopad
+			 11,    #Columns
+			 1 );   #Allow inline matches
+	$sports = '-';
+    } else {
+	($action, $source, $dest, $protos, $ports, $sports, $ipsec, $mark, $user, $condition, $origdest, $probability ) =
+	    split_line2( 'snat file',
+			 { action => 0, source => 1, dest => 2, proto => 3, port => 4, dport => 4, sport => 5, ipsec => 6, mark => 7, user => 8, switch => 9, origdest => 10, probability => 11 },
+			 {},    #Nopad
+			 12,    #Columns
+			 1 );   #Allow inline matches
+    }
 
     fatal_error 'ACTION must be specified' if $action eq '-';
     fatal_error 'DEST must be specified' if $dest eq '-';
 
     for my $proto ( split_list $protos, 'Protocol' ) {
-	process_snat1( undef, $action, $source, $dest, $proto, $ports, $ipsec, $mark, $user, $condition, $origdest, $probability );
+	process_snat1( undef, $action, $source, $dest, $proto, $ports, $sports, $ipsec, $mark, $user, $condition, $origdest, $probability );
     }
 }
 
@@ -5994,7 +6061,7 @@ sub setup_snat()
 	#
 	# Masq file was empty or didn't exist
 	#
-	if ( $fn = open_file( 'snat', 1, 1 ) ) {
+	if ( $fn = open_file( 'snat', 2, 1, undef, 1 ) ) {
 	    first_entry( sub { progress_message2 "$doing $fn..."; require_capability 'NAT_ENABLED' , "a non-empty snat file" , 's'; } );
 	    process_snat while read_a_line( NORMAL_READ );
 	}

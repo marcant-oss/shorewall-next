@@ -45,6 +45,20 @@
       that.</para>
     </warning>
 
+    <para>Beginning with Shorewall 5.2.6, the snat file supports two different
+    formats:</para>
+
+    <orderedlist>
+      <listitem>
+        <para>The SPORT (source port) column is omitted. This is the default
+        unless a "?FORMAT 2" compiler directive is included.</para>
+      </listitem>
+
+      <listitem>
+        <para>The SPORT column immediately follows the DPORT column.</para>
+      </listitem>
+    </orderedlist>
+
     <para>The columns in the file are as follows.</para>
 
     <variablelist>
@@ -374,6 +388,27 @@
           <para>Beginning with Shorewall 4.6.0, an
           <replaceable>ipset</replaceable> name can be specified in this
           column. This is intended to be used with
+          <firstterm>bitmap:port</firstterm> ipsets.</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><emphasis role="bold">SPORT
+        {-|[!]<replaceable>port-name-or-number</replaceable>[,<replaceable>port-name-or-number</replaceable>]...|+<replaceable>ipset</replaceable>}</emphasis></term>
+
+        <listitem>
+          <para>FORMAT 2 only.</para>
+
+          <para>If the PROTO column specifies TCP (6), UDP (17), DCCP (33),
+          SCTP (132) or UDPLITE (136) then you may list one or more port
+          numbers (or names from services(5)) or port ranges separated by
+          commas.</para>
+
+          <para>Port ranges are of the form
+          <emphasis>lowport</emphasis>:<emphasis>highport</emphasis>.</para>
+
+          <para>An <replaceable>ipset</replaceable> name can be specified in
+          this column. This is intended to be used with
           <firstterm>bitmap:port</firstterm> ipsets.</para>
         </listitem>
       </varlistentry>
