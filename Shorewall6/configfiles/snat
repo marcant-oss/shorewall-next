@@ -5,5 +5,7 @@
 #
 # See https://shorewall.org/manpages/shorewall-snat.html for more information
 #
-###########################################################################################################################################
-#ACTION			SOURCE			DEST		PROTO	DPORT	IPSEC	MARK	USER	SWITCH	ORIGDEST	PROBABILITY
+?FORMAT 2
+###################################################################################################################################################
+#ACTION			SOURCE			DEST		PROTO	DPORT	SPORT	IPSEC	MARK	USER	SWITCH	ORIGDEST	PROBABILITY
+

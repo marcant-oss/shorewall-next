@@ -741,9 +741,9 @@ ACCEPT      net:\
           <row>
             <entry>snat</entry>
 
-            <entry>action,source,dest,proto,port,ipsec,mark,user,switch,origdest,probability
-            (Note: 'port' may be specified as 'dport' beginning with Shorewall
-            5.2.6).</entry>
+            <entry>action,source,dest,proto,port,sport,ipsec,mark,user,switch,origdest,probability
+            (Note: 'port' may be specified as 'dport', beginning with
+            Shorewall 5.2.6).</entry>
           </row>
 
           <row>
