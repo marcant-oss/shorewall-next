@@ -12,8 +12,9 @@
 # For information about entries in this file, type "man shorewall-snat"
 #
 # See https://shorewall.org/manpages/shorewall-snat.html for more information
-###########################################################################################################################################
-#ACTION			SOURCE			DEST            PROTO	DPORT	IPSEC	MARK	USER	SWITCH	ORIGDEST	PROBABILITY
+?FORMAT 2
+###################################################################################################################################################
+#ACTION			SOURCE			DEST            PROTO	DPORT	SPORT	IPSEC	MARK	USER	SWITCH	ORIGDEST	PROBABILITY
 #
 # Rules generated from masq file /home/teastep/shorewall/trunk/Shorewall/Samples/two-interfaces/masq by Shorewall 5.0.13-RC1 - Sat Oct 15 11:41:40 PDT 2016
 #
