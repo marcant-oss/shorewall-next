@@ -5485,6 +5485,14 @@ sub process_snat1( $$$$$$$$$$$$ ) {
     my $logaction;
     my $param;
 
+    #
+    # Handle early matches
+    #
+    if ( $inlinematches =~ s/^s*\+// ) {
+	$prerule = $inlinematches;
+	$inlinematches = '';
+    }
+
     if ( $action =~ /^MASQUERADE(\+)?(?:\((.+)\))?$/ ) {
 	$target     = 'MASQUERADE';
 	$actiontype = $builtin_target{$action = $target};
