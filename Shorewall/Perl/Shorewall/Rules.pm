@@ -661,7 +661,7 @@ sub handle_nfqueue( $ ) {
 
     if ( supplied $queue2 ) {
 	require_capability 'CPU_FANOUT', '"c"', 's' if $fanout;
-	return "NFQUEUE --queue-balance ${queuenum1}:${queuenum2}${fanout}${bypass}";
+	return "NFQUEUE --queue-balance ${queuenum1}:${queuenum2}${bypass}${fanout}";
     } else {
 	return "NFQUEUE --queue-num ${queuenum1}${bypass}";
     }
