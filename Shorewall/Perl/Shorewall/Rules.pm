@@ -5571,7 +5571,6 @@ sub process_snat1( $$$$$$$$$$$$$ ) {
     my ( $action, $loglevel ) = split_action( $origaction );
     my $logaction;
     my $param;
-
     #
     # Handle early matches
     #
