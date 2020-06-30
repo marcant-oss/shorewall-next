@@ -2118,10 +2118,6 @@
           url="/manpages/shorewall.conf.html">shorewall.conf</ulink>(5)
           (<ulink
           url="/manpages/shorewall.conf.html">shorewall6.conf</ulink>(5).</para>
-
-          <para>The <emphasis role="bold">-D </emphasis>option was added in
-          Shoewall 5.2.4 and causes the compiler to write a large amount of
-          debugging information to standard output.</para>
         </listitem>
       </varlistentry>
 
