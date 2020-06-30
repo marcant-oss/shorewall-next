@@ -4359,9 +4359,9 @@ usage() # $1 = exit status
     echo "   add <interface>[:<host-list>] ... <zone>"
     echo "   allow <address> ..."
     echo "   blacklist <address> [ <option> ... ]"
-    ecko "   [ check | ck ] [ -e ] [ -r ] [ -p ] [ -r ] [ -T ] [ -i ] [ <directory> ]"
+    ecko "   [ check | ck ] [ -e ] [ -r ] [ -p ] [ -r ] [ -T ] [ -i ] [ -D ] [ <directory> ]"
     echo "   clear"
-    ecko "   [ compile | co ] [ -e ] [ -p ] [ -t ] [ -c ] [ -d ] [ -T ] [ -i ] [ <directory name> ] [ <path name> ]"
+    ecko "   [ compile | co ] [ -e ] [ -p ] [ -t ] [ -c ] [ -d ] [ -T ] [ -i ] [ -D ] [ <directory name> ] [ <path name> ]"
     echo "   close <source> <dest> [ <protocol> [ <port> ] ]" 
     echo "   delete <interface>[:<host-list>] ... <zone>"
     echo "   disable <interface>"
@@ -4401,7 +4401,7 @@ usage() # $1 = exit status
     if [ -n "$g_lite" ]; then
 	echo "   reload [ -n ] [ -p ] [ -f ] [ -C ] [ <directory> ]"
     else
-	echo "   reload [ -n ] [ -p ] [-d] [ -f ] [ -c ] [ -T ] [ -i ] [ -C ] [ <directory> ]"
+	echo "   reload [ -n ] [ -p ] [-d] [ -f ] [ -c ] [ -T ] [ -i ] [ -C ] [ -D ] [ <directory> ]"
     fi
 
     if [ -z "$g_lite" ]; then
@@ -4417,7 +4417,7 @@ usage() # $1 = exit status
     if [ -n "$g_lite" ]; then
 	echo "   restart [ -n ] [ -p ] [ -f ] [ -C ] [ <directory> ]"
     else
-	echo "   restart [ -n ] [ -p ] [-d] [ -f ] [ -c ] [ -T ] [ -i ] [ -C ] [ <directory> ]"
+	echo "   restart [ -n ] [ -p ] [-d] [ -f ] [ -c ] [ -T ] [ -i ] [ -C ] [ -D ] [ <directory> ]"
     fi
 
     echo "   restore [ -n ] [ -p ] [ -C ] [ <file name> ]"
