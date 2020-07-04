@@ -310,8 +310,6 @@ our %EXPORT_TAGS = ( internal => [ qw( create_temp_script
 				       NORMAL_READ
 
 				       OPTIMIZE_MASK
-				       OPTIMIZE_POLICY_MASK
-				       OPTIMIZE_POLICY_MASK2n4
 				       OPTIMIZE_RULESET_MASK
 				       OPTIMIZE_ALL
 				     ) , ] ,
@@ -554,8 +552,6 @@ use constant {
 # Optimization masks (OPTIMIZE option)
 #
 use constant {
-	       OPTIMIZE_POLICY_MASK    => 0x02 , # Call optimize_policy_chains()
-	       OPTIMIZE_POLICY_MASK2n4 => 0x06 ,
 	       OPTIMIZE_RULESET_MASK   => 0x1C , # Call optimize_ruleset()
                OPTIMIZE_MASK           => 0x1E , # Do optimizations beyond level 1
 	       OPTIMIZE_ALL            => 0x1F , # Maximum value for documented categories.
