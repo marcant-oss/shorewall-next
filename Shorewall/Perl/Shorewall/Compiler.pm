@@ -858,13 +858,13 @@ sub compiler {
 	if ( ( my $optimize = $config{OPTIMIZE} ) & OPTIMIZE_MASK ) {
 	    progress_message2 'Optimizing Ruleset...';
 	    #
-	    # Optimize Policy Chains
-	    #
-	    optimize_policy_chains if ( $optimize & OPTIMIZE_POLICY_MASK2n4 ) == OPTIMIZE_POLICY_MASK; # Level 2 but not 4
-	    #
-	    # More Optimization
+	    # Optimize the ruleet
 	    #
 	    optimize_ruleset if $config{OPTIMIZE} & OPTIMIZE_RULESET_MASK;
+	    #
+	    # Optimize Policy Chains
+	    #
+	    optimize_policy_chains;
 	}
 
 	enable_script;
@@ -928,16 +928,16 @@ sub compiler {
 
 	    optimize_level0;
 
-	    if ( ( my $optimize = $config{OPTIMIZE} ) & 0x1e ) {
+	    if ( ( my $optimize = $config{OPTIMIZE} ) & OPTIMIZE_MASK ) {
 		progress_message2 'Optimizing Ruleset...';
-		#
-		# Optimize Policy Chains
-		#
-		optimize_policy_chains if ( $optimize & OPTIMIZE_POLICY_MASK2n4 ) == OPTIMIZE_POLICY_MASK; # Level 2 but not 4
 		#
 		# Ruleset Optimization
 		#
 		optimize_ruleset if $optimize & OPTIMIZE_RULESET_MASK;
+		#
+		# Optimize Policy Chains
+		#
+		optimize_policy_chains;
 	    }
 
 	    enable_script if $debug;
