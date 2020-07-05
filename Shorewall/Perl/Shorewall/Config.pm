@@ -5530,6 +5530,8 @@ sub update_config_file( $ ) {
     for ( qw/DROP_DEFAULT REJECT_DEFAULT BLACKLIST_DEFAULT/ ) {
 	my $policy = $config{ $_ };
 
+	$policy = '' unless defined $policy;
+
 	if ( $policy =~ /\bA_(?:Drop|Reject)\b/ ) {
 	    if ( $family == F_IPV4 ) {
 		$policy =~ s/A_(?:Drop|Reject)/Broadcast(A_DROP),Multicast(A_DROP)/;
