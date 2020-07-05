@@ -860,11 +860,11 @@ sub compiler {
 	    #
 	    # Optimize the ruleet
 	    #
-	    optimize_ruleset if $config{OPTIMIZE} & OPTIMIZE_RULESET_MASK;
+	    optimize_ruleset if $optimize & OPTIMIZE_RULESET_MASK;
 	    #
 	    # Optimize Policy Chains
 	    #
-	    optimize_policy_chains;
+	    optimize_policy_chains if $optimize & OPTIMIZE_POLICY_MASK;
 	}
 
 	enable_script;
@@ -937,7 +937,7 @@ sub compiler {
 		#
 		# Optimize Policy Chains
 		#
-		optimize_policy_chains;
+		optimize_policy_chains if $optimize & OPTIMIZE_POLICY_MASK;
 	    }
 
 	    enable_script if $debug;
