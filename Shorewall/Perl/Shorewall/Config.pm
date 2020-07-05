@@ -5374,6 +5374,8 @@ sub ensure_config_path() {
 
     my $chop = ( $path =~ s/^:// );
 
+    $path =~ s/:+/:/g;
+
     @config_path = split /:/, $path;
 
     shift @config_path if $chop && ( $export || $> != 0 );
