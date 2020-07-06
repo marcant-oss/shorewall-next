@@ -2288,10 +2288,13 @@ sub generate_matrix() {
     #
     for my $zone ( @zones ) {
 	my $zoneref = find_zone( $zone );
-	if ( @zones > 2 || $zoneref->{complex} ) {
-	    handle_complex_zone( $zone, $zoneref );
-	} else {
-	    new_standard_chain zone_forward_chain( $zone ) if @zones > 1;
+
+	unless ( $zoneref->{type} == LOCAL ) {
+	    if ( @zones > 2 || $zoneref->{complex} ) {
+		handle_complex_zone( $zone, $zoneref );
+	    } else {
+		new_standard_chain zone_forward_chain( $zone ) if @zones > 1;
+	    }
 	}
     }
     #

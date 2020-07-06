@@ -3986,9 +3986,8 @@ sub process_rules() {
     #
     for my $zone ( @zones ) {
 	my $zoneref = find_zone( $zone );
-	my $simple  =  @zones <= 2 && ! $zoneref->{complex};
 
-	unless ( @zones <= 2 && ! $zoneref->{complex} ) {
+	unless ( $zoneref->{type} == LOCAL || ( @zones <= 2 && ! $zoneref->{complex} ) ) {
 	    #
 	    # Complex zone or we have more than one non-firewall zone -- create a zone forwarding chain
 	    #
