@@ -4413,7 +4413,9 @@ sub validate_level( $;$ ) {
 sub default_log_level( $$ ) {
     my ( $level, $default ) = @_;
 
-    my $value = $config{$level};
+    my $value = $config{$level} || '';
+
+    $value = $config{LOG_LEVEL} if $value eq '$LOG_LEVEL';  #This can happen during update
 
     unless ( supplied $value ) {
 	$config{$level} = validate_level $default, $level;
@@ -6836,6 +6838,12 @@ sub get_configuration( $$$ ) {
 
     require_capability 'AUDIT_TARGET', "SMURF_DISPOSITION=$val", 's' if $val =~ /^A_/;
 
+    if ( supplied( $val = $config{LOG_LEVEL} ) ) {
+	validate_level( $val );
+    } else {
+	$config{LOG_LEVEL} = 'info';
+    }
+
     default_log_level 'BLACKLIST_LOG_LEVEL',  '';
     default_log_level 'MACLIST_LOG_LEVEL',    '';
     default_log_level 'TCP_FLAGS_LOG_LEVEL',  '';
@@ -6843,12 +6851,6 @@ sub get_configuration( $$$ ) {
     default_log_level 'RELATED_LOG_LEVEL',    '';
     default_log_level 'INVALID_LOG_LEVEL',    '';
     default_log_level 'UNTRACKED_LOG_LEVEL',  '';
-
-    if ( supplied( $val = $config{LOG_LEVEL} ) ) {
-	validate_level( $val );
-    } else {
-	$config{LOG_LEVEL} = 'info';
-    }
 
     if ( supplied( $val = $config{LOG_BACKEND} ) ) {
 	if ( $family == F_IPV4 && $val eq 'ULOG' ) {
