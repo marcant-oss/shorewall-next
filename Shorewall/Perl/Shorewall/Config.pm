@@ -5380,13 +5380,6 @@ sub ensure_config_path() {
 
     shift @config_path if $chop && ( $export || $> != 0 );
 
-    #
-    # To accomodate Cygwin-based compilation, we have separate directories for files whose names
-    # clash on a case-insensitive filesystem.
-    #
-    push @config_path, $globals{SHAREDIR}    . "/deprecated";
-    push @config_path, $shorewallrc{SHAREDIR}. '/shorewall/deprecated' unless $globals{PRODUCT} eq 'shorewall';
-
     for ( @config_path ) {
 	$_ .= '/' unless m|/$|;
         s|//|/|g;
@@ -6321,6 +6314,14 @@ sub get_configuration( $$$ ) {
     process_shorewall_conf( $update, $annotate );
 
     ensure_config_path;
+    #
+    # To accomodate Cygwin-based compilation, we have separate directories for files whose names
+    # clash on a case-insensitive filesystem.
+    #
+    push @config_path, $globals{SHAREDIR}    . "/deprecated/" unless $config_path[-1] eq $globals{SHAREDIR} . "/deprecated/";
+    push @config_path, $shorewallrc{SHAREDIR}. '/shorewall/deprecated/' unless $globals{PRODUCT} eq 'shorewall';
+
+    $config{CONFIG_PATH} = join( ':', @config_path );
 
     @INC = @originalinc;
 
