@@ -239,8 +239,8 @@ LOGFORMAT="%s %s"
 LOGTAGONLY=Yes
 LOGLIMIT="s:5/min"
 MACLIST_LOG_LEVEL="$LOG_LEVEL"
-RELATED_LOG_LEVEL="$LOG_LEVEL:,related"
-RPFILTER_LOG_LEVEL="$LOG_LEVEL:,rpfilter"
+RELATED_LOG_LEVEL="$LOG_LEVEL:"
+RPFILTER_LOG_LEVEL="$LOG_LEVEL:"
 SFILTER_LOG_LEVEL="$LOG_LEVEL"
 SMURF_LOG_LEVEL="$LOG_LEVEL"
 STARTUP_LOG=/var/log/shorewall-init.log
@@ -413,7 +413,7 @@ LOGFORMAT="%s %s"
 LOGLIMIT="s:5/min"
 LOGTAGONLY=Yes
 MACLIST_LOG_LEVEL="$LOG_LEVEL"
-RELATED_LOG_LEVEL=
+RELATED_LOG_LEVEL="$LOG_LEVEL"
 RPFILTER_LOG_LEVEL="$LOG_LEVEL"
 SFILTER_LOG_LEVEL="$LOG_LEVEL"
 SMURF_LOG_LEVEL="$LOG_LEVEL"
@@ -573,8 +573,8 @@ if [ $g_family = 4 ]; then
     #
     # Interface Options
     #
-    LOC_OPTIONS=dhcp,ignore=1,wait=5,routefilter,routeback,tcpflags=0,nodbl,physical=eth2.2
-    WLAN_OPTIONS=dhcp,ignore=1,wait=5,routefilter,routeback,tcpflags=0,nodbl,physical=eth2.1
+    LOC_OPTIONS=dhcp,ignore=1,wait=5,routefilter,tcpflags=0,nodbl,physical=eth2.2
+    WLAN_OPTIONS=dhcp,ignore=1,wait=5,routefilter,tcpflags=0,nodbl,physical=eth2.1
     FAST_OPTIONS=optional,dhcp,tcpflags,nosmurfs,sourceroute=0,arp_ignore=1,proxyarp=0,nosmurfs,rpfilter,physical=eth0
     PROD_OPTIONS=optional,dhcp,tcpflags,nosmurfs,sourceroute=0,arp_ignore=1,proxyarp=0,nosmurfs,rpfilter,physical=eth1
     DMZ_OPTIONS=routeback,proxyarp=1,required,wait=30,nets=70.90.191.120/29,nodbl,physical=br0
@@ -630,7 +630,7 @@ apps	{ TYPE=ip }
 vpn	{ TYPE=ipsec, OPTIONS=mode=tunnel,proto=esp,mss=$IPSECMSS }
 wlan    { TYPE=ip }
 ?if __IPV4
-swch	{ TYPE=ip }
+swch	{ TYPE=local }
 ?endif</programlisting>
     </section>
 
@@ -684,39 +684,7 @@ vpn { HOSTS=LOC_IF:$ALL }</programlisting>
 
       <para>The same set of policies apply to both address families:</para>
 
-      <programlisting>?FORMAT 2
-###############################################################################
-#ZONE	INTERFACE	OPTIONS
-
-#
-# The two address families use different production interfaces and different 
-#
-# LOC_IF is the local LAN for both families
-# FAST_IF is a Comcast IPv6 beta uplink which is used for internet access from the local lan for both families
-# PROD_IF is the interface used by shorewall.org servers
-#     For IPv4, it is eth1
-#     For IPv6, it is sit1 (Hurricane Electric 6in4 link)
-# DMZ_IF is a bridge to the production containers
-# IRC_IF is a bridge to a container that currently runs irssi under screen
-# WLAN_IF is a vlan interface that connects to the wireless networks
-# SWCH_IF is the vlan trunk interface used for switch management
-
-loc  { INTERFACE=LOC_IF,  OPTIONS=$LOC_OPTIONS }
-wlan { INTERFACE=WLAN_IF, OPTIONS=$WLAN_OPTIONS }
-net  { INTERFACE=FAST_IF, OPTIONS=$FAST_OPTIONS }
-net  { INTERFACE=PROD_IF, OPTIONS=$PROD_OPTIONS }
-dmz  { INTERFACE=DMZ_IF,  OPTIONS=$DMZ_OPTIONS }
-apps { INTERFACE=IRC_IF,  OPTIONS=$IRC_OPTIONS }
-?if __IPV4
-swch { INTERFACE=SWCH_IF, OPTIONS=$SWCH_OPTIONS }
-?endif
-root@gateway:/etc/shorewall# cat hosts
-#ZONE		HOSTS				OPTIONS
-vpn { HOSTS=PROD_IF:$ALL }
-vpn { HOSTS=FAST_IF:$ALL }
-vpn { HOSTS=LOC_IF:$ALL }
-root@gateway:/etc/shorewall# cat policy
-#SOURCE	       DEST		 POLICY									  LOGLEVEL	      RATE
+      <programlisting>SOURCE	       DEST		 POLICY									  LOGLEVEL	      RATE
 
 $FW	      { DEST=dmz,net,	 POLICY=REJECT,								  LOGLEVEL=$LOG_LEVEL }
 
@@ -738,11 +706,9 @@ net	      { DEST=net,	 POLICY=REJECT,								  LOGLEVEL=$LOG_LEVEL }
 net	      { DEST=fw,	 POLICY=BLACKLIST:+Broadcast(DROP),Multicast(DROP),DropDNSrep:$LOG_LEVEL, LOGLEVEL=$LOG_LEVEL, RATE=8/sec:30 }
 net	      { DEST=all,	 POLICY=BLACKLIST:+DropDNSrep:$LOG_LEVEL,				  LOGLEVEL=$LOG_LEVEL, RATE=8/sec:30 }
 
-dmz	      { DEST=fw	 	 POLICY=REJECT,								  LOGLEVEL=$LOG_LEVEL }
-dmz	      { DEST=dmz 	 POLICY=REJECT,								  LOGLEVEL=$LOG_LEVEL }
-
-all	      { DEST=all,	 POLICY=REJECT,								  LOGLEVEL=$LOG_LEVEL }
-</programlisting>
+dmz	      { DEST=fw, 	 POLICY=REJECT,								  LOGLEVEL=$LOG_LEVEL }
+dmz	      { DEST=dmz, 	 POLICY=REJECT,								  LOGLEVEL=$LOG_LEVEL }
+all	      { DEST=all,	 POLICY=REJECT,								  LOGLEVEL=$LOG_LEVEL }</programlisting>
     </section>
 
     <section>
@@ -864,9 +830,7 @@ Tproxy   { NUMBER=3, INTERFACE=lo, OPTIONS=tproxy }</programlisting>
 
       <programlisting>#ACTION      OPTIONS            COMMENT
 SSHLIMIT     proto=tcp,\	# Blacklist overzealous SSHers
-	     dport=ssh
-
-</programlisting>
+	     dport=ssh</programlisting>
 
       <para>/etc/shorewall/action.SSHLIMIT:</para>
 
@@ -920,7 +884,8 @@ CT:helper:ftp:O  { PROTO=tcp, DPORT=21 }
       <para>/etc/shorewall/rules has only a couple of rules that are
       conditional based on address family:</para>
 
-      <programlisting>##ACTION		SOURCE		DEST		PROTO	DPORT	SPORT	ORIGDEST	RATE	USER	MARK	CONNLIMIT	TIME	HEADERS	SWITCH	HELPER
+      <programlisting>##############################################################################################################################################################
+#ACTION		SOURCE		DEST		PROTO	DPORT	SPORT	ORIGDEST	RATE	USER	MARK	CONNLIMIT	TIME	HEADERS	SWITCH	HELPER
 
 ?SECTION ALL
 
@@ -939,6 +904,7 @@ ACCEPT		{ SOURCE=loc, DEST=$FW,		PROTO=tcp,  helper=ftp }
 ACCEPT		{ SOURCE=all, DEST=all,		PROTO=icmp }
 RST(ACCEPT)	{ SOURCE=all, DEST=all }
 ACCEPT		{ SOURCE=dmz, DEST=dmz }
+ACCEPT		{ SOURCE=$FW, DEST=$FW,         PROTO=icmp }
 
 ?SECTION INVALID
 
@@ -991,9 +957,11 @@ DROP:$LOG_LEVEL	 { SOURCE=net, DEST=all } ;;+ -p tcp -m tcpmss --mss 1:535
 ######################################################################################################
 # Ping
 #
-Ping(ACCEPT)	  { SOURCE=$FW,loc,dmz,vpn,apps,wlan, DEST=$FW,loc,dmz,vpn,apps,wlan }
+Ping(ACCEPT)	  { SOURCE=all!net, DEST=all }
 Ping(ACCEPT)	  { SOURCE=dmz, DEST=dmz }
-Ping(ACCEPT)	  { SOURCE=all, DEST=net }
+?if __IPV4
+Ping(ACCEPT)	  { source=$FW, DEST=swch }
+?endif
 ######################################################################################################
 # Logging
 #
@@ -1003,9 +971,11 @@ Syslog(ACCEPT)	  { SOURCE=dmz, DEST=$FW }
 #
 SSH(DROP)	  { SOURCE=net, DEST=dmz:$SERVER }
 SSHLIMIT	  { SOURCE=net, DEST=all }
-SSH(ACCEPT)	  { SOURCE=all+, DEST=all+ }
 ?if __IPV4
+SSH(ACCEPT)	  { SOURCE=all+!swch, DEST=all+ }
 SSH(DNAT-)	  { SOURCE=net,              DEST=172.20.2.44, PROTO=tcp, DPORT=ssh, ORIGDEST=70.90.191.123 }
+?else
+SSH(ACCEPT)	  { SOURCE=all+, DEST=all+ }
 ?endif
 ######################################################################################################
 # DNS
