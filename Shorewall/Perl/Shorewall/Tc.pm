@@ -422,8 +422,8 @@ sub validate_tc_device( ) {
     fatal_error "Duplicate INTERFACE ($device)"    if $tcdevices{$device};
     fatal_error "Invalid INTERFACE name ($device)" if $device =~ /[:+]/;
 
-    my ( $classify, $pfifo, $flow, $qdisc, $linklayer, $overhead, $mtu, $mpu, $tsize ) = 
-	(0,         0,      '',    'htb',  '',         0,         0,    0,    0);
+    my ( $classify, $pfifo, $flow, $qdisc, $linklayer, $overhead, $mtu, $mpu, $tsize, $connmark ) = 
+	(0,         0,      '',    'htb',  '',         0,         0,    0,    0,      0);
 
     if ( $options ne '-' ) {
 	for my $option ( split_list1 $options, 'option' ) {
@@ -458,6 +458,8 @@ sub validate_tc_device( ) {
 		$tsize = numeric_value( $1 );
 		fatal_error "Invalid tsize ($1)" unless defined $tsize;
 		fatal_error q('tsize' requires 'linklayer') unless $linklayer; 
+	    } elsif ( $option eq 'connmark' ) {
+		$connmark = 1;
 	    } else {
 		fatal_error "Unknown device option ($option)";
 	    }
@@ -478,6 +480,8 @@ sub validate_tc_device( ) {
 	    fatal_error "REDIRECTED device ($rdevice) has not been defined in this file" unless $rdevref;
 	    fatal_error "IN-BANDWIDTH must be zero for REDIRECTED devices" if $rdevref->{in_bandwidth} != 0;
 	}
+    } elsif ( $connmark ) {
+	fatal_error "Option connmark can only be used when setting up a IFB device";
     }
 
     $inband = process_in_bandwidth( $inband );
@@ -503,6 +507,7 @@ sub validate_tc_device( ) {
 			    mpu           => $mpu,
 			    tsize         => $tsize,
 			    filterpri     => 0,
+			    connmark      => $connmark,
 			  } ,
 
     push @tcdevices, $device;
@@ -1865,7 +1870,7 @@ sub process_traffic_shaping() {
 	    for my $rdev ( @{$devref->{redirected}} ) {
 		my $phyrdev = physical_name( $rdev );
 		emit ( "run_tc qdisc add dev $phyrdev handle ffff: ingress" );
-		emit( "run_tc filter add dev $phyrdev parent ffff: protocol all u32 match u32 0 0 action mirred egress redirect dev $device > /dev/null" );
+		emit( "run_tc filter add dev $phyrdev parent ffff: protocol all u32 match u32 0 0 ".($devref->{'connmark'} ? ' action connmark' : '')." action mirred egress redirect dev $device > /dev/null" );
 	    }
 
 	    for my $class ( @tcclasses ) {
