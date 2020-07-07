@@ -502,6 +502,7 @@ our %capdesc = ( NAT_ENABLED     => 'NAT',
 		 RESTORE_WAIT_OPTION
 				 => 'iptables-restore --wait option',
                  NAT_INPUT_CHAIN => 'INPUT chain in NAT table',
+		 CONNMARK_ACTION => 'TC connmark support',
 		 #
 		 # Helpers
 		 #
@@ -883,8 +884,8 @@ sub initialize($;$$$$) {
 		    TC_SCRIPT               => '',
 		    EXPORT                  => 0,
 		    KLUDGEFREE              => '',
-		    VERSION                 => '5.2.4.1',
-		    CAPVERSION              => 50200 ,
+		    VERSION                 => '5.2.7-Beta1',
+		    CAPVERSION              => 50207 ,
 		    BLACKLIST_LOG_TAG       => '',
 		    RELATED_LOG_TAG         => '',
 		    MACLIST_LOG_TAG         => '',
@@ -1178,6 +1179,7 @@ sub initialize($;$$$$) {
 	       NFLOG_SIZE => undef,
 	       RESTORE_WAIT_OPTION => undef,
 	       NAT_INPUT_CHAIN => undef,
+	       CONNMARK_ACTION => undef ,
 
 	       AMANDA_HELPER => undef,
 	       FTP_HELPER => undef,
@@ -5052,6 +5054,10 @@ sub Basic_Filter() {
     $tc && system( "$tc filter add basic help 2>&1 | grep -q ^Usage" ) == 0;
 }
 
+sub Connmark_Action() {
+    $tc && system( "$tc action add connmark help 2>&1 | grep -q ^Usage" ) == 0;
+}
+
 sub Basic_Ematch() {
     $tc && have_capability( 'BASIC_FILTER' ) && system( "$tc filter add basic help 2>&1 | egrep -q match" ) == 0;
 }
@@ -5181,6 +5187,7 @@ our %detect_capability =
       COMMENTS => \&Comments,
       CONNLIMIT_MATCH => \&Connlimit_Match,
       CONNMARK => \&Connmark,
+      CONNMARK_ACTION => \&Connmark_Action,
       CONNMARK_MATCH => \&Connmark_Match,
       CONNTRACK_MATCH => \&Conntrack_Match,
       CPU_FANOUT => \&Cpu_Fanout,

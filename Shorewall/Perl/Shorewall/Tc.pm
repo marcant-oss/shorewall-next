@@ -459,6 +459,7 @@ sub validate_tc_device( ) {
 		fatal_error "Invalid tsize ($1)" unless defined $tsize;
 		fatal_error q('tsize' requires 'linklayer') unless $linklayer; 
 	    } elsif ( $option eq 'connmark' ) {
+		require_capability( 'CONNMARK_ACTION', q(The 'connmark' option), 's' );
 		$connmark = 1;
 	    } else {
 		fatal_error "Unknown device option ($option)";
@@ -1870,7 +1871,7 @@ sub process_traffic_shaping() {
 	    for my $rdev ( @{$devref->{redirected}} ) {
 		my $phyrdev = physical_name( $rdev );
 		emit ( "run_tc qdisc add dev $phyrdev handle ffff: ingress" );
-		emit( "run_tc filter add dev $phyrdev parent ffff: protocol all u32 match u32 0 0 ".($devref->{'connmark'} ? ' action connmark' : '')." action mirred egress redirect dev $device > /dev/null" );
+		emit( "run_tc filter add dev $phyrdev parent ffff: protocol all u32 match u32 0 0".($devref->{'connmark'} ? ' action connmark' : '')." action mirred egress redirect dev $device > /dev/null" );
 	    }
 
 	    for my $class ( @tcclasses ) {

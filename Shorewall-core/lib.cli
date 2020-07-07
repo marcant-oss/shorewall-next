@@ -25,7 +25,7 @@
 # loaded after this one and replaces some of the functions declared here.
 #
 
-SHOREWALL_CAPVERSION=50200
+SHOREWALL_CAPVERSION=50207
 
 if [ -z "$g_basedir" ]; then
     #
@@ -2878,6 +2878,7 @@ determine_capabilities() {
     NETMAP_TARGET=
     NFLOG_SIZE=
     RESTORE_WAIT_OPTION=
+    CONNMARK_ACTION=
 
     AMANDA_HELPER=
     FTP_HELPER=
@@ -3245,6 +3246,10 @@ determine_capabilities() {
 	    BASIC_FILTER=Yes
 	    $TC filter add basic help 2>&1 | egrep -q match && BASIC_EMATCH=Yes
 	fi
+
+	if $TC action add connmark help 2>&1 | grep -q ^Usage; then
+	    CONNMARK_ACTION=Yes
+	fi
     fi
 
     [ -n "$IP" ] && $IP rule add help 2>&1 | grep -q /MASK && FWMARK_RT_MASK=Yes
@@ -3388,6 +3393,7 @@ report_capabilities_unsorted() {
     report_capability "NETMAP Target (NETMAP_TARGET)" $NETMAP_TARGET
     report_capability "--nflog-size support (NFLOG_SIZE)" $NFLOG_SIZE
     report_capability "INPUT chain in nat table (NAT_INPUT_CHAIN)" $NAT_INPUT_CHAIN
+    report_capability "TC connmark support (CONNMARK_ACTION)" $CONNMARK_ACTION
 
     echo "   Kernel Version (KERNELVERSION): $KERNELVERSION"
     echo "   Capabilities Version (CAPVERSION): $CAPVERSION"
@@ -3494,6 +3500,7 @@ report_capabilities_unsorted1() {
     report_capability1 NFLOG_SIZE
     report_capability1 RESTORE_WAIT_OPTION
     report_capability1 NAT_INPUT_CHAIN
+    report_capability1 CONNMARK_ACTION
 
     report_capability1 AMANDA_HELPER
     report_capability1 FTP_HELPER
