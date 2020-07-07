@@ -904,7 +904,7 @@ ACCEPT		{ SOURCE=loc, DEST=$FW,		PROTO=tcp,  helper=ftp }
 ACCEPT		{ SOURCE=all, DEST=all,		PROTO=icmp }
 RST(ACCEPT)	{ SOURCE=all, DEST=all }
 ACCEPT		{ SOURCE=dmz, DEST=dmz }
-ACCEPT		{ SOURCE=$FW, DEST=$FW,         PROTO=icmp }
+ACCEPT		{ SOURCE=$FW, DEST=$FW }
 
 ?SECTION INVALID
 
