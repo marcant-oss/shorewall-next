@@ -26,6 +26,8 @@
     <copyright>
       <year>2001-2013</year>
 
+      <year>2020</year>
+
       <holder>Thomas M. Eastep</holder>
     </copyright>
 
@@ -214,24 +216,6 @@
     article</ulink>.</para>
   </section>
 
-  <section id="Kernel">
-    <title>Linux Kernel Configuration</title>
-
-    <para>You will need at least kernel 2.4.18 for this to work, please take a
-    look at the following screenshot for what settings you need to enable. For
-    builtin support, you need the HTB scheduler, the Ingress scheduler, the
-    PRIO pseudoscheduler and SFQ queue. The other scheduler or queue
-    algorithms are not needed.</para>
-
-    <para>This screen shot shows how I configured QoS in a 2.6.16
-    Kernel:</para>
-
-    <graphic align="center" fileref="images/traffic_shaping2.6.png"/>
-
-    <para>And here's my recommendation for a 2.6.21 kernel:<graphic
-    align="center" fileref="images/traffic_shaping2.6.21.png"/></para>
-  </section>
-
   <section id="Shorewall">
     <title>Enable TC support in Shorewall</title>
 
@@ -297,6 +281,15 @@
       <listitem>
         <para>Assign traffic to HTB and/or HFSC classes based on packet mark
         value or based on packet contents.</para>
+      </listitem>
+
+      <listitem>
+        <para>Throttle incoming traffic</para>
+      </listitem>
+
+      <listitem>
+        <para>Use an <emphasis>Intermediate functional block </emphasis>(IFB)
+        to shape incoming traffic<emphasis> </emphasis></para>
       </listitem>
     </itemizedlist>
 
@@ -482,6 +475,16 @@
                 </variablelist>
               </listitem>
             </varlistentry>
+
+            <varlistentry>
+              <term><emphasis role="bold">connmark</emphasis></term>
+
+              <listitem>
+                <para>Added in Shorewall 5.2.7. May be specified on IFB
+                devices to enable use of firewall marks to select the
+                appropriate traffic shaping class.</para>
+              </listitem>
+            </varlistentry>
           </variablelist>
         </listitem>
 
@@ -496,7 +499,8 @@
           column.</para>
 
           <para>IFB devices automatically get the <emphasis
-          role="bold">classify</emphasis> option.</para>
+          role="bold">classify</emphasis> option unless the <emphasis
+          role="bold">connmark</emphasis> option is specified.</para>
         </listitem>
       </itemizedlist>
 
@@ -1577,9 +1581,11 @@ ip link set ifb0 up</command></programlisting>
 
     <para>Entries in <filename>/etc/shorewall/mangle</filename> or
     <filename>/etc/shorewall/tcrules</filename> have no effect on shaping
-    traffic through an IFB. To allow classification of such traffic, the
-    /etc/shorewall/tcfilters file has been added. Entries in that file create
-    <ulink url="http://b42.cz/notes/u32_classifier/">u32 classification
+    traffic through an IFB unless the IFB is defined in shorewall-tcclasses(5)
+    with the <emphasis role="bold">connmark</emphasis> option. To allow
+    classification of such traffic, the /etc/shorewall/tcfilters file has been
+    added. Entries in that file create <ulink
+    url="http://b42.cz/notes/u32_classifier/">u32 classification
     rules</ulink>.</para>
 
     <section id="tcfilters">
@@ -1936,6 +1942,93 @@ filter parent 1: protocol ip pref 10 u32 <emphasis role="bold">fh 800:</emphasis
   match 00060000/00ff0000 at 8 (success 102 )                 <emphasis
             role="bold">&lt;========= PROTO TCP</emphasis>
     offset 0f00&gt;&gt;6 at 0  eat </programlisting></para>
+    </section>
+
+    <section>
+      <title>IFBs and SNAT/MASQUERADE</title>
+
+      <para>IFB traffic shaping takes place immediately after the traffic is
+      received by the incoming interface and before it has been passed to any
+      Netfilter hook. This has two consequences:</para>
+
+      <itemizedlist>
+        <listitem>
+          <para>There is no opportunity to mark the packets before they are
+          processed by the IFBs traffic shaping rules.</para>
+        </listitem>
+
+        <listitem>
+          <para>The DEST IP address is still the IP address of the external
+          interface on which the traffic arrived.</para>
+        </listitem>
+      </itemizedlist>
+
+      <para>As a result, in the tcdevices file description above, a <emphasis
+      role="bold">connmark</emphasis> option was added to that file in
+      Shorewall 5.2.7. The <emphasis role="bold">connmark</emphasis> option
+      allows firewall marks to be used to segregate traffic by DEST IP.</para>
+
+      <para>Example (based closely on one supplied by Rodrigo Araujo, who also
+      wrote much of the code supporting the <emphasis
+      role="bold">connmark</emphasis> option):</para>
+
+      <para><emphasis
+      role="bold">/etc/shorewall/shorewall.conf:</emphasis></para>
+
+      <programlisting>...
+TC_ENABLED=Internal
+...</programlisting>
+
+      <para><emphasis role="bold">/etc/shorewall/interfaces:</emphasis></para>
+
+      <programlisting>##############################################################################
+?FORMAT 2
+###############################################################################
+#ZONE	INTERFACE	OPTIONS
+net     NET_IF          dhcp,tcpflags,nosmurfs,routefilter,logmartians,sourceroute=0,physical=eth0
+loc     LOC_IF          tcpflags,nosmurfs,routefilter,logmartians,physical=eth1</programlisting>
+
+      <para><emphasis role="bold">/etc/shorewall/snat:</emphasis></para>
+
+      <programlisting>?FORMAT 2
+#ACTION       SOURCE      DEST    PROTO    PORT        IPSEC    MARK   
+USER    SWITCH    ORIGDEST    PROBABILITY
+MASQUERADE    -           NET_IF</programlisting>
+
+      <para><emphasis role="bold">/etc/shorewall/tcdevices:</emphasis></para>
+
+      <programlisting>#INTERFACE	IN_BANDWITH	OUT_BANDWIDTH	OPTIONS		REDIRECT
+## net upload
+10:NET_IF	-               1000mbit         htb
+## net download
+11:ifb0         -               1000mbit         htb,connmark   NET_IF</programlisting>
+
+      <para><emphasis role="bold">/etc/shorewall/tcclasses:</emphasis></para>
+
+      <programlisting>#INTERFACE	MARK	RATE		CEIL		PRIO	OPTIONS
+10:5000           111       500kbit            full       10     tcp-ack,tos-minimize-delay
+11:5000           110       500kbit            full       10     tcp-ack,tos-minimize-delay
+
+10:1000           100       full-50500         full       20      default
+11:1000           101       full-100500        full       20      default
+
+10:50             10        50mbit             50mbit     101     flow=nfct-src
+11:100            11        100mbit            100mbit    101     flow=dst</programlisting>
+
+      <para><emphasis role="bold">/etc/shorewall/tcfilters:</emphasis></para>
+
+      <programlisting>#CLASS		SOURCE		DEST		PROTO	DPORT	SPORT	TOS	LENGTH
+## limit LAN upload - works
+10:50          10.100.100.0/24
+## limit LAN download - DOESN'T WORK BECAUSE OF MASQUERADE ON eth0 !!!! (snat file)
+#11:100        -                  10.100.100.0/24</programlisting>
+
+      <para><emphasis role="bold">/etc/shorewall/mangle:</emphasis></para>
+
+      <programlisting>#ACTION		SOURCE		DEST		PROTO	DPORT	SPORT	USER	TEST	LENGTH	TOS	CONNBYTES	HELPER	PROBABILITY	DSCP	SWITCH
+## this only works with the aforementioned conntrack option
+## and LAN users' download traffic will get the 11:100 class (defined in tcclasses) applied
+CONNMARK(11):F       10.100.100.0/24    - { TEST=0x0/0xff }</programlisting>
     </section>
   </section>
 
