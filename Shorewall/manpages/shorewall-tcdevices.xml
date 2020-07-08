@@ -200,6 +200,11 @@
           marks. You must do all classification using CLASSIFY rules in <ulink
           url="shorewall-mangle.html">shorewall-mangle</ulink>(5).</para>
 
+          <para><emphasis role="bold">connmark</emphasis> -- Added in
+          Shorewall 5.2.7. May only be specified if the REDIRECTED_INTERFACES
+          column is non-empty. It allows packet marks to be used to classify
+          traffic for these interfaces.</para>
+
           <para><option>htb</option> - Use the <firstterm>Hierarchical Token
           Bucket</firstterm> queuing discipline. This is the default.</para>
 
@@ -248,7 +253,9 @@
           enter each listed interface to be passed through the egress filters
           defined for this device, thus providing a form of incoming traffic
           shaping. When this column is non-empty, the <emphasis
-          role="bold">classify</emphasis> option is assumed.</para>
+          role="bold">classify</emphasis> option is assumed unless the
+          <emphasis role="bold">connmark</emphasis> option is
+          specified.</para>
         </listitem>
       </varlistentry>
     </variablelist>

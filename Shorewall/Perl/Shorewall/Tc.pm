@@ -473,7 +473,7 @@ sub validate_tc_device( ) {
 
     if ( @redirected ) {
 	fatal_error "IFB devices may not have IN-BANDWIDTH" if $inband ne '-' && $inband;
-	$classify = 1;
+	$classify = 1 unless $connmark;
 
 	for my $rdevice ( @redirected ) {
 	    fatal_error "Invalid device name ($rdevice)" if $rdevice =~ /[:+]/;
@@ -667,6 +667,7 @@ sub validate_tc_class( ) {
 
     if ( $mark ne '-' ) {
 	fatal_error "MARK may not be specified when TC_BITS=0" unless $config{TC_BITS};
+	fatal_error "MARK may not be specified for an interface with the 'classify' option" if $devref->{classify};
 
 	( $mark, my $priority ) = split/:/, $mark, 2;
 
