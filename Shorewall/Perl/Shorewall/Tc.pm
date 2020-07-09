@@ -1646,8 +1646,8 @@ sub process_tcfilters() {
 #
 # Process a tcpri record
 #
-sub process_tc_priority1( $$$$$$ ) {
-    my ( $band, $proto, $ports , $address, $interface, $helper ) = @_;
+sub process_tc_priority1( $$$$$$$ ) {
+    my ( $band, $proto, $dports , $sports, $address, $interface, $helper ) = @_;
 
     my $val = numeric_value $band;
 
@@ -1658,7 +1658,7 @@ sub process_tc_priority1( $$$$$$ ) {
     $rule .= join('', '/', in_hex( $globals{TC_MASK} ) ) if have_capability( 'EXMARK' );
 
     if ( $interface ne '-' ) {
-	fatal_error "Invalid combination of columns" unless $address eq '-' && $proto eq '-' && $ports eq '-';
+	fatal_error "Invalid combination of columns" unless $address eq '-' && $proto eq '-' && $dports eq '-' && $sports eq '-';
 
 	my $forwardref = $mangle_table->{tcfor};
 
@@ -1669,41 +1669,57 @@ sub process_tc_priority1( $$$$$$ ) {
 	my $postref = $mangle_table->{tcpost};
 
 	if ( $address ne '-' ) {
-	    fatal_error "Invalid combination of columns" unless $proto eq '-' && $ports eq '-';
+	    fatal_error "Invalid combination of columns" unless $proto eq '-' && $dports eq '-' && $sports eq '-';
 	    add_rule( $postref ,
 		      join( '', match_source_net( $address) , $rule ) ,
 		      1 );
 	} else {
 	    add_rule( $postref ,
-		      join( '', do_proto( $proto, $ports, '-' , 0 ) , $rule ) ,
+		      join( '', do_proto( $proto, $dports, $sports , 0 ) , $rule ) ,
 		      1 );
 
-	    if ( $ports ne '-' ) {
+	    if ( $dports ne '-' ) {
 		my $protocol = resolve_proto $proto;
 
 		if ( $proto =~ /^ipp2p/ ) {
 		    fatal_error "ipp2p may not be used when there are tracked providers and PROVIDER_OFFSET=0" if @routemarked_interfaces && $config{PROVIDER_OFFSET} == 0;
 		    $ipp2p = 1;
+		} elsif ( $file_format == 1 ) {
+		    add_rule( $postref ,
+			      join( '' , do_proto( $proto, '-', $dports, 0 ) , $rule ) ,
+			      1 )
+			unless $proto =~ /^ipp2p/ || $protocol == ICMP || $protocol == IPv6_ICMP;
 		}
-
-		add_rule( $postref ,
-			  join( '' , do_proto( $proto, '-', $ports, 0 ) , $rule ) ,
-			  1 )
-		    unless $proto =~ /^ipp2p/ || $protocol == ICMP || $protocol == IPv6_ICMP;
 	    }
 	}
     }
 }
 
 sub process_tc_priority() {
-    my ( $band, $protos, $ports , $address, $interface, $helper ) =
-	split_line1( 'tcpri',
-		     { band => 0, proto => 1, port => 2, address => 3, interface => 4, helper => 5 } );
+    my ( $band, $protos, $dports , $sports, $address, $interface, $helper );
+
+    if ( $file_format == 1 ) {
+	( $band, $protos, $dports , $address, $interface, $helper ) =
+	    split_line2( 'tcpri',
+			 { band => 0, proto => 1, port => 2, dport => 2, address => 3, interface => 4, helper => 5 },
+			 {},
+			 6,
+			 1 );
+	$sports = '-';
+    } else {
+	( $band, $protos, $dports , $sports, $address, $interface, $helper ) =
+	    split_line2( 'tcpri',
+			 { band => 0, proto => 1, port => 2, dport => 2, sport => 3, address => 4, interface => 5, helper => 6 },
+			 {},
+			 7,
+			 1 );
+    };
 
     fatal_error 'BAND must be specified' if $band eq '-';
 
     fatal_error "Invalid tcpri entry" if ( $protos    eq '-' &&
-					   $ports     eq '-' &&
+					   $dports    eq '-' &&
+					   $sports    eq '-' &&
 					   $address   eq '-' &&
 					   $interface eq '-' &&
 					   $helper    eq '-' );
@@ -1713,7 +1729,7 @@ sub process_tc_priority() {
     fatal_error "Invalid PRIORITY ($band)" unless $val && $val <= 3;
 
     for my $proto ( split_list $protos, 'Protocol' ) {
-	process_tc_priority1( $band, $proto, $ports , $address, $interface, $helper );
+	process_tc_priority1( $band, $proto, $dports , $sports, $address, $interface, $helper );
     }
 }
 
@@ -1735,7 +1751,7 @@ sub process_tcinterfaces() {
 #
 sub process_tcpri() {
     my $fn  = find_file 'tcinterfaces';
-    my $fn1 = open_file 'tcpri', 1,1;
+    my $fn1 = open_file 'tcpri', 2,1,0,1;
 
     if ( $fn1 ) {
 	first_entry

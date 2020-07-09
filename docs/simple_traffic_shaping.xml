@@ -187,8 +187,9 @@ eth0                   External</programlisting>
         <para>Assign traffic entering the firewall on a particular interface
         to a specific priority band:</para>
 
-        <programlisting>#BAND         PROTO         PORT(S)         ADDRESS             INTERFACE        HELPER
-2               -             -                -                eth1</programlisting>
+        <programlisting>?FORMAT 2
+#BAND         PROTO         DPORT    SPORT     ADDRESS             INTERFACE        HELPER
+2               -             -        -          -                eth1</programlisting>
 
         <para>In this example, traffic from eth1 will be assigned to priority
         band 2.</para>
@@ -203,15 +204,17 @@ eth0                   External</programlisting>
         <para>Assign traffic from a particular IP address to a specific
         priority band:</para>
 
-        <programlisting>#BAND         PROTO         DPORT           ADDRESS             INTERFACE        HELPER
-1               -             -             192.168.1.44</programlisting>
+        <programlisting>?FORMAT 2
+#BAND         PROTO         DPORT    SPORT     ADDRESS             INTERFACE        HELPER
+
+1               -             -        -       192.168.1.44</programlisting>
 
         <para>In this example, traffic from 192.168.1.44 will be assigned to
         priority band 1.</para>
 
         <note>
-          <para>When an ADDRESS is specified, the PROTO, DPORT and INTERFACE
-          columns must be empty.</para>
+          <para>When an ADDRESS is specified, the PROTO, DPORT, SPORT and
+          INTERFACE columns must be empty.</para>
         </note>
       </listitem>
 
@@ -219,11 +222,19 @@ eth0                   External</programlisting>
         <para>Assign traffic to/from a particular application to a specific
         priority band:</para>
 
-        <programlisting>#BAND         PROTO         DPORT           ADDRESS             INTERFACE        HELPER
+        <programlisting>#BAND         PROTO         PORT            ADDRESS             INTERFACE        HELPER
 1             udp           1194</programlisting>
 
-        <para>In that example, OpenVPN traffic is assigned to priority band
-        1.</para>
+        <para>In that example, SSH traffic is assigned to priority band 1. In
+        file format 2, the above would be as follows:</para>
+
+        <programlisting>#BAND         PROTO         DPORT       SPORT     ADDRESS             INTERFACE        HELPER
+1             tcp           22
+1             tcp             -         22</programlisting>
+
+        <para>In other words, in file format 1, the compiler generates rules
+        for traffic from client to server and from server to client. In format
+        2, separate tcpri rules are required.</para>
       </listitem>
 
       <listitem>
