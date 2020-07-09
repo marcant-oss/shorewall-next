@@ -27,8 +27,11 @@
 
     <para>This file is used to specify the priority of traffic for simple
     traffic shaping (TC_ENABLED=Simple in <ulink
-    url="shorewall.conf.html">shorewall.conf</ulink>(5)). The
-    priority band of each packet is determined by the <emphasis
+    url="shorewall.conf.html">shorewall.conf</ulink>(5)). Beginning with
+    Shorewall 5.2.7, the file allows ?FORMAT 2 which inserts a SPORT column
+    immediately to the right of the DPORT column.</para>
+
+    <para>The priority band of each packet is determined by the <emphasis
     role="bold">last</emphasis> entry that the packet matches. If a packet
     doesn't match any entry in this file, then its priority will be determined
     by its TOS field. The default mapping is as follows but can be changed by
@@ -87,15 +90,36 @@
       </varlistentry>
 
       <varlistentry>
-        <term>PORT(S) - <replaceable>port</replaceable> [,...]</term>
+        <term>DPORT - <replaceable>port</replaceable> [,...]</term>
 
         <listitem>
+          <para>This column was named PORT prior to Shorewall 5.2.7. Both
+          'port' and 'dport' may be used in the <ulink
+          url="../configuration_file_basics.htm#Pairs">alternate input
+          format</ulink>.</para>
+
           <para>Optional. May only be given if the the PROTO is TCP (6), UDP
           (17), DCCP (33), SCTP (132) or UDPLITE (136). A list of one or more
           port numbers or service names from /etc/services. Port ranges of the
           form
           <replaceable>lowport</replaceable>:<replaceable>highport</replaceable>
-          may also be included.</para>
+          may also be included. In format 1, packets whose source or
+          destination port matches the specified
+          <replaceable>port</replaceable>(s) are assigned to the band given in
+          the BAND column.</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term>SPORT - <replaceable>port</replaceable> [,...]</term>
+
+        <listitem>
+          <para>Only present in file format 2. Optional. May only be given if
+          the the PROTO is TCP (6), UDP (17), DCCP (33), SCTP (132) or UDPLITE
+          (136). A list of one or more port numbers or service names from
+          /etc/services. Port ranges of the form
+          <replaceable>lowport</replaceable>:<replaceable>highport</replaceable>
+          may also be included. </para>
         </listitem>
       </varlistentry>
 

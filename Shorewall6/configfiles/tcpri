@@ -7,4 +7,4 @@
 # information.
 #
 ###############################################################################
-#BAND	PROTO	PORT		ADDRESS		INTERFACE	HELPER
+#BAND	PROTO	DPORT	SPORT	ADDRESS		INTERFACE	HELPER
