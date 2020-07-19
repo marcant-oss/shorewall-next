@@ -1150,7 +1150,7 @@ TCPMSS(pmtu,none) { PROTO=tcp }
       <programlisting>#TYPE			ZONE		GATEWAY			GATEWAY_ZONE
 ipsecnat {ZONE=net,  GATEWAY=$ALL, GATEWAY_ZONE=vpn }
 ipsecnat {ZONE=loc,  GATEWAY=$ALL, GATEWAY_ZONE=vpn }
-</programlisting>
+ipsecnat {ZONE=wlan, GATEWAY=$ALL, GATEWAY_ZONE=vpn }</programlisting>
     </section>
 
     <section>
