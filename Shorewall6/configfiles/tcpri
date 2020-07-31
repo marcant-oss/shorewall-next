@@ -6,5 +6,6 @@
 # See https://shorewall.org/simple_traffic_shaping.htm for additional
 # information.
 #
+?FORMAT 2
 ###############################################################################
 #BAND	PROTO	DPORT	SPORT	ADDRESS		INTERFACE	HELPER
