@@ -247,8 +247,34 @@ search_log() # $1 = IP address to search for
 #
 # Show traffic control information
 #
-show_tc1() {
+show_one_classifier() {
+    local class
 
+    qt tc -s filter ls root dev $1 && tc -s filter ls root dev $device | grep -v '^$'
+    tc filter show dev $1
+    tc class show dev $1 | fgrep 'leaf ' | fgrep -v ' hfsc' | sed 's/^.*leaf //;s/ .*//' | while read class; do
+	if [ -n "$class" ]; then
+	    echo
+	    echo Node $class
+	    tc filter show dev $device parent $class
+	fi
+    done
+    echo
+}
+
+show_classifier1() {
+    local device
+    local qdisc
+
+    device=${1%@*}
+    qdisc=$(tc qdisc list dev $device)
+    if [ -n "$qdisc" ]; then
+	echo Device $device:
+	show_one_classifier $device
+    fi
+}
+
+show_tc1() {
     show_one_tc() {
 	local device
 	device=${1%@*}
@@ -260,6 +286,7 @@ show_tc1() {
 	    echo
 	    tc -s -d class show dev $device
 	    echo
+	    show_one_classifier $device
 	fi
     }
 
@@ -270,7 +297,6 @@ show_tc1() {
 	    show_one_tc ${interface%:}
 	done
     fi
-
 }
 
 show_tc() {
@@ -291,28 +317,8 @@ show_tc() {
 #
 show_classifiers() {
 
-    show_one_classifier() {
-	local device
-	device=${1%@*}
-	qdisc=$(tc qdisc list dev $device)
-
-	if [ -n "$qdisc" ]; then
-	    echo Device $device:
-	    qt tc -s filter ls root dev $device && tc -s filter ls root dev $device | grep -v '^$'
-	    tc filter show dev $device
-	    tc class show dev $device | fgrep 'leaf ' | fgrep -v ' hfsc' | sed 's/^.*leaf //;s/ .*//' | while read class; do
-		if [ -n "$class" ]; then
-		    echo
-		    echo Node $class
-		    tc filter show dev $device parent $class
-		fi
-	    done
-	    echo
-	fi
-    }
-
     ip -o link list | while read inx interface details; do
-	show_one_classifier ${interface%:}
+	show_classifier1 ${interface%:}
     done
 
 }
