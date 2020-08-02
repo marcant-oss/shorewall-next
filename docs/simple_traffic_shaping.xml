@@ -93,6 +93,13 @@
     qdisc but seems to provide a benefit when the actual link output
     temporarily drops below the limit imposed by tbf or when tbf allows a
     burst of traffic to be released.</para>
+
+    <caution>
+      <para>IPSec traffic passes through traffic shaping twice - once en clair
+      and once encrypted and encapsulated. As a result, throughput may be
+      significantly less than configured if IPSEC packets form a significant
+      percentage of the traffic being shaped.</para>
+    </caution>
   </section>
 
   <section>
