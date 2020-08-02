@@ -365,9 +365,7 @@ sub process_simple_device() {
 
     emit( "run_tc filter add dev $physical parent $number:0 protocol all prio 1 u32" .
 	  "\\\n    match ip6 protocol 6 0xff" .
-	  "\\\n    match u8 0x05 0x0f at 0" .
-	  "\\\n    match u16 0x0000 0xffc0 at 2" .
-	  "\\\n    match u8 0x10 0xff at 33 flowid $number:1\n" );
+	  "\\\n    match u8 0x10 0xff at 53 flowid $number:1\n" );
 
     save_progress_message_short qq("   TC Device $physical defined.");
 
