@@ -260,6 +260,11 @@ show_one_classifier() {
 	fi
     done
     echo
+
+    if echo $2 | fgrep -q ingress; then
+	echo "Ingress:"
+	tc -s -d filter show dev $device parent ffff:
+    fi
 }
 
 show_classifier1() {
@@ -277,6 +282,9 @@ show_classifier1() {
 show_tc1() {
     show_one_tc() {
 	local device
+	local qdisc
+	local ingress
+
 	device=${1%@*}
 	qdisc=$(tc qdisc list dev $device)
 
@@ -286,7 +294,7 @@ show_tc1() {
 	    echo
 	    tc -s -d class show dev $device
 	    echo
-	    show_one_classifier $device
+	    show_one_classifier $device "$qdisc"
 	fi
     }
 
