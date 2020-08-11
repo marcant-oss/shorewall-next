@@ -260,11 +260,6 @@ show_one_classifier() {
 	fi
     done
     echo
-
-    if echo $2 | fgrep -q ingress; then
-	echo "Ingress:"
-	tc -s -d filter show dev $device parent ffff:
-    fi
 }
 
 show_classifier1() {
