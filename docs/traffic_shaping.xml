@@ -385,6 +385,14 @@
             The default burst is 10kb, but on my 50mbit line, I specify 200kb.
             (50mbit:200kb).</para>
           </note>
+
+          <caution>
+            <para>Incoming IPSec traffic traverses traffic shaping twice -
+            firs as encrypted and encapsulated ESP packets and then en clair.
+            As a result, incoming bandwidth can be significantly less than
+            specified if IPSEC packets form a significant part of inoming
+            traffic.</para>
+          </caution>
         </listitem>
 
         <listitem>
