@@ -2527,7 +2527,9 @@
               <listitem>
                 <para>Displays information about the packet classifiers
                 defined on the system as a result of traffic shaping
-                configuration.</para>
+                configuration. Beginning with Shorewall 5.2.8, this command is
+                deprecated, as its output is included in the information
+                displayed by the 'show tc' command.</para>
               </listitem>
             </varlistentry>
 

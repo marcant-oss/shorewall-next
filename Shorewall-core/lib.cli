@@ -1026,6 +1026,8 @@ show_mangle() {
 show_classifiers_command() {
     echo "$g_product $SHOREWALL_VERSION Classifiers at $g_hostname - $(date)"
     echo
+    echo "Warning: This command is deprecated in favor of the 'show tc' command"
+    echo
     show_classifiers
 }
 
@@ -4446,12 +4448,11 @@ usage() # $1 = exit status
     echo "   [ show | list | ls ] arptables"
     echo "   [ show | list | ls ] [ -f ] capabilities"
     echo "   [ show | list | ls ] [ -x ] {bl|blacklists}"
-    echo "   [ show | list | ls ] classifiers"
+    echo "   [ show | list | ls ] {classifiers|filters)"
     echo "   [ show | list | ls ] config"
     echo "   [ show | list | ls ] connections"
     echo "   [ show | list | ls ] event [ <event> ...]"
     echo "   [ show | list | ls ] events"
-    echo "   [ show | list | ls ] filters"
     echo "   [ show | list | ls ] ip"
 
     if [ $g_family -eq 4 ]; then
