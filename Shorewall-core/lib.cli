@@ -1913,8 +1913,6 @@ do_dump_command() {
     if [ -n "$TC_ENABLED" ]; then
 	heading "Traffic Control"
 	show_tc1
-	heading "TC Filters"
-	show_classifiers
 	fi
 }
 
