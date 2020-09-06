@@ -75,6 +75,7 @@ our @EXPORT = ( qw( NOTHING
 		    all_interfaces
 		    all_real_interfaces
 		    all_plain_interfaces
+		    interface_is_plain
 		    all_bridges
 		    managed_interfaces
 		    unmanaged_interfaces
@@ -103,6 +104,7 @@ our @EXPORT = ( qw( NOTHING
 		    find_zone_hosts_by_option
 		    find_zones_by_option
 		    have_ipsec
+		    generate_all_acasts
 		 ),
 	      );
 
@@ -418,7 +420,8 @@ sub initialize( $$ ) {
 		       32  => 'loopback',
 		       64  => 'local' );
     } else {
-	%validinterfaceoptions = (  accept_ra   => NUMERIC_IF_OPTION,
+	%validinterfaceoptions = (
+				    accept_ra	=> NUMERIC_IF_OPTION,
 				    blacklist   => SIMPLE_IF_OPTION + IF_OPTION_HOST,
 				    bridge      => SIMPLE_IF_OPTION,
 				    dbl         => ENUM_IF_OPTION   + IF_OPTION_WILDOK,
@@ -428,6 +431,7 @@ sub initialize( $$ ) {
 				    loopback    => BINARY_IF_OPTION,
 				    maclist     => SIMPLE_IF_OPTION + IF_OPTION_HOST,
 				    nets        => IPLIST_IF_OPTION + IF_OPTION_ZONEONLY + IF_OPTION_VSERVER,
+				    noanycast	=> SIMPLE_IF_OPTION + IF_OPTION_WILDOK,
 				    nodbl       => SIMPLE_IF_OPTION,
 				    nosmurfs    => SIMPLE_IF_OPTION + IF_OPTION_HOST,
 				    optional    => SIMPLE_IF_OPTION,
@@ -1536,7 +1540,7 @@ sub process_interface( $$ ) {
 						   zones      => {},
 						   origin     => shortlineinfo( '' ),
 						   wildcard   => $wildcard,
-						   physwild   => $physwild, # Currently unused
+						   physwild   => $physwild,
 					         };
 
     $interfaces{$physical} = $interfaceref if $physical ne $interface;
@@ -2383,6 +2387,101 @@ sub find_zones_by_option( $$ ) {
     }
 
     \@zns;
+}
+
+#
+# Generate the shell code to populate the ALL_ACASTS run-time variable
+#
+
+sub generate_all_acasts() {
+    my ( @acasts, @noacasts, @wildacasts, @wildnoacasts );
+
+    for my $interface ( @interfaces ) {
+	my $interfaceref = $interfaces{$interface};
+	my $physical     = $interfaceref->{physical};
+
+	if ( $interfaceref->{physwild} ) {
+	    $physical =~ s/\+/*/;
+
+	    if ( $interfaceref->{options}{noanycast} ) {
+		if ( $physical eq '*' ) {
+		    @wildnoacasts = ( '*' );
+		} else {
+		    push @wildnoacasts, $physical;
+		}
+	    } else {
+		if ( $physical eq '*' ) {
+		    @wildacasts = ( '*' );
+		} else {
+		    push @wildacasts, $physical;
+		}
+	    }
+	} else {
+	    if ( $interfaceref->{options}{noanycast} ) {
+		push @noacasts, $physical;
+	    } else {
+		push @acasts, $physical;
+	    }
+	}
+    }
+
+    unless( @noacasts || @wildnoacasts ) {
+	emit( 'ALL_ACASTS="$(get_all_acasts)"' );
+	return;
+    }
+
+    @wildacasts = '*' unless @wildacasts;
+
+    emit( 'local iface',
+	  '',
+	  'ALL_ACASTS=',
+	  '',
+	  'for iface in $(find_all_interfaces1); do' );
+
+    push_indent;
+
+    emit( 'case $iface in' );
+
+    push_indent;
+
+    if ( @noacasts ) {
+	unless ( @wildacasts ) {
+	    push @noacasts, @wildnoacasts;
+	    @wildnoacasts = ();
+	}
+
+	emit( join( '|', @noacasts) . ')',
+	      '    ;;' );
+    }
+
+    if ( @wildnoacasts ) {
+	if ( @acasts ) {
+	    emit( join( '|', @acasts) . ')',
+		  '    if [ -n "$ALL_ACASTS" ]; then',
+		  '        ALL_ACASTS="$ALL_ACASTS $(get_interface_acasts $iface)"',
+		  '    else',
+		  '        ALL_ACASTS="$(get_interface_acasts $iface)"',
+		  '    ;;' );
+	}
+
+	emit( join( '|', @wildnoacasts) . ')',
+	      '    ;;' );
+    } else {
+	@wildacasts = ( '*' );
+    }
+
+    emit( join( '|', @wildacasts ) . ')',
+	  '    if [ -n "$ALL_ACASTS" ]; then',
+	  '        ALL_ACASTS="$ALL_ACASTS $(get_interface_acasts $iface)"',
+	  '    else',
+	  '        ALL_ACASTS="$(get_interface_acasts $iface)"',
+	  '    ;;' );
+
+    pop_indent;
+    pop_indent;
+    emit( 'esac',
+	  '' );
+
 }
 
 1;

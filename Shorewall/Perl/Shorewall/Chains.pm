@@ -7522,7 +7522,7 @@ sub set_global_variables( $$ ) {
 		emit 'ALL_BCASTS="$(get_all_bcasts) 255.255.255.255"';
 		emit $interfacebcasts{$_} for sortkeysiftest %interfacebcasts;
 	    } else {
-		emit 'ALL_ACASTS="$(get_all_acasts)"';
+		generate_all_acasts;
 		emit $interfaceacasts{$_} for sortkeysiftest %interfaceacasts;
 	    }
 	}
