@@ -628,6 +628,18 @@ loc     eth2            -</programlisting>
             </varlistentry>
 
             <varlistentry>
+              <term>noanycast</term>
+
+              <listitem>
+                <para>IPv6 only. Added in Shorewall 5.2.8. Shorewall6 normally
+                generates rules to silently drop anycast packets for subnets
+                on all available interfaces. This can be inhibited for
+                individual interfaces by specifying <emphasis
+                role="bold">noanycast</emphasis> for those interfaces.</para>
+              </listitem>
+            </varlistentry>
+
+            <varlistentry>
               <term><emphasis role="bold">nodbl</emphasis></term>
 
               <listitem>
