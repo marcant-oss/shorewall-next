@@ -2461,6 +2461,7 @@ sub generate_all_acasts() {
 		  '        ALL_ACASTS="$ALL_ACASTS $(get_interface_acasts $iface)"',
 		  '    else',
 		  '        ALL_ACASTS="$(get_interface_acasts $iface)"',
+		  '    fi',
 		  '    ;;' );
 	}
 
@@ -2475,13 +2476,13 @@ sub generate_all_acasts() {
 	  '        ALL_ACASTS="$ALL_ACASTS $(get_interface_acasts $iface)"',
 	  '    else',
 	  '        ALL_ACASTS="$(get_interface_acasts $iface)"',
+	  '    fi',
 	  '    ;;' );
 
     pop_indent;
+    emit( 'esac');
     pop_indent;
-    emit( 'esac',
-	  '' );
-
+    emit( 'done');
 }
 
 1;
