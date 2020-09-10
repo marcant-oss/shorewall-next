@@ -178,7 +178,8 @@ our %reservedName = ( all => 1,
 #				      number	  => <ordinal position in the interfaces file>
 #				      physical	  => <physical interface name>
 #				      base	  => <shell variable base representing this interface>
-#				      wildcard	  => undef|1 # Wildcard Name
+#				      wildcard	  => undef|1 # Wildcard Logical Name
+#				      physwild	  => undef|1 # Wildcard Physical Name
 #				      zones	  => { zone1 => 1, ... }
 #				      origin	  => <where defined>
 #				    }
@@ -1491,7 +1492,7 @@ sub process_interface( $$ ) {
 
 	if ( $options{bridge} ) {
 	    require_capability( 'PHYSDEV_MATCH', 'The "bridge" option', 's');
-	    fatal_error "Bridges may not have wildcard names" if $wildcard;
+	    fatal_error "Bridges may not have wildcard names" if $physwild;
 	    $hostoptions{routeback} = $options{routeback} = 1 unless supplied $options{routeback};
 	}
 
@@ -1540,7 +1541,7 @@ sub process_interface( $$ ) {
 						   zones      => {},
 						   origin     => shortlineinfo( '' ),
 						   wildcard   => $wildcard,
-						   physwild   => $physwild, #Currently unused
+						   physwild   => $physwild,
 					         };
 
     $interfaces{$physical} = $interfaceref if $physical ne $interface;
@@ -1721,6 +1722,7 @@ sub known_interface($)
 					       physical => $physical ,
 					       base     => $interfaceref->{base} ,
 					       wildcard => $interfaceref->{wildcard} ,
+					       physwild => $interfaceref->{physwild} ,
 					       zones    => $interfaceref->{zones} ,
 		                              };
 		return $interfaceref;
@@ -1941,7 +1943,7 @@ sub find_interfaces_by_option( $;$ ) {
 	my $interfaceref = $interfaces{$interface};
 
 	next unless $interfaceref->{root};                                   # Don't return '+' interface
-	next if $procinterfaceoptions{$option} && $interfaceref->{wildcard}; # Ignore /proc options on wildcard interface
+	next if $procinterfaceoptions{$option} && $interfaceref->{physwild}; # Ignore /proc options on wildcard interface
 
 	my $optionsref = $interfaceref->{options};
 	if ( $nonzero ) {
