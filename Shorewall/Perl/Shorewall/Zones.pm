@@ -1375,7 +1375,7 @@ sub process_interface( $$ ) {
 		$hostoptions{$option} = $value if $hostopt;
 	    } elsif ( $type == ENUM_IF_OPTION ) {
 		if ( $option eq 'arp_ignore' ) {
-		    fatal_error q(The 'arp_ignore' option may not be used with a wild-card interface name) if $wildcard;
+		    fatal_error q(The 'arp_ignore' option may not be used with a wild-card interface name) if $physwild;
 		    if ( defined $value ) {
 			if ( $value =~ /^[1-3,8]$/ ) {
 			    $options{arp_ignore} = $value;
@@ -2402,7 +2402,10 @@ sub generate_all_acasts() {
 	my $interfaceref = $interfaces{$interface};
 	my $physical     = $interfaceref->{physical};
 
-	if ( $interfaceref->{wildcard} ) {
+	next if ( $interfaceref->{options}{port} ||
+		  $interfaceref->{options}{unmanaged} );
+
+	if ( $interfaceref->{physwild} ) {
 	    $physical =~ s/\+/*/;
 
 	    if ( $interfaceref->{options}{omitanycast} ) {
@@ -2469,17 +2472,20 @@ sub generate_all_acasts() {
 
 	emit( join( '|', @wildnoacasts) . ')',
 	      '    ;;' );
+
     } else {
 	@wildacasts = ( '*' );
     }
 
-    emit( join( '|', @wildacasts ) . ')',
-	  '    if [ -n "$ALL_ACASTS" ]; then',
-	  '        ALL_ACASTS="$ALL_ACASTS $(get_interface_acasts $iface)"',
-	  '    else',
-	  '        ALL_ACASTS="$(get_interface_acasts $iface)"',
-	  '    fi',
-	  '    ;;' );
+    if ( @wildacasts ) {
+	emit( join( '|', @wildacasts ) . ')',
+	      '    if [ -n "$ALL_ACASTS" ]; then',
+	      '        ALL_ACASTS="$ALL_ACASTS $(get_interface_acasts $iface)"',
+	      '    else',
+	      '        ALL_ACASTS="$(get_interface_acasts $iface)"',
+	      '    fi',
+	      '    ;;' );
+    }
 
     pop_indent;
     emit( 'esac');
