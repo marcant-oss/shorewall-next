@@ -431,9 +431,9 @@ sub initialize( $$ ) {
 				    loopback    => BINARY_IF_OPTION,
 				    maclist     => SIMPLE_IF_OPTION + IF_OPTION_HOST,
 				    nets        => IPLIST_IF_OPTION + IF_OPTION_ZONEONLY + IF_OPTION_VSERVER,
-				    noanycast	=> SIMPLE_IF_OPTION + IF_OPTION_WILDOK,
 				    nodbl       => SIMPLE_IF_OPTION,
 				    nosmurfs    => SIMPLE_IF_OPTION + IF_OPTION_HOST,
+				    omitanycast	=> SIMPLE_IF_OPTION + IF_OPTION_WILDOK,
 				    optional    => SIMPLE_IF_OPTION,
 				    proxyndp    => BINARY_IF_OPTION,
 				    required    => SIMPLE_IF_OPTION,
@@ -2403,7 +2403,7 @@ sub generate_all_acasts() {
 	if ( $interfaceref->{physwild} ) {
 	    $physical =~ s/\+/*/;
 
-	    if ( $interfaceref->{options}{noanycast} ) {
+	    if ( $interfaceref->{options}{omitanycast} ) {
 		if ( $physical eq '*' ) {
 		    @wildnoacasts = ( '*' );
 		} else {
@@ -2417,7 +2417,7 @@ sub generate_all_acasts() {
 		}
 	    }
 	} else {
-	    if ( $interfaceref->{options}{noanycast} ) {
+	    if ( $interfaceref->{options}{omitanycast} ) {
 		push @noacasts, $physical;
 	    } else {
 		push @acasts, $physical;

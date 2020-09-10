@@ -628,7 +628,33 @@ loc     eth2            -</programlisting>
             </varlistentry>
 
             <varlistentry>
-              <term>noanycast</term>
+              <term><emphasis role="bold">nodbl</emphasis></term>
+
+              <listitem>
+                <para>Added in Shorewall 5.0.8. When specified, dynamic
+                blacklisting is disabled on the interface. Beginning with
+                Shorewall 5.0.10, <emphasis role="bold">nodbl</emphasis> is
+                equivalent to <emphasis
+                role="bold">dbl=none</emphasis>.</para>
+              </listitem>
+            </varlistentry>
+
+            <varlistentry>
+              <term><emphasis role="bold">nosmurfs</emphasis></term>
+
+              <listitem>
+                <para>IPv4 only. Filter packets for smurfs (packets with a
+                broadcast address as the source).</para>
+
+                <para>Smurfs will be optionally logged based on the setting of
+                SMURF_LOG_LEVEL in <ulink
+                url="shorewall.conf.html">shorewall.conf</ulink>(5). After
+                logging, the packets are dropped.</para>
+              </listitem>
+            </varlistentry>
+
+            <varlistentry>
+              <term>omitanycast</term>
 
               <listitem>
                 <para>IPv6 only. Added in Shorewall 5.2.8.</para>
@@ -639,12 +665,12 @@ loc     eth2            -</programlisting>
 
                 <orderedlist numeration="loweralpha">
                   <listitem>
-                    <para> Packets with these destination IP addresses are
+                    <para>Packets with these destination IP addresses are
                     dropped by REJECT rules.</para>
                   </listitem>
 
                   <listitem>
-                    <para> Packets with these source IP addresses are dropped
+                    <para>Packets with these source IP addresses are dropped
                     by the 'nosmurfs' interface option and by the 'dropSmurfs'
                     action.</para>
                   </listitem>
@@ -674,32 +700,6 @@ loc     eth2            -</programlisting>
                   addresses in the subnet are reserved as anycast
                   addresses.</para>
                 </note>
-              </listitem>
-            </varlistentry>
-
-            <varlistentry>
-              <term><emphasis role="bold">nodbl</emphasis></term>
-
-              <listitem>
-                <para>Added in Shorewall 5.0.8. When specified, dynamic
-                blacklisting is disabled on the interface. Beginning with
-                Shorewall 5.0.10, <emphasis role="bold">nodbl</emphasis> is
-                equivalent to <emphasis
-                role="bold">dbl=none</emphasis>.</para>
-              </listitem>
-            </varlistentry>
-
-            <varlistentry>
-              <term><emphasis role="bold">nosmurfs</emphasis></term>
-
-              <listitem>
-                <para>IPv4 only. Filter packets for smurfs (packets with a
-                broadcast address as the source).</para>
-
-                <para>Smurfs will be optionally logged based on the setting of
-                SMURF_LOG_LEVEL in <ulink
-                url="shorewall.conf.html">shorewall.conf</ulink>(5). After
-                logging, the packets are dropped.</para>
               </listitem>
             </varlistentry>
 
