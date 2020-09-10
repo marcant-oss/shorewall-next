@@ -1540,7 +1540,7 @@ sub process_interface( $$ ) {
 						   zones      => {},
 						   origin     => shortlineinfo( '' ),
 						   wildcard   => $wildcard,
-						   physwild   => $physwild,
+						   physwild   => $physwild, #Currently unused
 					         };
 
     $interfaces{$physical} = $interfaceref if $physical ne $interface;
@@ -1941,7 +1941,7 @@ sub find_interfaces_by_option( $;$ ) {
 	my $interfaceref = $interfaces{$interface};
 
 	next unless $interfaceref->{root};                                   # Don't return '+' interface
-	next if $procinterfaceoptions{$option} && $interfaceref->{physwild}; # Ignore /proc options on wildcard interface
+	next if $procinterfaceoptions{$option} && $interfaceref->{wildcard}; # Ignore /proc options on wildcard interface
 
 	my $optionsref = $interfaceref->{options};
 	if ( $nonzero ) {
@@ -2400,7 +2400,7 @@ sub generate_all_acasts() {
 	my $interfaceref = $interfaces{$interface};
 	my $physical     = $interfaceref->{physical};
 
-	if ( $interfaceref->{physwild} ) {
+	if ( $interfaceref->{wildcard} ) {
 	    $physical =~ s/\+/*/;
 
 	    if ( $interfaceref->{options}{omitanycast} ) {
