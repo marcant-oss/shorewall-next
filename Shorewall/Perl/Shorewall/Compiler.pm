@@ -276,6 +276,11 @@ sub generate_script_2() {
 
     emit "}\n"; # End of initialize()
 
+    #
+    # Conditionally emit the 'generate_all_acasts() function
+    #
+    my $call_generate_all_acasts = $family == F_IPV6 && ! have_capability( 'ADDRTYPE' ) && generate_all_acasts;
+
     emit( '' ,
 	  '#' ,
 	  '# Set global variables holding detected IP information' ,
@@ -297,8 +302,6 @@ sub generate_script_2() {
 	    );
     }
 
-    emit( 'local iface', '' ) if $family == F_IPV6;
-
     map_provider_to_interface if have_providers;
 
     if ( $global_variables ) {
@@ -315,7 +318,7 @@ sub generate_script_2() {
 
 	    if ( $global_variables == ( ALL_COMMANDS | NOT_RESTORE ) ) {
 		verify_required_interfaces(0);
-		set_global_variables($family == F_IPV6, 0);
+		set_global_variables( $family == F_IPV6, 0, $call_generate_all_acasts );
 		handle_optional_interfaces;
 	    }
 
@@ -329,7 +332,7 @@ sub generate_script_2() {
 	}
 
 	verify_required_interfaces(1);
-	set_global_variables(1,1);
+	set_global_variables(1, 1, $call_generate_all_acasts );
 	handle_optional_interfaces;
 
 	if ( $global_variables & NOT_RESTORE ) {
