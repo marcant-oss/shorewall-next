@@ -2430,12 +2430,14 @@ sub generate_all_acasts() {
 	}
     }
 
-    unless( @noacasts || @wildnoacasts ) {
-	emit( 'ALL_ACASTS="$(get_all_acasts)"' );
-	return;
-    }
+    return 'ALL_ACASTS="$(get_all_acasts)"' unless @noacasts || @wildnoacasts;
 
     @wildacasts = '*' unless @wildacasts;
+
+    emit( "#\n# Populate the ALL_ACASTS variable\n#",
+	  'generate_all_acasts()',
+	  '{' );
+    push_indent;
 
     emit( 'ALL_ACASTS=',
 	  '',
@@ -2489,6 +2491,10 @@ sub generate_all_acasts() {
     emit( 'esac');
     pop_indent;
     emit( 'done');
+    pop_indent;
+    emit( "}\n" );
+
+    return 'generate_all_acasts';
 }
 
 1;
