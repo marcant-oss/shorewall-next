@@ -7513,11 +7513,12 @@ sub set_global_variables( $$ ) {
     }
 
     if ( $setall ) {
-	emit $interfaceaddr{$_}         for sortkeysiftest %interfaceaddr;
-	emit $interfacenets{$_}         for sortkeysiftest %interfacenets;
+	if ( $conditional ) {
+	    emit $interfaceaddr{$_}         for sortkeysiftest %interfaceaddr;
+	    emit $interfacenets{$_}         for sortkeysiftest %interfacenets;
+	}
 
 	unless ( have_capability( 'ADDRTYPE' ) ) {
-
 	    if ( $family == F_IPV4 ) {
 		emit 'ALL_BCASTS="$(get_all_bcasts) 255.255.255.255"';
 		emit $interfacebcasts{$_} for sortkeysiftest %interfacebcasts;

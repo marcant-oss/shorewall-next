@@ -291,12 +291,13 @@ sub generate_script_2() {
 
     if ( have_address_variables || @$optional_interfaces ) {
 	emit( 'local interface',
-	      'local iface',
 	      '',
 	      'interface="$1"',
 	      ''
 	    );
     }
+
+    emit( 'local iface', '' ) if $family == F_IPV6;
 
     map_provider_to_interface if have_providers;
 
@@ -314,7 +315,7 @@ sub generate_script_2() {
 
 	    if ( $global_variables == ( ALL_COMMANDS | NOT_RESTORE ) ) {
 		verify_required_interfaces(0);
-		set_global_variables($family == F_IPV4, 0);
+		set_global_variables($family == F_IPV6, 0);
 		handle_optional_interfaces;
 	    }
 

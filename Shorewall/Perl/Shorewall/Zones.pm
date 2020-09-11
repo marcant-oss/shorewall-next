@@ -2437,10 +2437,9 @@ sub generate_all_acasts() {
 
     @wildacasts = '*' unless @wildacasts;
 
-    emit( '',
-	  'ALL_ACASTS=',
+    emit( 'ALL_ACASTS=',
 	  '',
-	  'for $iface in $(find_all_interfaces1); do' );
+	  'for iface in $(find_all_interfaces1); do' );
 
     push_indent;
 
