@@ -7478,9 +7478,9 @@ sub have_address_variables() {
 #
 # Generate setting of run-time global shell variables
 #
-sub set_global_variables( $$ ) {
+sub set_global_variables( $$$ ) {
 
-    my ( $setall, $conditional ) = @_;
+    my ( $setall, $conditional, $call_generate_all_acasts ) = @_;
 
     if ( $conditional ) {
 	my ( $interface, @interfaces );
@@ -7523,7 +7523,7 @@ sub set_global_variables( $$ ) {
 		emit 'ALL_BCASTS="$(get_all_bcasts) 255.255.255.255"';
 		emit $interfacebcasts{$_} for sortkeysiftest %interfacebcasts;
 	    } else {
-		generate_all_acasts;
+		emit $call_generate_all_acasts;
 		emit $interfaceacasts{$_} for sortkeysiftest %interfaceacasts;
 	    }
 	}
