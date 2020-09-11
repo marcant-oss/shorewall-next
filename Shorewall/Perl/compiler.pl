@@ -46,6 +46,8 @@
 #    If the <filename> is omitted, then a 'check' operation is performed.
 #
 use strict;
+use FindBin;
+use lib "$FindBin::Bin"; # Required to allow modules to reside in ${BASEDIR}/Shorewall/
 use Shorewall::Compiler;
 use Getopt::Long;
 
