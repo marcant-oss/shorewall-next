@@ -281,7 +281,8 @@ sub generate_script_2() {
 	  '# Set global variables holding detected IP information' ,
 	  '#' ,
 	  'detect_configuration()',
-	  '{' );
+	  '{'
+	);
 
     my $global_variables    = have_global_variables;
     my $optional_interfaces = find_interfaces_by_option( 'optional' );
@@ -290,6 +291,7 @@ sub generate_script_2() {
 
     if ( have_address_variables || @$optional_interfaces ) {
 	emit( 'local interface',
+	      'local iface',
 	      '',
 	      'interface="$1"',
 	      ''
@@ -312,7 +314,7 @@ sub generate_script_2() {
 
 	    if ( $global_variables == ( ALL_COMMANDS | NOT_RESTORE ) ) {
 		verify_required_interfaces(0);
-		set_global_variables(0, 0);
+		set_global_variables($family == F_IPV4, 0);
 		handle_optional_interfaces;
 	    }
 
