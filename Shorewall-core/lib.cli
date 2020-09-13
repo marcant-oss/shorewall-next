@@ -4170,7 +4170,7 @@ get_config() {
 
 	    [ -x "$g_pager" ] || fatal_error "PAGER $g_pager is not executable"
 
-	    g_pager="| $g_pager"
+	    g_pager="2>&1 | $g_pager"
 	fi
     fi
 
