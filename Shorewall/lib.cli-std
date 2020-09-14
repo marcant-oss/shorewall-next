@@ -29,7 +29,7 @@
 #     $2 = Yes: check for STARTUP_ENABLED
 #     $3 = Yes: Check for LOGFILE
 #
-get_config() {
+std_get_config() {
     local prog
     local lib
 
@@ -568,7 +568,7 @@ compiler() {
 #
 # Start Command Executor
 #
-start_command() {
+std_start_command() {
     local finished
     finished=0
     local rc
@@ -967,7 +967,7 @@ update_command() {
 #
 # Reload/Restart Command Executor
 #
-restart_command() {
+std_restart_command() {
     local finished
     finished=0
     local rc
