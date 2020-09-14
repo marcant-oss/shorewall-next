@@ -4019,9 +4019,15 @@ setup_dbl() {
 # the Standard CLI by loading lib.cli-std
 ################################################################################
 #
-# Set the configuration variables from shorewall[6]-lite.conf.
+# Set the configuration variables from shorewall[6]-lite.conf. This function
+# is replaced by the one in lib.cli-std (Shorewall product) when Shorewall or
+# Shorewall6 is being run.
 #
-get_config() {
+#     $1 = Yes: read the params file
+#     $2 = Yes: check for STARTUP_ENABLED
+#     $3 = Yes: Check for LOGFILE
+#
+lite_get_config() {
     local config
     local lib
 
@@ -4183,10 +4189,22 @@ get_config() {
     [ -f $lib ] && . $lib
 
 }
+
+#
+# get_config() -- calls the appropriate xxx_get_config()
+#
+get_config() {
+    if [ -z "$g_lite" ]; then
+	std_get_config $@
+    else
+	lite_get_config $@
+    fi
+}
+
 #
 # Start Command Executor
 #
-start_command() {
+lite_start_command() {
     local finished
     finished=0
 
@@ -4274,9 +4292,20 @@ start_command() {
 }
 
 #
+# start_command() -- calls the appropriate xxx_start_command()
+#
+start_command() {
+    if [ -z "$g_lite" ]; then
+	std_start_command $@
+    else
+	lite_start_command $@
+    fi
+}
+
+#
 # Reload/Restart Command Executor
 #
-restart_command() {
+lite_restart_command() {
     local finished
     finished=0
     local rc
@@ -4343,6 +4372,17 @@ restart_command() {
 
     [ -n "$g_nolock" ] || mutex_off
     return $rc
+}
+
+#
+# restart_command() -- calls the appropriate xxx_restart_command()
+#
+restart_command() {
+    if [ -z "$g_lite" ]; then
+	std_restart_command $@
+    else
+	lite_restart_command $@
+    fi
 }
 
 run_command() {
