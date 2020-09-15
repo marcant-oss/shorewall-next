@@ -149,6 +149,10 @@ if [ $configure -eq 1 ]; then
     fi
 fi
 
+if [ $PRODUCT = shorewall6 ]; then
+    remove_file ${SBINDIR}/shorewall6
+fi
+
 if [ -h ${SHAREDIR}/$PRODUCT/init ]; then
     FIREWALL=$(readlink -m -q ${SHAREDIR}/$PRODUCT/init)
 elif [ -n "$INITFILE" ]; then
