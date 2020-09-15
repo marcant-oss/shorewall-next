@@ -884,7 +884,7 @@ sub initialize($;$$$$) {
 		    TC_SCRIPT               => '',
 		    EXPORT                  => 0,
 		    KLUDGEFREE              => '',
-		    VERSION                 => '5.2.7-Beta1',
+		    VERSION                 => '5.2.8-RC1',
 		    CAPVERSION              => 50207 ,
 		    BLACKLIST_LOG_TAG       => '',
 		    RELATED_LOG_TAG         => '',
@@ -5682,6 +5682,11 @@ sub process_shorewall_conf( $$ ) {
     if ( -f $file ) {
 	$globals{CONFIGDIR} =  $configfile = $file;
 	$globals{CONFIGDIR} =~ s/$product.conf//;
+
+	if ( $export ) {
+	    use Sys::Hostname;
+	    $globals{CONFIGDIR} = join( ':', hostname, $globals{CONFIGDIR} );
+	}
 
 	if ( -r _ ) {
 	    open_file $file;
