@@ -71,7 +71,21 @@ setup_product_environment() { # $1 = if non-empty, source shorewallrc again now 
 	    ;;
     esac
 
-    [ -f ${SHAREDIR}/${PRODUCT}/version ] || fatal_error "$g_product does not appear to be installed on this system"
+    if [ ! -f ${SHAREDIR}/${PRODUCT}/version ]; then
+	if [ $PRODUCT = shorewall6 ]; then
+	    if [ -f ${SHAREDIR}/shorewall6-lite/version ]; then
+		PRODUCT=shorewall6-lite
+		g_sharedir="${SHAREDIR}"/shorewall6-lite
+		g_confdir="${CONFDIR}"/shorewall6-lite
+		g_product="Shorewall6 Lite"
+		g_lite=Yes
+	    else
+		fatal_error "Neither Shorewall6 nor Shorewall6 Lite are installed on this system"
+	    fi
+	else
+	    fatal_error "$g_product does not appear to be installed on this system"
+	fi
+    fi
     #
     # We need to do this again, now that we have the correct product
     #
