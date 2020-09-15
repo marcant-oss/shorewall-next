@@ -315,7 +315,6 @@ fi
 # Install the CLI
 #
 install_file shorewall ${DESTDIR}${SBINDIR}/shorewall 0755
-ln -sf shorewall ${DESTDIR}${SBINDIR}/shorewall6
 [ $SHAREDIR = /usr/share ] || eval sed -i \'s\|/usr/share/\|${SHAREDIR}/\|\' ${DESTDIR}${SBINDIR}/shorewall
 echo "Shorewall CLI program installed in ${DESTDIR}${SBINDIR}/shorewall"
 #

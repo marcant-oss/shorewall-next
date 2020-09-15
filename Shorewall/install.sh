@@ -1087,6 +1087,10 @@ if [ ${PRODUCT} = shorewall6 ]; then
     # Symbolically link 'functions' to lib.base
     #
     ln -sf lib.base ${DESTDIR}${SHAREDIR}/${PRODUCT}/functions
+    #
+    # And create a symbolic link for the CLI
+    #
+    ln -sf shorewall ${DESTDIR}${SBINDIR}/shorewall6
 fi
 
 if [ -d Perl ]; then
