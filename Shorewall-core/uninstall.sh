@@ -134,6 +134,7 @@ fi
 
 remove_directory ${SHAREDIR}/shorewall
 remove_file ~/.shorewallrc
+remove_file ${SBINDIR}/shorewall
 
 #
 # Report Success
