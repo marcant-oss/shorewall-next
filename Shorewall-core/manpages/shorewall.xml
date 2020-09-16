@@ -981,7 +981,22 @@
               <td><command>shorewall -6</command> or <command>shorewall
               -6l</command></td>
             </tr>
+
+            <tr>
+              <td><command>shorewall</command></td>
+
+              <td><command>shorewall -l</command></td>
+            </tr>
           </table>
+
+          <para>Note that when Shorewall isn't installed, the 'shorewall'
+          command behaves like shorewall-lite. The same is not true with
+          respect to Shorewall6, "shorewall6" and 'shorewall6-lite". You can
+          make 'shorewall6' behave like 'shorewallt-lite' by adding the
+          following command to root's .profile file (or to .bashrc, if root's
+          shell is bash):</para>
+
+          <programlisting>    alias shorewall6=shorewall6-lite</programlisting>
         </listitem>
       </varlistentry>
 
