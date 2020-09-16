@@ -547,6 +547,18 @@
             <command>remote-reload</command> command (e.g., <command>shorewall
             remote-reload -c gateway</command>).</para>
           </listitem>
+
+          <listitem>
+            <para>Shorewall6-lite works with Shorewall6 in the same way that
+            Shorewall-lite works with Shorewall. Beginning with Shorewall
+            5.0.0, running 'shorewall &lt;cmd&gt;" is the same as running
+            "shorewall-lite &lt;cmd&gt;" when Shorewall is not installed.. To
+            continue to use the "shorewall6" command after switching to
+            Shoerwall6-lite, you need to add this to your .profile (or to
+            .bashrc if root's shell is bash):</para>
+
+            <programlisting>    alias shorewall6=shorewall6-lite</programlisting>
+          </listitem>
         </orderedlist>
       </section>
     </section>
