@@ -3605,7 +3605,7 @@ status_command() {
 
     [ $# -eq 0 ] || missing_argument
 
-    [ $VERBOSITY -ge 1 ] && echo "${g_product}-$SHOREWALL_VERSION Status at $g_hostname - $(date)" && echo
+    [ $VERBOSITY -ge 1 ] && echo "${g_product} $SHOREWALL_VERSION Status at $g_hostname - $(date)" && echo
     show_status
     [ -n "$interfaces" ] && show_interfaces
     exit $status
@@ -4753,7 +4753,7 @@ shorewall_cli() {
 	exit 1
     fi
 
-    banner="${g_product}-${SHOREWALL_VERSION} Status at $g_hostname -"
+    banner="${g_product} ${SHOREWALL_VERSION} Status at $g_hostname -"
 
     COMMAND=$1
 
@@ -4843,7 +4843,7 @@ shorewall_cli() {
 	logwatch)
 	    only_root
 	    get_config Yes Yes Yes
-	    banner="${g_product}-$SHOREWALL_VERSION Logwatch at $g_hostname -"
+	    banner="${g_product} $SHOREWALL_VERSION Logwatch at $g_hostname -"
 	    logwatch_command $@
 	    ;;
 	drop)
