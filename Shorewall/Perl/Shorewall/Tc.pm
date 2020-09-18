@@ -72,6 +72,9 @@ our %flow_keys = ( 'src'            => 1,
 #                              out_bandwidth => <value> ,
 #                              number        => <number>,
 #                              classify      => 0|1
+#                              flow          => Comma-separated flow tupple
+#                              classify      => 0|1
+#                              pfifo         => 0|1
 #                              tablenumber   => <next u32 table to be allocated for this device>
 #                              default       => <default class mark value>
 #                              redirected    => [ <dev1>, <dev2>, ... ]
@@ -80,6 +83,13 @@ our %flow_keys = ( 'src'            => 1,
 #                              qdisc         => htb|hfsc
 #                              guarantee     => <total RATE of classes seen so far>
 #                              name          => <interface>
+#                              filters       => [ filter, ... ]
+#                              linklayer     => <type> (optional)
+#                              overhead      => <number>
+#                              mtu           => <number>
+#                              tsize         => <number>
+#                              filterpri     => <number> (initially 0)
+#                              connmark      => 0|1
 #                                               }
 #
 our @tcdevices;
@@ -2392,7 +2402,6 @@ sub setup_tc( $ ) {
     }
 
     if ( $config{MANGLE_ENABLED} ) {
-
 	if ( $convert ) {
 	    my $have_tcrules;
 
