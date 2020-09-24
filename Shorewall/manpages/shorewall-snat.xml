@@ -207,9 +207,6 @@
                 the IP addresses configured on the interface named in the DEST
                 column and substitute them in this column.</para>
 
-                <para>Finally, you may also specify a comma-separated list of
-                ranges and/or addresses in this column.</para>
-
                 <para>DNS Names names are not allowed.</para>
 
                 <para>Normally, Netfilter will attempt to retain the source
@@ -805,21 +802,16 @@
         <term>IPv4 Example 6:</term>
 
         <listitem>
-          <para>SNAT outgoing connections on eth0 from 192.168.1.0/24 in
-          round-robin fashion between addresses 1.1.1.1, 1.1.1.3, and 1.1.1.9
-          (Shorewall 4.5.9 and later).</para>
+          <para>SNAT outgoing connections on eth0 from 192.168.1.0/24 randomly
+          to addresses 1.1.1.1, 1.1.1.3, and 1.1.1.9 (Shorewall 5.0.0 and
+          later).</para>
 
-          <programlisting>/etc/shorewall/tcrules:
-
-       #ACTION   SOURCE         DEST         PROTO   DPORT         SPORT    USER    TEST
-       1-3:CF    192.168.1.0/24 eth0 ; state=NEW
-
-/etc/shorewall/snat:
+          <programlisting>/etc/shorewall/snat:
 
        #ACTION                 SOURCE          DEST
-       SNAT(1.1.1.1)           192.168.1.0/24  eth0  { mark=1:C }
-       SNAT(1.1.1.3)           192.168.1.0/24  eth0  { mark=2:C }
-       SNAT(1.1.1.9)           192.168.1.0/24  eth0  { mark=3:C }</programlisting>
+       SNAT(1.1.1.1)           192.168.1.0/24  eth0  { probability=0.33 }
+       SNAT(1.1.1.3)           192.168.1.0/24  eth0  { probability=0.50 }
+       SNAT(1.1.1.9)           192.168.1.0/24  eth0</programlisting>
         </listitem>
       </varlistentry>
 
