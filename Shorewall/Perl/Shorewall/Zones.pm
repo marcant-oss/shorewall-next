@@ -75,7 +75,6 @@ our @EXPORT = ( qw( NOTHING
 		    all_interfaces
 		    all_real_interfaces
 		    all_plain_interfaces
-		    interface_is_plain
 		    all_bridges
 		    managed_interfaces
 		    unmanaged_interfaces
