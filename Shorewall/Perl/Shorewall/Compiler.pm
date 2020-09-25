@@ -279,7 +279,7 @@ sub generate_script_2() {
     #
     # Conditionally emit the 'generate_all_acasts() function
     #
-    my $call_generate_all_acasts = $family == F_IPV6 && ! have_capability( 'ADDRTYPE' ) && generate_all_acasts;
+    my $call_generate_all_acasts = $family == F_IPV6 && ! have_capability( 'ADDRTYPE' ) ? generate_all_acasts : '';
 
     emit( '' ,
 	  '#' ,
