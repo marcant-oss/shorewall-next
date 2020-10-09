@@ -149,12 +149,14 @@ sub initialize( $ ) {
 sub rate_to_kbit( $ ) {
     my $rate = $_[0];
 
-    return 0           if $rate eq '-';
-    return $1          if $rate =~ /^((\d+)(\.\d+)?)kbit$/i;
-    return $1 * 1000   if $rate =~ /^((\d+)(\.\d+)?)mbit$/i;
-    return $1 * 8000   if $rate =~ /^((\d+)(\.\d+)?)mbps$/i;
-    return $1 * 8      if $rate =~ /^((\d+)(\.\d+)?)kbps$/i;
-    return ($1/125)    if $rate =~ /^((\d+)(\.\d+)?)(bps)?$/;
+    return 0              if $rate eq '-';
+    return $1             if $rate =~ /^((\d+)(\.\d+)?)kbit$/i;
+    return $1 * 1000      if $rate =~ /^((\d+)(\.\d+)?)mbit$/i;
+    return $1 * 1000000   if $rate =~ /^((\d+)(\.\d+)?)gbit$/i;
+    return $1 * 8000000   if $rate =~ /^((\d+)(\.\d+)?)gbps$/i;
+    return $1 * 8000      if $rate =~ /^((\d+)(\.\d+)?)mbps$/i;
+    return $1 * 8         if $rate =~ /^((\d+)(\.\d+)?)kbps$/i;
+    return ($1/125)       if $rate =~ /^((\d+)(\.\d+)?)(bps)?$/;
     fatal_error "Invalid Rate ($rate)";
 }
 
@@ -212,7 +214,7 @@ sub process_in_bandwidth( $ ) {
     } else {
 	if ( $in_band =~ /:/ ) {
 	    ( $in_band, $burst ) = split /:/, $in_rate, 2;
-	    fatal_error "Invalid burst ($burst)" unless $burst  =~ /^\d+(k|kb|m|mb|mbit|kbit|b)?$/;
+	    fatal_error "Invalid burst ($burst)" unless $burst  =~ /^\d+(k|kb|m|mb|g|gb|gbit|mbit|kbit|b)?$/;
 	    $in_burst = $burst;
 	}
 
@@ -324,7 +326,7 @@ sub process_simple_device() {
 	my $command = "run_tc qdisc add dev $physical root handle $number: tbf rate ${out_bandwidth}kbit";
 
 	if ( supplied $burst ) {
-	    fatal_error "Invalid burst ($burst)" unless $burst =~ /^\d+(?:\.\d+)?(k|kb|m|mb|mbit|kbit|b)?$/;
+	    fatal_error "Invalid burst ($burst)" unless $burst =~ /^\d+(?:\.\d+)?(k|kb|m|mb|g|gb|gbit|mbit|kbit|b)?$/;
 	    $command .= " burst $burst";
 	} else {
 	    $command .= ' burst 10kb';
@@ -340,12 +342,12 @@ sub process_simple_device() {
 	$command .= ' mpu 64'; #Assume Ethernet
 
 	if ( supplied $peak ) {
-	    fatal_error "Invalid peak ($peak)" unless $peak =~ /^\d+(?:\.\d+)?(k|kb|m|mb|mbit|kbit|b)?$/;
+	    fatal_error "Invalid peak ($peak)" unless $peak =~ /^\d+(?:\.\d+)?(k|kb|m|mb|g|gb|gbit|mbit|kbit|b)?$/;
 	    $command .= " peakrate $peak";
 	}
 
 	if ( supplied $minburst ) {
-	    fatal_error "Invalid minburst ($minburst)" unless $minburst =~ /^\d+(?:\.\d+)?(k|kb|m|mb|mbit|kbit|b)?$/;
+	    fatal_error "Invalid minburst ($minburst)" unless $minburst =~ /^\d+(?:\.\d+)?(k|kb|m|mb|g|gb|gbit|mbit|kbit|b)?$/;
 	    $command .= " minburst $minburst";
 	}
 
