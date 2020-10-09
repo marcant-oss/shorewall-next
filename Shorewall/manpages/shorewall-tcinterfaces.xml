@@ -60,6 +60,14 @@
           </varlistentry>
 
           <varlistentry>
+            <term><emphasis role="bold">gbps</emphasis></term>
+
+            <listitem>
+              <para>Gigabytes per second.</para>
+            </listitem>
+          </varlistentry>
+
+          <varlistentry>
             <term><emphasis role="bold">kbit</emphasis></term>
 
             <listitem>
@@ -76,6 +84,14 @@
           </varlistentry>
 
           <varlistentry>
+            <term><emphasis role="bold">gbit</emphasis></term>
+
+            <listitem>
+              <para>Gigabits per second.</para>
+            </listitem>
+          </varlistentry>
+
+          <varlistentry>
             <term><emphasis role="bold">bps</emphasis> or <emphasis
             role="bold">number</emphasis></term>
 
@@ -88,7 +104,7 @@
             <term>k or kb</term>
 
             <listitem>
-              <para>Kilo bytes.</para>
+              <para>Kilobytes.</para>
             </listitem>
           </varlistentry>
 
@@ -97,6 +113,14 @@
 
             <listitem>
               <para>Megabytes.</para>
+            </listitem>
+          </varlistentry>
+
+          <varlistentry>
+            <term>g or gb</term>
+
+            <listitem>
+              <para>Gigabytes.</para>
             </listitem>
           </varlistentry>
         </variablelist>
