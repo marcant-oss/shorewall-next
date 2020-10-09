@@ -2473,8 +2473,8 @@
             </varlistentry>
 
             <varlistentry>
-              <term><emphasis role="bold">bl|blacklists</emphasis>
-              [-<option>x</option>]</term>
+              <term><emphasis role="bold">[-<option>x</option>]
+              bl|blacklists</emphasis></term>
 
               <listitem>
                 <para>Added in Shorewall 4.6.2. Displays the dynamic chain
