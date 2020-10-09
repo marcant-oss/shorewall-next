@@ -55,6 +55,14 @@
           </varlistentry>
 
           <varlistentry>
+            <term><emphasis role="bold">gbps</emphasis></term>
+
+            <listitem>
+              <para>Gigabytes per second.</para>
+            </listitem>
+          </varlistentry>
+
+          <varlistentry>
             <term><emphasis role="bold">kbit</emphasis></term>
 
             <listitem>
@@ -67,6 +75,14 @@
 
             <listitem>
               <para>Megabits per second.</para>
+            </listitem>
+          </varlistentry>
+
+          <varlistentry>
+            <term><emphasis role="bold">gbit</emphasis></term>
+
+            <listitem>
+              <para>Gigabits per second.</para>
             </listitem>
           </varlistentry>
 
