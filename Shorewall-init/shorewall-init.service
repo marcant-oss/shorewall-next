@@ -12,7 +12,7 @@ Wants=network-pre.target
 Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=-/etc/sysconfig/shorewall-init
-StandardOutput=syslog
+StandardOutput=journal
 ExecStart=/sbin/shorewall-init start
 ExecStop=/sbin/shorewall-init stop
 
