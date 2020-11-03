@@ -13,7 +13,6 @@ Conflicts=iptables.service firewalld.service
 Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=-/etc/sysconfig/shorewall
-StandardOutput=journal
 ExecStart=/sbin/shorewall $OPTIONS start $STARTOPTIONS
 ExecStop=/sbin/shorewall $OPTIONS stop
 ExecReload=/sbin/shorewall $OPTIONS reload $RELOADOPTIONS
