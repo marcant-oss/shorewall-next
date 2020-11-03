@@ -14,7 +14,6 @@ Conflicts=ip6tables.service firewalld.service
 Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=-/etc/sysconfig/shorewall6
-StandardOutput=journal
 ExecStart=/sbin/shorewall -6 $OPTIONS start $STARTOPTIONS
 ExecStop=/sbin/shorewall -6 $OPTIONS stop
 ExecReload=/sbin/shorewall -6 $OPTIONS reload $RELOADOPTIONS
