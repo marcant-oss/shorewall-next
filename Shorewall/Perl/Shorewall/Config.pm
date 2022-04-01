@@ -5818,7 +5818,7 @@ sub get_capabilities($)
     #
     # Determine if iptables supports the -w option
     #
-    $iptablesw = qt1( "$iptables -w -L -n") ? '-w' : '';
+    $iptablesw = qt1( "$iptables -w -n -L INPUT") ? '-w' : '';
 
     my $iptables_restore=$iptables . '-restore';
 
