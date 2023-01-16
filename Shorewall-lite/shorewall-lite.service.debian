@@ -6,6 +6,7 @@
 #
 [Unit]
 Description=Shorewall IPv4 firewall (lite)
+Documentation=man:shorewall-lite(8)
 Wants=network-online.target
 After=network-online.target
 Conflicts=iptables.service firewalld.service
