@@ -2921,9 +2921,9 @@
           listed in <ulink
           url="/manpages/shorewall-stoppedrules.html">shorewall-stoppedrules</ulink>(5)
           or permitted by the ADMINISABSENTMINDED option in <ulink
-          url="/manpages/shorewall.conf.html">shorewall.conf</ulink> The only
-          new traffic permitted through the firewall is from systems listed in
-          <ulink
+          url="/manpages/shorewall.conf.html">shorewall.conf</ulink>, are taken
+          down. The only new traffic permitted through the firewall is from
+          systems listed in <ulink
           url="/manpages/shorewall-stoppedrules.html">shorewall-stoppedrules</ulink>(5)
           or by ADMINISABSENTMINDED.</para>
         </listitem>
