@@ -324,6 +324,15 @@ install_file wait4ifup ${DESTDIR}${LIBEXECDIR}/shorewall/wait4ifup 0755
 
 echo
 echo "wait4ifup installed in ${DESTDIR}${LIBEXECDIR}/shorewall/wait4ifup"
+#
+# Install stop_service
+#
+if [ -n "${STOPSERVICEFILE}" ]; then
+    install_file ${STOPSERVICEFILE} ${DESTDIR}${LIBEXECDIR}/shorewall/stop_service 0755
+
+    echo
+    echo "${STOPSERVICEFILE} installed in ${DESTDIR}${LIBEXECDIR}/shorewall/stop_service"
+fi
 
 #
 # Install the libraries
