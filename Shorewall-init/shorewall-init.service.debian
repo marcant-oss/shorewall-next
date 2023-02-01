@@ -6,6 +6,7 @@
 #
 [Unit]
 Description=Shorewall firewall (bootup security)
+Documentation=man:shorewall-init(8)
 Before=network.target
 
 [Service]

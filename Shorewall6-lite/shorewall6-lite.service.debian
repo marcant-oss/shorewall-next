@@ -5,6 +5,7 @@
 #
 [Unit]
 Description=Shorewall IPv6 firewall (lite)
+Documentation=man:shorewall6-lite(8)
 Wants=network-online.target
 After=network-online.target
 After=shorewall-lite.service
