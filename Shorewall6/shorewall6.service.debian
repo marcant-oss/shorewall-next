@@ -6,6 +6,7 @@
 #
 [Unit]
 Description=Shorewall IPv6 firewall
+Documentation=man:shorewall6(8)
 Wants=network-online.target
 After=network-online.target
 After=shorewall.service
