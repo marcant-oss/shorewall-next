@@ -5816,9 +5816,10 @@ sub get_capabilities($)
 	fatal_error "Can't find $toolname executable" unless $iptables = which $toolname;
     }
     #
-    # Determine if iptables supports the -w option
+    # Determine if iptables supports the -w option unless we already have
+    # existing capabilities
     #
-    $iptablesw = qt1( "$iptables -w -L -n") ? '-w' : '';
+    $iptablesw = qt1( "$iptables -w -n -L INPUT") ? '-w' : '' unless $_[0];
 
     my $iptables_restore=$iptables . '-restore';
 
