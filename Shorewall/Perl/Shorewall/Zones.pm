@@ -49,6 +49,10 @@ our @EXPORT = ( qw( NOTHING
 		    GROUP
 		    NO_UPDOWN
 		    NO_SFILTER
+		    DBL_NONE
+		    DBL_SRC
+		    DBL_DST
+		    DBL_SRC_DST
 
 		    determine_zones
 		    zone_report
@@ -214,6 +218,14 @@ use constant { NOTHING    => 'NOTHING',
 	       IPSECMODE  => 'tunnel|transport'
 	     };
 
+#
+# Dynamic blacklisting values
+#
+use constant { DBL_NONE => 0,
+	       DBL_SRC => 1,
+	       DBL_DST => 2,
+	       DBL_SRC_DST => 3 };
+    
 sub NETWORK() {
     $family == F_IPV4 ? '\d+.\d+.\d+.\d+(\/\d+)?' : '(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?:\/d+)?';
 }
@@ -1321,7 +1333,7 @@ sub process_interface( $$ ) {
     my %options;
 
     $options{port} = 1 if $port;
-    $options{dbl}  = $config{DYNAMIC_BLACKLIST} =~ /^ipset(-only)?.*,src-dst/ ? '1:2' : $config{DYNAMIC_BLACKLIST} ? '1:0' : '0:0';
+    $options{dbl}  = $config{DYNAMIC_BLACKLIST} =~ /^ipset(-only)?.*,src-dst/ ? DBL_SRC_DST : $config{DYNAMIC_BLACKLIST} ? DBL_SRC : DBL_NONE;
 
     my $hostoptionsref = {};
 
@@ -1364,7 +1376,7 @@ sub process_interface( $$ ) {
 			warning_message "The 'blacklist' option is ignored on multi-zone interfaces";
 		    }
 		} elsif ( $option eq 'nodbl' ) {
-		    $options{dbl} = '0:0';
+		    $options{dbl} = DBL_NONE;
 		} else {
 		    $options{$option} = 1;
 		    $hostoptions{$option} = 1 if $hostopt;
@@ -1387,7 +1399,7 @@ sub process_interface( $$ ) {
 			$options{arp_ignore} = 1;
 		    }
 		} elsif ( $option eq 'dbl' ) {
-		    my %values = ( none => '0:0', src => '1:0', dst => '2:0', 'src-dst' => '1:2' );
+		    my %values = ( none => 0, src => DBL_SRC, dst => DBL_DST, 'src-dst' => DBL_SRC_DST );
 
 		    fatal_error q(The 'dbl' option requires a value) unless defined $value;
 		    fatal_error qq(Invalid setting ($value) for 'dbl') unless defined ( $options{dbl} = $values{$value} );

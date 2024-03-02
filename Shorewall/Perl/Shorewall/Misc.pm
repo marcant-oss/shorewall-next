@@ -953,9 +953,8 @@ sub add_common_rules ( $ ) {
 
 	    my @nodbl = @{$interfaceref->{nodbl}};
 
-	    if ( $dbl_ipset && ( ( my $setting = get_interface_option( $interface, 'dbl' ) ) ne '0:0' ) ) {
+	    if ( $dbl_ipset && ( ( my $setting = get_interface_option( $interface, 'dbl' ) ) ) ) {
 
-		my ( $in, $out ) = split /:/, $setting;
 		my ( $src_target,  $dst_target ) = ( $dbl_src_target, $dbl_dst_target );
 		my ( @src_exclude, @dst_exclude );
 
@@ -993,20 +992,19 @@ sub add_common_rules ( $ ) {
 		    }
 		}
 
-		if ( $in  == 1 ) {
+		if ( $setting & DBL_SRC) {
 		    #
-		    # src
+		    # src or src-dst
 		    #
 		    add_ijump_extended( $filter_table->{input_option_chain($interface)},   j => $src_target, $origin{DYNAMIC_BLACKLIST}, @src_exclude, @state, set => "--match-set $dbl_ipset src" );
 		    add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $src_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset src" );
-		} elsif ( $in == 2 ) {
-		    add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $dst_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset dst" );
 		}
 
-		if ( $out == 2 ) {
+		if ( $setting & DBL_DST ) {
 		    #
-		    # dst
+		    # dst or src-dst
 		    #
+		    add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $dst_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset dst" );
 		    add_ijump_extended( $filter_table->{output_option_chain($interface)},  j => $dbl_dst_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset dst" );
 		}
 	    }
