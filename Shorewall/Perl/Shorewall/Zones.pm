@@ -53,6 +53,7 @@ our @EXPORT = ( qw( NOTHING
 		    DBL_SRC
 		    DBL_DST
 		    DBL_SRC_DST
+		    DBL_CLASSIC
 
 		    determine_zones
 		    zone_report
@@ -224,7 +225,9 @@ use constant { NOTHING    => 'NOTHING',
 use constant { DBL_NONE => 0,
 	       DBL_SRC => 1,
 	       DBL_DST => 2,
-	       DBL_SRC_DST => 3 };
+	       DBL_SRC_DST => 3,
+	       DBL_CLASSIC => 4,
+             };
     
 sub NETWORK() {
     $family == F_IPV4 ? '\d+.\d+.\d+.\d+(\/\d+)?' : '(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?:\/d+)?';
@@ -1333,7 +1336,18 @@ sub process_interface( $$ ) {
     my %options;
 
     $options{port} = 1 if $port;
-    $options{dbl}  = $config{DYNAMIC_BLACKLIST} =~ /^ipset(-only)?.*,src-dst/ ? DBL_SRC_DST : $config{DYNAMIC_BLACKLIST} ? DBL_SRC : DBL_NONE;
+
+    my $setting = DBL_NONE;
+
+    if ( my $dbl = $config{DYNAMIC_BLACKLIST} ) {
+	unless ( $dbl =~ /^No/i ) {
+	    $setting |= DBL_SRC;
+	    $setting |= DBL_CLASSIC unless ( $dbl =~ /^ipset-only/ );
+	    $setting |= DBL_DST     if     ( $dbl =~ /,(src-)?dst[,:]/ );
+	}
+    }
+
+    $options{dbl} = $setting;
 
     my $hostoptionsref = {};
 
@@ -1399,10 +1413,15 @@ sub process_interface( $$ ) {
 			$options{arp_ignore} = 1;
 		    }
 		} elsif ( $option eq 'dbl' ) {
-		    my %values = ( none => 0, src => DBL_SRC, dst => DBL_DST, 'src-dst' => DBL_SRC_DST );
+		    my %values = ( src => DBL_SRC, dst => DBL_DST, 'src-dst' => DBL_SRC_DST );
 
 		    fatal_error q(The 'dbl' option requires a value) unless defined $value;
-		    fatal_error qq(Invalid setting ($value) for 'dbl') unless defined ( $options{dbl} = $values{$value} );
+		    if ( $value eq 'none' ) {
+			$options{dbl} = DBL_NONE;
+		    } else {
+			fatal_error qq(Invalid setting ($value) for 'dbl') unless defined ( $setting = $values{$value} );
+			$options{dbl} |= $setting;
+		    }
 		} else {
 		    assert( 0 );
 		}
