@@ -951,25 +951,61 @@ sub add_common_rules ( $ ) {
 		}
 	    }
 
+	    my @nodbl = @{$interfaceref->{nodbl}};
+
 	    if ( $dbl_ipset && ( ( my $setting = get_interface_option( $interface, 'dbl' ) ) ne '0:0' ) ) {
 
 		my ( $in, $out ) = split /:/, $setting;
+		my ( $src_target,  $dst_target ) = ( $dbl_src_target, $dbl_dst_target );
+		my ( @src_exclude, @dst_exclude );
+
+		if ( @nodbl ) {
+
+		    if ( @nodbl > 1 ) {
+			#
+			# We need to create an intermediate chain
+			#
+			$chainref = new_standard_chain( $src_target = nodbl_src_chain( $interface , $dbl_src_target ));
+
+			for (@nodbl) {
+			    add_ijump( $chainref, j => 'RETURN', s => $_ );
+			}
+
+			add_ijump( $chainref, j => $dbl_src_target );
+
+			if ( $dbl_src_target ne $dbl_dst_target ) {
+			    $chainref = new_standard_chain( $dst_target = nodbl_dst_chain( $interface , $dbl_dst_target ));
+
+			    for ( @nodbl ){
+				add_ijump( $chainref, j => 'RETURN', -d => $_ );
+			    }
+
+			    add_ijump( $chainref, j => $dbl_dst_target );
+			}
+		    } else {
+			#
+			# Easy case
+			#
+			@src_exclude = ( s => "! $nodbl[0]" );
+			@dst_exclude = ( d => "! $nodbl[0]" );
+		    }
+		}
 
 		if ( $in  == 1 ) {
 		    #
 		    # src
 		    #
-		    add_ijump_extended( $filter_table->{input_option_chain($interface)},   j => $dbl_src_target, $origin{DYNAMIC_BLACKLIST}, @state, set => "--match-set $dbl_ipset src" );
-		    add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $dbl_src_target, $origin{DYNAMIC_BLACKLIST}, @state, set => "--match-set $dbl_ipset src" );
+		    add_ijump_extended( $filter_table->{input_option_chain($interface)},   j => $src_target, $origin{DYNAMIC_BLACKLIST}, @src_exclude, @state, set => "--match-set $dbl_ipset src" );
+		    add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $src_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset src" );
 		} elsif ( $in == 2 ) {
-		    add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $dbl_dst_target, $origin{DYNAMIC_BLACKLIST}, @state, set => "--match-set $dbl_ipset dst" );
+		    add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $dst_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset dst" );
 		}
 
 		if ( $out == 2 ) {
 		    #
 		    # dst
 		    #
-		    add_ijump_extended( $filter_table->{output_option_chain($interface)},  j => $dbl_dst_target, $origin{DYNAMIC_BLACKLIST}, @state, set => "--match-set $dbl_ipset dst" );
+		    add_ijump_extended( $filter_table->{output_option_chain($interface)},  j => $dbl_dst_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset dst" );
 		}
 	    }
 	    
