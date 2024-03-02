@@ -960,7 +960,9 @@ sub add_common_rules ( $ ) {
 		my ( @src_exclude, @dst_exclude );
 
 		if ( @nodbl ) {
-
+		    #
+		    # We have blacklisting exclusions defined in the hosts file
+		    #
 		    if ( @nodbl > 1 ) {
 			#
 			# We need to create an intermediate chain
