@@ -888,7 +888,7 @@
           name is SW_DBL4 and the default IPv6 set name is SW_DBL6. The
           default log level is <option>none</option> (no logging). If
           <option>ipset-only</option> is given, then chain-based dynamic
-          blacklisting is disabled just as if DYNAMIC_BLACKLISTING=No had been
+          blacklisting is disabled just as if DYNAMIC_BLACKLIST=No had been
           specified.</para>
 
           <para>Possible <replaceable>option</replaceable>s are:</para>
