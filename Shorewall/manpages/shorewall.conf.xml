@@ -895,7 +895,7 @@
 
           <variablelist>
             <varlistentry>
-              <term>src-dst</term>
+              <term><option>src-dst</option></term>
 
               <listitem>
                 <para>Normally, only packets whose source address matches an
@@ -943,7 +943,7 @@
             </varlistentry>
 
             <varlistentry>
-              <term>log</term>
+              <term><option>log</option></term>
 
               <listitem>
                 <para>Added in Shorewall 5.2.5. When specified, successful
@@ -953,7 +953,7 @@
             </varlistentry>
 
             <varlistentry>
-              <term>noupdate</term>
+              <term><option>noupdate</option></term>
 
               <listitem>
                 <para>Added in Shorewall 5.2.5. Normally, once an address has
