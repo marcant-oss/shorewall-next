@@ -1010,7 +1010,7 @@ sub add_common_rules ( $ ) {
 	    }
 	    
 	    for ( option_chains( $interface ) ) {
-		add_ijump_extended( $filter_table->{$_}, j => $dynamicref, $origin{DYNAMIC_BLACKLIST}, @state ) if $dynamicref && ( get_interface_option( $interface, 'dbl' ) ne '0:0' );
+		add_ijump_extended( $filter_table->{$_}, j => $dynamicref, $origin{DYNAMIC_BLACKLIST}, @state ) if $dynamicref && ( get_interface_option( $interface, 'dbl' ) & DBL_CLASSIC );
 		add_ijump_extended( $filter_table->{$_}, j => 'ACCEPT',    $origin{FASTACCEPT},        state_imatch $faststate )->{comment} = '' if $config{FASTACCEPT};
 	    }
 	}
