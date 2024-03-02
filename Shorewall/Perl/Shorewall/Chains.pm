@@ -2443,17 +2443,17 @@ sub output_option_chain($) {
 #
 # Blacklist Source Exclusion Chain for an interface
 #
-sub nodbl_src_chain($$) {
-    my ( $interface, $end ) = ( $_[0], $_[1] );
-    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_' . $end;
+sub nodbl_src_chain($) {
+    my $interface = shift;
+    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_nosbl';
 }
 
 #
 # Blacklist Destination Exclusion Chain for an interface
 #
-sub nodbl_dst_chain($$) {
-    my ($interface, $end) = ( $_[0], $_[1] );
-    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_' . $end;
+sub nodbl_dst_chain($) {
+    my $interface = shift;
+    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_nodbl';
 }
 
 #

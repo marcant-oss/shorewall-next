@@ -966,7 +966,7 @@ sub add_common_rules ( $ ) {
 			#
 			# We need to create an intermediate chain
 			#
-			$chainref = new_standard_chain( $src_target = nodbl_src_chain( $interface , $dbl_src_target ));
+			$chainref = new_standard_chain( $src_target = nodbl_src_chain( $interface ));
 
 			for (@nodbl) {
 			    add_ijump( $chainref, j => 'RETURN', s => $_ );
@@ -975,7 +975,7 @@ sub add_common_rules ( $ ) {
 			add_ijump( $chainref, j => $dbl_src_target );
 
 			if ( $dbl_src_target ne $dbl_dst_target ) {
-			    $chainref = new_standard_chain( $dst_target = nodbl_dst_chain( $interface , $dbl_dst_target ));
+			    $chainref = new_standard_chain( $dst_target = nodbl_dst_chain( $interface ));
 
 			    for ( @nodbl ){
 				add_ijump( $chainref, j => 'RETURN', -d => $_ );
