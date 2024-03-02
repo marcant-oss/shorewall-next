@@ -410,6 +410,7 @@ sub initialize( $$ ) {
 			     destonly => 1,
 			     sourceonly => 1,
 			     mss => 1,
+	                     nodbl => 1
 			    );
 
 	%zonetypes = ( 1   => 'firewall',
@@ -456,6 +457,7 @@ sub initialize( $$ ) {
 			     routeback => 1,
 			     tcpflags => 1,
 			     mss => 1,
+	                     nodbl => 1
 			    );
 
 	%zonetypes = ( 1   => 'firewall',
@@ -1541,6 +1543,7 @@ sub process_interface( $$ ) {
 						   origin     => shortlineinfo( '' ),
 						   wildcard   => $wildcard,
 						   physwild   => $physwild,
+						   nodbl      => [],
 					         };
 
     $interfaces{$physical} = $interfaceref if $physical ne $interface;
@@ -2229,6 +2232,11 @@ sub process_host( ) {
 		require_capability 'TCPMSS_TARGET', $option, 's';
 		$options{mss} = $1;
 		$zoneref->{options}{complex} = 1;
+	    } elsif ( $option eq 'nodbl' ) {
+		fatal_error "The 'nodbl' option is only allowed when using ipset-based dynamic blacklisting" unless $config{DYNAMIC_BLACKLIST} =~ /^ipset/;
+		fatal_error "The 'nodbl' option is only allowed in 'ip' zones"                               unless $type & IP;
+		push @{$interfaceref->{nodbl}}, $hosts;
+		$options{nodbl} = 1;
 	    } elsif ( $validhostoptions{$option}) {
 		fatal_error qq(The "$option" option is not allowed with Vserver zones) if $type & VSERVER && ! ( $validhostoptions{$option} & IF_OPTION_VSERVER );
 		$options{$option} = 1;
