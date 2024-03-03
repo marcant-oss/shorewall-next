@@ -786,9 +786,15 @@ sub add_common_rules ( $ ) {
     create_docker_rules if $config{DOCKER};
 
     if ( my $val = $config{DYNAMIC_BLACKLIST} ) {
+	#
+	# $config{DYNAMIC_BLACKLIST} was normalized in Shorewall:Config:get_configuration - it is probably not what is specified in the shorewall[6].conf
+	#
 	( $dbl_type, $dbl_ipset, $dbl_level, $dbl_tag ) = split( ':', $val );
 
 	unless ( $dbl_type =~ /^ipset-only/ ) {
+	    #
+	    # Classic chain-based backlisting
+	    #
 	    add_rule_pair( set_optflags( new_standard_chain( 'logdrop' )  , DONT_OPTIMIZE | DONT_DELETE ), '' , 'DROP'   , $level , $tag);
 	    add_rule_pair( set_optflags( new_standard_chain( 'logreject' ), DONT_OPTIMIZE | DONT_DELETE ), '' , 'reject' , $level , $tag);
 	    $dynamicref =  set_optflags( new_standard_chain( 'dynamic' ) ,  DONT_OPTIMIZE );
@@ -796,6 +802,9 @@ sub add_common_rules ( $ ) {
 	}
 
 	if ( $dbl_ipset ) {
+	    #
+	    # ipset-based blacklisting - not mutually exclusive with the classic type
+	    #
 	    if ( $val = $globals{DBL_TIMEOUT} ) {
 		$dbl_options    = $globals{DBL_OPTIONS};
 		$dbl_src_target = $dbl_options =~ /src-dst/ ? 'dbl_src' : 'dbl_log';
@@ -919,7 +928,9 @@ sub add_common_rules ( $ ) {
 	#
 	$target1 = $target;
     }
-
+    #
+    # Interface-specific processing
+    #
     for $interface ( all_real_interfaces ) {
 	ensure_chain( 'filter', $_ )->{origin} = interface_origin( $interface )
 	    for first_chains( $interface ), output_chain( $interface ), option_chains( $interface ), output_option_chain( $interface );
@@ -927,6 +938,9 @@ sub add_common_rules ( $ ) {
 	my $interfaceref = find_interface $interface;
 
 	unless ( $interfaceref->{physical} eq loopback_interface ) {
+	    #
+	    # sfilter
+	    #
 	    unless ( $interfaceref->{options}{ignore} & NO_SFILTER || $interfaceref->{options}{rpfilter} ) {
 
 		my @filters = @{$interfaceref->{filter}};
@@ -950,7 +964,9 @@ sub add_common_rules ( $ ) {
 		    add_ijump_extended( $chainref , g => $target, $origin, imatch_source_net( $_ ), @ipsec ), $chainref->{filtered}++ for @filters;
 		}
 	    }
-
+	    #
+	    # Dynamic Blacklisting
+	    #
 	    my ( $src_target,  $dst_target, $classic_target ) = ( $dbl_src_target, $dbl_dst_target , $dynamicref->{name} );
 
 	    if ( ( my $setting = get_interface_option( $interface, 'dbl' ) ) != DBL_NONE ) {
@@ -1024,14 +1040,15 @@ sub add_common_rules ( $ ) {
 		    }
 		}
 	    }
-	    
+	    #
+	    # Finish blacklisting and FASTACCEPT
+	    #
 	    for ( option_chains( $interface ) ) {
 		add_ijump_extended( $filter_table->{$_}, j => $classic_target, $origin{DYNAMIC_BLACKLIST}, @state ) if $dynamicref && ( get_interface_option( $interface, 'dbl' ) & DBL_CLASSIC );
 		add_ijump_extended( $filter_table->{$_}, j => 'ACCEPT', $origin{FASTACCEPT},        state_imatch $faststate )->{comment} = '' if $config{FASTACCEPT};
 	    }
 	}
     }
-
     #
     # Delete 'sfilter' chains unless there are referenced to them
     #
@@ -1040,7 +1057,9 @@ sub add_common_rules ( $ ) {
 	    $chainref->{referenced} = 0 unless keys %{$chainref->{references}};
 	}
     }
-
+    #
+    # rfilter
+    #
     $list = find_interfaces_by_option('rpfilter');
 
     if ( @$list ) {
@@ -1110,7 +1129,9 @@ sub add_common_rules ( $ ) {
     } elsif ( -f ( my $fn = find_file 'blacklist' ) ) {
 	warning_message "The blacklist file is no longer supported -- use '$product update' to convert $fn to the equivalent blrules file";
     }
-
+    #
+    # Smurfs
+    #
     $list = find_hosts_by_option 'nosmurfs';
 
     if ( @$list ) {
@@ -1184,7 +1205,9 @@ sub add_common_rules ( $ ) {
 	    }
 	}
     }
-
+    #
+    # DHCP
+    #
     $list = find_interfaces_by_option 'dhcp';
 
     if ( @$list ) {
@@ -1217,7 +1240,9 @@ sub add_common_rules ( $ ) {
 	    }
 	}
     }
-
+    #
+    # tcpflags
+    #
     $list = find_hosts_by_option 'tcpflags';
 
     if ( @$list ) {
@@ -1289,7 +1314,9 @@ sub add_common_rules ( $ ) {
     }
 
     my $announced = 0;
-
+    #
+    # upnp
+    #
     $list = find_interfaces_by_option 'upnp';
 
     if ( @$list ) {
@@ -1313,7 +1340,9 @@ sub add_common_rules ( $ ) {
 	    add_ijump_extended $nat_table->{$globals{POSTROUTING}} , j => 'MINIUPNPD-POSTROUTING' , $origin{MINIUPNPD}              , imatch_dest_dev   ( $interface ) if $chainref1;
 	}
     }
-
+    #
+    # upnp client
+    #
     $list = find_interfaces_by_option 'upnpclient';
 
     if ( @$list ) {
