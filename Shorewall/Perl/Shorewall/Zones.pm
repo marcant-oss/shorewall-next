@@ -2264,8 +2264,7 @@ sub process_host( ) {
 		$options{mss} = $1;
 		$zoneref->{options}{complex} = 1;
 	    } elsif ( $option eq 'nodbl' ) {
-		fatal_error "The 'nodbl' option is only allowed when using ipset-based dynamic blacklisting" unless $config{DYNAMIC_BLACKLIST} =~ /^ipset/;
-		fatal_error "The 'nodbl' option is only allowed in 'ip' zones"                               unless $type & IP;
+		fatal_error "The 'nodbl' option is only allowed in 'ip' zones" unless $type & IP;
 		push @{$interfaceref->{nodbl}}, $hosts;
 		$options{nodbl} = 1;
 	    } elsif ( $validhostoptions{$option}) {

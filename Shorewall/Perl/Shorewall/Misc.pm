@@ -951,12 +951,13 @@ sub add_common_rules ( $ ) {
 		}
 	    }
 
-	    my @nodbl = @{$interfaceref->{nodbl}};
+	    my ( $src_target,  $dst_target, $classic_target ) = ( $dbl_src_target, $dbl_dst_target , $dynamicref->{name} );
 
-	    if ( $dbl_ipset && ( ( my $setting = get_interface_option( $interface, 'dbl' ) ) ) ) {
+	    if ( ( my $setting = get_interface_option( $interface, 'dbl' ) ) != DBL_NONE ) {
 
-		my ( $src_target,  $dst_target ) = ( $dbl_src_target, $dbl_dst_target );
-		my ( @src_exclude, @dst_exclude );
+		my ( @src_exclude, @dst_exclude, @classic_exclude );
+
+		my @nodbl = @{$interfaceref->{nodbl}};
 
 		if ( @nodbl ) {
 		    #
@@ -966,22 +967,35 @@ sub add_common_rules ( $ ) {
 			#
 			# We need to create an intermediate chain
 			#
-			$chainref = new_standard_chain( $src_target = nodbl_src_chain( $interface ));
+			if ( $dbl_ipset ) {
+			    $chainref = new_standard_chain( $src_target = nodbl_src_chain( $interface ));
 
-			for (@nodbl) {
-			    add_ijump( $chainref, j => 'RETURN', s => $_ );
-			}
-
-			add_ijump( $chainref, j => $dbl_src_target );
-
-			if ( $dbl_src_target ne $dbl_dst_target ) {
-			    $chainref = new_standard_chain( $dst_target = nodbl_dst_chain( $interface ));
-
-			    for ( @nodbl ){
-				add_ijump( $chainref, j => 'RETURN', -d => $_ );
+			    for (@nodbl) {
+				add_ijump( $chainref, j => 'RETURN', s => $_ );
 			    }
 
-			    add_ijump( $chainref, j => $dbl_dst_target );
+			    add_ijump( $chainref, j => $dbl_src_target );
+
+			    if ( $dbl_src_target ne $dbl_dst_target ) {
+				$chainref = new_standard_chain( $dst_target = nodbl_dst_chain( $interface ));
+
+				for ( @nodbl ){
+				    add_ijump( $chainref, j => 'RETURN', -d => $_ );
+				}
+
+				add_ijump( $chainref, j => $dbl_dst_target );
+			    }
+			}
+
+			if ( $setting & DBL_CLASSIC ) {
+			    $chainref = new_standard_chain( $classic_target = nodbl_classic_chain( $interface ));
+
+			    for (@nodbl) {
+				add_ijump( $chainref, j => 'RETURN', s => $_ );
+				add_ijump( $chainref, j => 'RETURN', d => $_ );
+			    }
+
+			    add_ijump( $chainref, j => $dynamicref->{name} );
 			}
 		    } else {
 			#
@@ -992,26 +1006,28 @@ sub add_common_rules ( $ ) {
 		    }
 		}
 
-		if ( $setting & DBL_SRC) {
-		    #
-		    # src or src-dst
-		    #
-		    add_ijump_extended( $filter_table->{input_option_chain($interface)},   j => $src_target, $origin{DYNAMIC_BLACKLIST}, @src_exclude, @state, set => "--match-set $dbl_ipset src" );
-		    add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $src_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset src" );
-		}
+		if ( $dbl_ipset ) {
+		    if ( $setting & DBL_SRC) {
+			#
+			# src or src-dst
+			#
+			add_ijump_extended( $filter_table->{input_option_chain($interface)},   j => $src_target, $origin{DYNAMIC_BLACKLIST}, @src_exclude, @state, set => "--match-set $dbl_ipset src" );
+			add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $src_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset src" );
+		    }
 
-		if ( $setting & DBL_DST ) {
-		    #
-		    # dst or src-dst
-		    #
-		    add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $dst_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset dst" );
-		    add_ijump_extended( $filter_table->{output_option_chain($interface)},  j => $dbl_dst_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset dst" );
+		    if ( $setting & DBL_DST ) {
+			#
+			# src-dst
+			#
+			add_ijump_extended( $filter_table->{forward_option_chain($interface)}, j => $dst_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset dst" );
+			add_ijump_extended( $filter_table->{output_option_chain($interface)},  j => $dbl_dst_target, $origin{DYNAMIC_BLACKLIST}, @dst_exclude, @state, set => "--match-set $dbl_ipset dst" );
+		    }
 		}
 	    }
 	    
 	    for ( option_chains( $interface ) ) {
-		add_ijump_extended( $filter_table->{$_}, j => $dynamicref, $origin{DYNAMIC_BLACKLIST}, @state ) if $dynamicref && ( get_interface_option( $interface, 'dbl' ) & DBL_CLASSIC );
-		add_ijump_extended( $filter_table->{$_}, j => 'ACCEPT',    $origin{FASTACCEPT},        state_imatch $faststate )->{comment} = '' if $config{FASTACCEPT};
+		add_ijump_extended( $filter_table->{$_}, j => $classic_target, $origin{DYNAMIC_BLACKLIST}, @state ) if $dynamicref && ( get_interface_option( $interface, 'dbl' ) & DBL_CLASSIC );
+		add_ijump_extended( $filter_table->{$_}, j => 'ACCEPT', $origin{FASTACCEPT},        state_imatch $faststate )->{comment} = '' if $config{FASTACCEPT};
 	    }
 	}
     }

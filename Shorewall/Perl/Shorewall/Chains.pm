@@ -188,6 +188,7 @@ our %EXPORT_TAGS = (
 				       input_option_chain
 				       nodbl_src_chain
 				       nodbl_dst_chain
+				       nodbl_classic_chain
 				       zone_input_chain
 				       use_interface_chain
 				       output_chain
@@ -2454,6 +2455,14 @@ sub nodbl_src_chain($) {
 sub nodbl_dst_chain($) {
     my $interface = shift;
     ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_nodbl';
+}
+
+#
+# Blacklist Destination Exclusion Chain for an interface
+#
+sub nodbl_classic_chain($) {
+    my $interface = shift;
+    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_nocbl';
 }
 
 #
