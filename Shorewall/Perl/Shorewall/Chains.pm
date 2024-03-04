@@ -2446,7 +2446,7 @@ sub output_option_chain($) {
 #
 sub nodbl_src_chain($) {
     my $interface = shift;
-    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_nosbl';
+    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_nobl';
 }
 
 #
@@ -2454,7 +2454,7 @@ sub nodbl_src_chain($) {
 #
 sub nodbl_dst_chain($) {
     my $interface = shift;
-    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_nodbl';
+    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_ndbl';
 }
 
 #
@@ -2462,7 +2462,7 @@ sub nodbl_dst_chain($) {
 #
 sub nodbl_classic_chain($) {
     my $interface = shift;
-    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_nocbl';
+    ( $config{USE_PHYSICAL_NAMES} ? chain_base( get_physical( $interface ) ) : get_logical( $interface ) ) . '_ncbl';
 }
 
 #
