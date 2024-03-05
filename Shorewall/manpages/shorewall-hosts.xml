@@ -256,7 +256,8 @@
                 url="shorewall.conf.html">Shorewall.conf</ulink>(5)). It may
                 only be specified if the <replaceable>zone-name</replaceable>
                 listed in the ZONE column is defined as an <option>ip</option>
-                zone in <ulink
+                (<option>ip</option>, <option>ip4</option>, or
+                <option>ip6</option>) zone in <ulink
                 url="shorewall-zones.html">shorewall-zones</ulink>(5).</para>
               </listitem>
             </varlistentry>
