@@ -748,7 +748,7 @@ sub process_a_policy1($$$$$$$) {
 	fatal_error "NONE policy not allowed to/from firewall zone"
 	    if ( zone_type( $client ) == FIREWALL ) || ( zone_type( $server ) == FIREWALL );
     } elsif ( $policy eq 'BLACKLIST' ) {
-	fatal_error 'BLACKLIST policies require ipset-based dynamic blacklisting' unless $config{DYNAMIC_BLACKLIST} =~ /^ipset/;
+	fatal_error 'BLACKLIST policies require ipset-based dynamic blacklisting' unless $globals{DBL} & DBL_IPSET;
     }
 
     unless ( $clientwild || $serverwild ) {
@@ -1078,12 +1078,10 @@ sub add_policy_rules( $$$$$ ) {
 	assert( $target );
 
 	if ( $target eq 'BLACKLIST' ) {
-	    my ( $dbl_type, $dbl_ipset, $dbl_level, $dbl_tag ) = split( ':', $config{DYNAMIC_BLACKLIST} );
-
 	    if ( my $timeout = $globals{DBL_TIMEOUT} ) {
-		add_ijump( $chainref, j => "SET --add-set $dbl_ipset src --exist --timeout $timeout" );
+		add_ijump( $chainref, j => "SET --add-set $globals{DBL_IPSET_NAME} src --exist --timeout $globals{DBL_TIMEOUT}" );
 	    } else {
-		add_ijump( $chainref, j => "SET --add-set $dbl_ipset src --exist" );
+		add_ijump( $chainref, j => "SET --add-set $globals{DBL_IPSET_NAME} src --exist" );
 	    }
 
 	    $target = 'DROP';

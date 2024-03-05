@@ -49,11 +49,6 @@ our @EXPORT = ( qw( NOTHING
 		    GROUP
 		    NO_UPDOWN
 		    NO_SFILTER
-		    DBL_NONE
-		    DBL_SRC
-		    DBL_DST
-		    DBL_SRC_DST
-		    DBL_CLASSIC
 
 		    determine_zones
 		    zone_report
@@ -219,16 +214,6 @@ use constant { NOTHING    => 'NOTHING',
 	       IPSECMODE  => 'tunnel|transport'
 	     };
 
-#
-# Dynamic blacklisting values
-#
-use constant { DBL_NONE => 0,
-	       DBL_SRC => 1,
-	       DBL_DST => 2,
-	       DBL_SRC_DST => 3,
-	       DBL_CLASSIC => 4,
-             };
-    
 sub NETWORK() {
     $family == F_IPV4 ? '\d+.\d+.\d+.\d+(\/\d+)?' : '(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?:\/d+)?';
 }
@@ -1337,17 +1322,7 @@ sub process_interface( $$ ) {
 
     $options{port} = 1 if $port;
 
-    my $setting = DBL_NONE;
-
-    if ( my $dbl = $config{DYNAMIC_BLACKLIST} ) {
-	unless ( $dbl =~ /^No/i ) {
-	    $setting |= DBL_SRC;
-	    $setting |= DBL_CLASSIC unless ( $dbl =~ /^ipset-only/ );
-	    $setting |= DBL_DST     if     ( $dbl =~ /,(src-)?dst[,:]/ );
-	}
-    }
-
-    $options{dbl} = $setting;
+    $options{dbl} = $globals{DBL};
 
     my $hostoptionsref = {};
 
@@ -1419,7 +1394,7 @@ sub process_interface( $$ ) {
 		    if ( $value eq 'none' ) {
 			$options{dbl} = DBL_NONE;
 		    } else {
-			fatal_error qq(Invalid setting ($value) for 'dbl') unless defined ( $setting = $values{$value} );
+			fatal_error qq(Invalid setting ($value) for 'dbl') unless defined ( my $setting = $values{$value} );
 			$options{dbl} |= $setting;
 		    }
 		} else {
