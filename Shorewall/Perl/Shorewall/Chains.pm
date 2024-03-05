@@ -8919,10 +8919,10 @@ sub ensure_ipsets( @ ) {
     my $set;
     my $counters = have_capability( 'IPSET_MATCH_COUNTERS' ) ? ' counters' : '';
 
-    if ( $_[0] eq $globals{DBL_IPSET} ) {
+    if ( $_[0] eq $globals{DBL_IPSET_NAME} ) {
 	shift;
 
-	emit( qq(    if ! qt \$IPSET list $globals{DBL_IPSET}; then));
+	emit( qq(    if ! qt \$IPSET list $globals{DBL_IPSET_NAME}; then));
 
 	push_indent;
 
@@ -8930,12 +8930,12 @@ sub ensure_ipsets( @ ) {
 	    emit(  q(    #),
 		   q(    # Set the timeout for the dynamic blacklisting ipset),
 		   q(    #),
-		  qq(    \$IPSET -exist create $globals{DBL_IPSET}  hash:net family inet timeout 0${counters}) );
+		  qq(    \$IPSET -exist create $globals{DBL_IPSET_NAME}  hash:net family inet timeout 0${counters}) );
 	} else {
 	    emit(  q(    #),
 		   q(    # Set the timeout for the dynamic blacklisting ipset),
 		   q(    #),
-		  qq(    \$IPSET -exist create $globals{DBL_IPSET} hash:net family inet6 timeout 0${counters}) );
+		  qq(    \$IPSET -exist create $globals{DBL_IPSET_NAME} hash:net family inet6 timeout 0${counters}) );
 	}
 
 	pop_indent;
@@ -9158,7 +9158,7 @@ sub create_load_ipsets() {
 	if ( $config{SAVE_IPSETS} || @{$globals{SAVED_IPSETS}} ) {
 	    emit( '    if [ -f ${VARDIR}/ipsets.save ]; then' );
 
-	    if ( my $set = $globals{DBL_IPSET} ) {
+	    if ( my $set = $globals{DBL_IPSET_NAME} ) {
 		emit( '        #',
 		      '        # Update the dynamic blacklisting ipset timeout value',
 		      '        #',
