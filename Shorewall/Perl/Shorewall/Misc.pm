@@ -710,10 +710,10 @@ sub create_docker_rules() {
 
 sub setup_mss();
 
-sub add_ipset_dbl_jump( $$$@) {
+sub add_ipset_dbl_ijump( $$$@) {
     my ( $chainref, $target, $ipset_dir )  = ( shift, shift, shift );
 
-    add_ijump_extended( $chainref, j => $target, $origin{DYNAMIC_BLACKLIST}, @_, "--match-set $ipset_dir" );
+    add_ijump_extended( $chainref, j => $target, $origin{DYNAMIC_BLACKLIST}, @_, "set --match-set" => $ipset_dir );
 }
 
 #
@@ -739,9 +739,9 @@ sub add_common_rules ( $ ) {
     my $dbl_ipset;
     my $dbl_level;
     my $dbl_tag;
+    my $dbl_timeout;
     my $dbl_src_target;
     my $dbl_dst_target;
-    my $dbl_options;
 
     if ( $config{REJECT_ACTION} ) {
 	process_reject_action;
@@ -791,13 +791,8 @@ sub add_common_rules ( $ ) {
     #
     create_docker_rules if $config{DOCKER};
 
-    if ( my $val = $config{DYNAMIC_BLACKLIST} ) {
-	#
-	# $config{DYNAMIC_BLACKLIST} was normalized in Shorewall:Config:get_configuration - it is probably not what is specified in the shorewall[6].conf
-	#
-	( $dbl_type, $dbl_ipset, $dbl_level, $dbl_tag ) = split( ':', $val );
-
-	unless ( $dbl_type =~ /^ipset-only/ ) {
+    if ( my $dbl = $globals{DBL} ) {
+	if ( $dbl & DBL_CLASSIC ) {
 	    #
 	    # Classic chain-based backlisting
 	    #
@@ -807,13 +802,14 @@ sub add_common_rules ( $ ) {
 	    add_commands( $dynamicref, '[ -f ${VARDIR}/.dynamic ] && cat ${VARDIR}/.dynamic >&3' );
 	}
 
-	if ( $dbl_ipset ) {
+	if ( $dbl & DBL_IPSET ) {
 	    #
 	    # ipset-based blacklisting - not mutually exclusive with the classic type
 	    #
-	    if ( $val = $globals{DBL_TIMEOUT} ) {
-		$dbl_options    = $globals{DBL_OPTIONS};
-		$dbl_src_target = $dbl_options =~ /src-dst/ ? 'dbl_src' : 'dbl_log';
+	    ( $dbl_ipset, $dbl_level, $dbl_tag , $dbl_timeout) = ( $globals{DBL_IPSET_NAME}, $globals{DBL_LEVEL}, $globals{DBL_TAG}, $globals{DBL_TIMEOUT} );
+
+	    if ( $dbl_timeout ) {
+		$dbl_src_target = ( ($dbl & DBL_SRC_DST) == DBL_SRC_DST ) ? 'dbl_src' : 'dbl_log';
 
 		my $chainref = new_standard_chain( $dbl_src_target );
 
@@ -826,7 +822,7 @@ sub add_common_rules ( $ ) {
 				'add',
 				'',
 				$origin{DYNAMIC_BLACKLIST} ) if $dbl_level;
-		add_ijump_extended( $chainref, j => "SET --add-set $dbl_ipset src --exist --timeout $val", $origin{DYNAMIC_BLACKLIST} ) unless $dbl_options =~ /noupdate/;
+		add_ijump_extended( $chainref, j => "SET --add-set $dbl_ipset src --exist --timeout $globals{DBL_TIMEOUT}", $origin{DYNAMIC_BLACKLIST} ) unless $dbl & DBL_NOUPDATE;;
 		add_ijump_extended( $chainref, j => 'DROP', $origin{DYNAMIC_BLACKLIST} );
 
 		if ( $dbl_src_target eq 'dbl_src' ) {
@@ -841,7 +837,7 @@ sub add_common_rules ( $ ) {
 				    'add',
 				    '',
 				    $origin{DYNAMIC_BLACKLIST} ) if $dbl_level;
-		    add_ijump_extended( $chainref, j => "SET --add-set $dbl_ipset dst --exist --timeout $val", $origin{DYNAMIC_BLACKLIST} );
+		    add_ijump_extended( $chainref, j => "SET --add-set $dbl_ipset dst --exist --timeout $globals{DBL_TIMEOUT}", $origin{DYNAMIC_BLACKLIST} );
 		    add_ijump_extended( $chainref, j => 'DROP', $origin{DYNAMIC_BLACKLIST} );
 		} else {
 		    $dbl_dst_target = $dbl_src_target;
@@ -973,9 +969,21 @@ sub add_common_rules ( $ ) {
 	    #
 	    # Dynamic Blacklisting
 	    #
-	    my ( $src_target,  $dst_target, $classic_target ) = ( $dbl_src_target, $dbl_dst_target , $dynamicref->{name} );
+	    my ( $input_option_chainref,
+		 $forward_option_chainref,
+		 $output_option_chainref,
+		 $classic_target_chain,
+		)
+	    =
+		(  $filter_table->{input_option_chain($interface)},
+		   $filter_table->{forward_option_chain($interface)},
+		   $filter_table->{output_option_chain($interface)},
+		   $dynamicref,
+		);
 
 	    if ( ( my $setting = get_interface_option( $interface, 'dbl' ) ) != DBL_NONE ) {
+
+		my @matches = @state;
 
 		my ( @src_exclude, @dst_exclude, @classic_exclude );
 
@@ -990,27 +998,32 @@ sub add_common_rules ( $ ) {
 			# We need to create an intermediate chain
 			#
 			if ( $dbl_ipset ) {
-			    $chainref = new_standard_chain( $src_target = nodbl_src_chain( $interface ));
+			    $chainref = new_standard_chain( nodbl_src_chain( $interface ));
 
 			    for (@nodbl) {
 				add_ijump( $chainref, j => 'RETURN', s => $_ );
 			    }
 
-			    add_ijump( $chainref, j => $dbl_src_target );
+			    add_ijump( $input_option_chainref,   j => $chainref->{name} );
+			    add_ijump( $forward_option_chainref, j => $chainref->{name} );
+
+			    $input_option_chainref = $forward_option_chainref = $chainref;
 
 			    if ( $dbl_src_target ne $dbl_dst_target ) {
-				$chainref = new_standard_chain( $dst_target = nodbl_dst_chain( $interface ));
+				$chainref = new_standard_chain( nodbl_dst_chain( $interface ));
 
 				for ( @nodbl ){
 				    add_ijump( $chainref, j => 'RETURN', -d => $_ );
 				}
 
-				add_ijump( $chainref, j => $dbl_dst_target );
+				add_ijump( $output_option_chainref,  j => $chainref->{name} );
+
+				$output_option_chainref = $chainref, 
 			    }
 			}
 
 			if ( $setting & DBL_CLASSIC ) {
-			    $chainref = new_standard_chain( $classic_target = nodbl_classic_chain( $interface ));
+			    $chainref = new_standard_chain( nodbl_classic_chain( $interface ));
 
 			    for (@nodbl) {
 				add_ijump( $chainref, j => 'RETURN', s => $_ );
@@ -1018,13 +1031,15 @@ sub add_common_rules ( $ ) {
 			    }
 
 			    add_ijump( $chainref, j => $dynamicref->{name} );
+
+			    $classic_target_chain = $chainref;
 			}
 		    } else {
 			#
 			# Easy case
 			#
-			@src_exclude = ( s => "! $nodbl[0]" );
-			@dst_exclude = ( d => "! $nodbl[0]" );
+			@matches = ( s => "! $nodbl[0]" , @matches );
+			@matches = ( d => "! $nodbl[0]" , @matches );
 		    }
 		}
 
@@ -1033,27 +1048,34 @@ sub add_common_rules ( $ ) {
 			#
 			# src or src-dst
 			#
-			add_ipset_dbl_ijump( $filter_table->{input_option_chain($interface)},   $src_target, "$dbl_ipset src", @state );
-			add_ipset_dbl_ijump( $filter_table->{forward_option_chain($interface)}, $src_target, "$dbl_ipset src", @state );
+			add_ipset_dbl_ijump( $input_option_chainref,   $dbl_src_target, "$dbl_ipset src", @matches );
+			add_ipset_dbl_ijump( $forward_option_chainref, $dbl_src_target, "$dbl_ipset src", @matches );
 		    }
 
 		    if ( $setting & DBL_DST ) {
 			#
 			# src-dst
 			#
-			add_ipset_dbl_ijump( $filter_table->{forward_option_chain($interface)}, $dst_target, "$dbl_ipset dst", @state );
-			add_ipset_dbl_ijump( $filter_table->{output_option_chain($interface)},  $dst_target, "$dbl_ipset dst", @state );
+			add_ipset_dbl_ijump( $forward_option_chainref, $dbl_dst_target, "$dbl_ipset dst", @matches );
+			add_ipset_dbl_ijump( $output_option_chainref,  $dbl_dst_target, "$dbl_ipset dst", @matches );
 		    }
+		}
+
+		if ( $setting & DBL_CLASSIC ) {
+		    add_ijump_extended( $input_option_chainref,   j => $classic_target_chain, $origin{DYNAMIC_BLACKLIST}, @state );
+		    add_ijump_extended( $forward_option_chainref, j => $classic_target_chain, $origin{DYNAMIC_BLACKLIST}, @state );
+		    add_ijump_extended( $output_option_chainref,  j => $classic_target_chain, $origin{DYNAMIC_BLACKLIST}, @state ) if $setting & DBL_DST;
 		}
 	    }
 	    #
-	    # Finish blacklisting and FASTACCEPT
+	    # Finish FASTACCEPT
 	    #
-	    for ( option_chains( $interface ) ) {
-		add_ijump_extended( $filter_table->{$_}, j => $classic_target, $origin{DYNAMIC_BLACKLIST}, @state ) if $dynamicref && ( get_interface_option( $interface, 'dbl' ) & DBL_CLASSIC );
-		add_ijump_extended( $filter_table->{$_}, j => 'ACCEPT', $origin{FASTACCEPT},        state_imatch $faststate )->{comment} = '' if $config{FASTACCEPT};
+	    if ( $config{FASTACCEPT} ) {
+		for ( option_chains( $interface ) ) {
+		    add_ijump_extended( $filter_table->{$_}, j => 'ACCEPT', $origin{FASTACCEPT}, state_imatch $faststate )->{comment} = '';
+		}
 	    }
-	}
+	} #Not loopback interface
     }
     #
     # Delete 'sfilter' chains unless there are referenced to them

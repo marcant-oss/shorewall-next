@@ -313,6 +313,16 @@ our %EXPORT_TAGS = ( internal => [ qw( create_temp_script
 				       OPTIMIZE_POLICY_MASK
 				       OPTIMIZE_RULESET_MASK
 				       OPTIMIZE_ALL
+
+				       DBL_NONE
+				       DBL_SRC
+				       DBL_DST
+				       DBL_SRC_DST
+				       DBL_IPSET
+				       DBL_CLASSIC
+				       DBL_DISCONNECT
+				       DBL_LOG
+				       DBL_NOUPDATE
 				     ) , ] ,
 		   protocols => [ qw (
 				       TCP
@@ -822,6 +832,19 @@ our %filecache;
 our $compiletime;
 
 our $test;
+#
+# Dynamic blacklisting values
+#
+use constant { DBL_NONE       => 0,
+	       DBL_SRC        => 1,
+	       DBL_DST        => 2,
+	       DBL_SRC_DST    => 3,
+	       DBL_CLASSIC    => 4,
+	       DBL_IPSET      => 8,
+	       DBL_DISCONNECT => 16,
+	       DBL_LOG        => 32,
+	       DBL_NOUPDATE   => 64
+             };
 
 sub process_shorewallrc($$);
 sub add_variables( \% );
@@ -894,8 +917,11 @@ sub initialize($;$$$$) {
 		    RPFILTER_LOG_TAG        => '',
 		    INVALID_LOG_TAG         => '',
 		    UNTRACKED_LOG_TAG       => '',
-		    DBL_IPSET               => '',
+		    DBL                     => DBL_NONE,
+		    DBL_IPSET_NAME          => '',
 		    DBL_TIMEOUT             => 0,
+		    DBL_TAG                 => '',
+		    DBL_LEVEL               => '',
 		    POSTROUTING             => 'POSTROUTING',
 		  );
     #
@@ -5322,7 +5348,7 @@ sub determine_capabilities() {
     fatal_error 'Your kernel/iptables do not include state match support. No version of Shorewall will run on this system'
 	unless
 	    qt1( "$iptables $iptablesw -A $sillyname -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT") ||
-	    qt1( "$iptables $iptablesw -A $sillyname -m state --state ESTABLISHED,RELATED -j ACCEPT");;
+	    qt1( "$iptables $iptablesw -A $sillyname -m state --state ESTABLISHED,RELATED -j ACCEPT");
 
     $globals{KLUDGEFREE} = $capabilities{KLUDGEFREE} = detect_capability 'KLUDGEFREE';
 }
@@ -5742,7 +5768,7 @@ sub process_shorewall_conf( $$ ) {
     # Now update the config file if asked
     #
     if ( $update ) {
-	update_config_file( $annotate ); 
+	update_config_file( $annotate );
 	#
 	# Config file update requires that the option values not have
 	# Shell variables expanded. We do that now.
@@ -6712,25 +6738,37 @@ sub get_configuration( $$$ ) {
 
     if ( supplied( $val = $config{DYNAMIC_BLACKLIST} ) ) {
 	if ( $val =~ /^ipset/ ) {
-	    my %simple_options = ( 'src-dst' => 1, 'disconnect' => 1, 'log' => 1, 'noupdate' => 1, );
+	    my $setting = DBL_IPSET;
+
+	    $setting |= DBL_SRC;
+	    $setting |= DBL_CLASSIC unless ( $val =~ /^ipset-only/ );
+	    $setting |= DBL_DST     if     ( $val =~ /,(src-)?dst[,:]/ );
+
+	    my %simple_options = ( 'src-dst'    => DBL_SRC_DST,
+				   'disconnect' => DBL_DISCONNECT,
+				   'log'        => DBL_LOG,
+				   'noupdate'   => DBL_NOUPDATE,
+		);
 
 	    my ( $key, $set, $level, $tag, $rest ) = split( ':', $val , 5 );
 
 	    ( $key , my @options ) = split_list( $key, 'option' );
 
-	    my $options = '';
-
 	    for ( @options ) {
-		if ( $simple_options{$_} ) {
-		    $options = join( ',' , $options, $_ );
-		} elsif ( $_ =~ s/^timeout=(\d+)$// ) {
+		my $tmp;
+
+		if ( $_ =~ s/^timeout=(\d+)$// ) {
 		    $globals{DBL_TIMEOUT} = $1;
+		} elsif ( $tmp = $simple_options {$_} ) {
+		    $setting |= $tmp;
 		} else {
-		    fatal_error "Invalid ipset option ($_)";
+		    if ( $_ =~ /^timeout=(.+)/ ) {
+			fatal_error( "Invalid Timeout ($1)" )
+		    } else {
+			fatal_error "Invalid ipset option ($_)";
+		    }
 		}
 	    }
-
-	    $globals{DBL_OPTIONS} = $options;
 
 	    fatal_error "Invalid DYNAMIC_BLACKLIST setting ( $val )" if $key !~ /^ipset(?:-only)?$/ || defined $rest;
 
@@ -6740,7 +6778,7 @@ sub get_configuration( $$$ ) {
 		$set = 'SW_DBL' . $family;
 	    }
 
-	    add_ipset( $globals{DBL_IPSET} = $set );
+	    add_ipset( $globals{DBL_IPSET_NAME} = $set );
 	    
 	    $level = validate_level( $level );
 
@@ -6753,11 +6791,16 @@ sub get_configuration( $$$ ) {
 	    $variables{SW_DBL_IPSET}   = $set;
 	    $variables{SW_DBL_TIMEOUT} = $globals{DBL_TIMEOUT};
 
+	    $globals{DBL}       = $setting;
+	    $globals{DBL_LEVEL} = $level;
+	    $globals{DBL_TAG}   = $tag;
 	} else {
 	    default_yes_no( 'DYNAMIC_BLACKLIST', 'Yes' );
+	    $globals{DBL} = $config{DYNAMIC_BLACKLIST} ? DBL_CLASSIC : DBL_NONE;
 	}
     } else {
 	default_yes_no( 'DYNAMIC_BLACKLIST', 'Yes' );
+	$globals{DBL} = $config{DYNAMIC_BLACKLIST} ? DBL_CLASSIC : DBL_NONE;
     }
 
     add_variables( %variables );
