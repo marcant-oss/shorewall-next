@@ -907,7 +907,7 @@ sub initialize($;$$$$) {
 		    TC_SCRIPT               => '',
 		    EXPORT                  => 0,
 		    KLUDGEFREE              => '',
-		    VERSION                 => '5.2.8-RC1',
+		    VERSION                 => '5.2.9-Beta1',
 		    CAPVERSION              => 50207 ,
 		    BLACKLIST_LOG_TAG       => '',
 		    RELATED_LOG_TAG         => '',
