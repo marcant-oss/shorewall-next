@@ -734,7 +734,7 @@ sub add_host_exclusion_ijump( $$$@ ) {
 sub add_dbl_exclusion_ijump( $$$$@ ) {
     my ( $chainref, $dest, $hostref, $ipset, $src ) = ( shift, shift, shift, shift, shift );
 
-    my $nets       = $hostref->{nets};
+    my $nets       = $hostref->{hosts};
     my $origin     = $hostref->{origin};
 
     for my $net ( @$nets ) {
