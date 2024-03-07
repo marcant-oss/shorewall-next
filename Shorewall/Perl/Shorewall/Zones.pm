@@ -979,18 +979,22 @@ sub add_group_to_zone($$$$$$)
 
     $zoneref->{complex} = 1 if @$interfaceref || @newnetworks > 1 || @exclusions || $options->{routeback};
 
-    push @{$interfaceref}, { options => $options,
-			     hosts   => \@newnetworks,
-			     ipsec   => $type & IPSEC ? 'ipsec' : 'none' ,
-			     exclusions => \@exclusions ,
-			     origin  => shortlineinfo( '' ) ,
-                            };
+    my $hostref = { options => $options,
+		    hosts   => \@newnetworks,
+		    ipsec   => $type & IPSEC ? 'ipsec' : 'none' ,
+		    exclusions => \@exclusions ,
+		    origin  => shortlineinfo( '' ) ,
+    };
+
+    push @{$interfaceref}, $hostref;
 
     if ( $type != IPSEC ) {
 	my $optref = $interfaces{$interface}{options};
 	$optref->{routeback} ||= $options->{routeback};
 	$optref->{allip}     ||= $allip;
     }
+
+    return $hostref;
 }
 
 #
@@ -2241,7 +2245,6 @@ sub process_host( ) {
 		$zoneref->{options}{complex} = 1;
 	    } elsif ( $option eq 'nodbl' ) {
 		fatal_error "The 'nodbl' option is only allowed in 'ip' zones" unless $type & IP;
-		push @{$interfaceref->{nodbl}}, $hosts;
 		$options{nodbl} = 1;
 	    } elsif ( $validhostoptions{$option}) {
 		fatal_error qq(The "$option" option is not allowed with Vserver zones) if $type & VSERVER && ! ( $validhostoptions{$option} & IF_OPTION_VSERVER );
@@ -2286,13 +2289,19 @@ sub process_host( ) {
 	$optionsref->{dynamic} = 1;
 	add_ipset($set);
     }
-
+    #
     #
     # We ignore the user's notion of what interface vserver addresses are on and simply invent one for all of the vservers.
     #
     $interface = '%vserver%' if $type & VSERVER;
 
-    add_group_to_zone( $zone, $type , $interface, [ split_list( $hosts, 'host' ) ] , $optionsref, 0 );
+    my $hostref = add_group_to_zone( $zone, $type , $interface, [ split_list( $hosts, 'host' ) ] , $optionsref, 0 );
+    #
+    # Push 'nodbl' info to the interface
+    #
+    if ( $optionsref->{nodbl} ) {
+	push @{$interfaceref->{nodbl}}, $hostref ;
+    }
 
     progress_message "   Host \"$currentline\" validated";
 
