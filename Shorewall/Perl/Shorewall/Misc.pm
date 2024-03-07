@@ -1012,7 +1012,9 @@ sub add_common_rules ( $ ) {
 		);
 
 	    if ( ( my $setting = get_interface_option( $interface, 'dbl' ) ) != DBL_NONE ) {
-
+		#
+		# Dynamic blacklisting
+		#
 		my @nodbl = @{$interfaceref->{nodbl}};
 
 		my $have_ipsec = have_ipsec;
