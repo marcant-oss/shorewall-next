@@ -1015,6 +1015,11 @@ sub add_common_rules ( $ ) {
 
 		my @nodbl = @{$interfaceref->{nodbl}};
 
+		my $have_ipsec = have_ipsec;
+
+		my @in_policy  = $have_ipsec ? ( policy => "--pol none --dir in" )  : ();
+		my @out_policy = $have_ipsec ? ( policy => "--pol none --dir out" ) : ();
+
 		if ( @nodbl ) {
 		    #
 		    # We have blacklisting exclusions defined in the hosts file
@@ -1029,8 +1034,8 @@ sub add_common_rules ( $ ) {
 			    add_host_exclusion_ijump( $chainref, 'RETURN', $hostref, 1 );
 			}
 
-			add_ijump( $input_option_chainref,   j => $chainref->{name} );
-			add_ijump( $forward_option_chainref, j => $chainref->{name} );
+			add_ijump( $input_option_chainref,   j => $chainref->{name} , @in_policy );
+			add_ijump( $forward_option_chainref, j => $chainref->{name} , @in_policy );
 
 			$input_option_chainref = $forward_option_chainref = $chainref;
 
@@ -1041,10 +1046,13 @@ sub add_common_rules ( $ ) {
 				add_host_exclusion_ijump( $chainref, 'RETURN', $hostref, 0 );
 			    }
 
-			    add_ijump( $output_option_chainref,  j => $chainref->{name} );
+			    add_ijump( $forward_option_chainref, j => $chainref->{name} , @out_policy );
+			    add_ijump( $output_option_chainref,  j => $chainref->{name},  @out_policy );
 
 			    $output_option_chainref = $chainref, 
 			}
+
+			@in_policy = @out_policy = ();
 
 		    } elsif ( $dbl_ipset ) {
 			#
@@ -1053,17 +1061,16 @@ sub add_common_rules ( $ ) {
 			my $hostref = $nodbl[0];
 
 			if ( $setting & DBL_SRC ) {
-			    add_dbl_exclusion_ijump( $input_option_chainref,   $dbl_src_target, $hostref, $dbl_ipset, 1, @state );
-			    add_dbl_exclusion_ijump( $forward_option_chainref, $dbl_src_target, $hostref, $dbl_ipset, 1, @state );
+			    add_dbl_exclusion_ijump( $input_option_chainref,   $dbl_src_target, $hostref, $dbl_ipset, 1, @state , @in_policy );
+			    add_dbl_exclusion_ijump( $forward_option_chainref, $dbl_src_target, $hostref, $dbl_ipset, 1, @state , @in_policy );
 			}
 
 			if ( $setting & DBL_DST ) {
-			    add_dbl_exclusion_ijump( $forward_option_chainref, $dbl_dst_target, $hostref, $dbl_ipset, 0, @state );
-			    add_dbl_exclusion_ijump( $output_option_chainref,  $dbl_dst_target, $hostref, $dbl_ipset, 1, @state );
+			    add_dbl_exclusion_ijump( $forward_option_chainref, $dbl_dst_target, $hostref, $dbl_ipset, 0, @state, @out_policy );
+			    add_dbl_exclusion_ijump( $output_option_chainref,  $dbl_dst_target, $hostref, $dbl_ipset, 1, @state, @out_policy );
 			}
 
-			$dbl_ipset = '';
-
+			$dbl_ipset = ''; # All ipset jumps have been added
 		    }
 
 		    if ( $setting & DBL_CLASSIC ) {
@@ -1085,16 +1092,16 @@ sub add_common_rules ( $ ) {
 			    #
 			    # src or src-dst
 			    #
-			    add_ipset_dbl_ijump( $input_option_chainref,   $dbl_src_target, "$dbl_ipset src", @state );
-			    add_ipset_dbl_ijump( $forward_option_chainref, $dbl_src_target, "$dbl_ipset src", @state );
+			    add_ipset_dbl_ijump( $input_option_chainref,   $dbl_src_target, "$dbl_ipset src", @state, @in_policy );
+			    add_ipset_dbl_ijump( $forward_option_chainref, $dbl_src_target, "$dbl_ipset src", @state, @in_policy);
 			}
 
 			if ( $setting & DBL_DST ) {
 			    #
 			    # src-dst
 			    #
-			    add_ipset_dbl_ijump( $forward_option_chainref, $dbl_dst_target, "$dbl_ipset dst", @state );
-			    add_ipset_dbl_ijump( $output_option_chainref,  $dbl_dst_target, "$dbl_ipset dst", @state );
+			    add_ipset_dbl_ijump( $forward_option_chainref, $dbl_dst_target, "$dbl_ipset dst", @state, @out_policy );
+			    add_ipset_dbl_ijump( $output_option_chainref,  $dbl_dst_target, "$dbl_ipset dst", @state, @out_policy );
 			}
 		    }
 
