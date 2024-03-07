@@ -1106,12 +1106,11 @@ sub add_common_rules ( $ ) {
 		    }
 
 		if ( $setting & DBL_CLASSIC ) {
-		    add_ijump_extended( $input_option_chainref,   j => $classic_target_chain, $origin{DYNAMIC_BLACKLIST}, @state );
-		    add_ijump_extended( $forward_option_chainref, j => $classic_target_chain, $origin{DYNAMIC_BLACKLIST}, @state );
-		    add_ijump_extended( $output_option_chainref,  j => $classic_target_chain, $origin{DYNAMIC_BLACKLIST}, @state ) if $setting & DBL_DST;
+		    add_ijump_extended( $input_option_chainref,   j => $classic_target_chain, $origin{DYNAMIC_BLACKLIST}, @state, @in_policy );
+		    add_ijump_extended( $forward_option_chainref, j => $classic_target_chain, $origin{DYNAMIC_BLACKLIST}, @state, @in_policy );
 		}
 
-	    } # Exclusion
+	    } # Dynamic Blacklisting
 	    #
 	    # Finish FASTACCEPT
 	    #
@@ -1120,8 +1119,9 @@ sub add_common_rules ( $ ) {
 		    add_ijump_extended( $filter_table->{$_}, j => 'ACCEPT', $origin{FASTACCEPT}, state_imatch $faststate )->{comment} = '';
 		}
 	    }
+
 	} #Not loopback interface
-    }
+    } # Interface Loop
     #
     # Delete 'sfilter' chains unless there are referenced to them
     #
