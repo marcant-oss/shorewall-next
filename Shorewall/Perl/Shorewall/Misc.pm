@@ -1069,7 +1069,7 @@ sub add_common_rules ( $ ) {
 
 			if ( $setting & DBL_DST ) {
 			    add_dbl_exclusion_ijump( $forward_option_chainref, $dbl_dst_target, $hostref, $dbl_ipset, 0, @state, @out_policy );
-			    add_dbl_exclusion_ijump( $output_option_chainref,  $dbl_dst_target, $hostref, $dbl_ipset, 1, @state, @out_policy );
+			    add_dbl_exclusion_ijump( $output_option_chainref,  $dbl_dst_target, $hostref, $dbl_ipset, 0, @state, @out_policy );
 			}
 
 			$dbl_ipset = ''; # All ipset jumps have been added
