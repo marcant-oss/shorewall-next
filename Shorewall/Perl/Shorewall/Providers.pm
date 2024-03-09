@@ -1553,6 +1553,15 @@ sub start_providers() {
 
     unless ( $config{KEEP_RT_TABLES} ) {
 	emit( "\n#\n# Update the routing table database\n#",
+	      'if ! [ -d /etc/iproute2 ] ; then',
+	      '    mkdir /etc/iproute2 2> /dev/null',
+	      'fi',
+	      '',
+	      'if ! [ -f /etc/iproute2/rt_tables ]; then',
+	      '    cp /usr/share/iproute2/rt_tables /etc/iproute2/ 2> /dev/null',
+	      '    chmod 644 /etc/iproute2/rt_tables 2> /dev/null',
+	      'fi',
+	      '',
 	      'if [ -w /etc/iproute2/rt_tables ]; then',
 	      '    cat > /etc/iproute2/rt_tables <<EOF' );
 
