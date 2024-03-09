@@ -2957,6 +2957,7 @@ EOF
     emit '
     rm -f ${VARDIR}/*.address
     rm -f ${VARDIR}/*.gateway
+    rm -f ${VARDIR}/*.status
 
     run_stopped_exit';
 
