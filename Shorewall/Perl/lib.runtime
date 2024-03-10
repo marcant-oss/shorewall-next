@@ -878,7 +878,7 @@ detect_dynamic_gateway() { # $1 = interface
     gateway=$(run_findgw_exit $1);
 
     if [ -z "$gateway" ]; then
-	gateway=$( find_peer $($IP addr list $interface ) )
+	gateway=$( find_peer $($IP addr list $interface 2>/dev/null ) )
     fi
 
     file="${VARLIB}/dhcpcd/dhcpcd-${1}.info"
@@ -923,9 +923,9 @@ detect_gateway() # $1 = interface $2 = table number
     #
     # Maybe there's a default route through this gateway already
     #
-    [ -n "$gateway" ] || gateway=$(find_gateway $($IP -4 route list dev $interface | grep ^default))
+    [ -n "$gateway" ] || gateway=$(find_gateway $($IP -4 route list dev $interface 2>/dev/null | grep ^default))
 
-    [ -z "$gateway" -a -n "$2" ] && gateway=$(find_gateway $($IP -4 route list dev $interface table $2 | grep ^default))
+    [ -z "$gateway" -a -n "$2" ] && gateway=$(find_gateway $($IP -4 route list dev $interface table $2 2>/dev/null | grep ^default))
     #
     # Last hope -- is there a load-balancing route through the interface?
     #
@@ -1312,11 +1312,11 @@ detect_gateway() # $1 = interface
     #
     # First assume that this is some sort of point-to-point interface
     #
-    gateway=$( find_peer $($IP -6 addr list $interface ) )
+    gateway=$( find_peer $($IP -6 addr list $interface 2>/dev/null ) )
     #
     # Maybe there's a default route through this gateway already
     #
-    [ -n "$gateway" ] || gateway=$(find_gateway $($IP -6 route list dev $interface | grep '^default'))
+    [ -n "$gateway" ] || gateway=$(find_gateway $($IP -6 route list dev $interface 2>/dev/null | grep '^default'))
     #
     # Last hope -- is there a load-balancing route through the interface?
     #
