@@ -639,7 +639,7 @@ find_first_interface_address_if_any() # $1 = interface
 #Determines if the passed interface is a loopback interface
 #
 loopback_interface() { #$1 = Interface name
-    [ "$1" = lo ] || $IP link show $1 | fgrep -q LOOPBACK
+    [ "$1" = lo ] || $IP link show $1 2>/dev/null | fgrep -q LOOPBACK
 }
 
 #
