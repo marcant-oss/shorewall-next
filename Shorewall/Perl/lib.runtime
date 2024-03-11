@@ -36,7 +36,7 @@
 #					interface
 #	    refresh			Refresh the firewall
 #	    reload			Reload the firewall
-#	    restart			Restarts the firewall
+#	    restart			Restart the firewall
 #	    restore			Restore a saved configuration
 #	    reset			Reset byte and packet counters
 #	    run				Call a function in this program
