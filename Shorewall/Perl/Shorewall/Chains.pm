@@ -699,7 +699,7 @@ use constant { UNIQUE      => 1,       # Simple header matches - only allowed on
 	       TARGET      => 2,       # Rule target or its options
 	       EXCLUSIVE   => 4,       # 'state' or 'conntrack --ctstate'
 	       MATCH       => 8,       # Currently means 'policy ...'
-	       CONTROL     => 16,      # Unsed internally by the compiler - does not contribute to the iptables rule
+	       CONTROL     => 16,      # Used internally by the compiler - does not contribute to the iptables rule
 	       COMPLEX     => 32,      # Currently means 'contrack --cstate'
 	       NFACCT      => 64,      # nfacct match
 	       EXPENSIVE   => 128,     # Has high match-processing cost in the kernel
@@ -1003,7 +1003,7 @@ sub validate_port_list( $$ ) {
 #
 # Example:
 #
-#       DB<3> @foo = Shorewall::IPAddrs::expand_port_range( 6, '110:' ); print "@foo\n"
+#       DB<3> @foo = Shorewall::Chains::expand_port_range( 6, '110:' ); print "@foo\n"
 #       006e fffe 0070 fff0 0080 ff80 0100 ff00 0200 fe00 0400 fc00 0800 f800 1000 f000 2000 e000 4000 c000 8000 8000
 #
 sub expand_port_range( $$ ) {
