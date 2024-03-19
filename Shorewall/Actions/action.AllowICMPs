@@ -30,6 +30,7 @@ DEFAULTS ACCEPT
     @1	fe80::/10	-	ipv6-icmp	131	# Listener report
     @1	fe80::/10	-	ipv6-icmp	132	# Listener done
     @1	fe80::/10	-	ipv6-icmp	router-advertisement
+    @1	::		-	ipv6-icmp	143	# Listener report v2
     @1	fe80::/10	-	ipv6-icmp	143	# Listener report v2
 
 # The following should be received with a ttl of 255 and must be allowed to transit a bridge
