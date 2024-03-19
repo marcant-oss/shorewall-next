@@ -36,7 +36,7 @@ DEFAULTS ACCEPT
 # The following should be received with a ttl of 255 and must be allowed to transit a bridge
     @1	::		-	ipv6-icmp	148	# Certificate path solicitation
     @1	fe80::/10	-	ipv6-icmp	148	# Certificate path solicitation
-    @1	-		-	ipv6-icmp	149	# Certificate path advertisement
+    @1	fe80::/10	-	ipv6-icmp	149	# Certificate path advertisement
 
 # The following should have a link local source address and a ttl of 1 and must be allowed to transit a bridge
     @1	fe80::/10	-	ipv6-icmp	151	# Multicast router advertisement
