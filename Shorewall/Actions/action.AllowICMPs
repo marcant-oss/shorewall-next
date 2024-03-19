@@ -23,7 +23,6 @@ DEFAULTS ACCEPT
     @1	-		-	ipv6-icmp	router-advertisement
     @1	-		-	ipv6-icmp	neighbour-solicitation
     @1	-		-	ipv6-icmp	neighbour-advertisement
-    @1	-		-	ipv6-icmp	137	# Redirect
     @1	-		-	ipv6-icmp	141	# Inverse neighbour discovery solicitation
     @1	-		-	ipv6-icmp	142	# Inverse neighbour discovery advertisement
 
