@@ -1002,27 +1002,6 @@ show_table() {
     $g_tool -t $table -L $g_ipt_options | $output_filter
 }
 
-show_nat() {
-    echo "$g_product $SHOREWALL_VERSION NAT Table at $g_hostname - $(date)"
-    echo
-    show_reset
-    $g_tool -t nat -L $g_ipt_options | $output_filter
-}
-
-show_raw() {
-    echo "$g_product $SHOREWALL_VERSION RAW Table at $g_hostname - $(date)"
-    echo
-    show_reset
-    $g_tool -t raw -L $g_ipt_options | $output_filter
-}
-
-show_mangle() {
-    echo "$g_product $SHOREWALL_VERSION Mangle Table at $g_hostname - $(date)"
-    echo
-    show_reset
-    $g_tool -t mangle -L $g_ipt_options | $output_filter
-}
-
 show_classifiers_command() {
     echo "$g_product $SHOREWALL_VERSION Classifiers at $g_hostname - $(date)"
     echo
@@ -1248,7 +1227,7 @@ show_command() {
     local finished
     finished=0
     local table
-    table=filter
+    table=
     local table_given
     table_given=
     local output_filter
@@ -1361,20 +1340,31 @@ show_command() {
 	    only_root
 	    eval show_connections $@ $g_pager
 	    ;;
-	nat)
+	filter|nat|raw|mangle)
 	    only_root
 	    [ $# -gt 1 ] && too_many_arguments $2
-	    eval show_nat $g_pager
+
+	    if [ -n "$table_given" ]; then
+		if [ $table != $1 ] ; then
+		    fatal_error "\"$1\" is not allowed when \"-t $table\" is given"
+		fi
+	    else
+		table=$1
+	    fi
+
+	    eval show_table $g_pager
 	    ;;
-	raw)
+	tos)
 	    only_root
 	    [ $# -gt 1 ] && too_many_arguments $2
-	    eval show_raw $g_pager
-	    ;;
-	tos|mangle)
-	    only_root
-	    [ $# -gt 1 ] && too_many_arguments $2
-	    eval show_mangle $g_pager
+
+	    if [ -z "$table_given" ] ; then
+		table=mangle
+	    else
+		[ "$table" = mangle ] || fatal_error "\"show tos\" is only valid in the mangle table"
+	    fi
+
+	    eval show_table $g_pager
 	    ;;
 	log)
 	    [ $# -gt 2 ] && too_many_arguments $2
@@ -1601,15 +1591,20 @@ show_command() {
 		    return;
                 fi
 
-		[ -n "$table_given" ] || for chain in $*; do
-		    if ! qt $g_tool -t $table -L $chain $g_ipt_options; then
-			error_message "ERROR: Chain '$chain' is not recognized by $g_tool."
-			exit 1
-		    fi
-					 done
+		if [ -z "$table_given" ]; then
+		    table=filter
+
+		    for chain in $*; do
+			if ! qt $g_tool -t $table -L $chain $g_ipt_options; then
+			    error_message "ERROR: Chain '$chain' is not recognized by $g_tool."
+			    exit 1
+			fi
+		    done
+		fi
 
 		eval show_chains $@ $g_pager
 	    else
+		[ -n "$table_given" ] || table=filter
 		eval show_table $g_pager
 	    fi
 	    ;;
