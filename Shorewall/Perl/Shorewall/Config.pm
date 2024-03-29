@@ -1093,7 +1093,7 @@ sub initialize($;$$$$) {
 	);
 
     #
-    # Line numbers in shorewall6.conf where options are specified
+    # Line numbers in shorewall[6].conf where options are specified
     #
     %origin = ();
     #
