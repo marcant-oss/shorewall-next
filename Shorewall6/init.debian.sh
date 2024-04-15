@@ -12,8 +12,8 @@
 
 . /lib/lsb/init-functions
 
-SRWL='/sbin/shorewall -6'
-SRWL_OPTS="-tvv"
+SRWL=/sbin/shorewall
+SRWL_OPTS="-6tvv"
 WAIT_FOR_IFUP=/usr/share/shorewall/wait4ifup
 test -n ${INITLOG:=/var/log/shorewall6-init.log}
 
