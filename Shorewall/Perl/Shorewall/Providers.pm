@@ -1874,6 +1874,8 @@ EOF
 	    emit( "        stop_$providerref->{what}_$provider",
 		  '    elif [ -z "$2" ]; then',
 		  "        startup_error \"Interface $providerref->{physical} is already disabled\"",
+		  "    else",
+		  "        echo 1 > \${VARDIR}/$providerref->{physical}.status",
 		  '    fi',
 		  '    ;;'
 		);
