@@ -149,14 +149,13 @@ sub validate_4address( $$ ) {
 
     unless ( valid_4address $addr ) {
 	fatal_error "Invalid IP Address ($addr)" unless $allow_name;
-	fatal_error "Unknown Host ($addr)" unless  @addrs = gethostbyname( $addr );
+	my ( $err, @addr_structs ) = Socket::getaddrinfo( $addr, 0, {
+	    family => Socket::AF_INET,
+	    protocol => Socket::IPPROTO_TCP,
+	} );
+	fatal_error "Unknown Host ($addr)" if $err != 0;
 
-	if ( defined wantarray ) {
-	    shift @addrs for (1..4);
-	    for ( @addrs ) {
-		$_ = ( inet_ntoa( $_ ) );
-	    }
-	}
+	@addrs = translate_addr_structs( @addr_structs );
     }
 
     defined wantarray ? wantarray ? @addrs : $addrs[0] : undef;
@@ -164,14 +163,14 @@ sub validate_4address( $$ ) {
 
 sub resolve_4dnsname( $ ) {
     my $net = $_[0];
-    my @addrs;
 
-    fatal_error "Unknown Host ($net)" unless  @addrs = gethostbyname( $net );
+    my ( $err, @addr_structs ) = Socket::getaddrinfo( $net, 0, {
+	family => Socket::AF_INET,
+	protocol => Socket::IPPROTO_TCP,
+    } );
+    fatal_error "Unknown Host ($net)" if $err != 0;
 
-    shift @addrs for (1..4);
-    for ( @addrs ) {
-	$_ = ( inet_ntoa( $_ ) );
-    }
+    my @addrs = translate_addr_structs( @addr_structs );
 
     @addrs;
 } 
@@ -508,15 +507,13 @@ sub validate_6address( $$ ) {
 
     unless ( valid_6address $addr ) {
 	fatal_error "Invalid IPv6 Address ($addr)" unless $allow_name;
-	require Socket6;
-	fatal_error "Unknown Host ($addr)" unless (@addrs = Socket6::gethostbyname2( $addr, Socket6::AF_INET6()));
+	my ( $err, @addr_structs ) = Socket::getaddrinfo( $addr, 0, {
+	    family => Socket::AF_INET6,
+	    protocol => Socket::IPPROTO_TCP,
+	} );
+	fatal_error "Unknown Host ($addr)" if $err != 0;
 
-	if ( defined wantarray ) {
-	    shift @addrs for (1..4);
-	    for ( @addrs ) {
-		$_ = Socket6::inet_ntop( Socket6::AF_INET6(), $_ );
-	    }
-	}
+	@addrs = translate_addr_structs( @addr_structs );
     }
 
     defined wantarray ? wantarray ? @addrs : $addrs[0] : undef;
@@ -524,15 +521,14 @@ sub validate_6address( $$ ) {
 
 sub resolve_6dnsname( $ ) {
     my $net = $_[0];
-    my @addrs;
     
-    require Socket6;
-    fatal_error "Unknown Host ($net)" unless (@addrs = Socket6::gethostbyname2( $net, Socket6::AF_INET6()));
+    my ( $err, @addr_structs ) = Socket::getaddrinfo( $net, 0, {
+	family => Socket::AF_INET6,
+	protocol => Socket::IPPROTO_TCP,
+    } );
+    fatal_error "Unknown Host ($net)" if $err != 0;
 
-    shift @addrs for (1..4);
-    for ( @addrs ) {
-	$_ = Socket6::inet_ntop( Socket6::AF_INET6(), $_ );
-    }
+    my @addrs = translate_addr_structs( @addr_structs );
 
     @addrs;
 }
@@ -659,6 +655,19 @@ sub validate_6host( $$ ) {
     } else {
 	validate_6net( $host, $allow_name );
     }
+}
+
+sub translate_addr_structs {
+    my @addr_structs = @_;
+
+    my @addrs;
+    foreach my $addr_struct ( @addr_structs ) {
+	my ( $err, $ip_addr ) = Socket::getnameinfo( $addr_struct->{addr},
+	    Socket::NI_NUMERICHOST, Socket::NIx_NOSERV );
+        push @addrs, $ip_addr if $err == 0;
+    }
+
+    return @addrs;
 }
 
 my %ipv6_icmp_types = ( any                          => 'any',
