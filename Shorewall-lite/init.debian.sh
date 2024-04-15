@@ -13,8 +13,8 @@
 
 . /lib/lsb/init-functions
 
-SRWL='/sbin/shorewall -l'
-SRWL_OPTS="-tvv"
+SRWL=/sbin/shorewall
+SRWL_OPTS="-ltvv"
 test -n ${INITLOG:=/var/log/shorewall-lite-init.log}
 
 [ "$INITLOG" = "/dev/null" ] && SHOREWALL_INIT_SCRIPT=1 || SHOREWALL_INIT_SCRIPT=0
