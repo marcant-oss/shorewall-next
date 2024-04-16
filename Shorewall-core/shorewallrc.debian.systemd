@@ -22,3 +22,4 @@ SPARSE=Yes				#If non-empty, only install $PRODUCT/$PRODUCT.conf in $CONFDIR
 VARLIB=/var/lib				#Directory where product variable data is stored.
 VARDIR=${VARLIB}/$PRODUCT		#Directory where product variable data is stored.
 DEFAULT_PAGER=/usr/bin/less		#Pager to use if none specified in shorewall[6].conf
+STOPSERVICEFILE=stop_service.debian	#Name of script to stop systemd service that honours `SAFESTOP`.
