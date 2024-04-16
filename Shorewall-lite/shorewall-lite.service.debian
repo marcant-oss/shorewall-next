@@ -17,7 +17,7 @@ RemainAfterExit=yes
 EnvironmentFile=-/etc/default/shorewall-lite
 StandardOutput=syslog
 ExecStart=/sbin/shorewall-lite $OPTIONS start $STARTOPTIONS
-ExecStop=/sbin/shorewall-lite $OPTIONS clear
+ExecStop=/usr/share/shorewall/stop_service shorewall-lite
 ExecReload=/sbin/shorewall-lite $OPTIONS reload $RELOADOPTIONS
 
 [Install]
