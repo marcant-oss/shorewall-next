@@ -382,20 +382,18 @@ uptodate() {
 
     local dir
     local find
-    local quit
+    local quit=-quit
     local maxdepth
 
     find=$(mywhich find)
 
     [ -n "${find}" ] || return 1
 
-    if [ -h "${find}" ]; then
+    if [ -h "${find}" ] && ! qt ${find} . -name foo -print -quit ; then
 	#
-	# 'Find' is provided by Busybox and doesn't support -quit.
+	# 'Find' is provided by Busybox and this old versions don't support -quit.
 	#
         quit=
-    else
-        quit=-quit
     fi
 
     if [ "$AUTOMAKE" = recursive ]; then
