@@ -1533,7 +1533,7 @@ sub qt1( $ ) {
 }
 
 #
-# Delete the test chains
+# Delete the test chains and IP sets
 #
 sub cleanup_iptables() {
     qt1( "$iptables $iptablesw -F $sillyname" );
@@ -1554,6 +1554,12 @@ sub cleanup_iptables() {
     if ( $capabilities{RAW_TABLE} ) {
 	qt1( "$iptables $iptablesw -t raw -F $sillyname" );
 	qt1( "$iptables $iptablesw -t raw -X $sillyname" );
+    }
+
+    my $ipset  = $config{IPSET} || 'ipset';
+    $ipset = which( $ipset ) unless $ipset =~ '/';
+    if ( $ipset && -x $ipset ) {
+	qt( "$ipset -X $sillyname" );
     }
 
     $sillyname = $sillyname1 = '';
@@ -1600,7 +1606,7 @@ sub cleanup() {
     unlink ( $perlscriptname ), $perlscriptname = undef if $perlscriptname;
     unlink ( @tempfiles ), @tempfiles = ()              if @tempfiles;
     #
-    # Delete temporary chains
+    # Delete temporary chains and IP sets
     #
     cleanup_iptables if $sillyname;
 }
