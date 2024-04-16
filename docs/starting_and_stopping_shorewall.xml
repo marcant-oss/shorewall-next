@@ -206,12 +206,12 @@
   <section>
     <title>systemd</title>
 
-    <para>As with SysV init described in the preceeding section, the behavior
-    of systemctl commands differ from the Shorewall CLI commands on
-    Debian-based systems. To make systemctl stop shorewall[-lite] and
-    systemctl restart shorewall[-lite] behave like shorewall stop and
-    shorewall restart, use this workaround provided by J Cliff
-    Armstrong:</para>
+    <para>As with SysV init described in the preceeding section, the behavior of
+    systemctl commands differ from the Shorewall CLI commands on Debian-based
+    systems. In versions of Shorewall before 5.2.9, to make <command>systemctl
+    stop shorewall</command> and <command>systemctl restart shorewall</command>
+    behave like <command>shorewall stop</command> and <command>shorewall
+    restart</command>, use this workaround provided by J Cliff Armstrong:</para>
 
     <para> Type (as root):</para>
 
@@ -231,10 +231,14 @@ ExecStop=/sbin/shorewall $OPTIONS stop</programlisting>
 
     <para>to activate the changes. This change will survive future updates of
     the shorewall package from apt repositories. The override file itself will
-    be saved to `/etc/systemd/system/shorewall.service.d/`.</para>
+    be saved to <filename>/etc/systemd/system/shorewall.service.d/</filename>.</para>
 
     <para>The same workaround may be applied to the other Shorewall products
     (excluding Shorewall Init).</para>
+
+    <para>From Shorewall 5.2.9 onwards, the systemd service files have been
+    updated to execute a shell script that obeys the SAFESTOP setting to stop
+    the firewall, and the workaround is no longer necessary.</para>
   </section>
 
   <section id="Trace">
