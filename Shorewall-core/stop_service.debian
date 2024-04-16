@@ -1,0 +1,19 @@
+#!/bin/sh
+
+PRODUCT=$1
+
+. /etc/default/${PRODUCT}
+
+if [ "$SAFESTOP" = 1 ]; then
+  COMMAND=stop
+else
+  COMMAND=clear
+fi
+
+if [ "${PRODUCT}" = shorewall6 ]; then
+  EXEC="/sbin/shorewall -6"
+else
+  EXEC="/sbin/${PRODUCT}"
+fi
+
+exec ${EXEC} ${OPTIONS} ${COMMAND}
