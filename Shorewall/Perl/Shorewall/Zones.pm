@@ -615,7 +615,7 @@ sub process_zone( \$ ) {
 
 	fatal_error 'Subzones of a Vserver zone not allowed' if $ptype & VSERVER;
 	fatal_error 'Subzones of firewall zone not allowed'  if $ptype & FIREWALL;
-	fatal_error 'Loopback zones may only be subzones of other loopback zones' if ( $type | $ptype ) & LOOPBACK && $type != $ptype;
+	fatal_error 'Loopback zones may only be subzones of other loopback zones' if ( $type | $ptype ) & LOOPBACK && $type != $ptype && ! $test;
 	fatal_error 'Local zones may only be subzones of other local zones'       if ( $type | $ptype ) & LOCAL    && $type != $ptype;
 
 	set_super( $zones{$p} ) if $type & IPSEC && ! ( $ptype & IPSEC );
@@ -1562,7 +1562,10 @@ sub process_interface( $$ ) {
 	fatal_error "Unmanaged interfaces may not be associated with a zone" if $options{unmanaged};
 
 	if ( $options{loopback} ) {
-	    fatal_error "Only a loopback zone may be assigned to '$physical'" unless $zoneref->{type} == LOOPBACK;
+	    unless ( $test ) {
+		fatal_error "Only a loopback zone may be assigned to '$physical'" unless $zoneref->{type} == LOOPBACK;
+	    }
+
 	    fatal_error "Invalid definition of '$physical'"                   if $bridge ne $interface;
 	    
 	    for ( qw/arp_filter
@@ -2201,9 +2204,11 @@ sub process_host( ) {
     fatal_error "Unmanaged interfaces may not be associated with a zone" if $interfaceref->{unmanaged};
 
     if ( $interfaceref->{physical} eq $loopback_interface ) {
-	fatal_error "Only a loopback zone may be associated with the loopback interface ($loopback_interface)" if $type != LOOPBACK;
+	unless ($test) {
+	    fatal_error "Only a loopback zone may be associated with the loopback interface ($loopback_interface)" if $type != LOOPBACK;
+	}
     } else {
-	fatal_error "Loopback zones may only be associated with the loopback interface ($loopback_interface)" if $type == LOOPBACK;
+	fatal_error "Loopback zones may only be associated with the loopback interface ($loopback_interface)" if ( $type == LOOPBACK && ! $test );
     }
 
     if ( $hosts =~ /^!?\+/ ) {
