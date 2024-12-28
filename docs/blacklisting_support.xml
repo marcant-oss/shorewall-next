@@ -302,7 +302,7 @@ DROP            net:200.55.14.18        all
     <title>BLACKLIST and Fail2ban</title>
 
     <para>The BLACKLIST command can be used as 'blocktype' in
-    /etc/fail2ban/actions.d/shorewall.conf. Prior to Shorewall 5.2.5, this
+    /etc/fail2ban/action.d/shorewall.conf. Prior to Shorewall 5.2.5, this
     works best if there is no <emphasis role="bold">timeout</emphasis>
     specified in the DYNAMIC_BLACKLIST setting or if <emphasis
     role="bold">timeout=0</emphasis> is given.</para>
