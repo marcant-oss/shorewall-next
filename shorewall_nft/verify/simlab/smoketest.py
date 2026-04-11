@@ -838,20 +838,47 @@ def cmd_full(args: argparse.Namespace) -> int:
     # count it under ``routing_incompatible`` so the report still
     # carries the signal "this rule's dst is unreachable from
     # this zone pair".
-    dropped_routing = 0
+    dropped_dst_routing = 0
     kept: list = []
     for cat, expected, plan, meta in all_probes:
         routed = _routed_iface_for(plan["dst_ip"], ctl.state)
         if routed is None or routed != plan["dst_iface"]:
-            dropped_routing += 1
+            dropped_dst_routing += 1
             continue
         kept.append((cat, expected, plan, meta))
-    if dropped_routing:
+    if dropped_dst_routing:
         _flush_print(
-            f"autorepair: dropped {dropped_routing} probes whose dst_ip "
-            f"routes to a different iface than the dst zone implies "
-            f"(routing_incompatible)")
+            f"autorepair: dropped {dropped_dst_routing} probes whose "
+            f"dst_ip routes to a different iface than the dst zone "
+            f"implies (dst_routing_incompatible)")
     all_probes = kept
+
+    # Autorepair pass 4: drop test cases whose src_ip isn't
+    # reachable via src_iface either. Symmetric to pass 3 — the
+    # iptables rule was in an <adm>2<siem> chain meaning "traffic
+    # from src IP going adm→siem", but the src IP (often pulled
+    # from a rule's explicit saddr CIDR) may be a customer range
+    # that's only routable over a completely different upstream
+    # iface. When simlab injects that probe on bond0.18 (adm),
+    # the kernel either rp_filters it at ingress or drops it
+    # because there's no matching route back, so the adm-siem
+    # nft chain never fires even though the rule exists.
+    #
+    # Same filter as pass 3 but for src_ip / src_iface.
+    dropped_src_routing = 0
+    kept2: list = []
+    for cat, expected, plan, meta in all_probes:
+        routed = _routed_iface_for(plan["src_ip"], ctl.state)
+        if routed is None or routed != plan["src_iface"]:
+            dropped_src_routing += 1
+            continue
+        kept2.append((cat, expected, plan, meta))
+    if dropped_src_routing:
+        _flush_print(
+            f"autorepair: dropped {dropped_src_routing} probes whose "
+            f"src_ip is not reachable via the src zone's iface "
+            f"(src_routing_incompatible)")
+    all_probes = kept2
 
     # Split by category for reporting (we'll also run them together)
     by_cat: dict[str, list] = {
