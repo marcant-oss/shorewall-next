@@ -532,6 +532,7 @@ def write_config_dir(
     force: bool = False,
     write_scripts: bool = True,
     pretty: bool = True,
+    provenance: bool = False,
 ) -> list[Path]:
     """Serialise a :class:`ShorewalConfig` back to on-disk Shorewall files.
 
@@ -597,6 +598,40 @@ def write_config_dir(
             # applied to ``rules`` and ``blrules`` — other files
             # don't have a meaningful zone-pair semantic.
             should_reorder = name in ("rules", "blrules")
+
+            def _emit_block(rows_block: list[ConfigLine],
+                            hdr: list[str] | None) -> list[str]:
+                """Render one block of rows with optional provenance.
+
+                When ``provenance=True`` each rule gets a shell
+                comment ``# from <file>:<lineno>`` immediately
+                before its data line. Comments are interleaved
+                between aligned rows so a future bisect can blame
+                the origin file/line of any rule.
+                """
+                if not provenance:
+                    return _aligned_block(
+                        [list(r.columns) for r in rows_block], hdr)
+                # Need to interleave shell comments — render the
+                # aligned data first, then walk index-aligned and
+                # prepend per-row comments.
+                aligned = _aligned_block(
+                    [list(r.columns) for r in rows_block], hdr)
+                out_lines: list[str] = []
+                # The first element of `aligned` is the header
+                # (when hdr was passed) — keep it intact.
+                idx = 0
+                if hdr:
+                    out_lines.append(aligned[0])
+                    idx = 1
+                for i, ln in enumerate(rows_block):
+                    src_file = (ln.file or "").rsplit("/", 1)[-1]
+                    if src_file and ln.lineno:
+                        out_lines.append(
+                            f"# from {src_file}:{ln.lineno}")
+                    out_lines.append(aligned[idx + i])
+                return out_lines
+
             if is_sectioned(name):
                 by_section: dict[str, list[ConfigLine]] = {}
                 for ln in rows:
@@ -610,16 +645,13 @@ def write_config_dir(
                     if should_reorder:
                         rows_in_section = _reorder_rules_block(
                             rows_in_section)
-                    block_rows = [list(ln.columns)
-                                  for ln in rows_in_section]
                     lines_out.extend(
-                        _aligned_block(block_rows, header_cols))
+                        _emit_block(rows_in_section, header_cols))
                     header_cols = None  # only the first section gets one
             else:
                 ordered = (
                     _reorder_rules_block(rows) if should_reorder else rows)
-                block_rows = [list(ln.columns) for ln in ordered]
-                lines_out.extend(_aligned_block(block_rows, header_cols))
+                lines_out.extend(_emit_block(ordered, header_cols))
         else:
             if schema:
                 header = "#" + "\t".join(c.upper() for c in schema)
