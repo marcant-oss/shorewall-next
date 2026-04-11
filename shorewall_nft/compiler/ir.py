@@ -95,6 +95,11 @@ class FirewallIR:
     # arprules. The arp family is its own table type so we keep it
     # apart from the inet chains, which only see L3 IPv4/IPv6 traffic.
     arp_chains: dict[str, Chain] = field(default_factory=dict)
+    # Named counter objects from the nfacct file. Each entry maps a
+    # name to its (packets, bytes) initial values. Emitted as
+    # `counter <name> { packets N bytes M }` declarations at the
+    # top of the inet shorewall table.
+    nfacct_counters: dict[str, tuple[int, int]] = field(default_factory=dict)
 
     def add_chain(self, chain: Chain) -> None:
         self.chains[chain.name] = chain
@@ -245,6 +250,10 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     # Process arprules (arp family — separate table)
     if getattr(config, "arprules", None):
         _process_arprules(ir, config.arprules)
+
+    # Process nfacct (named counter objects in the inet table)
+    if getattr(config, "nfacct", None):
+        _process_nfacct(ir, config.nfacct)
 
     # Process conntrack helpers
     if config.conntrack:
@@ -1756,6 +1765,44 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
                     r.matches.append(Match(field=_saddr_field(h), value=h))
                 _add_proto(r, proto, dport, sport)
                 stopped_raw.rules.append(r)
+
+
+def _process_nfacct(ir: FirewallIR, nfacct_lines: list[ConfigLine]) -> None:
+    """Process the ``nfacct`` config file into named counter objects.
+
+    Shorewall's ``nfacct`` file declares named accounting objects
+    that the kernel maintains via the ``nfnetlink_acct`` module.
+    The closest nft equivalent is a named counter object —
+    ``counter <name> { packets N bytes M }`` — which can be
+    referenced from rules with ``counter name "<name>"``.
+
+    We map nfacct rows onto nft named counters and store them in
+    ``ir.nfacct_counters`` for the emitter to declare at the top
+    of the inet shorewall table. Initial values from the file
+    survive the table flush so reload-and-keep-counts is at
+    least theoretically possible (in practice nft resets named
+    counters on table flush; the field is here to capture intent
+    if/when we wire a counter snapshot/restore path through
+    libnftables).
+
+    Format::
+
+        NAME  [PACKETS  [BYTES]]
+    """
+    for line in nfacct_lines:
+        cols = line.columns
+        if not cols:
+            continue
+        name = cols[0]
+        try:
+            packets = int(cols[1]) if len(cols) > 1 and cols[1] != "-" else 0
+        except ValueError:
+            packets = 0
+        try:
+            byte_count = int(cols[2]) if len(cols) > 2 and cols[2] != "-" else 0
+        except ValueError:
+            byte_count = 0
+        ir.nfacct_counters[name] = (packets, byte_count)
 
 
 def _process_arprules(ir: FirewallIR, arprules: list[ConfigLine]) -> None:

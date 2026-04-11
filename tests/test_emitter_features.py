@@ -774,3 +774,38 @@ class TestArprules:
             warnings.simplefilter("always")
             self._ir([["FOO", "10.0.0.5", "-", "eth0", "-"]])
             assert any("unsupported action" in str(x.message) for x in w)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# nfacct — named counter declarations
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestNfacct:
+    def _ir(self, columns_list):
+        from shorewall_nft.config.parser import ConfigLine, load_config
+        config = load_config(MINIMAL_DIR)
+        config.nfacct = [
+            ConfigLine(columns=cols, file="nfacct", lineno=i)
+            for i, cols in enumerate(columns_list)
+        ]
+        return build_ir(config)
+
+    def test_emits_named_counter(self):
+        ir = self._ir([["http_in"]])
+        out = emit_nft(ir)
+        assert "counter http_in {" in out
+
+    def test_initial_packet_byte_values(self):
+        ir = self._ir([["seeded", "100", "5000"]])
+        out = emit_nft(ir)
+        assert "counter seeded { packets 100 bytes 5000 }" in out
+
+    def test_no_counter_block_when_no_nfacct(self):
+        from shorewall_nft.config.parser import load_config
+        config = load_config(MINIMAL_DIR)
+        ir = build_ir(config)
+        out = emit_nft(ir)
+        # The "Named accounting counters" comment is the marker for
+        # the nfacct block; absence proves nothing was emitted.
+        assert "Named accounting counters" not in out
