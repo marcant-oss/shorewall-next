@@ -183,21 +183,19 @@ class SimController:
 
     # ── probe dispatch ────────────────────────────────────────────
 
-    async def run_probes(self, probes: list[ProbeSpec]) -> list[ProbeSpec]:
-        """Inject every probe and wait for its matching response.
+    def _start_thread_pool(self) -> None:
+        """Spawn the reader+writer thread pool once per controller.
 
-        Spawns ``self._num_threads`` reader threads (default:
-        ``os.cpu_count()``). Each runs its own asyncio loop with
-        a partition of the TUN/TAP fds registered as readers;
-        ARP / NDP are answered inline and observations are pushed
-        onto ``self._obs_queue``. The main loop drains the queue
-        into ``_on_observed`` for probe correlation.
+        Idempotent: does nothing if the pool is already running.
+        The pool lives from first ``run_probes`` call until
+        ``_shutdown``; individual batch calls reuse it so the
+        ~5 ms per-thread setup cost is amortised across the whole
+        scan instead of being paid once per batch.
         """
+        if self._reader_threads:
+            return
         import queue as _queue
         import threading as _threading
-
-        self._loop = asyncio.get_running_loop()
-        self._obs_queue = _queue.SimpleQueue()
 
         ifaces = sorted(self._iface_fds.keys())
         n_pairs = max(1, min(self._num_threads, len(ifaces)))
@@ -210,13 +208,7 @@ class SimController:
             for iface in group
         }
 
-        # Spawn (reader, writer) pairs. Writers start first so that
-        # the reader's first ARP/NDP reply can already be queued.
-        self._reader_threads = []
-        self._writer_threads = []
-        self._reader_stop_events = []
-        self._writer_stop_events = []
-        self._write_queues = []
+        # Writers first so reader's first ARP/NDP reply has a queue.
         for pid, group in enumerate(groups):
             wq: _queue.SimpleQueue = _queue.SimpleQueue()
             self._write_queues.append(wq)
@@ -242,6 +234,33 @@ class SimController:
             r.start()
             self._reader_threads.append(r)
 
+        active_threads = _threading.active_count()
+        print(
+            f"threads: spawned {len(self._reader_threads)} reader + "
+            f"{len(self._writer_threads)} writer thread(s) "
+            f"(total alive={active_threads}); ifaces/pair="
+            f"{[len(g) for g in groups]}",
+            flush=True,
+        )
+
+    async def run_probes(self, probes: list[ProbeSpec]) -> list[ProbeSpec]:
+        """Inject every probe and wait for its matching response.
+
+        Uses the persistent reader+writer thread pool (see
+        :meth:`_start_thread_pool`). Threads live across all
+        ``run_probes`` calls so their setup cost is paid exactly
+        once per controller. Per-call state: a fresh
+        ``asyncio.Queue``-free observation queue and the drainer
+        task.
+        """
+        import queue as _queue
+
+        self._loop = asyncio.get_running_loop()
+        self._start_thread_pool()
+        # Per-run observation queue. Reset every call so the
+        # previous call's drained items don't leak into this one.
+        self._obs_queue = _queue.SimpleQueue()
+
         drainer_task = asyncio.create_task(self._drain_observations())
 
         futures: list[asyncio.Future] = []
@@ -260,26 +279,6 @@ class SimController:
             await drainer_task
         except (asyncio.CancelledError, Exception):
             pass
-        for stop_ev in self._reader_stop_events:
-            stop_ev.set()
-        for stop_ev in self._writer_stop_events:
-            stop_ev.set()
-        for t in self._reader_threads:
-            try:
-                t.join(timeout=1.0)
-            except Exception:
-                pass
-        for t in self._writer_threads:
-            try:
-                t.join(timeout=1.0)
-            except Exception:
-                pass
-        self._reader_threads = []
-        self._writer_threads = []
-        self._reader_stop_events = []
-        self._writer_stop_events = []
-        self._write_queues = []
-        self._iface_to_pair = {}
         self._obs_queue = None
 
         return probes
