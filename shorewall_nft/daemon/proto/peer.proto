@@ -1,0 +1,118 @@
+// shorewalld HA peer replication protocol.
+//
+// One message type carries all traffic between a pair (or small
+// cluster) of shorewalld nodes. The envelope encodes a sequence
+// number so receivers can detect gaps, an origin node id so loop
+// prevention is a one-line check, and a timestamp for out-of-order
+// heartbeat dedup.
+//
+// Transport: UDP, app-level chunking for anything over 1400 bytes
+// (``SnapshotResponse`` in particular — see docs/roadmap/shorewalld.md).
+// Auth: HMAC-SHA256 trailer appended after serialisation, NOT
+// part of the protobuf message.
+syntax = "proto2";
+package shorewalld;
+
+message PeerEnvelope {
+    // Monotonic per-sender. Loss detection uses (seq_prev + 1) !=
+    // seq_now. Wrap at 2^64 means we never wrap in practice.
+    required uint64 seq = 1;
+
+    // Wall-clock ns since epoch on the sender. Used for RTT
+    // estimation in heartbeats and to tie-break out-of-order
+    // duplicate detections.
+    required uint64 ts_unix_ns = 2;
+
+    // Opaque sender identity — typically the hostname. Receivers
+    // use this for loop prevention ("if origin == me, drop") and
+    // to label the per-peer metrics.
+    required string origin_node = 3;
+
+    // Protocol version — bumped on incompatible changes. Receivers
+    // reject envelopes with a version they don't understand so
+    // the upgrade path is loud-fail, not silent data corruption.
+    required uint32 proto_version = 4;
+
+    // Exactly one payload per envelope.
+    oneof payload {
+        DnsBatch          dns_batch = 10;
+        Heartbeat         heartbeat = 11;
+        SnapshotRequest   snapshot_request = 12;
+        SnapshotResponse  snapshot_response = 13;
+    }
+}
+
+// Incremental update: one or more DNS set element additions with
+// per-element TTL. Deletions are not replicated — natural TTL
+// expiry handles that on every node independently.
+message DnsBatch {
+    repeated DnsUpdate updates = 1;
+}
+
+message DnsUpdate {
+    // Canonicalised qname (lower-case, no trailing dot). The
+    // receiver looks this up in its own ``DnsSetTracker``; a name
+    // the receiver doesn't know is silently dropped.
+    required string qname = 1;
+
+    // Raw IP bytes — 4 for v4, 16 for v6. Separate repeated
+    // fields per family so the wire stays compact (no tagging
+    // byte per element) and the receiver's fast path can
+    // demultiplex in one branch per field.
+    repeated bytes a_rrs = 2;
+    repeated bytes aaaa_rrs = 3;
+
+    // TTL in seconds. Receivers clamp against their local per-
+    // name floor/ceil from the compiled allowlist so nothing the
+    // peer sends can override the operator's intent.
+    required uint32 ttl = 4;
+
+    // Optional rcode for observability — not used for routing
+    // decisions.
+    optional uint32 rcode = 5;
+}
+
+// Liveness + lightweight state dump. Sent every
+// ``PEER_HEARTBEAT_INTERVAL`` (default 5 s). Payload doubles as
+// the peer-state gauge that the local exporter publishes as
+// ``shorewalld_peer_*`` so Prometheus sees both nodes' health
+// from scraping either one.
+message Heartbeat {
+    required uint64 frames_accepted_total = 1;
+    required uint64 frames_dropped_total = 2;
+    required uint32 queue_depth = 3;
+    required uint32 nft_set_elements_total = 4;
+    required uint32 uptime_seconds = 5;
+    required string version = 6;
+}
+
+// Cold-boot resync trigger. A freshly-started node sends this to
+// its peer; the peer responds with a multi-chunk SnapshotResponse
+// stream.
+message SnapshotRequest {
+    required uint64 snapshot_id = 1;
+    // Optional filter — caller may request just a subset of set
+    // names. Empty means "send me everything".
+    repeated string qname_filter = 2;
+}
+
+// One chunk of a full-state dump. Emitted in response to a
+// SnapshotRequest. The sender splits the dump into chunks sized
+// so each envelope stays under the 1400-byte app MTU cap.
+// Receivers apply entries incrementally as chunks arrive.
+message SnapshotResponse {
+    required uint64 snapshot_id = 1;
+    required uint32 chunk_index = 2;
+    required uint32 total_chunks = 3;
+    repeated SetEntry entries = 4;
+}
+
+message SetEntry {
+    required string qname = 1;
+    required uint32 family = 2;       // 4 or 6
+    required bytes  ip = 3;           // 4 or 16 bytes
+    // Remaining seconds until expiry as of the snapshot's
+    // ts_unix_ns. Receiver subtracts transit time and clamps
+    // against its own TTL floor/ceil.
+    required uint32 remaining_ttl = 4;
+}

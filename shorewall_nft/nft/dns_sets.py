@@ -1,0 +1,419 @@
+"""Shared helpers for DNS-backed nftables sets.
+
+The compiler and shorewalld both need to agree on:
+
+1. **Naming** — how a hostname like ``api.stripe.com`` becomes an nft
+   set name. Must be deterministic so the compiler can declare the set
+   and shorewalld can write to the exact same one from dnstap/pbdns
+   frames without any string manipulation drift.
+
+2. **Set schema** — the type, flags, and size-limit of each DNS set.
+   Declared by the compiler inside ``inet shorewall``; populated at
+   runtime by shorewalld via ``add element inet shorewall <name>``.
+
+3. **Allowlist file format** — the compiler emits
+   ``/etc/shorewall/dnsnames.compiled`` listing every hostname that
+   appears in the active ruleset, together with the per-name
+   TTL floor/ceil/size overrides. shorewalld reads that file at
+   startup and loads it into its ``QnameFilter`` so only interesting
+   qnames make it past the two-pass decoder.
+
+Both sides import this module. Never duplicate the sanitisation rules
+anywhere else — drift between compiler-side and runtime-side naming
+means the ruleset references a set the daemon never populates.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# nftables identifier limit: 31 chars including trailing NUL on older
+# kernels, 255 on modern ones. We target 31 for maximum compatibility.
+# This leaves ``_v4`` / ``_v6`` suffix (3 chars) + ``dns_`` prefix (4)
+# = 7 overhead, leaving 24 chars for the sanitised qname body.
+MAX_SET_NAME_LEN = 31
+_PREFIX = "dns_"
+_SUFFIX_V4 = "_v4"
+_SUFFIX_V6 = "_v6"
+_BODY_LIMIT = MAX_SET_NAME_LEN - len(_PREFIX) - len(_SUFFIX_V4)
+
+# Default values — overridable per-name in the ``dnsnames`` config file
+# or globally via ``shorewall.conf`` keys ``DNS_SET_TTL_FLOOR``,
+# ``DNS_SET_TTL_CEIL``, ``DNS_SET_SIZE``.
+DEFAULT_TTL_FLOOR = 300      # seconds — don't let super-short TTLs thrash
+DEFAULT_TTL_CEIL = 86400     # seconds — cap pathological multi-day records
+DEFAULT_SET_SIZE = 512       # max elements per set
+
+# A character is safe for an nft identifier body if it matches this.
+_SAFE_CHAR = re.compile(r"[a-z0-9]")
+
+# A token is considered a DNS hostname if it contains at least one
+# letter, at least one dot, and no characters that belong to IPv4 or
+# IPv6 literals. Used by the rules parser to classify ``dns:…`` tokens.
+_HOST_LABEL = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,62}[a-zA-Z0-9])?$")
+
+
+@dataclass(frozen=True)
+class DnsSetSpec:
+    """Per-hostname override for compiled DNS sets.
+
+    A ``dnsnames`` file line produces one ``DnsSetSpec``; hostnames
+    that appear only in ``rules`` (no explicit entry) fall back to the
+    global defaults from ``shorewall.conf``.
+    """
+
+    qname: str                  # canonical lower-case form, no trailing dot
+    ttl_floor: int = DEFAULT_TTL_FLOOR
+    ttl_ceil: int = DEFAULT_TTL_CEIL
+    size: int = DEFAULT_SET_SIZE
+    comment: str = ""
+
+
+@dataclass
+class DnsSetRegistry:
+    """Collects every hostname referenced by the compiled ruleset.
+
+    Populated during IR build by ``_process_rules`` (when it sees a
+    ``dns:`` token) and ``_process_dnsnames`` (explicit declarations
+    from the ``dnsnames`` file). The emitter reads this at the end to
+    produce set declarations, and the start command writes the compiled
+    allowlist file that shorewalld consumes.
+    """
+
+    # qname → resolved spec (possibly a default-filled one)
+    specs: dict[str, DnsSetSpec] = field(default_factory=dict)
+    # Global defaults, applied to any qname that has no explicit entry.
+    default_ttl_floor: int = DEFAULT_TTL_FLOOR
+    default_ttl_ceil: int = DEFAULT_TTL_CEIL
+    default_size: int = DEFAULT_SET_SIZE
+
+    def add_from_rule(self, qname: str) -> DnsSetSpec:
+        """Register a hostname seen in ``rules``.
+
+        Creates a default-filled spec if none exists yet; leaves an
+        existing one untouched so per-name overrides from ``dnsnames``
+        always win over rule-origin discovery.
+        """
+        qn = canonical_qname(qname)
+        if qn not in self.specs:
+            self.specs[qn] = DnsSetSpec(
+                qname=qn,
+                ttl_floor=self.default_ttl_floor,
+                ttl_ceil=self.default_ttl_ceil,
+                size=self.default_size,
+            )
+        return self.specs[qn]
+
+    def add_spec(self, spec: DnsSetSpec) -> None:
+        """Register or replace a spec from the ``dnsnames`` config file."""
+        self.specs[canonical_qname(spec.qname)] = spec
+
+    def set_names(self, qname: str) -> tuple[str, str]:
+        """Return ``(v4_name, v6_name)`` for a hostname.
+
+        Deterministic: same input always yields the same pair, so the
+        compiler and runtime can agree without any shared state.
+        """
+        qn = canonical_qname(qname)
+        return qname_to_set_name(qn, "v4"), qname_to_set_name(qn, "v6")
+
+    def iter_sorted(self) -> list[DnsSetSpec]:
+        """Sorted list of specs for stable emitter output."""
+        return [self.specs[k] for k in sorted(self.specs)]
+
+
+# ---------------------------------------------------------------------------
+# Sanitisation and classification
+# ---------------------------------------------------------------------------
+
+
+def canonical_qname(qname: str) -> str:
+    """Lower-case and strip trailing dot from a DNS name.
+
+    ``Github.Com.`` → ``github.com``. The canonical form is what
+    registries and the tracker key on — never hash a mixed-case or
+    trailing-dot name without normalising first, or the compiler and
+    runtime will disagree about set identity.
+    """
+    s = qname.strip().lower()
+    if s.endswith("."):
+        s = s[:-1]
+    return s
+
+
+def is_dns_token(value: str) -> bool:
+    """True if ``value`` looks like a Shorewall ``dns:hostname`` token.
+
+    The compiler's rule parser calls this to classify DEST/SOURCE
+    column entries before deciding which match expression to emit.
+    """
+    return value.startswith("dns:") and len(value) > 4
+
+
+def qname_to_set_name(qname: str, family: str) -> str:
+    """Deterministic hostname → nft set name mapping.
+
+    Rules:
+
+    * Canonicalise to lower-case, strip trailing dot.
+    * Replace every non-``[a-z0-9]`` character (dots, hyphens, wildcards,
+      anything weird) with ``_``.
+    * Collapse runs of ``_`` so ``foo..bar`` and ``foo-.bar`` both
+      become ``foo_bar``.
+    * Truncate the body to ``MAX_SET_NAME_LEN - len("dns__v4") = 24``
+      characters. Truncation uses the SHA-1 prefix of the full qname
+      as a collision-safe tail so two long, similar names stay unique.
+    * Prepend ``dns_`` and append ``_v4`` / ``_v6`` per family.
+
+    Deterministic across Python versions — no ``hash()`` involved.
+    The SHA-1 is purely for collision avoidance on truncated names,
+    not for any security purpose.
+    """
+    qn = canonical_qname(qname)
+    # Sanitise body — replace unsafe characters with underscore.
+    body = "".join(
+        ch if _SAFE_CHAR.match(ch) else "_" for ch in qn)
+    # Collapse repeated underscores.
+    while "__" in body:
+        body = body.replace("__", "_")
+    body = body.strip("_")
+    if not body:
+        body = "x"
+
+    if len(body) > _BODY_LIMIT:
+        # Keep a deterministic short hash suffix so similarly-prefixed
+        # truncations stay unique. SHA-1 is not used for security here.
+        import hashlib
+        h = hashlib.sha1(qn.encode("utf-8")).hexdigest()[:6]
+        head_len = _BODY_LIMIT - len(h) - 1
+        body = f"{body[:head_len]}_{h}"
+
+    suffix = _SUFFIX_V4 if family == "v4" else _SUFFIX_V6
+    return f"{_PREFIX}{body}{suffix}"
+
+
+def is_valid_hostname(value: str) -> bool:
+    """Strict hostname validation used when parsing ``dns:`` tokens.
+
+    Rejects empty strings, IP literals disguised as hostnames, and
+    inputs with control characters or whitespace. Each label must
+    satisfy RFC 1035 length and character rules.
+    """
+    if not value or len(value) > 253:
+        return False
+    s = value.rstrip(".")
+    if not s:
+        return False
+    # IPv4 literal?
+    if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", s):
+        return False
+    # IPv6 literal?
+    if ":" in s:
+        return False
+    labels = s.split(".")
+    if len(labels) < 2:
+        return False
+    for label in labels:
+        if not _HOST_LABEL.match(label):
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# nft set declaration emission
+# ---------------------------------------------------------------------------
+
+
+def emit_dns_set_declarations(
+    registry: DnsSetRegistry, indent: str = "\t"
+) -> list[str]:
+    """Return nft script lines declaring all DNS sets.
+
+    Called by the emitter to append DNS set blocks to the
+    ``inet shorewall`` table body, right after the regular
+    ``emit_nft_sets()`` output. Each hostname produces two sets —
+    one for ``ipv4_addr`` and one for ``ipv6_addr`` — so dual-stack
+    rules can reference either half.
+
+    Format::
+
+        set dns_github_com_v4 {
+                type ipv4_addr;
+                flags timeout;
+                size 512;
+        }
+        set dns_github_com_v6 {
+                type ipv6_addr;
+                flags timeout;
+                size 512;
+        }
+
+    ``timeout`` flag is mandatory — shorewalld adds elements with
+    per-element timeouts derived from the DNS answer's TTL, so the
+    set must accept timeout values.
+    """
+    if not registry.specs:
+        return []
+    lines: list[str] = []
+    lines.append("")
+    lines.append(f"{indent}# DNS-managed sets (populated by shorewalld")
+    lines.append(f"{indent}# from dnstap/pbdns frames; see dnsnames.compiled)")
+    for spec in registry.iter_sorted():
+        v4_name, v6_name = qname_to_set_name(spec.qname, "v4"), \
+            qname_to_set_name(spec.qname, "v6")
+        for name, nft_type in ((v4_name, "ipv4_addr"), (v6_name, "ipv6_addr")):
+            if spec.comment:
+                lines.append(
+                    f'{indent}# {spec.qname}: {spec.comment}')
+            else:
+                lines.append(f"{indent}# {spec.qname}")
+            lines.append(f"{indent}set {name} {{")
+            lines.append(f"{indent}\ttype {nft_type};")
+            lines.append(f"{indent}\tflags timeout;")
+            lines.append(f"{indent}\tsize {spec.size};")
+            lines.append(f"{indent}}}")
+            lines.append("")
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Compiled allowlist file — the compiler↔shorewalld interface
+# ---------------------------------------------------------------------------
+
+
+ALLOWLIST_HEADER = (
+    "# shorewall-nft compiled DNS name allowlist.\n"
+    "# Generated by the compiler — do not edit by hand.\n"
+    "# Columns: qname ttl_floor ttl_ceil size comment\n"
+)
+
+
+def write_compiled_allowlist(
+    registry: DnsSetRegistry, path: Path
+) -> None:
+    """Write the per-qname allowlist file consumed by shorewalld.
+
+    One line per hostname in stable sorted order. The file serves two
+    purposes:
+
+    * **Allowlist**: shorewalld's two-pass decoder rejects any frame
+      whose qname is not in this file before the expensive full decode.
+    * **Per-name overrides**: the daemon honours the per-name TTL
+      floor/ceil and set size when pushing elements, so the compiler's
+      intent stays authoritative.
+
+    Atomic write via temp-and-rename so a concurrent daemon reload
+    never sees a half-written file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    parts = [ALLOWLIST_HEADER]
+    for spec in registry.iter_sorted():
+        comment = spec.comment.replace("\t", " ").replace("\n", " ")
+        parts.append(
+            f"{spec.qname}\t{spec.ttl_floor}\t"
+            f"{spec.ttl_ceil}\t{spec.size}\t{comment}\n")
+    tmp.write_text("".join(parts))
+    tmp.replace(path)
+
+
+def read_compiled_allowlist(path: Path) -> DnsSetRegistry:
+    """Parse the compiled allowlist back into a :class:`DnsSetRegistry`.
+
+    Used by shorewalld at startup (and on reload-monitor signals) to
+    load the current set of managed hostnames without re-parsing the
+    raw ``dnsnames`` file — the compiled form is the stable contract.
+    """
+    registry = DnsSetRegistry()
+    if not path.exists():
+        return registry
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) < 4:
+            continue
+        try:
+            qn = canonical_qname(cols[0])
+            ttl_floor = int(cols[1])
+            ttl_ceil = int(cols[2])
+            size = int(cols[3])
+        except ValueError:
+            continue
+        comment = cols[4] if len(cols) > 4 else ""
+        registry.add_spec(DnsSetSpec(
+            qname=qn,
+            ttl_floor=ttl_floor,
+            ttl_ceil=ttl_ceil,
+            size=size,
+            comment=comment,
+        ))
+    return registry
+
+
+def parse_dnsnames_file(
+    lines: list[str] | list["object"],
+    default_ttl_floor: int = DEFAULT_TTL_FLOOR,
+    default_ttl_ceil: int = DEFAULT_TTL_CEIL,
+    default_size: int = DEFAULT_SET_SIZE,
+) -> list[DnsSetSpec]:
+    """Parse raw rows of the ``dnsnames`` config file.
+
+    Format (columns separated by whitespace, ``-`` for "use default"):
+
+    ::
+
+        # NAME            TTL_FLOOR  TTL_CEIL  SIZE   COMMENT
+        github.com        300        86400     256    GitHub API+web
+        api.stripe.com    60         3600      64     Payment webhooks
+        cdn.example.com   -          -         -      Uses defaults
+
+    Input is either a raw list of strings (one line each) or the
+    ``ConfigLine`` objects produced by the columnar parser; the
+    function accepts both by duck-typing on ``.columns``.
+    """
+    specs: list[DnsSetSpec] = []
+    for item in lines:
+        cols: list[str]
+        if hasattr(item, "columns"):
+            cols = list(item.columns)  # type: ignore[arg-type]
+        elif isinstance(item, str):
+            stripped = item.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            cols = stripped.split()
+        else:
+            continue
+        if not cols:
+            continue
+        qname = cols[0]
+        if not is_valid_hostname(qname):
+            continue
+        floor = _int_or_default(cols[1] if len(cols) > 1 else "-",
+                                default_ttl_floor)
+        ceil = _int_or_default(cols[2] if len(cols) > 2 else "-",
+                               default_ttl_ceil)
+        size = _int_or_default(cols[3] if len(cols) > 3 else "-",
+                               default_size)
+        comment = " ".join(cols[4:]) if len(cols) > 4 else ""
+        specs.append(DnsSetSpec(
+            qname=canonical_qname(qname),
+            ttl_floor=floor,
+            ttl_ceil=ceil,
+            size=size,
+            comment=comment,
+        ))
+    return specs
+
+
+def _int_or_default(value: str, default: int) -> int:
+    v = value.strip()
+    if not v or v == "-":
+        return default
+    try:
+        return int(v)
+    except ValueError:
+        return default

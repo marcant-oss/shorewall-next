@@ -1,0 +1,102 @@
+// PowerDNS recursor / authoritative protobuf logger schema.
+//
+// Upstream: pdns source tree ``pdns/dnsmessage.proto``.
+// Vendored here so shorewalld can decode ``protobufServer``
+// frames without a build-time dep on the pdns source.
+//
+// PowerDNS emits this format via the ``protobufServer()`` Lua
+// directive. It's a different wire format from dnstap:
+//
+//   * No FrameStream handshake — length-prefixed messages only.
+//   * Answer records are **pre-decomposed** into typed fields.
+//     That's the key efficiency win over dnstap: we don't need
+//     dnspython to pull A/AAAA values out of raw DNS wire bytes,
+//     the recursor has already done the parse for us.
+//
+// Only the fields shorewalld actually reads are commented with
+// "— used by shorewalld". The rest are kept to match the
+// upstream wire layout so the generated python module can
+// decode any pdns protobuf frame without failing on optional
+// fields we don't consume.
+syntax = "proto2";
+package PBDNSMessage;
+
+message PBDNSMessage {
+    enum Type {
+        DNSQueryType = 1;
+        DNSResponseType = 2;        // — used by shorewalld
+        DNSOutgoingQueryType = 3;
+        DNSIncomingResponseType = 4;
+    }
+    enum SocketFamily {
+        INET = 1;
+        INET6 = 2;
+    }
+    enum SocketProtocol {
+        UDP = 1;
+        TCP = 2;
+    }
+    required Type type = 1;                        // — used by shorewalld
+    optional bytes messageId = 2;
+    optional bytes serverIdentity = 3;
+    optional SocketFamily socketFamily = 4;
+    optional SocketProtocol socketProtocol = 5;
+    optional bytes from = 6;
+    optional bytes to = 7;
+    optional uint64 inBytes = 8;
+    optional uint32 timeSec = 9;
+    optional uint32 timeUsec = 10;
+    optional uint32 id = 11;
+    optional DNSQuestion question = 12;            // — used by shorewalld
+    optional DNSResponse response = 13;            // — used by shorewalld
+    optional bytes originalRequestorSubnet = 14;
+    optional string requestorId = 15;
+    optional bytes initialRequestId = 16;
+    optional bytes deviceId = 17;
+    optional bool newlyObservedDomain = 18;
+    optional string deviceName = 19;
+    optional uint32 fromPort = 20;
+    optional uint32 toPort = 21;
+    optional string deviceType = 22;
+    optional uint32 responseElapsedUsec = 23;
+    optional bytes openTelemetryData = 24;
+
+    message DNSQuestion {
+        optional string qName = 1;                  // — used by shorewalld
+        optional uint32 qType = 2;                  // — used by shorewalld
+        optional uint32 qClass = 3;
+    }
+
+    message DNSResponse {
+        optional uint32 rcode = 1;                  // — used by shorewalld
+        repeated DNSRR rrs = 2;                     // — used by shorewalld
+        optional string appliedPolicy = 3;
+        repeated string tags = 4;
+        optional uint32 queryTimeSec = 5;
+        optional uint32 queryTimeUsec = 6;
+        optional string appliedPolicyType = 7;
+        optional string appliedPolicyTrigger = 8;
+        optional string appliedPolicyHit = 9;
+        optional PolicyKind appliedPolicyKind = 10;
+        optional string appliedPolicyMeta = 11;
+        optional bool validationState = 12;
+
+        message DNSRR {
+            optional string name = 1;               // — used by shorewalld
+            optional uint32 type = 2;               // — used by shorewalld
+            optional uint32 class = 3;
+            optional uint32 ttl = 4;                // — used by shorewalld
+            optional bytes rdata = 5;               // — used by shorewalld
+            optional bool udr = 6;
+        }
+
+        enum PolicyKind {
+            NoAction = 0;
+            Drop = 1;
+            NXDOMAIN = 2;
+            NODATA = 3;
+            Truncate = 4;
+            Custom = 5;
+        }
+    }
+}

@@ -13,6 +13,16 @@ from pathlib import Path
 
 from shorewall_nft.config.parser import ConfigLine, ShorewalConfig
 from shorewall_nft.config.zones import ZoneModel, build_zone_model
+from shorewall_nft.nft.dns_sets import (
+    DEFAULT_SET_SIZE,
+    DEFAULT_TTL_CEIL,
+    DEFAULT_TTL_FLOOR,
+    DnsSetRegistry,
+    canonical_qname,
+    is_valid_hostname,
+    parse_dnsnames_file,
+    qname_to_set_name,
+)
 
 
 class Verdict(Enum):
@@ -100,6 +110,12 @@ class FirewallIR:
     # `counter <name> { packets N bytes M }` declarations at the
     # top of the inet shorewall table.
     nfacct_counters: dict[str, tuple[int, int]] = field(default_factory=dict)
+    # DNS-backed nft set registry — populated from rules that use
+    # ``dns:hostname`` tokens and from the optional ``dnsnames`` file.
+    # The emitter reads this to declare one ``dns_<name>_v4`` /
+    # ``dns_<name>_v6`` pair per hostname, and the start command writes
+    # a compiled allowlist for shorewalld to consume at runtime.
+    dns_registry: DnsSetRegistry = field(default_factory=DnsSetRegistry)
 
     def add_chain(self, chain: Chain) -> None:
         self.chains[chain.name] = chain
@@ -216,6 +232,35 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     zones = build_zone_model(config)
     ir = FirewallIR(zones=zones, settings=config.settings)
     ir._fastaccept = config.settings.get("FASTACCEPT", "Yes").lower() in ("yes", "1")
+
+    # Seed DNS set registry with global defaults from shorewall.conf;
+    # per-name overrides from the ``dnsnames`` config file win over
+    # these defaults, and rule-discovered hostnames fall back to them.
+    try:
+        ir.dns_registry.default_ttl_floor = int(
+            config.settings.get("DNS_SET_TTL_FLOOR", DEFAULT_TTL_FLOOR))
+    except (TypeError, ValueError):
+        ir.dns_registry.default_ttl_floor = DEFAULT_TTL_FLOOR
+    try:
+        ir.dns_registry.default_ttl_ceil = int(
+            config.settings.get("DNS_SET_TTL_CEIL", DEFAULT_TTL_CEIL))
+    except (TypeError, ValueError):
+        ir.dns_registry.default_ttl_ceil = DEFAULT_TTL_CEIL
+    try:
+        ir.dns_registry.default_size = int(
+            config.settings.get("DNS_SET_SIZE", DEFAULT_SET_SIZE))
+    except (TypeError, ValueError):
+        ir.dns_registry.default_size = DEFAULT_SET_SIZE
+
+    # Per-name overrides from the ``dnsnames`` config file, if present.
+    if getattr(config, "dnsnames", None):
+        for spec in parse_dnsnames_file(
+            config.dnsnames,
+            default_ttl_floor=ir.dns_registry.default_ttl_floor,
+            default_ttl_ceil=ir.dns_registry.default_ttl_ceil,
+            default_size=ir.dns_registry.default_size,
+        ):
+            ir.dns_registry.add_spec(spec)
 
     # Load custom macros (user-defined take precedence)
     _load_custom_macros(config.macros)
@@ -551,6 +596,90 @@ def _expand_zone_list(spec: str, zones: ZoneModel) -> list[str]:
     return pieces
 
 
+def _spec_contains_dns_token(spec: str) -> bool:
+    """Cheap test for ``dns:HOSTNAME`` embedded in a raw spec column.
+
+    Covers every shape the compiler's rule parser accepts for a
+    DNS-managed address: bare ``dns:host``, zone-prefixed
+    ``net:dns:host``, leading negation ``!dns:host``, and
+    zone-prefixed inner negation ``net:!dns:host``. We only need to
+    know *whether* to run the DNS pre-pass — the rewriter below
+    reconstructs the exact form.
+    """
+    return (
+        spec.startswith("dns:")
+        or spec.startswith("!dns:")
+        or ":dns:" in spec
+        or ":!dns:" in spec
+    )
+
+
+def _rewrite_dns_spec(
+    spec: str,
+    registry: DnsSetRegistry,
+    family: str,
+) -> str:
+    """Replace any ``dns:hostname`` token in ``spec`` with the
+    compiled set-reference sentinel ``+dns_<sanitised>_<family>``.
+
+    Supports every negation shape Shorewall accepts:
+
+    * ``dns:host``                — bare
+    * ``!dns:host``               — whole-spec negation
+    * ``net:dns:host``            — zone-prefixed
+    * ``net:!dns:host``           — zone-prefixed with inner negation
+    * ``<dns:host>`` / ``net:<dns:host>`` — ipv6 angle brackets (rare
+      but grammatically valid)
+
+    The zone prefix (if any) and negation marker (wherever it sat)
+    are preserved verbatim on the rewritten sentinel so
+    ``_parse_zone_spec`` and ``_add_rule`` downstream handle it
+    with their existing codepaths.
+
+    Side-effect: registers the canonicalised hostname with
+    ``registry`` so the emitter later produces matching set
+    declarations. Invalid hostnames are left untouched — the
+    caller's existing parser will reject them with a syntactic
+    error further down the line.
+    """
+    prefix = ""
+    body = spec
+    sentinel_negate = ""
+
+    if body.startswith("dns:"):
+        host = body[4:]
+    elif body.startswith("!dns:"):
+        sentinel_negate = "!"
+        host = body[5:]
+    else:
+        # ``zone:[!]dns:hostname`` — split off the zone prefix at the
+        # first colon. What follows is either ``dns:host`` or
+        # ``!dns:host``.
+        colon = body.find(":")
+        if colon < 0:
+            return spec
+        prefix = body[: colon + 1]
+        rest = body[colon + 1:]
+        if rest.startswith("dns:"):
+            host = rest[4:]
+        elif rest.startswith("!dns:"):
+            sentinel_negate = "!"
+            host = rest[5:]
+        else:
+            return spec
+
+    # Strip any ipv6 angle brackets — grammatically legal for DNS
+    # tokens even though they're nonsensical.
+    host = host.rstrip(">").lstrip("<")
+    if not is_valid_hostname(host):
+        return spec
+
+    qn = canonical_qname(host)
+    registry.add_from_rule(qn)
+    set_name = qname_to_set_name(qn, family)
+    return f"{prefix}{sentinel_negate}+{set_name}"
+
+
 def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
                    zones: ZoneModel) -> None:
     """Process firewall rules into chain rules."""
@@ -562,6 +691,35 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
         action_str = cols[0]
         source_spec_raw = cols[1] if len(cols) > 1 else "all"
         dest_spec_raw = cols[2] if len(cols) > 2 else "all"
+
+        # DNS-token pre-pass: if SOURCE or DEST carries ``dns:HOST``,
+        # clone the rule line into two family-specific variants. Each
+        # clone references the deterministic set name the emitter will
+        # declare, so the downstream pipeline sees only ``+dns_*_v4``
+        # or ``+dns_*_v6`` sentinels and never a raw hostname.
+        if (_spec_contains_dns_token(source_spec_raw)
+                or _spec_contains_dns_token(dest_spec_raw)):
+            for family in ("v4", "v6"):
+                new_cols = list(cols)
+                new_cols[1] = _rewrite_dns_spec(
+                    source_spec_raw, ir.dns_registry, family)
+                if len(new_cols) > 2:
+                    new_cols[2] = _rewrite_dns_spec(
+                        dest_spec_raw, ir.dns_registry, family)
+                elif _spec_contains_dns_token(dest_spec_raw):
+                    new_cols.append(_rewrite_dns_spec(
+                        dest_spec_raw, ir.dns_registry, family))
+                expanded_line = ConfigLine(
+                    columns=new_cols,
+                    file=line.file,
+                    lineno=line.lineno,
+                    comment_tag=line.comment_tag,
+                    section=line.section,
+                    raw=line.raw,
+                    format_version=line.format_version,
+                )
+                _process_rules(ir, [expanded_line], zones)
+            continue
 
         # Expand comma-separated zone lists in SOURCE and DEST.
         # One rule line may become N×M processed rules.
@@ -940,6 +1098,17 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     mac = clean_addr[1:].replace("-", ":").lower()
                     rule.matches.append(
                         Match(field="ether saddr", value=mac, negate=negate))
+                elif clean_addr.startswith("+dns_") and clean_addr.endswith("_v6"):
+                    # DNS-backed set sentinel produced by the pre-pass
+                    # in _process_rules. Force ip6 family; bare name
+                    # has no colons, so _is_ipv6 would misclassify.
+                    rule.matches.append(Match(
+                        field="ip6 saddr", value=clean_addr, negate=negate))
+                    has_v6_addr = True
+                elif clean_addr.startswith("+dns_") and clean_addr.endswith("_v4"):
+                    rule.matches.append(Match(
+                        field="ip saddr", value=clean_addr, negate=negate))
+                    has_v4_addr = True
                 elif _is_ipv6(clean_addr):
                     rule.matches.append(Match(field="ip6 saddr", value=clean_addr, negate=negate))
                     has_v6_addr = True
@@ -950,7 +1119,15 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             if dst_addrs:
                 negate = dst_addrs.startswith("!")
                 clean_addr = dst_addrs.lstrip("!")
-                if _is_ipv6(clean_addr):
+                if clean_addr.startswith("+dns_") and clean_addr.endswith("_v6"):
+                    rule.matches.append(Match(
+                        field="ip6 daddr", value=clean_addr, negate=negate))
+                    has_v6_addr = True
+                elif clean_addr.startswith("+dns_") and clean_addr.endswith("_v4"):
+                    rule.matches.append(Match(
+                        field="ip daddr", value=clean_addr, negate=negate))
+                    has_v4_addr = True
+                elif _is_ipv6(clean_addr):
                     rule.matches.append(Match(field="ip6 daddr", value=clean_addr, negate=negate))
                     has_v6_addr = True
                 else:

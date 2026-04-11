@@ -72,6 +72,69 @@ Already committed on this branch since 1.0.0:
   `ip netns exec` reaches host processes (ip netns provides no
   PID isolation) — the fix in commit `aa45f78ca` is load-bearing.
 
+## shorewalld performance doctrine
+
+Every code path in `shorewall_nft/daemon/` is hot. Target load is
+20 000 DNS answers/s across dnstap + PBDNSMessage + HA peer UDP
+ingestion. Write code as if each touched byte costs you budget:
+
+- **Don't copy data, pass pointers.** memoryview/slices over the
+  original frame buffer all the way through decode. No intermediate
+  `bytes(...)` copies, no f-string reassembly of qnames we throw
+  away a microsecond later.
+- **Filter before decode.** Two-pass decoder: walk the varint
+  stream far enough to read the discriminator fields (message type,
+  qname), consult the allowlist, and *only then* do the full parse.
+  99 % of frames are waste — don't pay their full cost.
+- **Batch at the netlink boundary.** Every libnftables `add element`
+  is a netlink round-trip. Coalesce updates per `(set, netns)` in a
+  short window and emit one command carrying N elements. Single
+  updates at 20 k/s will melt the scheduler.
+- **Dedup aggressively.** `(set_name, ip) → expiry` LRU cache; skip
+  the write if the existing timeout covers >50 % of the new TTL.
+  Cache hits from the recursor repeat themselves endlessly.
+- **Threading: match the work type.** Decode is GIL-bound Python →
+  real `threading.Thread` workers sized to `os.cpu_count()`, pulling
+  from a bounded `queue.Queue`. SetWriter and all nft mutations live
+  on the single asyncio event loop (libnftables is not thread-safe;
+  funnel through one coroutine). Sockets (dnstap, pbdns, peer) are
+  asyncio readers. No thread-pools for IO, no asyncio for CPU-bound
+  work.
+- **Zero-fork.** Never shell out. libnftables in-process via
+  `NftInterface`, pyroute2 for link stats, direct `/proc` reads for
+  ct counters. If a new metric tempts you to spawn `ss`/`ip`/`nft`,
+  write the netlink path instead.
+- **Bounded everything.** Every queue, every cache, every retry
+  counter has an explicit cap. Drops are counted as metrics, not
+  swallowed. An overloaded daemon must degrade gracefully — slower
+  convergence is acceptable, growing RSS is not.
+- **Measure before optimising further.** Scrape-duration histograms,
+  per-stage queue depths, batch-size histograms are all first-class
+  metrics. The profiler is a fallback; metrics are the first line
+  of defence.
+- **Peer-link UDP: never fragment at IP.** Set
+  ``IP_MTU_DISCOVER=IP_PMTUDISC_DO`` on the peer socket so the kernel
+  sets DF and raises ``EMSGSIZE`` on oversize sends — that's the loud
+  failure we want. Cap every envelope at 1400 bytes *before*
+  serialisation. Large payloads (``SnapshotResponse`` especially)
+  split into app-level chunks with ``chunk_index``/``total_chunks``
+  fields; receivers apply chunks incrementally via SetWriter and
+  drop the partial snapshot after a short timeout. No IP fragments,
+  no reassembly state to lose.
+- **Logging discipline in the hot path.** Never emit a log line per
+  frame — a 20 k/s stream would flood any sink and stall the decoder
+  on stdio locks. Allowed: per-batch-commit, per-reload, per-peer-
+  heartbeat, per-config-load. Persistent warnings from a hot loop
+  must go through ``daemon.logsetup.RateLimiter.warn`` with a
+  category key so repeated firings are deduped inside the
+  ``LOG_RATE_LIMIT_WINDOW``. Metrics tell you *how often* something
+  happens; logs tell you *that it happened and why*. Pick the right
+  one — usually the metric.
+
+These apply to every future shorewalld contribution. If you're
+touching daemon code and can't explain which of these principles
+your change respects, you're probably making it slower.
+
 ## Debug lessons (do not re-learn these the hard way)
 
 - **If `nft monitor trace` shows nothing**, the cause is

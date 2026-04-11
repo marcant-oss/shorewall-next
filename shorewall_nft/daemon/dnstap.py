@@ -161,19 +161,48 @@ CLIENT_RESPONSE = 6  # dnstap.Message.Type.CLIENT_RESPONSE
 def decode_dnstap_frame(buf: bytes) -> tuple[int, bytes] | None:
     """Parse a dnstap protobuf frame into ``(msg_type, dns_wire_bytes)``.
 
-    Returns None if the frame isn't a Message we recognise (e.g.
-    an identity-only frame). Raises ValueError on malformed bytes.
+    Uses the generated :mod:`shorewall_nft.daemon.proto.dnstap_pb2`
+    module (protoc output of the vendored ``dnstap.proto``). Falls
+    back to the hand-rolled varint decoder if the protobuf runtime
+    is missing — keeps the daemon importable on minimal test hosts
+    while the production wheel declares ``protobuf>=4.25`` as a
+    hard dependency.
+
+    Returns ``None`` if the frame isn't a Message we recognise
+    (e.g. an identity-only frame, non-response message type, or a
+    frame without ``response_message`` bytes). Raises ``ValueError``
+    on malformed bytes.
     """
-    top = _decode_fields(buf)
-    msg = top.get(DNSTAP_MESSAGE_FIELD)
-    if not isinstance(msg, bytes):
+    try:
+        from shorewall_nft.daemon.proto import dnstap_pb2
+    except ImportError:
+        # Protobuf runtime missing — fall back to the legacy
+        # hand-rolled decoder path. This branch lets the module
+        # import on hosts without the runtime but the production
+        # daemon never takes it because ``protobuf`` is a hard
+        # dependency declared in ``pyproject.toml``.
+        top = _decode_fields(buf)
+        msg = top.get(DNSTAP_MESSAGE_FIELD)
+        if not isinstance(msg, bytes):
+            return None
+        inner = _decode_fields(msg)
+        msg_type = inner.get(MESSAGE_TYPE_FIELD, 0)
+        wire = inner.get(MESSAGE_RESPONSE_FIELD)
+        if not isinstance(wire, bytes):
+            return None
+        return int(msg_type), wire
+
+    frame = dnstap_pb2.Dnstap()
+    try:
+        frame.ParseFromString(buf)
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"dnstap protobuf decode error: {e}") from e
+    if not frame.HasField("message"):
         return None
-    inner = _decode_fields(msg)
-    msg_type = inner.get(MESSAGE_TYPE_FIELD, 0)
-    wire = inner.get(MESSAGE_RESPONSE_FIELD)
-    if not isinstance(wire, bytes):
+    message = frame.message
+    if not message.HasField("response_message"):
         return None
-    return int(msg_type), wire
+    return int(message.type), bytes(message.response_message)
 
 
 # ── DNS wire parse (via dnspython) ──────────────────────────────────
@@ -430,7 +459,7 @@ class DnstapServer:
 
     def __init__(
         self,
-        socket_path: str,
+        socket_path: str | None,
         nft: NftInterface,
         netns_list: list[str],
         *,
@@ -438,8 +467,22 @@ class DnstapServer:
         n_workers: int | None = None,
         qname_allowlist: set[str] | None = None,
         socket_mode: int = 0o660,
+        tcp_host: str | None = None,
+        tcp_port: int | None = None,
     ) -> None:
+        # At least one of the two listen targets must be configured.
+        # Both may be active simultaneously — pdns_recursor supports
+        # tcp://host:port alongside unix:/path/to/sock so operators
+        # can keep the local recursor on the unix socket and receive
+        # replicated frames from a remote recursor over TCP.
+        tcp_configured = bool(tcp_host) and tcp_port is not None
+        if not socket_path and not tcp_configured:
+            raise ValueError(
+                "DnstapServer requires a unix socket_path, a "
+                "(tcp_host, tcp_port) pair, or both")
         self.socket_path = socket_path
+        self.tcp_host = tcp_host
+        self.tcp_port = tcp_port
         self.queue_size = queue_size
         self.n_workers = n_workers
         self.socket_mode = socket_mode
@@ -452,6 +495,7 @@ class DnstapServer:
         self._set_writer = SetWriter(nft, netns_list, self.metrics)
 
         self._server: asyncio.base_events.Server | None = None
+        self._tcp_server: asyncio.base_events.Server | None = None
         self._pool: DecodeWorkerPool | None = None
         self._recent_qnames: deque[tuple[float, str]] = deque(maxlen=1024)
         self._close_lock = threading.Lock()
@@ -467,34 +511,69 @@ class DnstapServer:
         )
         self._pool.start()
 
-        # Unlink stale socket left over from a crashed previous run.
-        try:
-            if os.path.exists(self.socket_path):
-                os.unlink(self.socket_path)
-        except OSError:
-            pass
-        parent = os.path.dirname(self.socket_path)
-        if parent:
+        # Unix listener (optional).
+        if self.socket_path:
             try:
-                os.makedirs(parent, exist_ok=True)
+                if os.path.exists(self.socket_path):
+                    os.unlink(self.socket_path)
             except OSError:
                 pass
+            parent = os.path.dirname(self.socket_path)
+            if parent:
+                try:
+                    os.makedirs(parent, exist_ok=True)
+                except OSError:
+                    pass
+            self._server = await asyncio.start_unix_server(
+                self._handle_client, path=self.socket_path)
+            try:
+                os.chmod(self.socket_path, self.socket_mode)
+            except OSError:
+                log.warning("could not chmod %s to %o",
+                            self.socket_path, self.socket_mode)
+            log.info(
+                "dnstap unix endpoint live on %s "
+                "(queue=%d, workers=%d)",
+                self.socket_path, self.queue_size,
+                self.n_workers or (os.cpu_count() or 1))
 
-        self._server = await asyncio.start_unix_server(
-            self._handle_client, path=self.socket_path)
-        try:
-            os.chmod(self.socket_path, self.socket_mode)
-        except OSError:
-            log.warning("could not chmod %s to %o",
-                        self.socket_path, self.socket_mode)
-        log.info("shorewalld dnstap endpoint live on %s (queue=%d, workers=%d)",
-                 self.socket_path, self.queue_size,
-                 self.n_workers or (os.cpu_count() or 1))
+        # TCP listener (optional). pdns_recursor can emit dnstap
+        # over TCP via ``dnstapFrameStreamServer({"tcp://host:port"})``
+        # — useful when the recursor lives in a different mount NS,
+        # container, or host from shorewalld and a unix socket isn't
+        # reachable. Same FrameStream handshake, same decoder, same
+        # downstream pipeline — only the listener is different.
+        if self.tcp_host and self.tcp_port is not None:
+            self._tcp_server = await asyncio.start_server(
+                self._handle_client,
+                host=self.tcp_host,
+                port=self.tcp_port,
+                # SO_REUSEADDR so a crashed shorewalld's TIME_WAIT
+                # socket doesn't keep the port hostage.
+                reuse_address=True,
+            )
+            log.info(
+                "dnstap tcp endpoint live on %s:%d "
+                "(queue=%d, workers=%d)",
+                self.tcp_host, self.tcp_port, self.queue_size,
+                self.n_workers or (os.cpu_count() or 1))
 
     async def serve_forever(self) -> None:
-        assert self._server is not None
-        async with self._server:
-            await self._server.serve_forever()
+        """Block until every configured listener stops.
+
+        Runs both listeners concurrently if both are active so the
+        daemon sees a single 'serve' coroutine regardless of
+        deployment shape.
+        """
+        tasks = []
+        if self._server is not None:
+            tasks.append(asyncio.create_task(self._server.serve_forever()))
+        if self._tcp_server is not None:
+            tasks.append(
+                asyncio.create_task(self._tcp_server.serve_forever()))
+        if not tasks:
+            return
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def close(self) -> None:
         with self._close_lock:
@@ -513,11 +592,18 @@ class DnstapServer:
             except Exception:
                 pass
             self._server = None
-        try:
-            if os.path.exists(self.socket_path):
-                os.unlink(self.socket_path)
-        except OSError:
-            pass
+        if self._tcp_server is not None:
+            try:
+                self._tcp_server.close()
+            except Exception:
+                pass
+            self._tcp_server = None
+        if self.socket_path:
+            try:
+                if os.path.exists(self.socket_path):
+                    os.unlink(self.socket_path)
+            except OSError:
+                pass
 
     # ── internal handlers ────────────────────────────────────────
 
