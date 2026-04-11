@@ -180,12 +180,12 @@ def test_roundtrip_through_disk_minimal(tmp_path):
     cfg_c = load_config(target)
     blob_c = export_config(cfg_c)
 
-    s_a = json.dumps(blob_a, sort_keys=True, default=str)
-    s_c = json.dumps(blob_c, sort_keys=True, default=str)
     # The config_dir key will legitimately differ (different paths).
     # Strip both before comparing content.
-    blob_a_cmp = dict(blob_a); blob_a_cmp.pop("config_dir", None)
-    blob_c_cmp = dict(blob_c); blob_c_cmp.pop("config_dir", None)
+    blob_a_cmp = dict(blob_a)
+    blob_a_cmp.pop("config_dir", None)
+    blob_c_cmp = dict(blob_c)
+    blob_c_cmp.pop("config_dir", None)
     s_a = json.dumps(blob_a_cmp, sort_keys=True, default=str)
     s_c = json.dumps(blob_c_cmp, sort_keys=True, default=str)
     assert s_a == s_c, (
@@ -273,6 +273,8 @@ def test_write_refuses_non_empty_target_without_force(tmp_path):
     """write_config_dir refuses to overwrite a non-empty dir unless forced."""
     from shorewall_nft.config.importer import (
         ImportError as CfgImportError,
+    )
+    from shorewall_nft.config.importer import (
         write_config_dir,
     )
 

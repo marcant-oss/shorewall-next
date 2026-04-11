@@ -12,12 +12,10 @@ handful of ioctls and constants.
 
 from __future__ import annotations
 
-import ctypes
 import fcntl
 import os
 import struct
 from typing import Literal
-
 
 # /usr/include/linux/if.h — IFF_* flags
 IFF_TUN      = 0x0001

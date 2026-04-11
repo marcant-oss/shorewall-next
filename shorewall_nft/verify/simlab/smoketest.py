@@ -28,7 +28,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-
+from typing import Any
 
 # Defaults assume the bootstrap state laid down by
 # tools/setup-remote-test-host.sh
@@ -57,7 +57,7 @@ def _resource_counts(ns_name: str = "simlab-fw") -> dict[str, int]:
         counts["simlab_procs"] = -1
     try:
         counts["fw_iface_count"] = len([
-            d for d in os.listdir(f"/sys/class/net") if d.startswith("simlab")
+            d for d in os.listdir("/sys/class/net") if d.startswith("simlab")
         ])
     except OSError:
         counts["fw_iface_count"] = -1
@@ -329,8 +329,8 @@ def _build_static_probes(topo_tun_mac: dict) -> list[tuple]:
 
     Returns a list of (category, expected_verdict, ProbeSpec, meta).
     """
-    from .controller import ProbeSpec
     from . import packets as P
+    from .controller import ProbeSpec
 
     out: list[tuple] = []
     pid = 100
@@ -539,8 +539,8 @@ def _build_zone_to_concrete_src(
 def _plan_to_spec(plan: dict, topo_tun_mac: dict,
                   timeout_s: float = 2.0):
     """Build a ProbeSpec from a lightweight plan dict on demand."""
-    from .controller import ProbeSpec
     from . import packets as P
+    from .controller import ProbeSpec
 
     src_iface = plan["src_iface"]
     dst_iface = plan["dst_iface"]
@@ -601,7 +601,8 @@ def _build_per_rule_probes(
     after, keeping parent RSS bounded to ~batch_size ProbeSpecs.
     """
     from shorewall_nft.verify.simulate import (
-        DEFAULT_SRC, derive_tests_all_zones,
+        DEFAULT_SRC,
+        derive_tests_all_zones,
     )
 
     zone_set = set(iface_to_zone.values())
@@ -861,8 +862,8 @@ def _print_category(
     )
     if failed:
         print(
-            f"           ↳ fail_drop  = should have had access but was DROPPED\n"
-            f"           ↳ fail_accept = should have been blocked but was ACCEPTED",
+            "           ↳ fail_drop  = should have had access but was DROPPED\n"
+            "           ↳ fail_accept = should have been blocked but was ACCEPTED",
             flush=True,
         )
 

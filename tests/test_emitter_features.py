@@ -662,6 +662,7 @@ class TestStoppedrules:
 
     def test_unknown_target_warns_and_skips(self):
         import warnings
+
         from shorewall_nft.nft.emitter import emit_stopped_nft
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")

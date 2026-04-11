@@ -392,10 +392,11 @@ def start(directory, netns, config_dir, config_dir4, config6_dir,
     # are surfaced as warnings but never block start. Loaded only
     # when the config actually defines entries.
     try:
-        from shorewall_nft.config.parser import load_config
         from shorewall_nft.compiler.proxyarp import (
-            apply_proxyarp, parse_proxyarp,
+            apply_proxyarp,
+            parse_proxyarp,
         )
+        from shorewall_nft.config.parser import load_config
         primary, secondary, skip = _resolve_config_paths(
             directory, config_dir, config_dir4, config6_dir,
             no_auto_v4, no_auto_v6)
@@ -509,7 +510,8 @@ def stop(directory, netns, config_dir, config_dir4, config6_dir,
     # Remove non-persistent proxy ARP/NDP entries via pyroute2.
     try:
         from shorewall_nft.compiler.proxyarp import (
-            parse_proxyarp, remove_proxyarp,
+            parse_proxyarp,
+            remove_proxyarp,
         )
         from shorewall_nft.config.parser import load_config
         primary, secondary, skip = _resolve_config_paths(
@@ -1780,6 +1782,8 @@ def config_import(source: Path, fmt: str, target: Path | None,
     """
     from shorewall_nft.config.importer import (
         ImportError as CfgImportError,
+    )
+    from shorewall_nft.config.importer import (
         blob_to_config,
         write_config_dir,
     )
@@ -1967,6 +1971,8 @@ def config_merge(sources: tuple[Path, ...], target: Path, force: bool,
     """
     from shorewall_nft.config.importer import (
         ImportError as CfgImportError,
+    )
+    from shorewall_nft.config.importer import (
         write_config_dir,
     )
     from shorewall_nft.config.parser import load_config

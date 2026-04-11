@@ -32,9 +32,7 @@ import ctypes
 import ctypes.util
 import os
 import signal
-import sys
 from typing import Any
-
 
 # Linux syscalls + constants
 _CLONE_NEWNET = 0x40000000

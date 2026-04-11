@@ -21,7 +21,7 @@ to the Shorewall column format via :func:`write_config_dir` (TODO).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from shorewall_nft.config.parser import ConfigLine, ShorewalConfig
 from shorewall_nft.config.schema import (

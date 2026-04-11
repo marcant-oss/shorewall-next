@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE = REPO / "tests" / "configs" / "minimal"
 VENV = REPO / ".venv" / "bin" / "shorewall-nft"

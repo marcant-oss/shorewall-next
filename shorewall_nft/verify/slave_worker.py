@@ -38,7 +38,6 @@ import threading
 import time
 from typing import Any
 
-
 # CLONE_NEWNET — net-namespace bit for setns()
 _CLONE_NEWNET = 0x40000000
 _libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
