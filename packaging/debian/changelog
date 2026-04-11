@@ -1,3 +1,13 @@
+shorewall-nft (1.1.0-1) unstable; urgency=medium
+
+  * Release 1.1.0: flowtable + vmap dispatch + ct zone tag, concat-map DNAT,
+    full config-file coverage (stoppedrules, proxyarp/ndp, rawnat, arprules,
+    nfacct, scfilter, ecn), routefilter parity, simlab packet-level test
+    harness with autorepair, pretty structured exporter.
+  * See CHANGELOG.md for full history.
+
+ -- shorewall-nft maintainers <shorewall-nft@example.com>  Sat, 11 Apr 2026 18:00:00 +0000
+
 shorewall-nft (1.0.0-1) unstable; urgency=medium
 
   * First stable release.
