@@ -432,6 +432,50 @@ def _build_random_probes(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _build_zone_to_concrete_src(
+    fw_state, iface_to_zone: dict[str, str],
+) -> dict[str, str]:
+    """For each zone, pick a routable host IP from its interface subnet.
+
+    This is the "autorepair" for the 192.0.2.69 placeholder-src bug
+    in ``derive_tests_all_zones``: when a rule has no explicit SOURCE
+    CIDR, derive_tests falls back to DEFAULT_SRC which is in TEST-NET-1
+    and therefore not in ANY real zone. The firewall kernel's rp_filter
+    drops it on ingress before the nft rule evaluates, so every probe
+    for that rule shows up as a spurious fail_drop.
+
+    The fix: at probe-construction time, look up the source zone's
+    first interface's first IPv4 subnet, then pick a host in that
+    subnet that's NOT the firewall's own address. That gives us a
+    valid spoof-free source for every rule.
+    """
+    import ipaddress as _ipaddr
+    out: dict[str, str] = {}
+    for iface_name, zone in iface_to_zone.items():
+        if zone in out:
+            continue
+        iface = fw_state.interfaces.get(iface_name)
+        if not iface or not iface.addrs4:
+            continue
+        for addr in iface.addrs4:
+            try:
+                net = _ipaddr.ip_network(
+                    f"{addr.addr}/{addr.prefixlen}", strict=False)
+            except ValueError:
+                continue
+            hosts = [str(h) for h in net.hosts()]
+            if not hosts:
+                continue
+            fw_ip = addr.addr
+            for h in hosts:
+                if h != fw_ip:
+                    out[zone] = h
+                    break
+            if zone in out:
+                break
+    return out
+
+
 def _build_per_rule_probes(
     iptables_dump: Path, fw_state, iface_to_zone: dict,
     topo_tun_mac: dict, *, max_per_pair: int = 10000,
@@ -446,12 +490,27 @@ def _build_per_rule_probes(
     """
     from .controller import ProbeSpec
     from . import packets as P
-    from shorewall_nft.verify.simulate import derive_tests_all_zones
+    from shorewall_nft.verify.simulate import (
+        DEFAULT_SRC, derive_tests_all_zones,
+    )
 
     zone_set = set(iface_to_zone.values())
     cases = derive_tests_all_zones(
         iptables_dump, zones=zone_set, max_tests=max_per_pair, family=4,
         random_per_rule=random_per_rule)
+
+    # Autorepair: replace the DEFAULT_SRC placeholder with a concrete
+    # host from the source zone's own subnet so rp_filter doesn't
+    # drop the probe at ingress. See _build_zone_to_concrete_src.
+    zone_src_map = _build_zone_to_concrete_src(fw_state, iface_to_zone)
+    repaired = 0
+    for tc in cases:
+        if tc.src_ip == DEFAULT_SRC and tc.src_zone in zone_src_map:
+            tc.src_ip = zone_src_map[tc.src_zone]
+            repaired += 1
+    if repaired:
+        print(f"autorepair: rewrote {repaired} placeholder-src probes "
+              f"to zone-local IPs")
 
     zone_to_iface = {z: ifc for ifc, z in iface_to_zone.items()}
 
