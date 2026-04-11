@@ -252,16 +252,78 @@ release config.
   hash policy, metric layout, five failure modes, and
   monitoring checklist.
 
-### Measured on the reference config
+### routestopped — full Shorewall semantics + standalone table
 
-- 264 pytest tests green on the grml test host (35 skipped).
+- routestopped used to be parser-only — the IR built chains nobody
+  ever rendered or loaded. The runtime path is now wired end to
+  end. `_process_routestopped` populates a dedicated
+  `ir.stopped_chains` dict (kept apart from `ir.chains` so the
+  main emitter can never mix it into the running ruleset), and
+  `nft/emitter.emit_stopped_nft` renders a standalone
+  `inet shorewall_stopped` table that loads independently.
+- `shorewall-nft stop` compiles the config, deletes the running
+  `inet shorewall` table, and loads `inet shorewall_stopped`
+  if routestopped is configured. `start` tears down any
+  leftover `shorewall_stopped` table so the two rulesets never
+  run side by side.
+- OPTIONS column parser supports `routeback`, `source`, `dest`,
+  `critical`, `notrack`. SPORT column (cols[5]) honoured.
+  IPv6 hosts auto-route to `ip6 saddr/daddr`. Global setting
+  `ROUTESTOPPED_OPEN=Yes` collapses every listed interface to a
+  wildcard accept (host/proto filtering ignored), matching
+  Shorewall's "panic mode" behaviour.
+- 11 new pytest cases under `TestRoutestopped` cover each
+  option, SPORT, IPv6 saddr/daddr selection, the
+  ROUTESTOPPED_OPEN collapsing path, and the critical no-op.
+
+### simlab — first 100 % green archived run
+
+- Emitter: zone-pair dispatch jumps now carry a
+  `meta nfproto ipv4|ipv6` qualifier when either side is a
+  single-family zone (e.g. an IPv6-only zone in a merged
+  shorewall46 config). Pairs with conflicting families are
+  skipped — they were the cause of every IPv4 probe falling
+  into a v6-only chain whose terminal sw_Reject dropped them.
+- Compiler: `_add_rule` now extends the existing ACCEPT/policy=
+  ACCEPT dedup to DROP/REJECT verdicts. A rule like
+  `DROP:$LOG customer-a any` in `rules` used to expand into every
+  customer-a→X chain as an inline catch-all drop, and when file order
+  put it before later `all → X:host` accept expansions the
+  inline drop landed mid-chain and shadowed every accept that
+  followed. The iptables backend never inlines these — it
+  relies on the chain's policy at the tail. The shorewall-nft
+  compiler now mirrors that behaviour.
+- simlab autorepair: `_build_zone_to_concrete_src` collects every
+  IP the firewall owns across every interface (not just the
+  iterated address) and walks candidate hosts from the high end
+  downwards. The previous picker landed on fw-local secondary
+  IPs that the kernel rejected as a martian source before any
+  rule evaluated. Random-probe generator gets the same
+  treatment in `oracle.RandomProbeGenerator._pick_host`.
+- simlab oracle: chain fall-through is now classified as DROP
+  (matching Shorewall's policy chain at the chain tail)
+  instead of UNKNOWN. Removes a long tail of false-positive
+  random-probe mismatches.
+- packets: injector default `src_mac` aligned to the
+  controller's synthetic worker MAC so the kernel's neighbour
+  cache stays consistent and forwarded probes don't get
+  silently dropped as stale neighbour-table updates.
+
+### Measured on the reference HA firewall
+
+- 353 pytest tests green on the grml test host (35 skipped).
 - Triangle verify with `OPTIMIZE=8 + OPTIMIZE_VMAP=Yes +
   CT_ZONE_TAG=Yes + FLOWTABLE=bond1,bond0.20`:
   - IPv4: 100.0 % rule coverage (8282/8284), 239/241 zone pairs
   - IPv6:  99.6 % rule coverage (3297/3310), 210/213 zone pairs
-- Remaining fails are 2 stale-baseline misses (rules commented
-  out in the current config but still present in the older
-  iptables-save used as ground truth) and 1 benign order
+- simlab full run, archived under
+  `docs/testing/simlab-reports/20260411T150507Z/`:
+  - POSITIVE: 626 / 626 ok = 100.0 %, fail_drop=0, fail_accept=0
+  - RANDOM:    64 /  64 ok = 100.0 %, fail_drop=0, fail_accept=0
+  - 0 unknowns, 0 errors, ~0.9 s probe run, ~6 s end-to-end
+- Remaining triangle fails are 2 stale-baseline misses (rules
+  commented out in the current config but still present in the
+  older iptables-save used as ground truth) and 1 benign order
   conflict — neither is a release blocker.
 
 ## [1.0.0] — 2026-04-11
