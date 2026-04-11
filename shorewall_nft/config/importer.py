@@ -190,6 +190,12 @@ def blob_to_config(
         if key in ("schema_version", "config_dir", "shorewall.conf",
                    "params", "macros", "scripts"):
             continue
+        # Plugin files (plugins.conf + plugins/*.toml + plugins/*.token)
+        # land in config.plugin_files as-is so write_config_dir can
+        # emit them as TOML / raw strings.
+        if key == "plugins.conf" or key.startswith("plugins/"):
+            config.plugin_files[key] = value
+            continue
         if key not in known_columnar:
             # Unknown top-level key — forward-compat hint, not an
             # error. Real unknowns will be caught by a stricter
@@ -298,6 +304,70 @@ def _columns_to_line(cols: list[str]) -> str:
     return "\t".join(cols)
 
 
+def _render_toml_value(v: Any) -> str:
+    """Minimal TOML value serialiser — strings, ints, bools, lists."""
+    if v is None:
+        return '""'
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, str):
+        # Escape backslashes and quotes
+        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    if isinstance(v, list):
+        return "[" + ", ".join(_render_toml_value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        # Inline table — rare, used only for simple nested settings
+        items = ", ".join(f"{k} = {_render_toml_value(w)}"
+                          for k, w in v.items())
+        return "{ " + items + " }"
+    return _render_toml_value(str(v))
+
+
+def _render_toml(doc: dict) -> str:
+    """Render a minimal-but-correct TOML document from a dict.
+
+    Handles the shapes the shorewall-nft plugin files actually use:
+
+    - Top-level scalar keys (strings, ints, bools, lists)
+    - Arrays of tables via a nested ``list[dict]`` value:
+      ``{"plugins": [{"name": "netbox", ...}]}`` → ``[[plugins]]``.
+    - One level of nested sub-tables as ``[section]`` headers when a
+      top-level value is a dict (also handles simple inline form
+      through ``_render_toml_value``).
+
+    Not a general-purpose TOML writer — deliberately minimal to stay
+    dependency-free. The ``tomli_w`` package would do the same job
+    more thoroughly but we don't want to add another runtime dep.
+    """
+    out: list[str] = []
+    # 1. Top-level scalars + arrays first
+    for k, v in doc.items():
+        if isinstance(v, dict):
+            continue  # emit as [section] below
+        if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+            continue  # emit as [[array]] below
+        out.append(f"{k} = {_render_toml_value(v)}")
+    # 2. [[array-of-tables]] sections
+    for k, v in doc.items():
+        if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+            for entry in v:
+                out.append("")
+                out.append(f"[[{k}]]")
+                for kk, vv in entry.items():
+                    out.append(f"{kk} = {_render_toml_value(vv)}")
+    # 3. [section] sub-tables
+    for k, v in doc.items():
+        if isinstance(v, dict):
+            out.append("")
+            out.append(f"[{k}]")
+            for kk, vv in v.items():
+                out.append(f"{kk} = {_render_toml_value(vv)}")
+    return "\n".join(out) + "\n"
+
+
 def write_config_dir(
     config: ShorewalConfig, target_dir: Path, *,
     force: bool = False,
@@ -395,6 +465,26 @@ def write_config_dir(
     if write_scripts and config.scripts:
         for script_name, script_lines in config.scripts.items():
             _write(script_name, "\n".join(script_lines) + "\n")
+
+    # Plugin config files (plugins.conf + plugins/*.toml + plugins/*.token)
+    import os as _os
+    for path, value in config.plugin_files.items():
+        full_path = target_dir / path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        if path.endswith(".token") or isinstance(value, str):
+            # Raw string file — usually a credential. 0600.
+            full_path.write_text(str(value) + ("\n" if not str(value).endswith("\n") else ""))
+            try:
+                _os.chmod(full_path, 0o600)
+            except OSError:
+                pass
+        elif isinstance(value, dict):
+            full_path.write_text(_render_toml(value))
+        else:
+            # Unknown shape — emit as JSON so nothing is silently dropped
+            import json as _json
+            full_path.write_text(_json.dumps(value, indent=2) + "\n")
+        written.append(full_path)
 
     return written
 

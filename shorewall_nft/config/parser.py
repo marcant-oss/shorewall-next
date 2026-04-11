@@ -70,6 +70,12 @@ class ShorewalConfig:
     # Line-based extension scripts — raw line lists so the structured
     # blob can round-trip them without pretending they have columns.
     scripts: dict[str, list[str]] = field(default_factory=dict)
+    # Plugin config files — plugins.conf (TOML) and plugins/*.toml /
+    # plugins/*.token (raw string for secrets). Keys are file paths
+    # relative to the shorewall config dir; values are dicts for TOML
+    # files and strings for raw files. The structured importer
+    # writes these to disk when config import --to DIR runs.
+    plugin_files: dict[str, "str | dict"] = field(default_factory=dict)
 
 
 class ParseError(Exception):

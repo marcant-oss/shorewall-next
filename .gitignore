@@ -1,7 +1,8 @@
 # ─────────────────────────────────────────────────────────────
-# Deployment secrets (template lives in tools/*.env.example)
+# Deployment secrets — tools/deploy.json.example is the committed
+# template, tools/deploy.json holds the real credentials.
 # ─────────────────────────────────────────────────────────────
-tools/marcant-deploy.env
+tools/deploy.json
 
 # ─────────────────────────────────────────────────────────────
 # Claude Code local state

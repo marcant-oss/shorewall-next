@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "_comment": "Deployment overlay consumed by tools/setup-remote-test-host.sh via `shorewall-nft config import --to /etc/shorewall46 --force`. Copy to tools/deploy.json and fill in real credentials. tools/deploy.json is .gitignored.",
+
+  "plugins.conf": {
+    "plugins": [
+      { "name": "netbox", "enabled": true }
+    ]
+  },
+
+  "plugins/netbox.toml": {
+    "url":                  "https://netbox.example.com/",
+    "token_file":           "/etc/shorewall46/plugins/netbox.token",
+    "priority":             100,
+    "cache_ttl":            86400,
+    "timeout":              30,
+    "dirty_flush_interval": 50,
+    "bulk_subnets": [
+      "203.0.113.0/24",
+      "2001:db8::/32"
+    ]
+  },
+
+  "plugins/netbox.token": "PASTE-YOUR-NETBOX-API-TOKEN-HERE"
+}
