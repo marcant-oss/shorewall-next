@@ -3,17 +3,17 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
-
-SWNFT = str(Path(__file__).parent.parent / ".venv" / "bin" / "shorewall-nft")
 
 
 def _cli(*args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": str(Path(__file__).parent.parent)}
     return subprocess.run(
-        [SWNFT, *args], capture_output=True, text=True, timeout=15, env=env)
+        [sys.executable, "-m", "shorewall_nft.main", *args],
+        capture_output=True, text=True, timeout=15, env=env)
 
 
 @pytest.fixture
