@@ -601,34 +601,45 @@ def write_config_dir(
 
             def _emit_block(rows_block: list[ConfigLine],
                             hdr: list[str] | None) -> list[str]:
-                """Render one block of rows with optional provenance.
+                """Render one block of rows with comment_tag + optional provenance.
 
-                When ``provenance=True`` each rule gets a shell
-                comment ``# from <file>:<lineno>`` immediately
-                before its data line. Comments are interleaved
-                between aligned rows so a future bisect can blame
-                the origin file/line of any rule.
+                Always preserves ``?COMMENT`` directives — when
+                consecutive rows share a ``comment_tag`` we emit
+                one ``?COMMENT <tag>`` line before the run, and a
+                bare ``?COMMENT`` (empty) when the tag clears or
+                changes. This brings ``?COMMENT`` blocks back into
+                the round-trip; they carry semantic grouping in
+                production rules files (e.g. "Sophos UTM
+                Administration") and the legacy snapshot uses
+                hundreds of them.
+
+                When ``provenance=True`` each rule additionally
+                gets a shell comment ``# from <file>:<lineno>``
+                immediately before its data line.
                 """
-                if not provenance:
-                    return _aligned_block(
-                        [list(r.columns) for r in rows_block], hdr)
-                # Need to interleave shell comments — render the
-                # aligned data first, then walk index-aligned and
-                # prepend per-row comments.
+                if not rows_block and not hdr:
+                    return []
                 aligned = _aligned_block(
                     [list(r.columns) for r in rows_block], hdr)
                 out_lines: list[str] = []
-                # The first element of `aligned` is the header
-                # (when hdr was passed) — keep it intact.
                 idx = 0
                 if hdr:
                     out_lines.append(aligned[0])
                     idx = 1
+                cur_tag: str | None = None
                 for i, ln in enumerate(rows_block):
-                    src_file = (ln.file or "").rsplit("/", 1)[-1]
-                    if src_file and ln.lineno:
-                        out_lines.append(
-                            f"# from {src_file}:{ln.lineno}")
+                    tag = ln.comment_tag or None
+                    if tag != cur_tag:
+                        if tag:
+                            out_lines.append(f"?COMMENT {tag}")
+                        else:
+                            out_lines.append("?COMMENT")
+                        cur_tag = tag
+                    if provenance:
+                        src_file = (ln.file or "").rsplit("/", 1)[-1]
+                        if src_file and ln.lineno:
+                            out_lines.append(
+                                f"# from {src_file}:{ln.lineno}")
                     out_lines.append(aligned[idx + i])
                 return out_lines
 
