@@ -1,0 +1,4 @@
+#ZONE	INTERFACE	BROADCAST	OPTIONS
+net	eth0	-	tcpflags,nosmurfs,routefilter,blacklist
+loc	eth1	-	tcpflags,dhcp,routeback
+dmz	eth2	-	tcpflags,nosmurfs

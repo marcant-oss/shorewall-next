@@ -1,0 +1,101 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shorewall-nft"
+version = "1.0.0"
+description = "nftables-native firewall compiler with Shorewall-compatible configuration"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "GPL-2.0-only"}
+authors = [
+    {name = "André Valentin", email = "avalentin@marcant.net"},
+]
+maintainers = [
+    {name = "André Valentin", email = "avalentin@marcant.net"},
+]
+keywords = [
+    "shorewall",
+    "nftables",
+    "nft",
+    "firewall",
+    "iptables",
+    "netfilter",
+    "ipv6",
+    "dual-stack",
+    "security",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet",
+    "Topic :: Security",
+    "Topic :: System :: Networking :: Firewalls",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "click>=8.0",
+    "pyroute2>=0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+]
+simulate = [
+    "scapy>=2.5",
+]
+docs = [
+    "mkdocs-material",
+]
+
+[project.urls]
+Homepage = "https://github.com/shorewall-nft/shorewall-nft"
+Documentation = "https://github.com/shorewall-nft/shorewall-nft/blob/master/docs/index.md"
+Repository = "https://github.com/shorewall-nft/shorewall-nft.git"
+Issues = "https://github.com/shorewall-nft/shorewall-nft/issues"
+Changelog = "https://github.com/shorewall-nft/shorewall-nft/blob/master/CHANGELOG.md"
+
+[project.scripts]
+shorewall-nft = "shorewall_nft.main:main"
+shorewall-nft-migrate = "shorewall_nft.tools.migrate:migrate"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["shorewall_nft*"]
+
+[tool.setuptools.package-data]
+shorewall_nft = ["data/macros/macro.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Start conservative: E (pycodestyle errors), F (pyflakes),
+# W (warnings), I (isort). Expand as the codebase catches up.
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line too long — we aim for 100 but don't enforce
+    "E701",  # multiple statements on one line (compact if/continue)
+    "E731",  # lambda assignments are fine in small helpers
+    "E741",  # ambiguous variable name (we use l for line, i for index)
+    "F601",  # dict literal "repeated" key via dict unpack override — intentional
+    "F841",  # unused locals — triggered by destructuring patterns
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # import order in tests is relaxed

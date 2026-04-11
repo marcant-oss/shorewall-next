@@ -1,0 +1,23 @@
+#!/bin/sh
+# run-netns — thin wrapper around `ip netns` for unprivileged use via sudo
+#
+# This script exists so that operators can grant NOPASSWD sudo access to
+# a single, audit-friendly entry point instead of all of `ip`. The wrapper
+# forwards every argument verbatim to `ip netns`, so the usual subcommands
+# are available:
+#
+#   run-netns list
+#   run-netns add myns
+#   run-netns delete myns
+#   run-netns exec myns nft list ruleset
+#   run-netns exec myns ip link set lo up
+#
+# Used by shorewall-nft tests (via `sudo /usr/local/bin/run-netns`) and
+# by the debug/simulate/trace commands for per-netns operations.
+#
+# Install this file to /usr/local/bin/run-netns (root-owned, mode 0755)
+# and pair it with a sudoers entry allowing the test user NOPASSWD access.
+# See tools/sudoers.d-shorewall-nft for the matching sudoers snippet, and
+# tools/install-test-tooling.sh for the one-shot installer.
+
+exec /sbin/ip netns "$@"

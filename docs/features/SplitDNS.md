@@ -1,0 +1,138 @@
+# What is Split DNS
+
+Split DNS is simply a configuration in which the IP address to which a DNS name resolves is dependent on the location of the client. It is most often used in a NAT environment to insure that local clients resolve the DNS names of local servers to their RFC 1918 addresses while external clients resolve the same server names to their public counterparts.
+
+# Why would I want to use Split DNS?
+
+See [Shorewall FAQ 2](../reference/FAQ.md#faq2).
+
+# Setting up Split DNS
+
+Setting up Split DNS is extremely simple:
+
+1.  Be sure that your firewall/router can resolve external DNS names.
+
+2.  Install the **dnsmasq** package ([http://www.thekelleys.org.uk/dnsmasq/doc.htm](http://www.thekelleys.org.uk/dnsmasq/doc.html)l) and arrange for it to start at boot time. There are many dnsmasq HOWTOs on the Internet.
+
+3.  Add your local hosts to `/etc/hosts` on the firewall/router using their local RFC 1918 addresses. Here's an example:
+
+        #
+        # hosts         This file describes a number of hostname-to-address
+        #               mappings for the TCP/IP subsystem.  It is mostly
+        #               used at boot time, when no name servers are running.
+        #               On small systems, this file can be used instead of a
+        #               "named" name server.
+        # Syntax:
+        #    
+        # IP-Address  Full-Qualified-Hostname  Short-Hostname
+        #
+
+        127.0.0.1       localhost
+
+        172.20.0.1      openvpn.shorewall.net   openvpn
+        172.20.0.2      vpn02.shorewall.net     vpn02
+        172.20.0.3      vpn03.shorewall.net     vpn03
+        172.20.0.4      vpn04.shorewall.net     vpn04
+        172.20.0.5      vpn05.shorewall.net     vpn05
+        172.20.0.6      vpn06.shorewall.net     vpn06
+        172.20.0.7      vpn07.shorewall.net     vpn07
+        172.20.0.8      vpn08.shorewall.net     vpn08
+        172.20.0.9      vpn09.shorewall.net     vpn09
+        172.20.0.10     vpn10.shorewall.net     vpn10
+        172.20.0.11     vpn11.shorewall.net     vpn11
+        172.20.0.12     vpn12.shorewall.net     vpn12
+        172.20.0.13     vpn13.shorewall.net     vpn13
+        172.20.0.14     vpn14.shorewall.net     vpn14
+        172.20.0.15     vpn15.shorewall.net     vpn15
+        172.20.0.16     vpn16.shorewall.net     vpn16
+
+        172.20.1.1      linksys.shorewall.net   linksys
+        172.20.1.100    hp8500.shorewall.net    hp8500
+        172.20.1.102    ursa.shorewall.net      ursa
+        172.20.1.105    tarry.shorewall.net     tarry
+        172.20.1.107    teastep.shorewall.net   teastep
+        172.20.1.109    hpmini.shorewall.net    hpmini
+
+        172.20.1.130    lanursa.shorewall.net   lanursa
+        172.20.1.131    wookie.shorewall.net    wookie
+        172.20.1.132    tipper.shorewall.net    tipper
+        172.20.1.133    nasty.shorewall.net     nasty
+        172.20.1.134    ursadog.shorewall.net   ursadog
+        172.20.1.135    opensuse.shorewall.net  opensuse
+        172.20.1.136    centos.shorewall.net    centos
+        172.20.1.137    fedora.shorewall.net    fedora
+        172.20.1.138    debian.shorewall.net    debian
+        172.20.1.139    archlinux.shorewall.net archlinux
+        172.20.1.140    foobar.shorewall.net    foobar
+        172.20.1.141    deblap.shorewall.net    deblap
+        172.20.1.254    firewall.shorewall.net  firewall
+
+        206.124.146.254 blarg.shorewall.net     blarg
+
+        # special IPv6 addresses
+        ::1             localhost ipv6-localhost ipv6-loopback
+
+        fe00::0         ipv6-localnet
+
+        ff00::0         ipv6-mcastprefix
+        ff02::1         ipv6-allnodes
+        ff02::2         ipv6-allrouters
+        ff02::3         ipv6-allhosts
+
+        2002:ce7c:92b4::1       gateway6.shorewall.net  gateway6
+        2002:ce7c:92b4:1::2     mail6.shorewall.net     mail6
+        2002:ce7c:92b4:1::2     lists6.shorewall.net    lists6
+        2002:ce7c:92b4:2::2     server6.shorewall.net   server6
+
+4.  If your local hosts are configured using DHCP, that is a simple one-line change to the DHCP configuration.
+
+**And that's it!** Your local clients will resolve those names in the firewall/router's `/etc/hosts` file as defined in that file. All other names will be resolved using the firewall/router's Name Server as defined in `/etc/resolv.conf`.
+
+Example:
+
+From an Internet Host:
+
+    gateway:~ # host linksys.shorewall.net
+    linksys.shorewall.net has address 206.124.146.180
+    gateway:~ # 
+
+From Tipper (192.168.1.132):
+
+    teastep@tipper:~$ host linksys
+    linksys.shorewall.net has address 172.20.1.1
+    teastep@tipper:~$ 
+
+As a bonus, dnsmasq can also act as a DHCP server. Here are some excerpts from the corresponding /etc/dnsmasq.conf:
+
+    interface=eth1
+
+    dhcp-range=172.20.1.210,172.20.1.219,24h
+
+    dhcp-host=00:11:85:89:da:9b,172.20.1.220
+
+    dhcp-host=00:1A:73:DB:8C:35,172.20.1.102
+    dhcp-host=00:25:B3:9F:5B:FD,172.20.1.100
+    dhcp-host=00:1F:E1:07:53:CA,172.20.1.105
+    dhcp-host=00:1F:29:7B:04:04,172.20.1.107
+    dhcp-host=00:24:2b:59:96:e2,172.20.1.109
+
+    dhcp-host=00:1B:24:CB:2B:CC,172.20.1.130
+    dhcp-host=00:21:5a:22:ac:e0,172.20.1.131
+    dhcp-host=08:00:27:B1:46:a9,172.20.1.132
+    dhcp-host=08:00:27:31:45:83,172.20.1.133
+    dhcp-host=08:00:27:28:64:50,172.20.1.134
+    dhcp-host=08:00:27:4b:38:88,172.20.1.135
+    dhcp-host=08:00:27:f6:4d:65,172.20.1.136
+    dhcp-host=08:00:27:dc:cd:94,172.20.1.137
+    dhcp-host=08:00:27:0f:d3:8f,172.20.1.138
+    dhcp-host=08:00:27:42:9c:01,172.20.1.139
+    dhcp-host=08:00:27:5a:6c:d8,172.20.1.140
+    dhcp-host=08:00:27:da:96:78,172.20.1.141
+
+    dhcp-option=19,0           # option ip-forwarding off
+    dhcp-option=44,0.0.0.0     # set netbios-over-TCP/IP nameserver(s) aka WINS server(s)
+    dhcp-option=45,0.0.0.0     # netbios datagram distribution server
+    dhcp-option=46,8           # netbios node type
+    dhcp-option=47             # empty netbios scope.
+
+    dhcp-option=option:domain-search,shorewall.net

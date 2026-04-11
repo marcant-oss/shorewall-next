@@ -1,0 +1,149 @@
+site_name: shorewall-nft
+site_description: nftables-native firewall compiler with Shorewall-compatible configuration
+docs_dir: docs-new
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - md_in_html
+  - footnotes
+
+nav:
+  - Home: index.md
+  - shorewall-nft specifics:
+    - Plugin system: shorewall-nft/plugins.md
+    - Plugin development: shorewall-nft/plugin-development.md
+    - Optimizer: shorewall-nft/optimizer.md
+    - Debug mode: shorewall-nft/debug.md
+    - merge-config: shorewall-nft/merge-config.md
+    - Config directories: shorewall-nft/config-dirs.md
+    - Config hash & drift detection: shorewall-nft/config-hash.md
+  - Testing:
+    - Overview: testing/index.md
+    - Setup: testing/setup.md
+    - Test suite: testing/test-suite.md
+    - Debugging rules: testing/debugging.md
+    - Verification tools: testing/verification.md
+    - Fuzz testing: testing/fuzz.md
+    - Troubleshooting: testing/troubleshooting.md
+  - CLI:
+    - Command reference: cli/commands.md
+  - Concepts:
+    - Anatomy: concepts/Anatomy.md
+    - Introduction: concepts/Introduction.md
+    - Getting started: concepts/GettingStarted.md
+    - My network: concepts/MyNetwork.md
+    - Netfilter overview: concepts/NetfilterOverview.md
+    - Manual chains: concepts/ManualChains.md
+    - Multiple zones: concepts/Multiple_Zones.md
+    - Actions: concepts/Actions.md
+    - Macros: concepts/Macros.md
+    - Events: concepts/Events.md
+    - Anti-spoofing: features/Anti-Spoofing.md
+    - Manpages: concepts/Manpages.md
+    - What shorewall doesn't do: concepts/Shorewall_Doesnt.md
+    - Feature list: concepts/shorewall_features.md
+    - Prerequisites: concepts/shorewall_prerequisites.md
+  - Features:
+    - NAT: features/NAT.md
+    - Netmap: features/netmap.md
+    - ProxyARP: features/ProxyARP.md
+    - Multi-ISP: features/MultiISP.md
+    - Packet marking: features/PacketMarking.md
+    - Packet handling: features/PacketHandling.md
+    - Traffic shaping: features/traffic_shaping.md
+    - Simple traffic shaping: features/simple_traffic_shaping.md
+    - QoS example: features/QOSExample.md
+    - Accounting: features/Accounting.md
+    - Logging: features/shorewall_logging.md
+    - Dynamic blacklisting: features/Dynamic.md
+    - Blacklist support: features/blacklisting_support.md
+    - Whitelisting: features/whitelisting_under_shorewall.md
+    - MAC validation: features/MAC_Validation.md
+    - Connection rate: features/ConnectionRate.md
+    - Port knocking: features/PortKnocking.md
+    - Audit: features/Audit.md
+    - ECN: features/ECN.md
+    - Fallback: features/fallback.md
+    - Helpers: features/Helpers.md
+    - DHCP: features/dhcp.md
+    - Ping: features/ping.md
+    - FTP: features/FTP.md
+    - Ports: features/ports.md
+    - Universal setup: features/Universal.md
+    - IPv6 support: features/IPv6Support.md
+    - ipsets: features/ipsets.md
+    - Shared config: features/SharedConfig.md
+    - Split DNS: features/SplitDNS.md
+    - Routing: features/Shorewall_and_Routing.md
+    - Squid: features/Shorewall_Squid_Usage.md
+    - Simple bridge: features/SimpleBridge.md
+    - Docker: features/Docker.md
+    - LXC: features/LXC.md
+    - KVM: features/KVM.md
+    - Laptop: features/Laptop.md
+  - VPN & tunnels:
+    - VPN: features/VPN.md
+    - VPN basics: features/VPNBasics.md
+    - Generic tunnels: features/GenericTunnels.md
+    - IPsec: features/IPSEC.md
+    - IPsec 2.6: features/IPSEC-2.6.md
+    - IPIP: features/IPIP.md
+    - 6to4: features/6to4.md
+    - OpenVPN: features/OPENVPN.md
+    - PPTP: features/PPTP.md
+  - Reference:
+    - Quickstart guide: reference/shorewall_quickstart_guide.md
+    - Setup guide: reference/shorewall_setup_guide.md
+    - Configuration files: reference/configuration_file_basics.md
+    - Standalone setup: reference/standalone.md
+    - Two-interface setup: reference/two-interface.md
+    - Three-interface setup: reference/three-interface.md
+    - Starting and stopping: reference/starting_and_stopping_shorewall.md
+    - Extension scripts: reference/shorewall_extension_scripts.md
+    - Build: reference/Build.md
+    - Install: reference/Install.md
+    - Kernel: reference/kernel.md
+    - Internals: reference/Internals.md
+    - Troubleshooting: reference/troubleshoot.md
+    - FAQ: reference/FAQ.md
+    - Dependencies: reference/dependencies.md
+    - Feature catalog (JSON): reference/features.json
+    - CLI reference (JSON): reference/commands.json
+    - License: reference/GnuCopyright.md
+  - Legacy & upstream:
+    - (various historical docs in docs-new/legacy/)

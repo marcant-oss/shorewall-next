@@ -1,0 +1,13 @@
+# Generic example parameters — documentation-prefix addresses only.
+# See RFC 5737 (IPv4) and RFC 3849 (IPv6).
+
+ORG_PFX=203.0.113.0/24
+ORG_ADM=203.0.113.10,203.0.113.11
+DNS1=203.0.113.53
+DNS2=203.0.113.54
+MAIL1=203.0.113.25
+WEB1=203.0.113.80
+WEB2=203.0.113.81
+TIME=198.51.100.123
+SYSLOG=198.51.100.14
+LOG=info

@@ -1,0 +1,695 @@
+{
+  "generated_for": "1.0.0",
+  "files": [
+    {
+      "path": "tests/test_cli_config_flags.py",
+      "classes": [
+        {
+          "class": "TestDeriveV4Sibling",
+          "tests": [
+            "test_sibling_exists",
+            "test_no_sibling",
+            "test_not_ending_in_6"
+          ],
+          "count": 3
+        },
+        {
+          "class": "TestResolvePaths",
+          "tests": [
+            "test_explicit_merged",
+            "test_explicit_dual",
+            "test_v4_only_with_auto_sibling",
+            "test_v4_with_no_auto_v6",
+            "test_v6_finds_v4_sibling",
+            "test_v6_only",
+            "test_v6_orphan_no_sibling",
+            "test_positional",
+            "test_positional_with_no_auto_v6",
+            "test_conflict_config_dir_plus_dir4",
+            "test_conflict_config_dir_plus_dir6",
+            "test_conflict_positional_plus_flags"
+          ],
+          "count": 12
+        }
+      ],
+      "test_count": 15
+    },
+    {
+      "path": "tests/test_cli_integration.py",
+      "classes": [
+        {
+          "class": "TestCompileCheck",
+          "tests": [
+            "test_version",
+            "test_compile_stdout",
+            "test_compile_to_file",
+            "test_check_skip_caps",
+            "test_check_with_caps",
+            "test_compile_nat_config"
+          ],
+          "count": 6
+        },
+        {
+          "class": "TestLifecycle",
+          "tests": [
+            "test_01_start",
+            "test_02_status_running",
+            "test_03_restart",
+            "test_04_reload",
+            "test_05_save_stdout",
+            "test_06_save_to_file",
+            "test_07_stop",
+            "test_08_status_stopped",
+            "test_09_restore",
+            "test_10_status_after_restore",
+            "test_11_clear"
+          ],
+          "count": 11
+        },
+        {
+          "class": "TestShowInfo",
+          "tests": [
+            "test_show",
+            "test_list_alias",
+            "test_ls_alias",
+            "test_dump_alias",
+            "test_counters",
+            "test_reset"
+          ],
+          "count": 6
+        },
+        {
+          "class": "TestBlacklist",
+          "tests": [
+            "test_drop",
+            "test_blacklist",
+            "test_reject",
+            "test_allow"
+          ],
+          "count": 4
+        },
+        {
+          "class": "TestGenerators",
+          "tests": [
+            "test_generate_sysctl",
+            "test_generate_systemd",
+            "test_generate_systemd_netns",
+            "test_generate_tc",
+            "test_generate_set_loader"
+          ],
+          "count": 5
+        },
+        {
+          "class": "TestVerifyMigrate",
+          "tests": [
+            "test_verify",
+            "test_migrate"
+          ],
+          "count": 2
+        },
+        {
+          "class": "TestCapabilities",
+          "tests": [
+            "test_capabilities",
+            "test_capabilities_json"
+          ],
+          "count": 2
+        },
+        {
+          "class": "TestExplain",
+          "tests": [
+            "test_explain_features",
+            "test_explain_category",
+            "test_explain_json",
+            "test_explain_probe"
+          ],
+          "count": 4
+        },
+        {
+          "class": "TestPlugins",
+          "tests": [
+            "test_plugins_list",
+            "test_lookup",
+            "test_lookup_unknown",
+            "test_enrich"
+          ],
+          "count": 4
+        },
+        {
+          "class": "TestDebug",
+          "tests": [
+            "test_debug_compile_emits_counters_and_comments",
+            "test_debug_config_hash_embedded",
+            "test_debug_command_sigint_restores"
+          ],
+          "count": 3
+        },
+        {
+          "class": "TestMerge",
+          "tests": [
+            "test_merge_config",
+            "test_merge_default_output",
+            "test_merge_zones_no_duplicates",
+            "test_merge_policies_no_duplicates",
+            "test_merge_comment_blocks_combined",
+            "test_merge_with_plugins",
+            "test_merge_no_plugins_flag",
+            "test_merge_params_collisions"
+          ],
+          "count": 8
+        }
+      ],
+      "test_count": 55
+    },
+    {
+      "path": "tests/test_compiler.py",
+      "classes": [
+        {
+          "class": "TestBuildIR",
+          "tests": [
+            "test_firewall_zone",
+            "test_zones",
+            "test_base_chains",
+            "test_zone_pair_chains",
+            "test_policy_defaults",
+            "test_ssh_rule_in_loc_fw",
+            "test_dns_rule_in_loc_net",
+            "test_ping_rule",
+            "test_admin_ssh_comment",
+            "test_http_anonymous_set"
+          ],
+          "count": 10
+        }
+      ],
+      "test_count": 10
+    },
+    {
+      "path": "tests/test_config_gen.py",
+      "classes": [
+        {
+          "function": "test_random_config_compiles"
+        },
+        {
+          "function": "test_random_config_loads_in_netns"
+        },
+        {
+          "function": "test_dual_stack_config"
+        },
+        {
+          "function": "test_extreme_zones"
+        },
+        {
+          "function": "test_minimal_config"
+        }
+      ],
+      "test_count": 5
+    },
+    {
+      "path": "tests/test_config_hash.py",
+      "classes": [
+        {
+          "class": "TestComputeHash",
+          "tests": [
+            "test_empty_dir",
+            "test_missing_dir",
+            "test_deterministic",
+            "test_content_change_changes_hash",
+            "test_new_file_changes_hash",
+            "test_ignored_files_dont_change_hash",
+            "test_subdirectory_contents_counted"
+          ],
+          "count": 7
+        },
+        {
+          "class": "TestHashMarker",
+          "tests": [
+            "test_format",
+            "test_extract_from_ruleset",
+            "test_extract_with_debug_flag",
+            "test_extract_missing",
+            "test_extract_wrong_format"
+          ],
+          "count": 5
+        }
+      ],
+      "test_count": 12
+    },
+    {
+      "path": "tests/test_config_resolution.py",
+      "classes": [
+        {
+          "class": "TestConfigResolution",
+          "tests": [
+            "test_explicit_directory_wins",
+            "test_merged_dir_preferred_over_default",
+            "test_fallback_to_legacy_default",
+            "test_explicit_overrides_merged"
+          ],
+          "count": 4
+        },
+        {
+          "class": "TestParserMergedDir",
+          "tests": [
+            "test_load_shorewall46_skips_automerge",
+            "test_load_legacy_shorewall_still_automerges"
+          ],
+          "count": 2
+        }
+      ],
+      "test_count": 6
+    },
+    {
+      "path": "tests/test_emitter.py",
+      "classes": [
+        {
+          "class": "TestEmitNft",
+          "tests": [
+            "test_shebang",
+            "test_table_declaration",
+            "test_table_cleanup",
+            "test_base_chains",
+            "test_filter_hook",
+            "test_zone_pair_chains",
+            "test_dispatch_jumps",
+            "test_ssh_rule",
+            "test_dns_rules",
+            "test_ping_rule",
+            "test_http_set",
+            "test_admin_comment",
+            "test_admin_saddr",
+            "test_policy_verdicts",
+            "test_no_duplicate_iifname"
+          ],
+          "count": 15
+        }
+      ],
+      "test_count": 15
+    },
+    {
+      "path": "tests/test_nat.py",
+      "classes": [
+        {
+          "class": "TestNAT",
+          "tests": [
+            "test_prerouting_chain_exists",
+            "test_postrouting_chain_exists",
+            "test_dnat_rule",
+            "test_snat_rule",
+            "test_dnat_nft_output",
+            "test_snat_nft_output",
+            "test_nat_chain_hooks"
+          ],
+          "count": 7
+        },
+        {
+          "class": "TestNotrack",
+          "tests": [
+            "test_raw_chain_exists",
+            "test_notrack_rules",
+            "test_notrack_nft_output",
+            "test_raw_output_chain"
+          ],
+          "count": 4
+        },
+        {
+          "class": "TestConntrack",
+          "tests": [
+            "test_ct_helper_chain",
+            "test_ftp_helper",
+            "test_ct_helper_nft_output"
+          ],
+          "count": 3
+        },
+        {
+          "class": "TestProductionConfig",
+          "tests": [
+            "test_zones",
+            "test_chain_count",
+            "test_rule_count",
+            "test_nat_chains",
+            "test_raw_chains",
+            "test_ct_helpers",
+            "test_output_line_count",
+            "test_nft_syntax_basics"
+          ],
+          "count": 8
+        }
+      ],
+      "test_count": 22
+    },
+    {
+      "path": "tests/test_netbox_plugin.py",
+      "classes": [
+        {
+          "class": "TestNetboxCache",
+          "tests": [
+            "test_load_missing_cache",
+            "test_load_existing_cache",
+            "test_cache_stale_check",
+            "test_save_cache"
+          ],
+          "count": 4
+        },
+        {
+          "class": "TestNetboxLookups",
+          "tests": [
+            "test_lookup_ip",
+            "test_lookup_unknown",
+            "test_map_v4_to_v6",
+            "test_map_v4_to_v6_pattern_mismatch",
+            "test_map_v4_to_v6_no_v6_for_dns",
+            "test_map_v6_to_v4",
+            "test_map_v6_to_v4_pattern_mismatch"
+          ],
+          "count": 7
+        },
+        {
+          "class": "TestNetboxEnrichment",
+          "tests": [
+            "test_enrich_comment_block",
+            "test_enrich_comment_block_single_customer",
+            "test_enrich_comment_block_stale_warning",
+            "test_enrich_params_pair_same_dns_name",
+            "test_enrich_params_pair_pattern_mismatch"
+          ],
+          "count": 5
+        },
+        {
+          "class": "TestNetboxIndexing",
+          "tests": [
+            "test_index_real_netbox_format",
+            "test_index_internal_tenant",
+            "test_index_ip_deprecated_status",
+            "test_parse_tenant"
+          ],
+          "count": 4
+        },
+        {
+          "class": "TestNetboxSnapshot",
+          "tests": [
+            "test_load_snapshot"
+          ],
+          "count": 1
+        }
+      ],
+      "test_count": 21
+    },
+    {
+      "path": "tests/test_netns_routing.py",
+      "classes": [
+        {
+          "class": "TestRouteDetection",
+          "tests": [
+            "test_ruleset_loads_with_real_interface",
+            "test_routes_survive_ruleset_load",
+            "test_interface_address_readable",
+            "test_rp_filter_sysctl_settable",
+            "test_generate_sysctl_output"
+          ],
+          "count": 5
+        },
+        {
+          "class": "TestSysctlApplied",
+          "tests": [
+            "test_generated_sysctl_runs"
+          ],
+          "count": 1
+        },
+        {
+          "class": "TestDhcpInterface",
+          "tests": [
+            "test_dhcp_rules_emitted"
+          ],
+          "count": 1
+        },
+        {
+          "class": "TestStartInNetns",
+          "tests": [
+            "test_full_lifecycle"
+          ],
+          "count": 1
+        }
+      ],
+      "test_count": 8
+    },
+    {
+      "path": "tests/test_optimize.py",
+      "classes": [
+        {
+          "class": "TestSetReference",
+          "tests": [
+            "test_ipset",
+            "test_plain",
+            "test_list_with_set_ref"
+          ],
+          "count": 3
+        },
+        {
+          "class": "TestCombinableField",
+          "tests": [
+            "test_same_rule",
+            "test_differ_in_saddr",
+            "test_differ_in_dport",
+            "test_differ_in_two_fields",
+            "test_different_verdict",
+            "test_ipset_rejected",
+            "test_different_match_set",
+            "test_non_combinable_field"
+          ],
+          "count": 8
+        },
+        {
+          "class": "TestCombineValues",
+          "tests": [
+            "test_simple",
+            "test_dedup",
+            "test_strip_braces",
+            "test_ports"
+          ],
+          "count": 4
+        },
+        {
+          "class": "TestDuplicates",
+          "tests": [
+            "test_remove_exact_duplicates",
+            "test_different_verdicts_not_duplicate"
+          ],
+          "count": 2
+        },
+        {
+          "class": "TestEmptyChains",
+          "tests": [
+            "test_remove_accept_policy_empty",
+            "test_keep_drop_policy_empty",
+            "test_keep_chain_with_user_rules"
+          ],
+          "count": 3
+        },
+        {
+          "class": "TestCombineMatches",
+          "tests": [
+            "test_combine_adjacent_saddr",
+            "test_combine_preserves_order_across_uncombinable",
+            "test_no_combine_two_diffs",
+            "test_no_combine_ipset"
+          ],
+          "count": 4
+        },
+        {
+          "class": "TestChainMerge",
+          "tests": [
+            "test_merge_identical_chains",
+            "test_different_chains_not_merged"
+          ],
+          "count": 2
+        },
+        {
+          "class": "TestRunOptimizations",
+          "tests": [
+            "test_level_0",
+            "test_level_2_runs_1_and_2",
+            "test_level_4_runs_up_to_4",
+            "test_level_8_runs_everything"
+          ],
+          "count": 4
+        }
+      ],
+      "test_count": 30
+    },
+    {
+      "path": "tests/test_parser.py",
+      "classes": [
+        {
+          "class": "TestStripComment",
+          "tests": [
+            "test_empty",
+            "test_full_comment",
+            "test_trailing_comment",
+            "test_no_comment",
+            "test_hash_in_quotes",
+            "test_whitespace"
+          ],
+          "count": 6
+        },
+        {
+          "class": "TestSplitColumns",
+          "tests": [
+            "test_simple",
+            "test_tabs",
+            "test_parentheses",
+            "test_multiple_spaces",
+            "test_empty"
+          ],
+          "count": 5
+        },
+        {
+          "class": "TestVariableExpansion",
+          "tests": [
+            "test_simple",
+            "test_braces",
+            "test_transitive",
+            "test_undefined",
+            "test_inline",
+            "test_append_pattern"
+          ],
+          "count": 6
+        },
+        {
+          "class": "TestConditions",
+          "tests": [
+            "test_defined_var",
+            "test_undefined_var",
+            "test_negation",
+            "test_eq",
+            "test_ne"
+          ],
+          "count": 5
+        },
+        {
+          "class": "TestReadLines",
+          "tests": [
+            "test_continuation"
+          ],
+          "count": 1
+        },
+        {
+          "class": "TestLoadConfig",
+          "tests": [
+            "test_minimal"
+          ],
+          "count": 1
+        }
+      ],
+      "test_count": 24
+    },
+    {
+      "path": "tests/test_plugins.py",
+      "classes": [
+        {
+          "class": "TestUtils",
+          "tests": [
+            "test_extract_ipv4",
+            "test_extract_ipv4_invalid",
+            "test_extract_ipv6",
+            "test_ip_in_subnet",
+            "test_is_ipv4_ipv6"
+          ],
+          "count": 5
+        },
+        {
+          "class": "TestBase",
+          "tests": [
+            "test_plugin_defaults",
+            "test_enrich_result_empty",
+            "test_param_enrich_result"
+          ],
+          "count": 3
+        },
+        {
+          "class": "TestIpInfo",
+          "tests": [
+            "test_v4_to_v6_basic",
+            "test_v4_to_v6_multiple_subnets",
+            "test_v4_to_v6_unknown_subnet",
+            "test_v6_to_v4_roundtrip",
+            "test_v6_to_v4_unknown_prefix",
+            "test_v4_to_v6_invalid",
+            "test_lookup_ip",
+            "test_enrich_params_pair",
+            "test_enrich_params_non_pair",
+            "test_enrich_comment_block_detects_pairs",
+            "test_enrich_comment_block_v4_only",
+            "test_enrich_comment_block_empty"
+          ],
+          "count": 12
+        },
+        {
+          "class": "TestPluginManager",
+          "tests": [
+            "test_load_from_config",
+            "test_empty_config",
+            "test_disabled_plugin",
+            "test_unknown_plugin_skipped",
+            "test_map_v4_to_v6",
+            "test_lookup_ip_aggregates",
+            "test_priority_ordering"
+          ],
+          "count": 7
+        }
+      ],
+      "test_count": 27
+    },
+    {
+      "path": "tests/test_triangle.py",
+      "classes": [
+        {
+          "class": "TestProductionCompleteness",
+          "tests": [
+            "test_all_zones_present",
+            "test_all_interfaces_mapped",
+            "test_zone_pair_coverage",
+            "test_nat_chains_populated",
+            "test_notrack_chains_populated",
+            "test_ct_helpers_populated"
+          ],
+          "count": 6
+        },
+        {
+          "class": "TestNftOutputStructure",
+          "tests": [
+            "test_single_table",
+            "test_delete_before_create",
+            "test_base_chain_types",
+            "test_ct_state_before_dispatch",
+            "test_no_empty_chains",
+            "test_nft_set_declaration",
+            "test_set_reference_matches_declaration"
+          ],
+          "count": 7
+        },
+        {
+          "class": "TestFoomuuriComparison",
+          "tests": [
+            "test_zone_count_matches",
+            "test_zone_pair_count_reasonable"
+          ],
+          "count": 2
+        },
+        {
+          "class": "TestSemanticTriangleComparison",
+          "tests": [
+            "test_triangle_runs",
+            "test_triangle_coverage_baseline"
+          ],
+          "count": 2
+        }
+      ],
+      "test_count": 17
+    }
+  ],
+  "totals": {
+    "files": 14,
+    "classes": 54,
+    "tests": 267
+  }
+}

@@ -1,6 +1,0 @@
-#
-# Shorewall6 version 5 - Default Config Path
-#
-# /usr/share/shorewall6/configpath
-#
-CONFIG_PATH=":${CONFDIR}/shorewall6:${SHAREDIR}/shorewall6:${SHAREDIR}/shorewall"

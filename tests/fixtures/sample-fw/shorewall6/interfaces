@@ -1,0 +1,4 @@
+#ZONE	INTERFACE	OPTIONS
+net	eth0	tcpflags,blacklist
+loc	eth1	tcpflags,dhcp,routeback
+dmz	eth2	tcpflags
