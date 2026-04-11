@@ -990,37 +990,90 @@ def generate_set_loader(directory, config_dir, config_dir4, config6_dir,
 @click.option("--iptables", type=click.Path(exists=True, path_type=Path), required=True,
               help="iptables-save dump (ground truth).")
 @click.option("--target", default="203.0.113.5", help="Target IP for tests.")
-@click.option("--max-tests", "-n", default=60, help="Max test cases.")
+@click.option("--targets", default=None,
+              help="Comma-separated list of target IPs, or @FILE with one IP "
+                   "per line. Bypasses --target; all targets share a single "
+                   "netns topology so the nft ruleset is loaded once.")
+@click.option("--ip6tables", "ip6tables_dump",
+              type=click.Path(exists=True, path_type=Path), default=None,
+              help="ip6tables-save dump for IPv6 tests (optional).")
+@click.option("--targets6", default=None,
+              help="Comma-separated list or @FILE of IPv6 target addresses. "
+                   "Requires --ip6tables.")
+@click.option("--src-iface", default=None,
+              help="Override the src-zone interface name in the FW netns "
+                   f"(default: {'bond1'}). Use to exercise a different "
+                   "source zone than net.")
+@click.option("--dst-iface", default=None,
+              help="Override the dst-zone interface name in the FW netns "
+                   f"(default: {'bond0.20'}). Use to exercise a different "
+                   "destination zone than host.")
+@click.option("--max-tests", "-n", default=60,
+              help="Max test cases per target.")
 @click.option("--seed", default=42, help="Random seed for sampling.")
 @click.option("-V", "--sim-verbose", is_flag=True, help="Show all test results.")
 @click.option("--parallel", "-j", default=4, help="Parallel test threads.")
 @click.option("--no-trace", is_flag=True, help="Disable nft trace logging.")
 @config_options
-def simulate(directory, iptables, target, max_tests, seed, sim_verbose,
+def simulate(directory, iptables, target, targets, ip6tables_dump, targets6,
+             src_iface, dst_iface, max_tests, seed, sim_verbose,
              parallel, no_trace,
              config_dir, config_dir4, config6_dir, no_auto_v4, no_auto_v6):
     """Run packet-level simulation in 3 network namespaces."""
-    from shorewall_nft.verify.simulate import run_simulation
+    from shorewall_nft.verify.simulate import (
+        DST_IFACE_DEFAULT,
+        SRC_IFACE_DEFAULT,
+        run_simulation,
+    )
 
     primary, _, _ = _resolve_config_paths(
         directory, config_dir, config_dir4, config6_dir,
         no_auto_v4, no_auto_v6)
     config_dir = primary
 
+    def _parse_list(val: str | None) -> list[str] | None:
+        if not val:
+            return None
+        if val.startswith("@"):
+            return [
+                line.strip()
+                for line in Path(val[1:]).read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+        return [t.strip() for t in val.split(",") if t.strip()]
+
+    target_list = _parse_list(targets)
+    target_list6 = _parse_list(targets6)
+    sif = src_iface or SRC_IFACE_DEFAULT
+    dif = dst_iface or DST_IFACE_DEFAULT
+
     click.echo(f"Simulating {config_dir} against {iptables}")
-    click.echo(f"Target: {target}, max tests: {max_tests}, seed: {seed}, "
-               f"parallel: {parallel}, trace: {not no_trace}")
+    click.echo(f"Topology: src-iface={sif}, dst-iface={dif}")
+    if target_list or target_list6:
+        n4 = len(target_list) if target_list else 0
+        n6 = len(target_list6) if target_list6 else 0
+        click.echo(f"Targets: {n4} v4 + {n6} v6 (single topology), "
+                   f"max per target: {max_tests}, seed: {seed}, "
+                   f"parallel: {parallel}, trace: {not no_trace}")
+    else:
+        click.echo(f"Target: {target}, max tests: {max_tests}, seed: {seed}, "
+                   f"parallel: {parallel}, trace: {not no_trace}")
     click.echo()
 
     results = run_simulation(
         config_dir=config_dir,
         iptables_dump=iptables,
         target_ip=target,
+        targets=target_list,
+        ip6tables_dump=ip6tables_dump,
+        targets6=target_list6,
         max_tests=max_tests,
         seed=seed,
         verbose=sim_verbose,
         parallel=parallel,
         trace=not no_trace,
+        src_iface=sif,
+        dst_iface=dif,
     )
 
     passed = sum(1 for r in results if r.passed)
