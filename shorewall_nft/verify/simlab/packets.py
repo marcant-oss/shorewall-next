@@ -259,6 +259,85 @@ def build_raw_ip(src_ip: str, dst_ip: str, proto: int, *,
     return _finalize(layer, src_mac, dst_mac, wrap_ether)
 
 
+# IANA assigned IP protocol numbers — the subset that might appear
+# in shorewall ``rules`` files. Anything not listed here can still
+# be used as a numeric string ("89") or via the small fallback table
+# in ``proto_number()``. We deliberately keep this hand-curated
+# rather than parsing /etc/protocols at runtime so the simlab works
+# in chroots that don't ship that file (e.g. distroless / busybox).
+_PROTO_NUMBERS: dict[str, int] = {
+    "icmp": 1, "igmp": 2, "ipv4": 4, "tcp": 6, "egp": 8, "udp": 17,
+    "rdp": 27, "dccp": 33, "ipv6": 41, "rsvp": 46, "gre": 47,
+    "esp": 50, "ah": 51, "ipv6-icmp": 58, "icmpv6": 58, "ipv6-nonxt": 59,
+    "ipv6-opts": 60, "ospf": 89, "ipip": 94, "etherip": 97, "encap": 98,
+    "pim": 103, "vrrp": 112, "l2tp": 115, "sctp": 132, "fc": 133,
+    "mh": 135, "udplite": 136, "mpls-in-ip": 137,
+}
+
+
+def proto_number(name_or_num: str | int | None) -> int | None:
+    """Resolve a protocol token to its IANA number, or ``None``.
+
+    Accepts ``None``, an empty string, a numeric string ("112"),
+    an int (112), or a well-known name from ``_PROTO_NUMBERS``
+    ("vrrp"). Used by the simlab dispatch fallback so any rule
+    with ``-p <proto>`` — even one we have no dedicated builder
+    for — gets a probe.
+    """
+    if name_or_num is None:
+        return None
+    if isinstance(name_or_num, int):
+        return name_or_num if 0 <= name_or_num <= 255 else None
+    s = name_or_num.strip().lower()
+    if not s:
+        return None
+    if s.isdigit():
+        n = int(s)
+        return n if 0 <= n <= 255 else None
+    return _PROTO_NUMBERS.get(s)
+
+
+def build_unknown_proto(
+    src_ip: str, dst_ip: str, proto: str | int, *,
+    family: int = 4,
+    payload_byte: int = 0xfe, payload_len: int = 16,
+    probe_id: int | None = None,
+    src_mac: str | None = None, dst_mac: str | None = None,
+    wrap_ether: bool = True,
+) -> bytes | None:
+    """Build a minimal IPv4/IPv6 packet for an arbitrary IP protocol.
+
+    Used by the simlab dispatch as a generic fallback for any
+    protocol we don't have a dedicated builder for (or where the
+    dedicated builder isn't worth the maintenance burden — esp/
+    ah/gre/vrrp/ospf/igmp/sctp/pim all fall into this bucket).
+
+    The packet is minimal by design:
+
+      * IPv4 / IPv6 header with ``protocol`` / ``next-header`` set
+        to the requested number
+      * ``probe_id`` tunnelled through the IP id field (v4) or
+        flow label (v6) so the simlab observer can correlate
+      * payload = ``payload_byte`` repeated ``payload_len`` times
+        (default 16 × 0xfe — distinctive enough to spot in pcap
+        diffs but small enough to dodge MTU issues on tagged VLANs)
+
+    Returns ``None`` if the proto token cannot be resolved to a
+    number — caller's responsibility to handle that case.
+    """
+    n = proto_number(proto)
+    if n is None:
+        return None
+    return build_raw_ip(
+        src_ip, dst_ip, n,
+        family=family,
+        payload=bytes([payload_byte]) * payload_len,
+        probe_id=probe_id,
+        src_mac=src_mac, dst_mac=dst_mac,
+        wrap_ether=wrap_ether,
+    )
+
+
 def build_arp_request(src_mac: str, src_ip: str, dst_ip: str) -> bytes:
     """Build an ARP who-has request (L2, broadcast)."""
     s = _sc()
@@ -312,67 +391,110 @@ def build_ndp_na(src_mac: str, src_ip: str,
 def build_esp(src_ip: str, dst_ip: str, *, spi: int = 0x1000, seq: int = 1,
               family: int = 4, payload: bytes = b"\x00" * 16,
               src_mac: str | None = None, dst_mac: str | None = None,
-              wrap_ether: bool = True) -> bytes:
-    """Build an ESP packet (IP proto 50, bare)."""
+              wrap_ether: bool = True,
+              probe_id: int | None = None) -> bytes:
+    """Build an ESP packet (IP proto 50, bare).
+
+    ``probe_id`` is tunnelled through the IP id field (v4) or the
+    flow-label field (v6) so the simlab observer can correlate
+    the inject with the observed frame on the expect side.
+    """
     s = _sc()
     from scapy.layers.ipsec import ESP
     if family == 6:
-        layer = s.IPv6(src=src_ip, dst=dst_ip, nh=50) / ESP(spi=spi, seq=seq, data=payload)
+        ip6_kwargs: dict = {"src": src_ip, "dst": dst_ip, "nh": 50}
+        if probe_id is not None:
+            ip6_kwargs["fl"] = probe_id & 0xffff
+        layer = s.IPv6(**ip6_kwargs) / ESP(spi=spi, seq=seq, data=payload)
     else:
-        layer = s.IP(src=src_ip, dst=dst_ip, proto=50) / ESP(spi=spi, seq=seq, data=payload)
+        ip_kwargs: dict = {"src": src_ip, "dst": dst_ip, "proto": 50}
+        if probe_id is not None:
+            ip_kwargs["id"] = probe_id & 0xffff
+        layer = s.IP(**ip_kwargs) / ESP(spi=spi, seq=seq, data=payload)
+    return _finalize(layer, src_mac, dst_mac, wrap_ether)
+
+
+def build_ah(src_ip: str, dst_ip: str, *, spi: int = 0x1000, seq: int = 1,
+             family: int = 4,
+             src_mac: str | None = None, dst_mac: str | None = None,
+             wrap_ether: bool = True,
+             probe_id: int | None = None) -> bytes:
+    """Build an AH packet (IP proto 51, no inner payload).
+
+    AH is the IPsec authentication header. We emit a minimal
+    24-byte AH (no integrity data) just to exercise rules with
+    ``-p ah`` / ``-p 51`` — production peers will reject the
+    packet but the firewall's match decision is what we care
+    about.
+
+    ``probe_id`` is tunnelled through the IP id field (v4) or
+    the flow-label field (v6).
+    """
+    s = _sc()
+    from scapy.layers.ipsec import AH
+    ah = AH(spi=spi, seq=seq, icv=b"\x00" * 12)
+    if family == 6:
+        ip6_kwargs: dict = {"src": src_ip, "dst": dst_ip, "nh": 51}
+        if probe_id is not None:
+            ip6_kwargs["fl"] = probe_id & 0xffff
+        layer = s.IPv6(**ip6_kwargs) / ah
+    else:
+        ip_kwargs: dict = {"src": src_ip, "dst": dst_ip, "proto": 51}
+        if probe_id is not None:
+            ip_kwargs["id"] = probe_id & 0xffff
+        layer = s.IP(**ip_kwargs) / ah
     return _finalize(layer, src_mac, dst_mac, wrap_ether)
 
 
 def build_gre(src_ip: str, dst_ip: str, *,
               inner: Any = None, family: int = 4,
               src_mac: str | None = None, dst_mac: str | None = None,
-              wrap_ether: bool = True) -> bytes:
-    """Build a GRE packet (IP proto 47), carrying the given inner payload."""
+              wrap_ether: bool = True,
+              probe_id: int | None = None) -> bytes:
+    """Build a GRE packet (IP proto 47), carrying the given inner payload.
+
+    ``probe_id`` is tunnelled through the IP id field (v4) or the
+    flow-label field (v6) so the simlab observer can correlate
+    the inject with the observed frame on the expect side.
+    """
     s = _sc()
     from scapy.layers.inet import GRE
     gre = GRE()
     if inner is not None:
         gre = gre / inner
     if family == 6:
-        layer = s.IPv6(src=src_ip, dst=dst_ip, nh=47) / gre
+        ip6_kwargs: dict = {"src": src_ip, "dst": dst_ip, "nh": 47}
+        if probe_id is not None:
+            ip6_kwargs["fl"] = probe_id & 0xffff
+        layer = s.IPv6(**ip6_kwargs) / gre
     else:
-        layer = s.IP(src=src_ip, dst=dst_ip, proto=47) / gre
+        ip_kwargs: dict = {"src": src_ip, "dst": dst_ip, "proto": 47}
+        if probe_id is not None:
+            ip_kwargs["id"] = probe_id & 0xffff
+        layer = s.IP(**ip_kwargs) / gre
     return _finalize(layer, src_mac, dst_mac, wrap_ether)
 
 
 def build_vrrp(src_ip: str, vrid: int = 1, prio: int = 100, *,
                vips: list[str] | None = None,
                src_mac: str | None = None, dst_mac: str | None = None,
-               wrap_ether: bool = True) -> bytes:
-    """Build a VRRPv2 advertisement (proto 112 → multicast 224.0.0.18)."""
+               wrap_ether: bool = True,
+               probe_id: int | None = None) -> bytes:
+    """Build a VRRPv2 advertisement (proto 112 → multicast 224.0.0.18).
+
+    ``probe_id`` is tunnelled through the IP id field so the
+    simlab observer can correlate the inject with the observed
+    frame on the expect side. Only the low 16 bits are used.
+    """
     s = _sc()
     from scapy.layers.vrrp import VRRP
     vrrp = VRRP(version=2, type=1, vrid=vrid, priority=prio,
                 addrlist=vips or [src_ip])
-    layer = s.IP(src=src_ip, dst="224.0.0.18", proto=112, ttl=255) / vrrp
-    return _finalize(layer, src_mac, dst_mac, wrap_ether)
-
-
-def build_bgp_open(src_ip: str, dst_ip: str, *,
-                   sport: int | None = None,
-                   my_as: int = 65001, hold: int = 180,
-                   bgp_id: str | None = None,
-                   src_mac: str | None = None, dst_mac: str | None = None,
-                   wrap_ether: bool = True) -> bytes:
-    """Build a BGP OPEN on tcp/179 (session setup probe)."""
-    s = _sc()
-    try:
-        from scapy.contrib.bgp import BGPHeader, BGPOpen
-    except ImportError:
-        # Fallback: just a TCP SYN to 179 so at least the rule is tested
-        return build_tcp(src_ip, dst_ip, 179, sport=sport, flags="S",
-                         src_mac=src_mac, dst_mac=dst_mac,
-                         wrap_ether=wrap_ether)
-    sport = sport or _next_sport()
-    bgp = BGPHeader() / BGPOpen(my_as=my_as, hold_time=hold,
-                                 bgp_id=bgp_id or src_ip)
-    layer = s.IP(src=src_ip, dst=dst_ip) / s.TCP(
-        sport=sport, dport=179, flags="PA") / bgp
+    ip_kwargs: dict = {"src": src_ip, "dst": "224.0.0.18",
+                       "proto": 112, "ttl": 255}
+    if probe_id is not None:
+        ip_kwargs["id"] = probe_id & 0xffff
+    layer = s.IP(**ip_kwargs) / vrrp
     return _finalize(layer, src_mac, dst_mac, wrap_ether)
 
 
@@ -422,26 +544,6 @@ def build_dhcp_discover(src_mac: str, *,
     )
     frame = s.Ether(src=src_mac, dst=dst_mac) / layer
     return bytes(frame)
-
-
-def build_radius(src_ip: str, dst_ip: str, *,
-                 auth_port: int = 1812, sport: int | None = None,
-                 code: int = 1,  # Access-Request
-                 src_mac: str | None = None, dst_mac: str | None = None,
-                 wrap_ether: bool = True) -> bytes:
-    """Build a RADIUS Access-Request (udp/1812 or udp/1813)."""
-    s = _sc()
-    try:
-        from scapy.layers.radius import Radius
-        rad = Radius(code=code, id=1, authenticator=b"\x00" * 16)
-    except ImportError:
-        return build_udp(src_ip, dst_ip, auth_port, sport=sport,
-                         payload=b"\x01\x01\x00\x14" + b"\x00" * 16,
-                         src_mac=src_mac, dst_mac=dst_mac,
-                         wrap_ether=wrap_ether)
-    sport = sport or _next_sport()
-    layer = s.IP(src=src_ip, dst=dst_ip) / s.UDP(sport=sport, dport=auth_port) / rad
-    return _finalize(layer, src_mac, dst_mac, wrap_ether)
 
 
 # ── pcap export helper ──────────────────────────────────────────────
@@ -559,8 +661,12 @@ def parse(raw: bytes, *, is_tap: bool = True) -> PacketSummary:
             summary.proto = "icmp"
         elif ip.proto == 50:
             summary.proto = "esp"
+        elif ip.proto == 51:
+            summary.proto = "ah"
         elif ip.proto == 47:
             summary.proto = "gre"
+        elif ip.proto == 112:
+            summary.proto = "vrrp"
         return summary
 
     # IPv6

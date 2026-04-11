@@ -68,13 +68,29 @@ class TestCase:
     """A single packet test."""
     src_ip: str
     dst_ip: str
-    proto: Literal["tcp", "udp", "icmp"]
+    proto: Literal["tcp", "udp", "icmp", "vrrp", "esp", "ah", "gre"]
     port: int | None
     expected: Literal["ACCEPT", "DROP", "REJECT"]
     family: int = 4  # 4 or 6
     src_zone: str | None = None
     dst_zone: str | None = None
     raw: str = ""
+
+
+# Map proto names / numeric ids that the iptables-save dump uses
+# onto our internal proto labels. derive_tests_all_zones consults
+# this so a rule with ``-p 112`` or ``-p vrrp`` produces a probe
+# even though our TestCase Literal is otherwise tcp/udp/icmp-only.
+_PROTO_ALIAS: dict[str, str] = {
+    "112": "vrrp",
+    "vrrp": "vrrp",
+    "50": "esp",
+    "esp": "esp",
+    "51": "ah",
+    "ah": "ah",
+    "47": "gre",
+    "gre": "gre",
+}
 
 
 @dataclass
@@ -825,20 +841,55 @@ def derive_tests_all_zones(
                 continue
             if rule.target not in ("ACCEPT", "DROP", "REJECT"):
                 continue
-            if rule.proto not in ("tcp", "udp", "icmp"):
-                continue
-            if not rule.daddr:
+            # Translate proto aliases (e.g. "112" → "vrrp",
+            # "50" → "esp", "47" → "gre", "51" → "ah"). Anything
+            # not in the alias map is passed through verbatim — the
+            # simlab dispatch resolves arbitrary names/numbers via
+            # ``packets.proto_number()``.
+            rule_proto = _PROTO_ALIAS.get(rule.proto, rule.proto)
+            # tcp/udp/icmp keep their dedicated builders. Everything
+            # else falls through to ``build_unknown_proto`` and is
+            # accepted here as long as the dispatch can resolve it
+            # to a number at probe-build time.
+            from shorewall_nft.verify.simlab.packets import proto_number
+            if rule_proto not in ("tcp", "udp", "icmp"):
+                if proto_number(rule_proto) is None:
+                    continue
+            # VRRP / OSPF / IGMP are multicast — there's no daddr
+            # in the rule (the kernel matches the well-known
+            # multicast group implicitly). Generate one probe per
+            # matching rule using the source pool only and let the
+            # simlab builder set the multicast destination.
+            multicast_protos = {"vrrp", "ospf", "igmp", "pim"}
+            if rule_proto not in multicast_protos and not rule.daddr:
                 continue
 
             import ipaddress as _ipaddr
             raw_daddr = rule.daddr
-            if not raw_daddr or raw_daddr.startswith("+") or raw_daddr.startswith("@"):
-                continue
-            daddr_clean = raw_daddr.split("/")[0]
-            try:
-                _ipaddr.ip_address(daddr_clean)
-            except ValueError:
-                continue
+            # Multicast destinations for known protocols. Falls
+            # back to the all-routers multicast (224.0.0.2 / ff02::2)
+            # for anything else that needs a placeholder dst.
+            _MCAST_DST = {
+                "vrrp": ("224.0.0.18", "ff02::12"),
+                "ospf": ("224.0.0.5", "ff02::5"),
+                "igmp": ("224.0.0.1", "ff02::1"),
+                "pim":  ("224.0.0.13", "ff02::d"),
+            }
+            if rule_proto in _MCAST_DST and not raw_daddr:
+                v4, v6 = _MCAST_DST[rule_proto]
+                daddr_clean = v6 if family == 6 else v4
+                raw_daddr = daddr_clean
+            else:
+                if (not raw_daddr
+                        or raw_daddr.startswith("+")
+                        or raw_daddr.startswith("@")):
+                    continue
+                daddr_clean = raw_daddr.split("/")[0]
+                try:
+                    _ipaddr.ip_address(daddr_clean)
+                except ValueError:
+                    continue
+            # ``raw_daddr`` is now safe to use in the dst_pool below.
             # Build candidate src/dst pools from the rule's own CIDRs so
             # the randomised variants still satisfy the rule's constraints
             # (we sample within rule.saddr / rule.daddr rather than using
@@ -912,7 +963,7 @@ def derive_tests_all_zones(
             for s, d, p in chosen:
                 per_pair.setdefault(pair, []).append(TestCase(
                     src_ip=s, dst_ip=d,
-                    proto=rule.proto, port=p,
+                    proto=rule_proto, port=p,
                     expected=expected,
                     family=family,
                     src_zone=src_zone, dst_zone=dst_zone,

@@ -564,7 +564,21 @@ def _plan_to_spec(plan: dict, topo_tun_mac: dict,
                                probe_id=pid16)
         match = _match(proto="icmp", dst=dst_ip)
     else:
-        return None
+        # Generic fallback for any other IP protocol — esp, ah, gre,
+        # vrrp, ospf, igmp, sctp, pim, …. The auto-generator emits
+        # a minimal IPv4/IPv6 header with ``proto`` set to the
+        # right number, ``probe_id`` in the id / flow-label field,
+        # and a payload of 0xfe × 16 (small + distinctive). Avoids
+        # the maintenance burden of a hand-rolled builder per
+        # exotic protocol while still exercising the matching nft
+        # rule. Multicast/zero-daddr cases (vrrp, ospf hello) get
+        # an inject destination from the per-rule walker which
+        # already pre-populates the well-known multicast group.
+        payload = P.build_unknown_proto(
+            src_ip, dst_ip, proto, dst_mac=dst_mac, probe_id=pid16)
+        if payload is None:
+            return None
+        match = _match(proto=proto)
 
     return ProbeSpec(
         probe_id=pid16, inject_iface=src_iface,
@@ -656,7 +670,8 @@ def _build_per_rule_probes(
         dst_iface = zone_to_iface.get(tc.dst_zone)
         if not src_iface or not dst_iface:
             continue
-        if tc.proto not in ("tcp", "udp", "icmp"):
+        if tc.proto not in ("tcp", "udp", "icmp",
+                            "vrrp", "esp", "ah", "gre"):
             continue
         pid16 = pid & 0xffff
         cat = (TestCategory.POSITIVE if tc.expected == "ACCEPT"
@@ -899,18 +914,62 @@ def cmd_full(args: argparse.Namespace) -> int:
     # count it under ``routing_incompatible`` so the report still
     # carries the signal "this rule's dst is unreachable from
     # this zone pair".
+    # Build a {iface → zone} reverse map and a {zone → set(ifaces)}
+    # forward map so the routing checks accept ANY iface in the
+    # destination zone (multi-iface zones are common — host has
+    # bond0.20+bond0.21, net has bond1+bond0.19+bond0.61, etc.).
+    zone_to_ifaces: dict[str, set[str]] = {}
+    for ifc, zn in iface_to_zone.items():
+        zone_to_ifaces.setdefault(zn, set()).add(ifc)
+
+    def _accept_iface(iface: str | None, zone_iface: str) -> bool:
+        if iface is None:
+            return False
+        if iface == zone_iface:
+            return True
+        zn = iface_to_zone.get(zone_iface)
+        if zn is None:
+            return False
+        return iface in zone_to_ifaces.get(zn, set())
+
+    # Pre-compute the set of fw-local addresses so we can drop
+    # probes whose dst is a fw-owned IP — those packets are
+    # delivered to the INPUT chain instead of FORWARD, so the
+    # zone-pair chain we expected to fire never runs.
+    fw_local_ips: set[str] = set()
+    for ifc in ctl.state.interfaces.values():
+        for a in getattr(ifc, "addrs4", []) or []:
+            fw_local_ips.add(a.addr)
+        for a in getattr(ifc, "addrs6", []) or []:
+            fw_local_ips.add(a.addr)
+
     dropped_dst_routing = 0
+    dropped_dst_local = 0
     kept: list = []
     for cat, expected, plan, meta in all_probes:
+        if plan["dst_ip"] in fw_local_ips:
+            dropped_dst_local += 1
+            continue
         routed = _routed_iface_for(plan["dst_ip"], ctl.state)
-        if routed is None or routed != plan["dst_iface"]:
+        if not _accept_iface(routed, plan["dst_iface"]):
             dropped_dst_routing += 1
             continue
+        # Multi-iface zone: rewrite dst_iface to the actually-routed
+        # iface so the controller observes on the right TAP. The
+        # nft chain dispatch already has both ifaces in its
+        # ``oifname { … }`` set, so the chain still matches.
+        if routed != plan["dst_iface"]:
+            plan["dst_iface"] = routed
         kept.append((cat, expected, plan, meta))
+    if dropped_dst_local:
+        _flush_print(
+            f"autorepair: dropped {dropped_dst_local} probes whose "
+            f"dst_ip is a fw-local address (delivered to INPUT, "
+            f"not FORWARD — zone-pair chain never fires)")
     if dropped_dst_routing:
         _flush_print(
             f"autorepair: dropped {dropped_dst_routing} probes whose "
-            f"dst_ip routes to a different iface than the dst zone "
+            f"dst_ip routes to a different zone than the dst zone "
             f"implies (dst_routing_incompatible)")
     all_probes = kept
 
@@ -926,6 +985,12 @@ def cmd_full(args: argparse.Namespace) -> int:
     # nft chain never fires even though the rule exists.
     #
     # Same filter as pass 3 but for src_ip / src_iface.
+    # Source routing is checked strictly: if src_ip doesn't route
+    # back to the SPECIFIC inject iface in the simlab netns, the
+    # kernel will silently discard the probe at ingress (rp_filter
+    # is forced off but the kernel still does sanity checks on
+    # forwarded packets). Multi-iface zones don't get the dst-side
+    # relaxation here — we want the inject path to be deterministic.
     dropped_src_routing = 0
     kept2: list = []
     for cat, expected, plan, meta in all_probes:
