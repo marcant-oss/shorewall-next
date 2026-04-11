@@ -634,12 +634,17 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     # Give workers a moment to become listener-ready
     time.sleep(0.2)
 
-    probes = _build_probes(ctl.topo.tun_mac if ctl.topo else {})
-    print(f"probes: {len(probes)}")
-    results = asyncio.run(_smoke_one(ctl, probes))
-    for r in results:
-        print(f"  [{r.verdict or 'NONE'}] {r.inject_iface}→{r.expect_iface} "
-              f"id={r.probe_id} {r.elapsed_ms}ms")
+    # cmd_smoke uses the hand-picked static probes (positive + negative).
+    # Full rule coverage + random is handled by cmd_full.
+    static = _build_static_probes(ctl.topo.tun_mac if ctl.topo else {})
+    specs = [p[2] for p in static]
+    print(f"probes: {len(specs)}")
+    asyncio.run(_smoke_one(ctl, specs))
+    for cat, expected, spec, meta in static:
+        ok = "PASS" if spec.verdict == expected else "FAIL"
+        print(f"  [{ok}] {spec.inject_iface}→{spec.expect_iface} "
+              f"expected={expected} got={spec.verdict} "
+              f"id={spec.probe_id} {spec.elapsed_ms}ms — {meta.get('desc','')}")
 
     ctl.shutdown()
     after = _resource_counts()
