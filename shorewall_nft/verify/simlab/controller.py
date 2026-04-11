@@ -101,11 +101,14 @@ class SimController:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
         self._cleanup_registered = False
-        # Thread pool — one reader thread per CPU core by default.
-        # Each thread runs its own asyncio loop and registers
-        # add_reader() for a partition of the TUN/TAP fds. Observed
-        # packets are handed to the main loop's correlation code via
-        # a thread-safe queue.
+        # Thread pool — one (reader, writer) pair per CPU core by
+        # default. The reader drains a partition of TUN/TAP fds,
+        # parses every frame, answers ARP/NDP by pushing replies
+        # onto its paired writer's queue, and enqueues observed IP
+        # packets onto the main thread's ``_obs_queue``. The writer
+        # runs a tight ``queue.get → os.write`` loop. Split reader
+        # and writer so a slow os.write can't block the read path
+        # and vice versa.
         if num_threads is None:
             try:
                 num_threads = max(1, os.cpu_count() or 2)
@@ -113,7 +116,17 @@ class SimController:
                 num_threads = 2
         self._num_threads = num_threads
         self._reader_threads: list = []
+        self._writer_threads: list = []
         self._reader_stop_events: list = []
+        self._writer_stop_events: list = []
+        # One write queue per (reader, writer) pair. Every os.write
+        # targeting a fd owned by pair N goes through
+        # ``self._write_queues[N].put((fd, bytes))``.
+        self._write_queues: list = []
+        # iface_name → pair index, populated at run_probes() time so
+        # the main thread can dispatch a probe inject to the right
+        # writer queue in O(1).
+        self._iface_to_pair: dict[str, int] = {}
         self._obs_queue: "Any | None" = None
         # No-op back-compat alias used by legacy tests / callers that
         # inspect ``workers`` to see which interfaces exist.
@@ -187,24 +200,47 @@ class SimController:
         self._obs_queue = _queue.SimpleQueue()
 
         ifaces = sorted(self._iface_fds.keys())
-        n_threads = max(1, min(self._num_threads, len(ifaces)))
-        groups: list[list[str]] = [[] for _ in range(n_threads)]
+        n_pairs = max(1, min(self._num_threads, len(ifaces)))
+        groups: list[list[str]] = [[] for _ in range(n_pairs)]
         for i, iface in enumerate(ifaces):
-            groups[i % n_threads].append(iface)
+            groups[i % n_pairs].append(iface)
+        self._iface_to_pair = {
+            iface: pair_idx
+            for pair_idx, group in enumerate(groups)
+            for iface in group
+        }
 
+        # Spawn (reader, writer) pairs. Writers start first so that
+        # the reader's first ARP/NDP reply can already be queued.
         self._reader_threads = []
+        self._writer_threads = []
         self._reader_stop_events = []
-        for tid, group in enumerate(groups):
-            stop_ev = _threading.Event()
-            self._reader_stop_events.append(stop_ev)
-            t = _threading.Thread(
-                target=self._reader_thread_main,
-                args=(tid, group, stop_ev),
-                name=f"simlab-reader-{tid}",
+        self._writer_stop_events = []
+        self._write_queues = []
+        for pid, group in enumerate(groups):
+            wq: _queue.SimpleQueue = _queue.SimpleQueue()
+            self._write_queues.append(wq)
+            w_stop = _threading.Event()
+            self._writer_stop_events.append(w_stop)
+            w = _threading.Thread(
+                target=self._writer_thread_main,
+                args=(pid, wq, w_stop),
+                name=f"simlab-writer-{pid}",
                 daemon=True,
             )
-            t.start()
-            self._reader_threads.append(t)
+            w.start()
+            self._writer_threads.append(w)
+
+            r_stop = _threading.Event()
+            self._reader_stop_events.append(r_stop)
+            r = _threading.Thread(
+                target=self._reader_thread_main,
+                args=(pid, group, r_stop),
+                name=f"simlab-reader-{pid}",
+                daemon=True,
+            )
+            r.start()
+            self._reader_threads.append(r)
 
         drainer_task = asyncio.create_task(self._drain_observations())
 
@@ -226,13 +262,24 @@ class SimController:
             pass
         for stop_ev in self._reader_stop_events:
             stop_ev.set()
+        for stop_ev in self._writer_stop_events:
+            stop_ev.set()
         for t in self._reader_threads:
             try:
                 t.join(timeout=1.0)
             except Exception:
                 pass
+        for t in self._writer_threads:
+            try:
+                t.join(timeout=1.0)
+            except Exception:
+                pass
         self._reader_threads = []
+        self._writer_threads = []
         self._reader_stop_events = []
+        self._writer_stop_events = []
+        self._write_queues = []
+        self._iface_to_pair = {}
         self._obs_queue = None
 
         return probes
@@ -264,16 +311,59 @@ class SimController:
                 pass
             raise
 
+    def _writer_thread_main(self, pid: int, wq, stop_ev) -> None:
+        """Entry point for one writer thread.
+
+        Tight ``queue.get → os.write`` loop. Consumes ``(fd, bytes)``
+        tuples from its paired write queue and writes them out.
+        All os.write calls in simlab go through a writer thread so
+        probe injection and ARP/NDP replies can't stall the main
+        event loop or the reader threads. The writer has its own
+        core slot under the GIL while the reader parses the next
+        frame in parallel (parse releases the GIL briefly during
+        scapy's C-accelerated paths).
+        """
+        import queue as _queue
+        while not stop_ev.is_set():
+            try:
+                cmd = wq.get(timeout=0.1)
+            except _queue.Empty:
+                continue
+            if cmd is None:
+                break
+            fd, payload = cmd
+            try:
+                os.write(fd, payload)
+            except OSError:
+                pass
+        # Drain any remaining queued writes so the last few probes /
+        # ARP replies still hit the wire before we tear down.
+        try:
+            while True:
+                fd, payload = wq.get_nowait()
+                try:
+                    os.write(fd, payload)
+                except OSError:
+                    pass
+        except _queue.Empty:
+            pass
+        except Exception:
+            pass
+
     def _reader_thread_main(self, tid: int, ifaces: list[str], stop_ev) -> None:
         """Entry point for one reader thread.
 
         Runs its own asyncio loop with the assigned subset of TUN/TAP
-        fds. ARP / NDP are handled inline. Observed IP packets are
-        pushed onto ``self._obs_queue`` for the main thread to
-        correlate against outstanding probes.
+        fds. ARP / NDP replies are **queued to the paired writer
+        thread** instead of written inline — splits read and write
+        into separate GIL slots so a slow write never stalls the
+        parse loop. Observed IP packets are pushed onto
+        ``self._obs_queue`` for the main thread to correlate.
         """
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+
+        write_q = self._write_queues[tid]
 
         def on_read(iface_name: str) -> None:
             fd = self._iface_fds[iface_name]
@@ -299,10 +389,7 @@ class SimController:
                             dst_mac=_extract_src_mac(buf),
                             dst_ip=pkt.src,
                         )
-                        try:
-                            os.write(fd, reply)
-                        except OSError:
-                            pass
+                        write_q.put((fd, reply))
                         continue
 
                     if (pkt.proto == "ndp" and pkt.ndp_type == 135
@@ -321,7 +408,7 @@ class SimController:
                                     dst_ip=pkt.src,
                                     target_ip=str(target),
                                 )
-                                os.write(fd, na)
+                                write_q.put((fd, na))
                         except Exception:
                             pass
                         continue
@@ -381,9 +468,13 @@ class SimController:
             if fut and not fut.done():
                 fut.set_result(None)
             return
+        # Route the write through the paired writer thread's queue.
+        # Writer threads own all os.write calls so a slow/blocked
+        # write can't stall the main event loop.
+        pair_idx = self._iface_to_pair.get(probe.inject_iface, 0)
         try:
-            os.write(fd, probe.payload)
-        except OSError:
+            self._write_queues[pair_idx].put((fd, probe.payload))
+        except Exception:
             probe.verdict = "ERROR"
             fut = self._probe_futures.get(probe.probe_id)
             if fut and not fut.done():
@@ -538,8 +629,13 @@ class SimController:
         if self._shutdown_done:
             return
         self._shutdown_done = True
-        # 0. Signal reader threads to stop + join.
+        # 0. Signal reader + writer threads to stop and join them.
         for stop_ev in list(self._reader_stop_events):
+            try:
+                stop_ev.set()
+            except Exception:
+                pass
+        for stop_ev in list(self._writer_stop_events):
             try:
                 stop_ev.set()
             except Exception:
@@ -549,8 +645,17 @@ class SimController:
                 t.join(timeout=1.0)
             except Exception:
                 pass
+        for t in list(self._writer_threads):
+            try:
+                t.join(timeout=1.0)
+            except Exception:
+                pass
         self._reader_threads = []
+        self._writer_threads = []
         self._reader_stop_events = []
+        self._writer_stop_events = []
+        self._write_queues = []
+        self._iface_to_pair = {}
         # 1. Remove asyncio readers if the loop is still alive.
         if self._loop is not None:
             for fd in list(self._iface_fds.values()):
