@@ -745,6 +745,7 @@ def derive_tests_all_zones(
     max_tests: int = 40,
     seed: int | None = 42,
     family: int = 4,
+    random_per_rule: int = 1,
 ) -> list[TestCase]:
     """Derive test cases across every (src_zone, dst_zone) chain in the dump.
 
@@ -797,9 +798,12 @@ def derive_tests_all_zones(
                 _ipaddr.ip_address(daddr_clean)
             except ValueError:
                 continue
-            # Pick a concrete src from the subnet when available
+            # Build candidate src/dst pools from the rule's own CIDRs so
+            # the randomised variants still satisfy the rule's constraints
+            # (we sample within rule.saddr / rule.daddr rather than using
+            # placeholder globals).
             saddr = rule.saddr
-            src = default_src
+            src_pool: list[str] = [default_src]
             if saddr and not saddr.startswith(("+", "@")):
                 if "/" in saddr:
                     try:
@@ -809,39 +813,70 @@ def derive_tests_all_zones(
                         hosts = list(net.hosts())
                         if not hosts:
                             continue
-                        src = str(hosts[1] if len(hosts) > 1 else hosts[0])
+                        # Up to 64 distinct candidates from the subnet.
+                        if len(hosts) <= 64:
+                            src_pool = [str(h) for h in hosts]
+                        else:
+                            src_pool = [str(hosts[i])
+                                        for i in rng.sample(range(len(hosts)), 64)]
                     except ValueError:
                         continue
                 else:
                     try:
                         _ipaddr.ip_address(saddr)
-                        src = saddr
+                        src_pool = [saddr]
                     except ValueError:
                         continue
-            # final sanity
-            try:
-                _ipaddr.ip_address(src)
-            except ValueError:
-                continue
 
-            port: int | None = None
-            if rule.proto in ("tcp", "udp") and rule.dport:
+            # Same treatment for dst — rules with a /N daddr allow every
+            # host in the subnet, so sample rather than always hitting
+            # the same concrete IP.
+            dst_pool: list[str] = [daddr_clean]
+            if raw_daddr and "/" in raw_daddr and not raw_daddr.startswith(("+", "@")):
                 try:
-                    port = int(rule.dport.split(",")[0].split(":")[0])
+                    dnet = _ipaddr.ip_network(raw_daddr, strict=False)
+                    if dnet.version == family:
+                        dhosts = list(dnet.hosts())
+                        if dhosts:
+                            if len(dhosts) <= 64:
+                                dst_pool = [str(h) for h in dhosts]
+                            else:
+                                dst_pool = [str(dhosts[i])
+                                            for i in rng.sample(range(len(dhosts)), 64)]
                 except ValueError:
-                    continue
-            if rule.proto in ("tcp", "udp") and port is None:
-                continue
+                    pass
+
+            # Port pool: if the rule matches a range (``1024:65535``) or
+            # a comma-list, sample up to 64 distinct ports from it.
+            port_pool: list[int | None] = [None]
+            if rule.proto in ("tcp", "udp"):
+                port_pool = _expand_port_spec(rule.dport, rng, cap=64)
+                if not port_pool:
+                    continue  # unparseable or empty
 
             expected = "DROP" if rule.target == "REJECT" else rule.target
-            per_pair.setdefault(pair, []).append(TestCase(
-                src_ip=src, dst_ip=daddr_clean,
-                proto=rule.proto, port=port,
-                expected=expected,
-                family=family,
-                src_zone=src_zone, dst_zone=dst_zone,
-                raw=rule.raw[:120],
-            ))
+
+            # Emit up to ``random_per_rule`` distinct (src,dst,port) tuples
+            # drawn from the pools. random_per_rule=1 preserves the legacy
+            # deterministic single-probe behaviour.
+            n_variants = max(1, random_per_rule)
+            chosen: set[tuple[str, str, int | None]] = set()
+            attempts = 0
+            while len(chosen) < n_variants and attempts < n_variants * 4:
+                attempts += 1
+                s = rng.choice(src_pool)
+                d = rng.choice(dst_pool)
+                p = rng.choice(port_pool)
+                chosen.add((s, d, p))
+            for s, d, p in chosen:
+                per_pair.setdefault(pair, []).append(TestCase(
+                    src_ip=s, dst_ip=d,
+                    proto=rule.proto, port=p,
+                    expected=expected,
+                    family=family,
+                    src_zone=src_zone, dst_zone=dst_zone,
+                    raw=rule.raw[:120],
+                ))
 
     # Sample per-pair: drops first, then accepts. Keep budget per pair so
     # heavy chains don't starve small ones.
@@ -863,6 +898,45 @@ def derive_tests_all_zones(
         picked.extend(accepts[:max(0, max_tests - len(picked))])
         out.extend(picked)
     return out
+
+
+def _expand_port_spec(
+    dport: str | None, rng: "random.Random", cap: int = 64,
+) -> list[int | None]:
+    """Expand an iptables-style dport spec into up to ``cap`` concrete ports.
+
+    Accepts single ``80``, list ``80,443,8080``, range ``1024:65535``,
+    or combinations thereof (``80,443,1024:2048``). Returns a list of
+    ``int`` ports; ``[]`` on parse failure so the caller can skip.
+    """
+    if not dport:
+        return [None]
+    out: set[int] = set()
+    try:
+        for tok in dport.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            if ":" in tok:
+                lo_s, hi_s = tok.split(":", 1)
+                lo = int(lo_s) if lo_s else 1
+                hi = int(hi_s) if hi_s else 65535
+                if lo > hi:
+                    lo, hi = hi, lo
+                span = hi - lo + 1
+                if span <= cap:
+                    out.update(range(lo, hi + 1))
+                else:
+                    out.update(rng.sample(range(lo, hi + 1), cap))
+            else:
+                out.add(int(tok))
+            if len(out) >= cap * 4:
+                break
+    except ValueError:
+        return []
+    if len(out) > cap:
+        out = set(rng.sample(list(out), cap))
+    return sorted(out)  # type: ignore[return-value]
 
 
 def _split_chain_zones(chain_name: str) -> tuple[str | None, str | None]:

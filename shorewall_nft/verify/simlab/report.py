@@ -43,14 +43,30 @@ DEFAULT_REPORT_DIR = Path(__file__).resolve().parents[3] / \
 
 @dataclass
 class CategoryStats:
+    """Per-category test result counters.
+
+    The four-way split (pass_accept / pass_drop / fail_drop / fail_accept)
+    is what matters for regression triage — never just ``mismatch``. See
+    ``feedback_test_reports`` in the operator's memory for the rationale.
+    """
     name: str
     total: int = 0
-    match: int = 0
-    mismatch: int = 0
+    # Four-way pass/fail split
+    pass_accept: int = 0   # expected ACCEPT, got ACCEPT  (correct allow)
+    pass_drop: int = 0     # expected DROP,   got DROP    (correct block)
+    fail_drop: int = 0     # expected ACCEPT, got DROP    (should have had access)
+    fail_accept: int = 0   # expected DROP,   got ACCEPT  (shouldn't have had access)
     unknown_expected: int = 0
-    observed_accept: int = 0
-    observed_drop: int = 0
+    errored: int = 0
     latencies_ms: list[int] = field(default_factory=list)
+
+    @property
+    def match(self) -> int:
+        return self.pass_accept + self.pass_drop
+
+    @property
+    def mismatch(self) -> int:
+        return self.fail_drop + self.fail_accept
 
     def summary(self) -> dict[str, Any]:
         from statistics import mean, median, quantiles
@@ -67,11 +83,15 @@ class CategoryStats:
         else:
             p99 = latmax
         return {
-            "total": self.total, "match": self.match,
+            "total": self.total,
+            "pass_accept": self.pass_accept,
+            "pass_drop": self.pass_drop,
+            "fail_drop": self.fail_drop,
+            "fail_accept": self.fail_accept,
+            "match": self.match,
             "mismatch": self.mismatch,
             "unknown_expected": self.unknown_expected,
-            "observed_accept": self.observed_accept,
-            "observed_drop": self.observed_drop,
+            "errored": self.errored,
             "latency_ms": {
                 "min": latmin, "avg": latavg, "p50": latp50,
                 "p99": p99, "max": latmax,
@@ -149,7 +169,7 @@ def write_report(
     run_dir = archive_root / ts
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Per-category breakdown
+    # Per-category breakdown — four-way pass/fail split.
     cats: dict[str, CategoryStats] = {}
     for cat, expected, spec, _meta in probes:
         cs = cats.setdefault(cat, CategoryStats(name=cat))
@@ -157,14 +177,16 @@ def write_report(
         observed = spec.verdict or "NONE"
         if expected == "UNKNOWN":
             cs.unknown_expected += 1
-        elif observed == expected:
-            cs.match += 1
+        elif observed == "ACCEPT" and expected == "ACCEPT":
+            cs.pass_accept += 1
+        elif observed == "DROP" and expected == "DROP":
+            cs.pass_drop += 1
+        elif observed == "DROP" and expected == "ACCEPT":
+            cs.fail_drop += 1
+        elif observed == "ACCEPT" and expected == "DROP":
+            cs.fail_accept += 1
         else:
-            cs.mismatch += 1
-        if observed == "ACCEPT":
-            cs.observed_accept += 1
-        elif observed == "DROP":
-            cs.observed_drop += 1
+            cs.errored += 1
         if spec.elapsed_ms > 0:
             cs.latencies_ms.append(spec.elapsed_ms)
 
@@ -223,32 +245,72 @@ def write_report(
     md.append("")
     md.append("## Category results")
     md.append("")
-    md.append("| Category | Total | Match | Mismatch | Unknown | ACCEPT | DROP |"
-              " avg | p50 | p99 | max |")
-    md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    md.append("Columns: **fail_drop** = should have had access but was "
+              "DROPPED. **fail_accept** = should have been blocked but was "
+              "ACCEPTED. pass_acc/pass_drp are the two correct outcomes.")
+    md.append("")
+    md.append("| Category | Total | ok | pass_acc | pass_drp | **fail_drop** | "
+              "**fail_accept** | unknown | err | avg | p50 | p99 | max |")
+    md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for name in sorted(cats):
         cs = cats[name].summary()
         md.append(
-            f"| {name} | {cs['total']} | {cs['match']} | {cs['mismatch']} "
-            f"| {cs['unknown_expected']} | {cs['observed_accept']} "
-            f"| {cs['observed_drop']} | {cs['latency_ms']['avg']}ms "
-            f"| {cs['latency_ms']['p50']}ms | {cs['latency_ms']['p99']}ms "
-            f"| {cs['latency_ms']['max']}ms |"
+            f"| {name} | {cs['total']} | {cs['match']} "
+            f"| {cs['pass_accept']} | {cs['pass_drop']} "
+            f"| {cs['fail_drop']} | {cs['fail_accept']} "
+            f"| {cs['unknown_expected']} | {cs['errored']} "
+            f"| {cs['latency_ms']['avg']}ms | {cs['latency_ms']['p50']}ms "
+            f"| {cs['latency_ms']['p99']}ms | {cs['latency_ms']['max']}ms |"
         )
     md.append("")
     (run_dir / "report.md").write_text("\n".join(md) + "\n")
 
-    # Mismatches file
-    mismatches: list[str] = []
+    # Mismatches file — grouped by failure direction so triage doesn't
+    # have to re-classify by hand. RANDOM probes carry the oracle's
+    # reasoning string (which rule matched, why ACCEPT/DROP was expected)
+    # so a reader can decide "oracle wrong" vs "emit wrong" at a glance.
+    fail_drop: list[str] = []   # expected ACCEPT, got DROP
+    fail_accept: list[str] = [] # expected DROP, got ACCEPT
+    errored: list[str] = []
     for cat, expected, spec, meta in probes:
         if expected == "UNKNOWN":
             continue
-        if spec.verdict and spec.verdict != expected:
-            mismatches.append(
-                f"{cat:10} [{spec.inject_iface}→{spec.expect_iface}] "
-                f"expected={expected} got={spec.verdict} "
-                f"[{meta.get('desc','')}]"
+        if not spec.verdict or spec.verdict == expected:
+            continue
+        desc = meta.get("desc", "")
+        reason = meta.get("oracle_reason", "")
+        line = (
+            f"{cat:10} [{spec.inject_iface}→{spec.expect_iface}] "
+            f"expected={expected} got={spec.verdict} "
+            f"[{desc}]"
+        )
+        if reason:
+            line += f"  ↳ oracle: {reason}"
+        if expected == "ACCEPT" and spec.verdict == "DROP":
+            fail_drop.append(line)
+        elif expected == "DROP" and spec.verdict == "ACCEPT":
+            fail_accept.append(line)
+        else:
+            errored.append(line)
+    if fail_drop or fail_accept or errored:
+        out_lines: list[str] = []
+        if fail_drop:
+            out_lines.append(
+                f"# fail_drop — should have had access but was DROPPED "
+                f"({len(fail_drop)})"
             )
-    if mismatches:
-        (run_dir / "mismatches.txt").write_text("\n".join(mismatches) + "\n")
+            out_lines.extend(fail_drop)
+            out_lines.append("")
+        if fail_accept:
+            out_lines.append(
+                f"# fail_accept — should have been blocked but was ACCEPTED "
+                f"({len(fail_accept)})"
+            )
+            out_lines.extend(fail_accept)
+            out_lines.append("")
+        if errored:
+            out_lines.append(f"# errored — no observed verdict ({len(errored)})")
+            out_lines.extend(errored)
+            out_lines.append("")
+        (run_dir / "mismatches.txt").write_text("\n".join(out_lines))
     return run_dir
