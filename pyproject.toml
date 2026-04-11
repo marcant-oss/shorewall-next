@@ -55,6 +55,10 @@ dev = [
 simulate = [
     "scapy>=2.5",
 ]
+daemon = [
+    "prometheus_client>=0.20",
+    "dnspython>=2.4",
+]
 docs = [
     "mkdocs-material",
 ]
@@ -69,6 +73,7 @@ Changelog = "https://github.com/shorewall-nft/shorewall-nft/blob/master/CHANGELO
 [project.scripts]
 shorewall-nft = "shorewall_nft.main:main"
 shorewall-nft-migrate = "shorewall_nft.tools.migrate:migrate"
+shorewalld = "shorewall_nft.daemon.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
