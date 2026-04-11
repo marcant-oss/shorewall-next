@@ -2010,6 +2010,15 @@ def config_merge(sources: tuple[Path, ...], target: Path, force: bool,
         for k, v in cfg.params.items():
             if not k.startswith("__"):
                 merged.params[k] = v
+        # last-wins for plugin files (plugins.conf + plugins/*.toml +
+        # plugins/*.token) and macro definitions. The exporter
+        # writes whatever ends up in these dicts byte-for-byte.
+        for k, v in (getattr(cfg, "plugin_files", None) or {}).items():
+            merged.plugin_files[k] = v
+        for k, v in (getattr(cfg, "macros", None) or {}).items():
+            merged.macros[k] = v
+        for k, v in (getattr(cfg, "scripts", None) or {}).items():
+            merged.scripts[k] = v
 
     assert merged is not None
 
