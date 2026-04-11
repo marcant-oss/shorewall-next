@@ -370,8 +370,9 @@ def test_worker_pool_counts_non_client_response_drops():
     metrics = DnstapMetrics()
     frame_q: queue.Queue[bytes] = queue.Queue(maxsize=4)
 
-    # Pretend type = 2 (RESOLVER_QUERY) instead of CLIENT_RESPONSE.
-    frame = _make_dnstap_frame(2, b"\x00")
+    # CLIENT_QUERY (type=5) is a query event, not a response — the
+    # decoder drops it and increments the non-response counter.
+    frame = _make_dnstap_frame(5, b"\x00")
 
     async def driver() -> None:
         loop = asyncio.get_running_loop()

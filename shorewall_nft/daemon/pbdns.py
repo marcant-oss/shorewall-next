@@ -31,7 +31,6 @@ decode worker pool, bail cleanly on SIGTERM.
 from __future__ import annotations
 
 import asyncio
-import os
 import struct
 import threading
 import time
@@ -240,9 +239,16 @@ def _bump_rcode(metrics: PbdnsMetrics, rcode: int) -> None:
 
 
 class PbdnsServer:
-    """asyncio unix-socket server reading length-prefixed PBDNSMessage
-    frames from pdns recursor and feeding them through the
-    :class:`TrackerBridge` into Phase 2's SetWriter.
+    """asyncio server reading length-prefixed PBDNSMessage frames from
+    pdns recursor and feeding them through the :class:`TrackerBridge`
+    into Phase 2's SetWriter.
+
+    Supports both unix-socket and TCP ingestion on the same server
+    instance. pdns-recursor's ``protobufServer()`` Lua directive
+    speaks TCP only (unlike ``dnstapFrameStreamServer()`` which
+    accepts both), so every realistic setup that wants to use the
+    PBDNSMessage ingress path needs TCP support; the unix path
+    stays available for out-of-tree producers that can speak it.
 
     One instance per daemon. Multiple recursor connections are
     handled concurrently (each connection gets its own reader
@@ -255,42 +261,78 @@ class PbdnsServer:
     def __init__(
         self,
         *,
-        socket_path: str,
+        socket_path: str | None = None,
         bridge: TrackerBridge,
         socket_mode: int = 0o660,
+        socket_owner: str | int | None = None,
+        socket_group: str | int | None = None,
+        tcp_host: str | None = None,
+        tcp_port: int | None = None,
     ) -> None:
+        tcp_configured = bool(tcp_host) and tcp_port is not None
+        if not socket_path and not tcp_configured:
+            raise ValueError(
+                "PbdnsServer requires a unix socket_path, a "
+                "(tcp_host, tcp_port) pair, or both")
         self._socket_path = socket_path
         self._bridge = bridge
         self._socket_mode = socket_mode
+        self._socket_owner = socket_owner
+        self._socket_group = socket_group
+        self._tcp_host = tcp_host
+        self._tcp_port = tcp_port
         self._server: asyncio.base_events.Server | None = None
+        self._tcp_server: asyncio.base_events.Server | None = None
         self.metrics = PbdnsMetrics()
 
     async def start(self) -> None:
-        path = Path(self._socket_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-        self._server = await asyncio.start_unix_server(
-            self._handle_client, path=str(path))
-        try:
-            os.chmod(path, self._socket_mode)
-        except OSError as e:
-            log.warning("chmod %s failed: %s", path, e)
-        log.info("pbdns server listening on %s", path)
+        if self._socket_path:
+            path = Path(self._socket_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            self._server = await asyncio.start_unix_server(
+                self._handle_client, path=str(path))
+            from .sockperms import apply_socket_perms
+            apply_socket_perms(
+                path,
+                mode=self._socket_mode,
+                owner=self._socket_owner,
+                group=self._socket_group,
+            )
+            log.info("pbdns server listening on %s", path)
+        if bool(self._tcp_host) and self._tcp_port is not None:
+            self._tcp_server = await asyncio.start_server(
+                self._handle_client,
+                host=self._tcp_host,
+                port=self._tcp_port,
+                reuse_address=True,
+            )
+            log.info(
+                "pbdns server listening on tcp://%s:%d",
+                self._tcp_host, self._tcp_port)
 
     async def close(self) -> None:
+        if self._tcp_server is not None:
+            self._tcp_server.close()
+            try:
+                await self._tcp_server.wait_closed()
+            except Exception:  # noqa: BLE001
+                pass
+            self._tcp_server = None
         if self._server is not None:
             self._server.close()
             try:
                 await self._server.wait_closed()
             except Exception:  # noqa: BLE001
                 pass
-        try:
-            Path(self._socket_path).unlink()
-        except FileNotFoundError:
-            pass
+        if self._socket_path:
+            try:
+                Path(self._socket_path).unlink()
+            except FileNotFoundError:
+                pass
 
     async def _handle_client(
         self,
@@ -301,8 +343,17 @@ class PbdnsServer:
         self.metrics.inc("connections_total", 1)
         try:
             while True:
-                header = await reader.readexactly(4)
-                length = struct.unpack(">I", header)[0]
+                # pdns-recursor's protobufServer() frames every
+                # PBDNSMessage with a 2-byte big-endian length
+                # prefix (``uint16_t mlen = htons(data.length())``
+                # in rec-protobuf.cc). A 4-byte read would pull
+                # the header plus the first two bytes of the
+                # protobuf body, interpret that as the length,
+                # and disconnect the client with a garbage cap
+                # overflow. Match the on-wire 2-byte framing
+                # exactly.
+                header = await reader.readexactly(2)
+                length = struct.unpack(">H", header)[0]
                 if length == 0:
                     continue
                 if length > MAX_FRAME_BYTES:
@@ -330,8 +381,81 @@ class PbdnsServer:
 def encode_length_prefixed(msg: "dnsmessage_pb2.PBDNSMessage") -> bytes:
     """Encode a PBDNSMessage into the recursor's wire format.
 
-    Used by tests and by the simlab integration test (Phase 10)
-    to synthesise pdns-like frames without running a real recursor.
+    Matches pdns-recursor's ``protobufServer()`` framing exactly:
+    a 2-byte big-endian length followed by the serialised
+    PBDNSMessage. Used by tests and by the simlab integration
+    test (Phase 10) to synthesise pdns-like frames without
+    running a real recursor.
     """
     body = msg.SerializeToString()
-    return struct.pack(">I", len(body)) + body
+    if len(body) > 0xFFFF:
+        raise ValueError(
+            f"PBDNSMessage {len(body)} bytes exceeds 2-byte length "
+            f"prefix limit (0xFFFF)")
+    return struct.pack(">H", len(body)) + body
+
+
+# ── Prometheus collector ─────────────────────────────────────────────
+
+
+class PbdnsMetricsCollector:
+    """Prometheus collector that surfaces the pbdns pipeline counters.
+
+    Mirrors :class:`shorewall_nft.daemon.dnstap.DnstapMetricsCollector`
+    so operators running both ingestion paths see a symmetric
+    ``shorewalld_pbdns_*`` / ``shorewalld_dnstap_*`` metric set and
+    can A/B compare the two in a single Grafana dashboard.
+    """
+
+    def __init__(self, server: PbdnsServer) -> None:
+        from .exporter import CollectorBase
+        CollectorBase.__init__(self, netns="")
+        self._server = server
+        self.netns = ""
+
+    def collect(self):  # type: ignore[no-untyped-def]
+        from .exporter import _MetricFamily
+        snap = self._server.metrics.snapshot()
+        fams: list = []
+
+        def counter(name: str, help_text: str, value: float) -> None:
+            fam = _MetricFamily(name, help_text, [], mtype="counter")
+            fam.add([], float(value))
+            fams.append(fam)
+
+        def gauge(name: str, help_text: str, value: float) -> None:
+            fam = _MetricFamily(name, help_text, [])
+            fam.add([], float(value))
+            fams.append(fam)
+
+        counter("shorewalld_pbdns_frames_accepted_total",
+                "PBDNSMessage frames that produced a DnsUpdate",
+                snap["frames_accepted_total"])
+        counter("shorewalld_pbdns_frames_decode_error_total",
+                "PBDNSMessage frames that failed protobuf decode",
+                snap["frames_decode_error_total"])
+        counter("shorewalld_pbdns_frames_empty_rrs_total",
+                "PBDNSMessage frames with no A/AAAA answers",
+                snap["frames_empty_rrs_total"])
+        counter("shorewalld_pbdns_frames_family_v4_total",
+                "Per-frame A record counts (v4 RRs seen)",
+                snap["frames_family_v4_total"])
+        counter("shorewalld_pbdns_frames_family_v6_total",
+                "Per-frame AAAA record counts (v6 RRs seen)",
+                snap["frames_family_v6_total"])
+        counter("shorewalld_pbdns_frames_by_rcode_noerror_total",
+                "NOERROR PBDNSMessage frames",
+                snap["frames_by_rcode_noerror_total"])
+        counter("shorewalld_pbdns_frames_by_rcode_nxdomain_total",
+                "NXDOMAIN PBDNSMessage frames",
+                snap["frames_by_rcode_nxdomain_total"])
+        counter("shorewalld_pbdns_bytes_received_total",
+                "Bytes of PBDNSMessage protobuf received",
+                snap["bytes_received_total"])
+        counter("shorewalld_pbdns_connections_total",
+                "Cumulative PBDNSMessage producer connections",
+                snap["connections_total"])
+        gauge("shorewalld_pbdns_connections",
+              "Currently connected PBDNSMessage producers",
+              snap["connections"])
+        return fams

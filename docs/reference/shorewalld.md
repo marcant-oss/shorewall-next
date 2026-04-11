@@ -43,6 +43,16 @@ REPROBE_INTERVAL=300
 ALLOWLIST_FILE=/var/lib/shorewalld/dns-allowlist.tsv
 LISTEN_API=/run/shorewalld/dnstap.sock
 PBDNS_SOCKET=/run/shorewalld/pbdns.sock
+PBDNS_TCP=127.0.0.1:9999       # pdns protobufServer() is TCP-only
+
+# Unix socket ownership applied to every daemon-owned socket
+# (LISTEN_API, PBDNS_SOCKET). Typical production shape: 0660
+# with SOCKET_GROUP=pdns so the recursor can connect as its
+# normal non-root user. Owner defaults to the shorewalld
+# process UID (usually root); group defaults to unchanged.
+SOCKET_MODE=0660
+SOCKET_OWNER=root
+SOCKET_GROUP=pdns
 
 PEER_LISTEN=0.0.0.0:9749
 PEER_ADDRESS=10.0.0.2:9749
@@ -424,29 +434,78 @@ Tap runs as its own *listener* on the configured path; point
 pdns_recursor at that same path if you want to observe the live
 stream without stopping shorewalld itself.
 
-## PBDNSMessage (PowerDNS protobuf) ingestion
+## Ingestion path: dnstap vs PBDNSMessage
 
-In addition to dnstap, shorewalld accepts PowerDNS recursor's
-native protobuf logger format via `PBDNS_SOCKET` in
-`shorewalld.conf`:
+shorewalld ships with two DNS answer ingestion paths. **dnstap
+is the recommended default** and the only path activated by the
+smoke test (`tools/setup-shorewalld-dnstap-smoke.sh`); the
+PBDNSMessage path stays in-tree as an opt-in alternative.
+
+### Why dnstap is preferred
+
+| Property | dnstap | PBDNSMessage |
+|---|---|---|
+| Standard | fstrm / dnstap (multi-vendor) | pdns-specific |
+| Producers | pdns-recursor, unbound, dnsdist, knot-resolver | pdns-recursor only |
+| Transports | **unix socket + TCP** | **TCP only** (pdns refuses unix) |
+| Wire format | raw DNS bytes in envelope | pre-decomposed DNSRR records |
+| Consumer cost | ~100 µs dnspython parse per frame | ~20 µs skip-parse per frame |
+| Framing | fstrm FrameStream (handshake) | 2-byte length prefix |
+| Netns story | unix socket crosses mount NS cleanly | loopback TCP port per netns |
+
+The ~80 µs per-frame difference in shorewalld's decoder is well
+within the latency budget at realistic DNS QPS (< 20 k/s), so
+the performance advantage of PBDNSMessage rarely matters in
+practice. Meanwhile dnstap's unix-socket support, multi-vendor
+reach, and zero-port-management story win on every operational
+dimension. Prefer dnstap unless you have a specific reason to
+pick PBDNSMessage.
+
+### dnstap (recommended)
 
 ```
-PBDNS_SOCKET=/run/shorewalld/pbdns.sock
+# /etc/shorewall/shorewalld.conf
+LISTEN_API=/run/shorewalld/dnstap.sock
 ```
 
-Configure the recursor's `protobufServer()` Lua directive to
-write to the same path. The PBDNSMessage path is more efficient
-than dnstap because the recursor hands us already-decomposed
-`DNSRR` records — we never need to parse raw DNS wire format, so
-dnspython sits out of the hot path entirely. Most deployments
-will want to use PBDNS for raw throughput and keep dnstap
-available as a fallback.
+pdns-recursor side, in a file loaded via `lua_config_file`:
+
+```lua
+dnstapFrameStreamServer({"/run/shorewalld/dnstap.sock"},
+    {logQueries = false, logResponses = true})
+```
+
+Or via the pdns 5.x YAML config (`logging.dnstap_framestream_servers`)
+if you prefer the native path — but not alongside `lua_config_file`,
+pdns refuses that combination.
+
+### PBDNSMessage (opt-in alternative)
+
+```
+# /etc/shorewall/shorewalld.conf
+PBDNS_TCP=127.0.0.1:9999
+```
+
+pdns-recursor side:
+
+```lua
+protobufServer("127.0.0.1:9999",
+    {logQueries = false, logResponses = true})
+```
+
+Note the TCP-only restriction: pdns-recursor's `protobufServer()`
+and the YAML `protobuf_servers` field both refuse unix sockets
+(`Unable to convert presentation address 'unix:/...'`). If an
+out-of-tree producer speaks the PBDNSMessage wire format over a
+unix socket, shorewalld can still consume it via
+`PBDNS_SOCKET=/run/shorewalld/pbdns.sock`; the two transports
+can be enabled simultaneously on the same PbdnsServer instance.
 
 Both ingestion paths feed the same Phase 2 pipeline:
 `DnsSetTracker.propose → SetWriter → WorkerRouter → nft worker →
 libnftables`. Metrics are mirrored (`shorewalld_pbdns_*` vs
 `shorewalld_dnstap_*`) so a Grafana dashboard can compare them
-side-by-side.
+side-by-side during a migration.
 
 ## TCP dnstap listener
 
