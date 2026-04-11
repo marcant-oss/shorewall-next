@@ -136,10 +136,58 @@ shorewall-nft simulate /etc/shorewall \
 Options:
 
 - `--target IP` — focus tests on packets involving this IP
-- `--max-tests N` — cap the number of random test cases (default 60)
+- `--targets LIST|@FILE` — comma-separated list or `@file` of target
+  IPs. All targets share a single netns topology so the nft ruleset
+  is loaded exactly once regardless of how many targets you pass.
+  This avoids the CPU burst from reloading a multi-thousand-rule
+  ruleset per target.
+- `--ip6tables FILE` — ip6tables-save dump for IPv6 tests
+- `--targets6 LIST|@FILE` — IPv6 target addresses (requires `--ip6tables`)
+- `--src-iface NAME` — override the src-zone interface name in the
+  FW netns (default: `bond1`, net zone)
+- `--dst-iface NAME` — override the dst-zone interface name in the
+  FW netns (default: `bond0.20`, host zone)
+- `--max-tests N` — cap the number of random test cases per target (default 60)
 - `--seed N` — reproducible sampling
 - `--parallel N`, `-j N` — parallel workers (default 4)
 - `--no-trace` — disable nft trace capture (faster but less diagnostic)
+
+### Topology and coverage
+
+The simulator sets up three network namespaces with two dual-stack
+veth pairs:
+
+```
+NS_SRC                     NS_FW                              NS_DST
+(src-z veth)               (src_iface + dst_iface)            (dst-z veth)
+10.200.1.2/30              10.200.1.1/30  ↔  10.200.2.1/30    10.200.2.2/30
+fd00:200:1::2/64           fd00:200:1::1  ↔  fd00:200:2::1    fd00:200:2::2/64
++spoofed saddr (v4/v6)     SRC_IFACE=bond1   DST_IFACE=bond0.20 +target IPs
+                           (net zone)        (host zone)
+```
+
+By default this exercises **`net → host` (FORWARD)** only, both v4
+and v6 if an `--ip6tables` dump is supplied. To test other zone
+pairs, override the interface names to match interfaces from other
+zones in your config:
+
+```bash
+shorewall-nft simulate /etc/shorewall46 \
+    --iptables iptables-save.txt \
+    --src-iface bond0.18 \   # adm zone
+    --dst-iface bond0.20 \   # host zone
+    --target 203.0.113.130
+```
+
+Not currently exercised by simulate:
+
+- INPUT / OUTPUT chains (firewall itself as src or dst)
+- Reverse traffic (host→net)
+- Intra-zone rules (net→net)
+- Rule chains for zones whose interface isn't `src_iface` or
+  `dst_iface` — use `verify --iptables` for full static rule-level
+  coverage, which has no topology constraint and handles all 241
+  zone pairs via fingerprint comparison.
 
 ### Output
 
