@@ -25,6 +25,81 @@ from typing import Any
 _eph_counter = 32768 + (os.getpid() & 0xffff) % 28000
 
 
+def fast_probe_id(raw: bytes, is_tap: bool) -> int | None:
+    """Extract the probe_id from an observed frame without scapy.
+
+    simlab stashes every probe's 16-bit id in IPv4 ``id`` or the low
+    20 bits of the IPv6 flow label (see ``_ipv4``/``_ipv6`` above).
+    On the hot path (~thousands of probes per second) running scapy
+    parse for each observation dominates CPU and — thanks to the
+    GIL — prevents the reader threads from scaling across cores.
+    This helper reads the exact bytes we need in pure Python
+    without touching scapy:
+
+    - TAP mode: skip the 14-byte Ethernet header (ethertype is
+      verified to be 0x0800 v4 or 0x86dd v6).
+    - TUN mode: no header, IP version is in the first nibble.
+
+    Returns the 16-bit id (masked by the caller) or ``None`` when
+    the frame is not a recognisable v4/v6 packet (caller should
+    fall back to the slow path, ARP/NDP handling, etc.).
+    """
+    off = 14 if is_tap else 0
+    if is_tap:
+        if len(raw) < 14:
+            return None
+        etype = (raw[12] << 8) | raw[13]
+        if etype == 0x0800:  # IPv4
+            pass
+        elif etype == 0x86dd:  # IPv6
+            pass
+        else:
+            return None
+    if len(raw) < off + 4:
+        return None
+    version = raw[off] >> 4
+    if version == 4:
+        if len(raw) < off + 6:
+            return None
+        return (raw[off + 4] << 8) | raw[off + 5]
+    if version == 6:
+        if len(raw) < off + 4:
+            return None
+        return (((raw[off + 1] & 0x0f) << 16)
+                | (raw[off + 2] << 8) | raw[off + 3]) & 0xffff
+    return None
+
+
+def fast_is_arp_or_ndp_ns(raw: bytes, is_tap: bool) -> bool:
+    """Cheap check — is the frame an ARP who-has or IPv6 NDP NS?
+
+    These need full scapy parse + reply construction so the
+    reader thread has to take the slow path for them. Everything
+    else is observed IP traffic that can use ``fast_probe_id``.
+    """
+    if is_tap:
+        if len(raw) < 14:
+            return False
+        etype = (raw[12] << 8) | raw[13]
+        if etype == 0x0806:  # ARP
+            return True
+        if etype == 0x86dd:
+            if len(raw) < 14 + 40 + 1:
+                return False
+            if raw[14 + 6] != 58:  # next-header != ICMPv6
+                return False
+            return raw[14 + 40] == 135  # NS
+        return False
+    # TUN — bare IP
+    if len(raw) < 40 + 1:
+        return False
+    if raw[0] >> 4 != 6:
+        return False
+    if raw[6] != 58:
+        return False
+    return raw[40] == 135
+
+
 def _next_sport() -> int:
     global _eph_counter
     _eph_counter = 32768 + ((_eph_counter - 32768 + 1) % 28000)
