@@ -1,3 +1,13 @@
+shorewall-nft (1.2.0-1) unstable; urgency=medium
+
+  * Release 1.2.0: shorewalld DNS-set pipeline — full DNS-driven nft-set
+    populator with HA replication, zero-copy hot paths, persistent state,
+    ruleset-reload reconciliation, peer-to-peer replication over
+    authenticated UDP. OPTIMIZE=8 is now the compiler default.
+  * See CHANGELOG.md for full history.
+
+ -- shorewall-nft maintainers <shorewall-nft@example.com>  Sun, 12 Apr 2026 12:00:00 +0000
+
 shorewall-nft (1.1.0-1) unstable; urgency=medium
 
   * Release 1.1.0: flowtable + vmap dispatch + ct zone tag, concat-map DNAT,

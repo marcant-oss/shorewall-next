@@ -2,7 +2,7 @@
 %global srcname shorewall_nft
 
 Name:           shorewall-nft
-Version:        1.1.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        nftables-native firewall compiler with Shorewall-compatible config
 
@@ -150,6 +150,13 @@ fi
 %{_docdir}/%{name}/
 
 %changelog
+* Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.2.0-1
+- Release 1.2.0: shorewalld DNS-set pipeline — full DNS-driven nft-set
+  populator with HA replication, zero-copy hot paths, persistent state,
+  ruleset-reload reconciliation, peer-to-peer replication over
+  authenticated UDP. OPTIMIZE=8 is now the compiler default.
+- See CHANGELOG.md for full history.
+
 * Sat Apr 11 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.1.0-1
 - Release 1.1.0: flowtable + vmap dispatch + ct zone tag, concat-map DNAT,
   full config-file coverage (stoppedrules, proxyarp/ndp, rawnat, arprules,
