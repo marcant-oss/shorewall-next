@@ -162,6 +162,18 @@ Already committed on this branch since 1.0.0:
    Reihenfolge nach Häufigkeit in echten Configs:
    stoppedrules > proxyarp > rawnat > arprules > nfacct >
    proxyndp > scfilter > ecn.
+10. **Flame graph for simlab runs** — profile the controller
+    during a ``full`` scan and export a flame graph (via
+    ``py-spy record --format flamegraph`` or ``perf record``
+    with ``perf-folded``) for the hot path. **Scope: inside
+    NS_FW only**, and covering every interface that carries
+    probe traffic — including parent interfaces in the root
+    netns (e.g. ``bond0`` carrying ``bond0.18`` vlan, the
+    underlying physical NICs, veth endpoints). Goal: find
+    whatever takes > 5 % of run wall time so we can target
+    it for the next round of optimisation. Post-flamegraph
+    artifact under ``docs/testing/simlab-reports/<ts>/
+    flamegraph.svg`` alongside ``report.json``.
 
 ## Release checklist (carry-forward from pre-1.0 work)
 
