@@ -206,6 +206,27 @@ Already committed on this branch since 1.0.0:
     (sister repo) has the metric shape and the Prometheus
     registry already — the port is mostly replacing its
     counter-read path with the shorewall-nft netlink one.
+12. **routefilter / rp_filter parity with Shorewall.** Today
+    ``simlab/topology.py`` writes ``net.ipv4.conf.{all,default}.
+    rp_filter = 0`` and the compiler does nothing with the
+    ``routefilter`` interface option — both ends are rigid.
+    Shorewall's behaviour is per-interface and three-state:
+    no option (kernel default, usually loose), ``routefilter``
+    (strict), ``routefilter=1`` (strict), ``routefilter=2``
+    (loose). The setting maps to
+    ``net.ipv4.conf.<iface>.rp_filter`` AND interacts with
+    ``net.ipv4.conf.all.rp_filter`` (kernel uses ``max(all,
+    iface)``). Implement: (1) compiler reads ``routefilter``
+    from ``interfaces`` and emits a sysctl line per iface in
+    the generated systemd unit / start script (already have
+    ``runtime/sysctl_gen.py``); (2) simlab topology stops
+    forcing rp_filter=0 globally and instead replays the
+    per-iface values from the parsed ``interfaces`` file so
+    the test environment matches what production would see;
+    (3) shorewall.conf ``ROUTE_FILTER`` global setting honoured
+    as the default for unset interfaces. Cross-check with the
+    upstream Shorewall ``Compiler::*`` perl module for the
+    exact mapping table.
 
 ## Release checklist (carry-forward from pre-1.0 work)
 
