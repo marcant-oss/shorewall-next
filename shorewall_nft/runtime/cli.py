@@ -234,8 +234,16 @@ def _check_loaded_hash(config_dir: Path, netns: str | None) -> tuple[str, str | 
 
 def _compile(config_dir: Path, config6_dir: Path | None = None,
              debug: bool = False,
-             skip_sibling_merge: bool = False):
-    """Compile helper — returns (ir, script, sets)."""
+             skip_sibling_merge: bool = False,
+             override: dict | None = None):
+    """Compile helper — returns (ir, script, sets).
+
+    ``override`` is a structured JSON blob (see
+    ``docs/cli/override-json.md``) applied on top of the parsed
+    config via :func:`shorewall_nft.config.importer.apply_overlay`.
+    Load order is *defaults → on-disk → override*, so the overlay
+    always wins on collisions.
+    """
     from shorewall_nft.compiler.ir import build_ir
     from shorewall_nft.config.hash import compute_config_hash
     from shorewall_nft.config.parser import load_config
@@ -243,6 +251,9 @@ def _compile(config_dir: Path, config6_dir: Path | None = None,
 
     config = load_config(config_dir, config6_dir=config6_dir,
                          skip_sibling_merge=skip_sibling_merge)
+    if override:
+        from shorewall_nft.config.importer import apply_overlay
+        apply_overlay(config, override)
     ir = build_ir(config)
     static_nft = _load_static_nft(config_dir)
     nft_sets = _load_sets(config_dir)
@@ -253,7 +264,8 @@ def _compile(config_dir: Path, config6_dir: Path | None = None,
 
 
 def _compile_from_cli(directory, config_dir, config_dir4, config6_dir,
-                      no_auto_v4, no_auto_v6, debug=False):
+                      no_auto_v4, no_auto_v6, debug=False,
+                      override=None):
     """Helper for commands using @config_options + positional directory.
 
     Resolves the CLI flags to (primary, secondary, skip) and calls _compile.
@@ -261,50 +273,92 @@ def _compile_from_cli(directory, config_dir, config_dir4, config6_dir,
     primary, secondary, skip = _resolve_config_paths(
         directory, config_dir, config_dir4, config6_dir,
         no_auto_v4, no_auto_v6)
+    if override is None:
+        # Pick up the ctx-stashed overlay if a subcommand caller
+        # didn't explicitly pass one.
+        try:
+            override = click.get_current_context().obj.get(
+                "override_json")
+        except Exception:
+            override = None
     return _compile(primary, config6_dir=secondary,
-                    skip_sibling_merge=skip, debug=debug), (primary, secondary, skip)
+                    skip_sibling_merge=skip, debug=debug,
+                    override=override), (primary, secondary, skip)
+
+
+def _load_override_arg(arg: str) -> dict:
+    """Read a --override-json argument.
+
+    Accepts a literal JSON string, ``@path`` (reads from file), or
+    ``-`` (reads from stdin). File extension may be ``.yaml`` for
+    YAML, default is JSON.
+    """
+    import json as _json
+    if arg == "-":
+        text = sys.stdin.read()
+        suffix = ""
+    elif arg.startswith("@"):
+        p = Path(arg[1:])
+        text = p.read_text()
+        suffix = p.suffix
+    else:
+        text = arg
+        suffix = ""
+    if suffix in (".yaml", ".yml"):
+        try:
+            import yaml  # type: ignore[import-not-found]
+        except ImportError:
+            raise click.ClickException(
+                "--override-json YAML requested but PyYAML not installed")
+        return yaml.safe_load(text)
+    return _json.loads(text)
 
 
 @click.group()
 @click.version_option(version=__version__)
 @click.option("-q", is_flag=True, help="Quiet mode.")
 @click.option("-v", "verbose", count=True, help="Verbose mode (-v, -vv).")
-# FUTURE (planned, not wired yet): add a global
-#     @click.option("--override-json", "override_json", default=None,
-#                   help="Structured JSON merged over every parsed config "
-#                        "file at runtime (works even if a file is absent).")
-# and stash the parsed dict on ``ctx.obj["override_json"]`` so every
-# subcommand that calls ``_compile`` / ``load_config`` can pass it
-# through to the parser.
-#
-# Structure: top-level keys are config-file names (relative to the
-# shorewall config dir), values are the file-specific overlay shape:
-#
-#   {
-#     "shorewall.conf":       {"NETBOX_URL": "...", "OPTIMIZE": "8"},
-#     "params":               {"NETMASK": "24"},
-#     "interfaces":           [{"zone":"net","iface":"bond1","options":"..."}],
-#     "rules":                [{"action":"ACCEPT","source":"net","dest":"fw", ...}],
-#     "plugins/netbox.toml":  {"url":"https://...", "cache_ttl": 3600}
-#   }
-#
-# For KEY=VALUE files (shorewall.conf, params) values are dicts
-# merged over self.settings / self.params. For column-based files
-# (interfaces, rules, hosts, policy, ...) values are lists of
-# structured rows that get appended to the parsed list (or replace
-# it when the corresponding file is absent). Plugin-TOML files
-# merge into the plugin-specific config dict loaded by PluginManager.
-#
-# Load order (each later layer wins): defaults → on-disk file →
-# override-json. This makes the tool usable even with NO config
-# files on disk — just `shorewall-nft compile --override-json @cfg.json`.
-# See matching TODO in shorewall_nft/config/parser.py::_parse_conf.
+@click.option(
+    "--override-json", "override_json", default=None,
+    metavar="JSON_OR_@FILE",
+    help="Structured JSON merged over every parsed config file at "
+         "runtime. Accepts a literal JSON string, ``@path`` (reads a "
+         "JSON/YAML file; YAML auto-detected by .yaml/.yml extension), "
+         "or ``-`` (reads from stdin). See docs/cli/override-json.md.")
+@click.option(
+    "--override", "override_per_file", multiple=True,
+    metavar="FILE=JSON_OR_@FILE",
+    help="Per-file overlay entry, repeatable. "
+         "``--override rules=@extra.json`` merges the JSON in "
+         "extra.json under the ``rules`` top-level key. Mergeable "
+         "with --override-json (later wins on collision).")
 @click.pass_context
-def cli(ctx, q, verbose):
+def cli(ctx, q, verbose, override_json, override_per_file):
     """shorewall-nft: nftables-native firewall compiler."""
     ctx.ensure_object(dict)
     ctx.obj["quiet"] = q
     ctx.obj["verbose"] = verbose
+
+    # Assemble the effective overlay: --override-json first, then
+    # each --override FILE=JSON layered on top in argv order.
+    overlay: dict = {}
+    if override_json:
+        try:
+            overlay.update(_load_override_arg(override_json))
+        except Exception as e:
+            raise click.ClickException(
+                f"failed to parse --override-json: {e}")
+    for entry in override_per_file:
+        if "=" not in entry:
+            raise click.ClickException(
+                f"--override must be of the form FILE=JSON: {entry!r}")
+        file, _, value = entry.partition("=")
+        try:
+            overlay[file] = _load_override_arg(value)
+        except Exception as e:
+            raise click.ClickException(
+                f"failed to parse --override {file}=...: {e}")
+    ctx.obj["override_json"] = overlay or None
 
 
 # ──────────────────────────────────────────────────────────────────────
