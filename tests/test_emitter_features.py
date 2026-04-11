@@ -724,3 +724,53 @@ class TestRawnat:
             assert any("unsupported action" in str(x.message) for x in w)
         out = emit_nft(ir)
         assert "dnat ip to" not in out
+
+
+# ──────────────────────────────────────────────────────────────────────
+# arprules — separate arp filter table
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestArprules:
+    def _ir(self, columns_list):
+        from shorewall_nft.config.parser import ConfigLine, load_config
+        config = load_config(MINIMAL_DIR)
+        config.arprules = [
+            ConfigLine(columns=cols, file="arprules", lineno=i)
+            for i, cols in enumerate(columns_list)
+        ]
+        return build_ir(config)
+
+    def test_emits_arp_table(self):
+        ir = self._ir([["DROP", "10.0.0.5", "-", "eth0", "-"]])
+        out = emit_nft(ir)
+        assert "table arp filter {" in out
+        assert "chain arp-input {" in out
+        assert "type filter hook input priority 0; policy accept;" in out
+        assert "arp saddr ip 10.0.0.5" in out
+        assert "drop" in out
+
+    def test_no_arp_table_when_no_arprules(self):
+        from shorewall_nft.config.parser import load_config
+        config = load_config(MINIMAL_DIR)
+        ir = build_ir(config)
+        out = emit_nft(ir)
+        assert "table arp filter" not in out
+
+    def test_mac_match(self):
+        ir = self._ir([["DROP", "-", "-", "eth0", "00-11-22-33-44-55"]])
+        out = emit_nft(ir)
+        assert "arp saddr ether 00:11:22:33:44:55" in out
+
+    def test_dest_target_match(self):
+        ir = self._ir([["ACCEPT", "-", "10.0.0.1", "eth0", "-"]])
+        out = emit_nft(ir)
+        assert "arp daddr ip 10.0.0.1" in out
+        assert "accept" in out
+
+    def test_unknown_action_warns(self):
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            self._ir([["FOO", "10.0.0.5", "-", "eth0", "-"]])
+            assert any("unsupported action" in str(x.message) for x in w)
