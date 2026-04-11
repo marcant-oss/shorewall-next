@@ -140,13 +140,39 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
 
     flowtable_devices = _parse_flowtable_devices(ir)
     if flowtable_devices:
-        from shorewall_nft.nft.flowtable import Flowtable, emit_flowtable
+        from shorewall_nft.nft.flowtable import (
+            Flowtable,
+            emit_flowtable,
+            parse_flags,
+            parse_priority,
+        )
+        flags = parse_flags(ir.settings.get("FLOWTABLE_FLAGS", ""))
+        # Back-compat: FLOWTABLE_OFFLOAD=Yes → flags += ["offload"]
+        if ir.settings.get("FLOWTABLE_OFFLOAD", "No").lower() in ("yes", "1", "true"):
+            if "offload" not in flags:
+                flags.append("offload")
+        # Gate offload on the kernel capability. Drop the flag with a
+        # compile-time note when the probe says the kernel can't do
+        # it — the flowtable still serves as software fastpath, which
+        # is itself a big win.
+        if ("offload" in flags and capabilities is not None
+                and not getattr(capabilities, "has_flowtable_offload", True)):
+            lines.append("")
+            lines.append("\t# NOTE: FLOWTABLE_FLAGS=offload dropped — "
+                         "kernel probe reports no flow-offload support.")
+            flags = [f for f in flags if f != "offload"]
+        try:
+            priority = parse_priority(ir.settings.get("FLOWTABLE_PRIORITY", "filter"))
+        except ValueError as e:
+            lines.append(f"\t# WARNING: {e}, falling back to priority 0")
+            priority = 0
         ft = Flowtable(
             name="ft",
             hook="ingress",
-            priority=0,
+            priority=priority,
             devices=flowtable_devices,
-            offload=(ir.settings.get("FLOWTABLE_OFFLOAD", "No").lower()
+            flags=flags,
+            counter=(ir.settings.get("FLOWTABLE_COUNTER", "No").lower()
                      in ("yes", "1", "true")),
         )
         lines.append("")
