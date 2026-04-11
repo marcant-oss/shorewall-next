@@ -2,7 +2,7 @@
 %global srcname shorewall_nft
 
 Name:           shorewall-nft
-Version:        1.0.0
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        nftables-native firewall compiler with Shorewall-compatible config
 
@@ -143,6 +143,12 @@ fi
 %{_docdir}/%{name}/
 
 %changelog
+* Sat Apr 11 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.1.0-1
+- Release 1.1.0: flowtable + vmap dispatch + ct zone tag, concat-map DNAT,
+  full config-file coverage (stoppedrules, proxyarp/ndp, rawnat, arprules,
+  nfacct, scfilter, ecn), routefilter parity, simlab packet-level test
+  harness with autorepair, pretty structured exporter. See CHANGELOG.md.
+
 * Sat Apr 11 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.0.0-1
 - Release 1.0.0: first stable release. Python nftables-native firewall
   compiler with full Shorewall-compatible configuration, dual-stack
