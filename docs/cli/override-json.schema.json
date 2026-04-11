@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shorewall-nft.example/schemas/override-json/v1",
+  "title": "shorewall-nft structured config blob",
+  "description": "JSON Schema for the structured config blob exchanged via `shorewall-nft config export` / `config import` and the global `--override-json` CLI flag. Matches docs/cli/override-json.md (v1). The authoritative per-file column schema lives in shorewall_nft/config/schema.py; this file is derived from it and is regenerated whenever _COLUMNS or _SECTIONED_FILES change.",
+  "type": "object",
+  "required": ["schema_version"],
+  "additionalProperties": false,
+
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Envelope version. Readers accept their own version and N-1, emitters always emit N."
+    },
+    "config_dir": {
+      "type": "string",
+      "description": "Absolute path of the source config directory. Ignored on import; informational only."
+    },
+
+    "shorewall.conf": {
+      "type": "object",
+      "description": "KEY=VALUE settings. Merges over the parsed shorewall.conf on overlay; overlay keys win on collision.",
+      "additionalProperties": {"type": "string"}
+    },
+
+    "params": {
+      "type": "object",
+      "description": "User-defined $VAR definitions. Same merge semantics as shorewall.conf.",
+      "additionalProperties": {"type": "string"}
+    },
+
+    "zones": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Zone definitions. Columns: zone, type, options, in_options, out_options."
+    },
+    "interfaces": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Interface → zone bindings. Columns: zone, interface, broadcast, options."
+    },
+    "hosts": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Sub-zone host lists. Columns: zone, hosts, options."
+    },
+    "policy": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Default zone→zone verdicts. Columns: source, dest, policy, log_level, burst, connlimit."
+    },
+
+    "rules": {
+      "oneOf": [
+        {"$ref": "#/$defs/sectionedRules"},
+        {"$ref": "#/$defs/rowsOrReplace"}
+      ],
+      "description": "Filter rules. Sectioned by default under NEW / ESTABLISHED / RELATED / INVALID / UNTRACKED. Columns: action, source, dest, proto, dport, sport, orig_dest, rate, user, mark, connlimit, time, headers, switch, helper. A flat list is accepted and folds into the NEW section."
+    },
+    "blrules": {
+      "oneOf": [
+        {"$ref": "#/$defs/sectionedRules"},
+        {"$ref": "#/$defs/rowsOrReplace"}
+      ],
+      "description": "Blacklist rules. Sectioned. Columns: action, source, dest, proto, dport, sport."
+    },
+    "stoppedrules": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Rules active when the firewall is stopped. Columns: target, source, dest, proto, dport, sport."
+    },
+
+    "masq": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "SNAT / masquerade rules. Columns: interface, source, address, proto, port, ipsec, mark, user, switch, orig_dest, probability."
+    },
+    "netmap": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "1:1 address translation. Columns: type, net1, interface, net2, proto, dport."
+    },
+    "rawnat": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Raw-table NAT (early DNAT, pre-conntrack). Columns: action, source, dest, proto, dport, sport, user."
+    },
+
+    "conntrack": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Conntrack helpers. Columns: action, source, dest, proto, dport, sport, user, switch."
+    },
+    "notrack": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Conntrack bypass. Columns: source, dest, proto, dport, sport, user."
+    },
+
+    "providers": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Routing providers (per-uplink tables). Columns: name, number, mark, interface, gateway, options."
+    },
+    "routes": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Static routes tied to a provider. Columns: provider, dest, gateway, device."
+    },
+    "rtrules": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "ip rule entries. Columns: source, dest, provider, priority, mark."
+    },
+    "tunnels": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Tunnel definitions. Columns: type, zone, gateway, gateway_zones."
+    },
+
+    "routestopped": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Legacy routestopped file. Columns: interface, hosts, options, proto, dport, sport."
+    },
+
+    "tcdevices": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "tc device definitions. Columns: interface, in_bandwidth, out_bandwidth, options, redirect."
+    },
+    "tcclasses": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "tc classes. Columns: interface, mark, rate, ceil, priority, options."
+    },
+    "tcfilters": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "tc filters. Columns: class, source, dest, proto, dport, sport."
+    },
+    "tcinterfaces": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "tc interface binds. Columns: interface, type, in_bandwidth, out_bandwidth."
+    },
+    "tcrules": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Legacy tcrules. Columns: mark, source, dest, proto, dport, sport, user, test, length, tos, connbytes, helper, headers."
+    },
+    "tcpri": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "tc priomap. Columns: band, proto, port, address, interface, helper."
+    },
+
+    "mangle": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Mangle-table rules. Columns: action, source, dest, proto, dport, sport, user, test, length, tos, connbytes, helper, headers, probability, dscp, state, time, switch."
+    },
+
+    "accounting": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Traffic accounting. Columns: action, chain, source, dest, proto, dport, sport, user, mark, ipsec, headers."
+    },
+    "secmarks": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "SELinux security marks. Columns: secmark, chain, source, dest, proto, dport, sport, state."
+    },
+    "maclist": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "MAC filtering. Columns: disposition, interface, mac, ip, assigned_interfaces."
+    },
+
+    "arprules": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "ARP anti-spoof rules. Columns: action, source, dest, interface, mac."
+    },
+    "proxyarp": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Proxy-ARP address table. Columns: address, interface, external, haveroute, persistent."
+    },
+    "proxyndp": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Proxy-NDP address table. Columns: address, interface, external, haveroute, persistent."
+    },
+    "ecn": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "ECN disable per iface/host pair. Columns: interface, host."
+    },
+    "nfacct": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Named nfacct accounting objects. Columns: name, packets, bytes."
+    },
+    "scfilter": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Source CIDR sanity filter. Columns: interface, hosts, options."
+    },
+
+    "macros": {
+      "type": "object",
+      "description": "User-defined rule macros. Key is the macro name, value is a list of rule rows using the rules schema.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"$ref": "#/$defs/ruleRow"}
+      }
+    },
+
+    "scripts": {
+      "type": "object",
+      "description": "Extension script bodies (start / started / stop / stopped / init / initdone / refresh / refreshed / restored / findgw / ifup / isusable / savesets). Value is a dict with lang + lines, or a plain list of lines, or a single string split on newlines.",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["lines"],
+            "additionalProperties": false,
+            "properties": {
+              "lang": {"type": "string", "default": "sh"},
+              "lines": {"type": "array", "items": {"type": "string"}}
+            }
+          },
+          {"type": "array", "items": {"type": "string"}},
+          {"type": "string"}
+        ]
+      }
+    }
+  },
+
+  "$defs": {
+    "rowsOrReplace": {
+      "description": "Either a flat list of row dicts (appended to the parsed list) or a replace sentinel dict {_replace: true, rows: [...]} that wipes the parsed list before appending.",
+      "oneOf": [
+        {"type": "array", "items": {"type": "object"}},
+        {
+          "type": "object",
+          "required": ["_replace", "rows"],
+          "additionalProperties": false,
+          "properties": {
+            "_replace": {"type": "boolean", "const": true},
+            "rows": {"type": "array", "items": {"type": "object"}}
+          }
+        }
+      ]
+    },
+
+    "sectionedRules": {
+      "description": "Section-keyed dict for rules / blrules. Keys are ?SECTION names (NEW, ESTABLISHED, RELATED, INVALID, UNTRACKED). Values are lists of rule rows merged per-section.",
+      "type": "object",
+      "propertyNames": {
+        "enum": ["NEW", "ESTABLISHED", "RELATED", "INVALID", "UNTRACKED"]
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {"$ref": "#/$defs/ruleRow"}
+      }
+    },
+
+    "ruleRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {"type": ["string", "null"]},
+        "source": {"type": ["string", "null"]},
+        "dest": {"type": ["string", "null"]},
+        "proto": {"type": ["string", "null"]},
+        "dport": {"type": ["string", "integer", "null"]},
+        "sport": {"type": ["string", "integer", "null"]},
+        "orig_dest": {"type": ["string", "null"]},
+        "rate": {"type": ["string", "null"]},
+        "user": {"type": ["string", "null"]},
+        "mark": {"type": ["string", "null"]},
+        "connlimit": {"type": ["string", "null"]},
+        "time": {"type": ["string", "null"]},
+        "headers": {"type": ["string", "null"]},
+        "switch": {"type": ["string", "null"]},
+        "helper": {"type": ["string", "null"]},
+        "extra": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Trailing columns beyond the known schema. Preserved for forward compat with future Shorewall versions."
+        },
+        "_file": {"type": "string"},
+        "_lineno": {"type": "integer"},
+        "_comment": {"type": "string"}
+      }
+    }
+  }
+}
