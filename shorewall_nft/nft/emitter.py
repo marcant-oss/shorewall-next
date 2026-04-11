@@ -124,16 +124,35 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
     # forward base chain below.
     # CT zone-tag prerouting chain (emitted at table level, before other chains)
     if ct_zone_tag and zone_marks:
+        ct_mask_str = ir.settings.get("CT_ZONE_TAG_MASK", "0xff").strip()
+        try:
+            ct_mask = int(ct_mask_str, 0)
+        except ValueError:
+            lines.append(
+                f"\t# WARNING: CT_ZONE_TAG_MASK={ct_mask_str!r} is not a "
+                f"valid integer; falling back to 0xff"
+            )
+            ct_mask = 0xff
+        inv_mask = (~ct_mask) & 0xffffffff
         lines.append("")
         lines.append("\t# CT zone tagging — tag new flows with per-zone ct mark.")
         lines.append("\t# Replicated by conntrackd across the HA pair so zone")
-        lines.append("\t# identity survives failover. Mask 0xff is reserved for zones.")
+        lines.append("\t# identity survives failover.")
+        lines.append(f"\t# Zone bits are confined to mask {ct_mask:#010x}; the")
+        lines.append("\t# rest of ct mark stays available for policy routing.")
         lines.append("\tchain sw_zone_tag {")
         lines.append("\t\ttype filter hook prerouting priority mangle;")
-        lines.append("\t\tct state new ct mark set iifname map {")
+        if ct_mask == 0xffffffff:
+            lines.append("\t\tct state new ct mark set iifname map {")
+        else:
+            lines.append(
+                f"\t\tct state new ct mark set ct mark and {inv_mask:#010x} "
+                f"or iifname map {{"
+            )
         entries = []
         for iface, mark in sorted(zone_marks.items()):
-            entries.append(f'\t\t\t"{iface}" : {mark:#x}')
+            masked_mark = mark & ct_mask
+            entries.append(f'\t\t\t"{iface}" : {masked_mark:#x}')
         lines.append(",\n".join(entries))
         lines.append("\t\t}")
         lines.append("\t}")
