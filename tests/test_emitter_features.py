@@ -669,8 +669,58 @@ class TestStoppedrules:
                 ["DNAT", "net", "loc:10.0.0.5", "tcp", "80"],
             ])
             assert any("unsupported target" in str(x.message) for x in w)
-        # The DNAT line is skipped — but loopback/established setup
-        # rules from the lazy chain bootstrap may still appear.
         out = emit_stopped_nft(ir)
         assert "ip daddr 10.0.0.5" not in out
+
+
+# ──────────────────────────────────────────────────────────────────────
+# rawnat — raw-table actions, runs pre-conntrack
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestRawnat:
+    def _ir(self, columns_list):
+        from shorewall_nft.config.parser import ConfigLine, load_config
+        config = load_config(MINIMAL_DIR)
+        config.rawnat = [
+            ConfigLine(columns=cols, file="rawnat", lineno=i)
+            for i, cols in enumerate(columns_list)
+        ]
+        return build_ir(config)
+
+    def test_notrack_action_lands_in_raw_prerouting(self):
+        ir = self._ir([["NOTRACK", "net", "loc", "udp", "500"]])
+        out = emit_nft(ir)
+        assert "chain raw-prerouting {" in out
+        assert "type filter hook prerouting priority -300;" in out
+        # nftables emits "notrack" as the verdict, no jump form
+        assert "udp dport 500" in out
+        assert " notrack" in out
+
+    def test_accept_action(self):
+        ir = self._ir([["ACCEPT", "net:1.2.3.4", "all", "tcp", "22"]])
+        out = emit_nft(ir)
+        assert "ip saddr 1.2.3.4" in out
+        assert "tcp dport 22 accept" in out
+
+    def test_drop_action(self):
+        ir = self._ir([["DROP", "net:1.2.3.4", "all", "udp", "53"]])
+        out = emit_nft(ir)
+        assert "ip saddr 1.2.3.4" in out
+        assert "udp dport 53 drop" in out
+
+    def test_fw_source_routes_to_raw_output(self):
+        # $FW source → raw-output, not raw-prerouting
+        ir = self._ir([["NOTRACK", "$FW", "net:1.2.3.4", "udp", "53"]])
+        out = emit_nft(ir)
+        assert "chain raw-output {" in out
+        assert "type filter hook output priority -300;" in out
+
+    def test_unknown_action_warns(self):
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            ir = self._ir([["DNAT", "net:1.2.3.4", "all", "tcp", "80"]])
+            assert any("unsupported action" in str(x.message) for x in w)
+        out = emit_nft(ir)
         assert "dnat ip to" not in out
