@@ -8,8 +8,263 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] — 2026-04-11
 
 nft-native feature expansion and verifier robustness fixes driven
-by a full end-to-end validation against a production HA firewall
+by a full end-to-end validation against the reference HA firewall
 release config.
+
+### Config-file coverage round (TODO #9 closed)
+
+Eight Shorewall config files that the structured-io groundwork
+parsed but the IR/emitter ignored are now wired end-to-end. Each
+landed with its own pytest cases under
+`tests/test_emitter_features.py`:
+
+- **`stoppedrules`** — modern routestopped successor. Routes
+  ACCEPT / DROP / REJECT / NOTRACK actions into the standalone
+  `inet shorewall_stopped` table that ``shorewall-nft stop`` loads.
+  Direction inferred from `$FW` source/dest (input vs output vs
+  forward); NOTRACK lands in a lazily-created
+  `stopped-raw-prerouting` chain.
+- **`proxyarp` / `proxyndp`** — pyroute2-driven apply / remove
+  via the start / stop CLI. Sets the per-iface
+  `net.ipv{4,6}.conf.<iface>.proxy_arp / proxy_ndp` sysctls and
+  installs an `NTF_PROXY` neighbour entry on the publishing
+  interface plus an optional `/32` or `/128` route when
+  `HAVEROUTE=no`. Idempotent (replace semantics) so reloads are
+  safe; `PERSISTENT=yes` entries survive `shorewall-nft stop`.
+- **`rawnat`** — raw-table actions pre-conntrack. NOTRACK,
+  ACCEPT, DROP routed into the existing
+  `raw-prerouting` / `raw-output` chains via the standard zone
+  spec parser; `$FW` source picks `raw-output`, anything else
+  picks `raw-prerouting`.
+- **`arprules`** — separate `table arp filter` block. The arp
+  family is its own nft table type so the new `ir.arp_chains`
+  dict and `emit_arp_nft()` helper render a standalone
+  `table arp filter` that the main script appends. ARP sender
+  IP, ARP target IP, interface, and sender MAC matches all
+  supported.
+- **`nfacct`** — named counter object declarations. The nfacct
+  rows produce `counter <name> { packets N bytes M }` entries
+  at the top of the inet shorewall table; rules can reference
+  them via `counter name "<name>"`.
+- **`scfilter`** — source CIDR sanity filter. Each row prepends
+  a negated-set drop rule (one per family) to the input and
+  forward base chains, so spoofed sources land in the
+  drop-before-zone-dispatch slot.
+- **`ecn`** — clear ECN bits per iface/host. Lazily creates a
+  `mangle-postrouting` chain (priority -150) and emits one rule
+  per host with the new `ecn_clear:` verdict marker, which the
+  emitter renders as `ip ecn set not-ect`.
+
+Bonus from this round: **legacy `routestopped`** also got the
+full Shorewall feature parity treatment — the `OPTIONS` column
+parser now supports `routeback`, `source`, `dest`, `critical`,
+and `notrack`; the `SPORT` column (cols[5]) is honoured; IPv6
+hosts auto-route to `ip6 saddr/daddr`; and the global
+`ROUTESTOPPED_OPEN=Yes` setting collapses every listed
+interface to a wildcard accept.
+
+### simlab — first 100 % green archived run
+
+The simlab full smoketest now runs to 100 % across both
+the per-rule (`POSITIVE`) and random-probe categories on the
+reference HA firewall config:
+
+- POSITIVE: **836 / 836** ok = 100.0 %, fail_drop = 0
+- NEGATIVE: **99 / 99**  ok = 100.0 %, fail_drop = 0
+- RANDOM:   **64 / 64**  ok = 100.0 %, fail_drop = 0
+
+Two regression-baseline runs are archived under
+`docs/testing/simlab-reports/`:
+- `20260411T150507Z/` — first archived green run
+- `20260411T155107Z/` — multi-iface zone + proto auto-generator
+  green run
+
+The path to green spanned a long autonomous fix loop. The
+load-bearing fixes:
+
+- **emitter**: zone-pair dispatch jumps now carry a
+  `meta nfproto ipv4|ipv6` qualifier when either side is a
+  single-family zone (e.g. an IPv6-only zone in a merged
+  shorewall46 config). Pairs with conflicting families are
+  skipped — they were the cause of every IPv4 probe falling
+  into a v6-only chain whose terminal sw_Reject dropped them.
+- **compiler/ir._add_rule**: extends the existing ACCEPT /
+  policy=ACCEPT dedup to DROP / REJECT verdicts. A rule like
+  `DROP:$LOG customer-a any` in the rules file used to expand into
+  every customer-a→X chain as an inline catch-all drop, and when
+  file order put it before later `all → X:host` accept
+  expansions the inline drop landed mid-chain and shadowed
+  every accept that followed. The iptables backend never
+  inlines these — it relies on the chain's policy at the
+  tail. The shorewall-nft compiler now mirrors that behaviour.
+- **simlab autorepair**: collects every IP the firewall owns
+  across every interface (not just the iterated address) and
+  walks candidate hosts from the high end down. The previous
+  picker landed on fw-local secondary IPs that the kernel
+  rejected as a martian source before any rule evaluated.
+  `RandomProbeGenerator._pick_host` gets the same treatment.
+- **simlab oracle**: chain fall-through is now classified as
+  DROP (matching Shorewall's policy chain at the chain tail)
+  instead of UNKNOWN. Removes a long tail of false-positive
+  random-probe mismatches.
+- **simlab autorepair pass 3 (dst routing)**: now accepts ANY
+  iface in the destination zone, not just the canonical one.
+  Fixes the multi-iface zone case (host has bond0.20+bond0.21,
+  net has bond1+bond0.19+bond0.61). When the routed iface
+  differs from the planned dst_iface, plan["dst_iface"] is
+  rewritten so the controller observes on the right TAP — the
+  nft chain dispatch already covers both via its
+  `oifname { … }` set.
+- **simlab pre-pass**: drops probes whose dst_ip is a
+  fw-local address — those go through INPUT, not FORWARD, so
+  the zone-pair chain never fires.
+- **simlab/packets**: injector default `src_mac` aligned to
+  the controller's synthetic worker MAC so the kernel's
+  neighbour cache stays consistent and forwarded probes don't
+  get silently dropped as stale neighbour-table updates.
+
+### simlab — protocol coverage expansion
+
+The probe pipeline now covers every IP protocol shorewall-nft
+emits rules for, not just tcp/udp/icmp:
+
+- **`packets.build_unknown_proto()`** — generic auto-generator
+  that emits a minimal IPv4/IPv6 header with the requested
+  protocol byte, `probe_id` in the IP id (v4) or flow-label
+  (v6) field, and a 16×0xfe payload. Scapy auto-fills
+  version / ihl / total_len / checksum so headers stay valid.
+- **`packets.proto_number()`** — hand-curated `_PROTO_NUMBERS`
+  table maps names → IANA numbers (esp / ah / gre / vrrp /
+  ospf / igmp / sctp / pim / …). Numeric strings ("112") and
+  ints (112) also accepted. No `/etc/protocols` runtime
+  dependency — works in chroots.
+- **simulate.derive_tests_all_zones**: accepts any proto
+  resolvable via `proto_number()`. Multicast destinations
+  (vrrp, ospf, igmp, pim) get a placeholder daddr from the
+  well-known group when the rule has no `-d`.
+- **smoketest._plan_to_spec**: tcp/udp/icmp keep dedicated
+  builders; everything else falls through to
+  `build_unknown_proto`, removing the per-proto branch tax.
+
+Hand-rolled BGP and RADIUS builders deleted — they're covered
+by the auto-generator if the iptables parser ever surfaces a
+matching `-p`.
+
+### simlab — production-faithful per-iface routefilter (TODO #12)
+
+`SimController` and `SimFwTopology` now accept an
+`iface_rp_filter` dict and replay the per-interface
+`routefilter` values from the parsed shorewall config inside
+the netns instead of forcing `rp_filter=0` globally. Strict
+per-iface RPF is functionally a no-op for surviving probes
+because autorepair pass 4 already enforces routability — the
+reference HA firewall ships rp_filter=1 on 22 ifaces and the
+run stays 100 % green.
+
+`runtime/sysctl.py` extends the routefilter mapping to the
+full Shorewall set: implicit `routefilter` (=1),
+`routefilter=1`, `routefilter=2` (loose), `noroutefilter`.
+Loose mode was previously silently ignored.
+
+### simlab — flowtable offload sanity check (TODO #7)
+
+New `_flowtable_state()` post-run helper queries `nft -j list
+flowtables` inside the simlab netns at the end of a run and
+prints a single-line summary listing every active flowtable
+with its device count. Best-effort; configs without
+`FLOWTABLE=` emit no output. Configs that DO get an instant
+"yes the fast-path is wired" signal at the end of every run.
+
+### simlab — pytest CI gate
+
+`tests/test_simlab_pytest_gate.py` covers the simlab pieces
+that don't need root or a real netns: the autorepair zone-src
+picker, the RandomProbeGenerator fw-local exclusion, oracle
+fall-through classification, and explicit accept/drop
+matching. Runs in a few hundred ms and gates the autorepair /
+oracle code paths against silent regressions between full
+simlab runs.
+
+### routestopped — full Shorewall semantics + standalone table
+
+- routestopped used to be parser-only — the IR built chains nobody
+  ever rendered or loaded. The runtime path is now wired end to
+  end. `_process_routestopped` populates a dedicated
+  `ir.stopped_chains` dict (kept apart from `ir.chains` so the
+  main emitter can never mix it into the running ruleset), and
+  `nft/emitter.emit_stopped_nft` renders a standalone
+  `inet shorewall_stopped` table that loads independently.
+- `shorewall-nft stop` compiles the config, deletes the running
+  `inet shorewall` table, and loads `inet shorewall_stopped`
+  if routestopped is configured. `start` tears down any
+  leftover `shorewall_stopped` table so the two rulesets never
+  run side by side.
+
+### Structured-io coverage round (TODO #13 first sweep)
+
+Aesthetic + ordering + metadata + parser-coverage pass on the
+structured config exporter, driven by the user goal of replaying
+the `/etc/shorewall46` merged config from multiple host snapshots
+into a clean canonical layout.
+
+- **Pretty exporter** — `write_config_dir(..., pretty=True)` is
+  the new default. `_aligned_block` renders columns padded to
+  the per-column max width across the block, capped at 28
+  chars so a single 200-char host list doesn't blow up
+  padding for every other row.
+- **Zone-pair reorder** — `_reorder_rules_block` groups rules
+  by zone-pair affinity via a stable sort on
+  `(src_zone, dst_zone)`. Catch-all DROP / REJECT rules (no
+  host/proto/port narrowing) get pushed to the bottom of each
+  zone-pair group, so the kind of mid-chain shadowing
+  `_add_rule` was just fixed for can't sneak back via a
+  hand-edit.
+- **`?COMMENT` directive preservation** — `_emit_block` walks
+  each row's `comment_tag` and emits `?COMMENT <tag>` headers
+  before tag runs. The parser had been recording these for
+  years but no consumer ever wrote them back; round-trip-via-
+  disk silently erased the semantic groupings ("monitoring",
+  "Sophos UTM Administration", "CDN (example.com)" etc.)
+  that humans use to scan the rules file.
+- **Provenance markers** — opt-in `provenance=True` interleaves
+  `# from <file>:<lineno>` shell comments before each row so
+  a future bisect can blame the origin file/line of any rule.
+- **`config merge` CLI** — new `shorewall-nft config merge`
+  subcommand reads N source dirs and unions them into a single
+  pretty-printed output. Post-concat **dedup pass** drops
+  byte-equal duplicate rows by `(section, columns)`. Verified
+  by passing the same source twice → 1801 duplicates dropped.
+- **`config template` CLI** — generic `@host\t<line>` text
+  expander for the legacy keepalived / conntrackd snapshots
+  that use prefix templating. Preserves indentation by
+  stripping only the tag plus exactly one whitespace
+  separator. Lives under `config` because it's a config-
+  related text utility, but it's deliberately a generic
+  file-level filter rather than a parser feature.
+- **Parser coverage** — `load_config` now also reads:
+  - **`blacklist`** (legacy CIDR + proto/port columnar file)
+    with a new `ShorewalConfig.blacklist` field
+  - **`helpers`** (loadmodule script) into `config.scripts`
+  - **`plugins.conf`** + **`plugins/*.toml`** + **`plugins/
+    *.token`** via stdlib `tomllib` into `config.plugin_files`
+  - **`compile`** + **`lib.private`** extension scripts
+  Round-trip coverage on the reference HA firewall went from
+  27 → 33 files in the merged output.
+
+### Documentation / roadmap
+
+- **`docs/roadmap/shorewalld.md`** — design plan for the new
+  async daemon that closes TODO #11 (Prometheus exporter) and
+  lays groundwork for TODO #4 (DNS-based filtering via the
+  powerdns recursor RPZ + protobuf sidecar). Captures the
+  multi-netns scraper-profile architecture, the
+  libnftables-based per-rule counter export path, and the
+  Phase 4 DNS-set unix socket placeholder. Implementation
+  deferred to a future release line.
+- **CLAUDE.md** TODOs #9 (config files) and #12 (routefilter)
+  marked complete; #7 (flowtable probe) and #11 (Prometheus
+  exporter) updated to point at the relevant new code or
+  design doc.
 
 ### Added
 
