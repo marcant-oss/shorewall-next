@@ -499,18 +499,54 @@ def _build_per_rule_probes(
         iptables_dump, zones=zone_set, max_tests=max_per_pair, family=4,
         random_per_rule=random_per_rule)
 
-    # Autorepair: replace the DEFAULT_SRC placeholder with a concrete
-    # host from the source zone's own subnet so rp_filter doesn't
-    # drop the probe at ingress. See _build_zone_to_concrete_src.
+    # Autorepair pass 1: replace the DEFAULT_SRC placeholder with a
+    # concrete host from the source zone's own subnet so rp_filter
+    # doesn't drop the probe at ingress. See
+    # :func:`_build_zone_to_concrete_src` for the rationale.
     zone_src_map = _build_zone_to_concrete_src(fw_state, iface_to_zone)
-    repaired = 0
+    repaired_rpf = 0
     for tc in cases:
         if tc.src_ip == DEFAULT_SRC and tc.src_zone in zone_src_map:
             tc.src_ip = zone_src_map[tc.src_zone]
-            repaired += 1
-    if repaired:
-        print(f"autorepair: rewrote {repaired} placeholder-src probes "
-              f"to zone-local IPs")
+            repaired_rpf += 1
+    if repaired_rpf:
+        print(f"autorepair: rewrote {repaired_rpf} placeholder-src "
+              f"probes to zone-local IPs")
+
+    # Autorepair pass 2: re-classify every TestCase via the oracle
+    # (full chain walk of iptables.txt = Point of Truth). A random
+    # variant may hit a *different* rule earlier in the chain than the
+    # one that generated it, so the generator-inherited expected
+    # verdict can be wrong. The oracle's answer replaces it.
+    # See docs/testing/point-of-truth.md.
+    from .oracle import RulesetOracle
+    oracle_pot = RulesetOracle(iptables_dump)
+    reclassified = 0
+    dropped_unverifiable = 0
+    kept: list = []
+    for tc in cases:
+        v = oracle_pot.classify(
+            src_zone=tc.src_zone, dst_zone=tc.dst_zone,
+            src_ip=tc.src_ip, dst_ip=tc.dst_ip,
+            proto=tc.proto, port=tc.port,
+        )
+        if v.verdict == "UNKNOWN":
+            # Oracle can't answer this tuple against iptables.txt —
+            # don't count it. Usually means the chain has no rule
+            # matching this specific (src,dst,port) combination.
+            dropped_unverifiable += 1
+            continue
+        if v.verdict != tc.expected:
+            reclassified += 1
+            tc.expected = v.verdict
+        # Attach the matching rule raw so per-probe triage can read
+        # "which rule the oracle used" directly out of the report.
+        tc.raw = v.matched_rule_raw or tc.raw
+        kept.append(tc)
+    cases = kept
+    if reclassified or dropped_unverifiable:
+        print(f"autorepair: oracle reclassified {reclassified} "
+              f"TestCases, dropped {dropped_unverifiable} unverifiable")
 
     zone_to_iface = {z: ifc for ifc, z in iface_to_zone.items()}
 
