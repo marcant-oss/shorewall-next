@@ -272,6 +272,56 @@ class NftInterface:
                 }
         return counters
 
+    def list_rule_counters(self, family: str = "inet", table: str = "shorewall",
+                           *, netns: str | None = None) -> list[dict[str, Any]]:
+        """Walk a table's ruleset and yield every rule's inline counter.
+
+        Unlike :meth:`list_counters` (which only returns named counter
+        objects, i.e. the ``nfacct``-style ones), this extracts the
+        ``counter`` expression that nft emits inside every rule when
+        the compiler asks for per-rule accounting.
+
+        Single libnftables round-trip: ``list table <fam> <table>``
+        returns the entire ruleset JSON in one dump, and we walk it
+        once to extract rule counters. Used by the shorewalld
+        Prometheus exporter — the per-scrape cost is one netlink
+        dump per netns, well under the 50 ms budget even at 1600+
+        rules.
+
+        Returns a list of dicts with keys ``table``, ``chain``,
+        ``handle``, ``comment``, ``packets``, ``bytes``. Missing
+        fields default to empty string / zero.
+        """
+        try:
+            data = self.list_table(family=family, table=table, netns=netns)
+        except NftError:
+            return []
+        out: list[dict[str, Any]] = []
+        for item in data.get("nftables", []):
+            rule = item.get("rule")
+            if not rule:
+                continue
+            packets = 0
+            bytes_ = 0
+            found = False
+            for expr in rule.get("expr", []):
+                c = expr.get("counter") if isinstance(expr, dict) else None
+                if isinstance(c, dict):
+                    packets += int(c.get("packets", 0))
+                    bytes_ += int(c.get("bytes", 0))
+                    found = True
+            if not found:
+                continue
+            out.append({
+                "table": rule.get("table", table),
+                "chain": rule.get("chain", ""),
+                "handle": rule.get("handle", 0),
+                "comment": rule.get("comment", ""),
+                "packets": packets,
+                "bytes": bytes_,
+            })
+        return out
+
     def list_set_elements(self, set_name: str, family: str = "inet",
                           table: str = "shorewall",
                           *, netns: str | None = None) -> list[str]:
