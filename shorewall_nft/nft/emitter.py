@@ -739,8 +739,43 @@ def _emit_vmap_dispatch(lines: list[str], base_chain: Chain,
 def _emit_zone_jump(lines: list[str], chain_name: str,
                     src_zone: str | None, dst_zone: str | None,
                     ir: FirewallIR, indent: str) -> None:
-    """Emit a jump rule with interface matches for a zone pair."""
+    """Emit a jump rule with interface matches for a zone pair.
+
+    If either zone is IPv6-only (``zone_type`` in ``ipv6`` /
+    ``bport6`` / ``ipsec6``) or IPv4-only (``ipv4`` / ``bport4`` /
+    ``ipsec4``), the jump gets a ``meta nfproto ipv6`` / ``ipv4``
+    qualifier. Otherwise a single-family zone with no interface
+    assignment in the other family produces a catch-all dispatch
+    rule that captures traffic of the wrong family and routes it
+    to a chain that can only accept packets of the matching
+    family — dropping e.g. every IPv4 probe destined for a
+    different zone via a ``Reject`` fall-through in the v6-only
+    chain. Happens with merged shorewall46 configs where one zone
+    is v6-only (e.g. ``rsr ipv6``).
+    """
     matches: list[str] = []
+
+    # Family qualifier — needed when either zone is single-family
+    # so the rule doesn't catch traffic of the wrong family. If
+    # both zones pin a family and the two disagree (IPv4 src zone
+    # × IPv6 dst zone or vice versa), the pair is semantically
+    # impossible: skip the dispatch entirely so no wrong-family
+    # packet ends up in a chain that can't accept it and falls
+    # through to a terminal Reject.
+    families: set[str] = set()
+    for z_name in (src_zone, dst_zone):
+        if z_name and z_name in ir.zones.zones:
+            z = ir.zones.zones[z_name]
+            if z.is_ipv4:
+                families.add("ipv4")
+            elif z.is_ipv6:
+                families.add("ipv6")
+            # firewall / loopback / local / bport (unqualified) —
+            # don't constrain the family
+    if len(families) == 2:
+        return  # impossible pair — skip
+    if families:
+        matches.append(f"meta nfproto {next(iter(families))}")
 
     if src_zone and src_zone in ir.zones.zones:
         zone = ir.zones.zones[src_zone]
