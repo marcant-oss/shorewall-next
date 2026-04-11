@@ -1,0 +1,34 @@
+[Unit]
+Description=shorewall-nft monitoring daemon for netns %i
+Documentation=file:///usr/share/doc/shorewall-nft/shorewalld.md
+# The instance name %i maps to a netns under /run/netns.
+# Use this template if you prefer one daemon per namespace instead
+# of letting a single daemon serve all of them (shorewalld.service
+# with --netns auto).
+After=network.target shorewall-nft@%i.service
+Wants=network.target
+
+[Service]
+Type=simple
+# Per-instance Prometheus port: 9748 + netns-hash-offset would be
+# cleaner, but we keep it simple with a fixed port; operators that
+# want multi-instance scraping should use per-instance NetworkNamespacePath
+# drop-ins to bind inside the target netns and pick distinct ports.
+ExecStart=/usr/bin/shorewalld --listen-prom :9748 --netns %i
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/shorewalld /var/log
+PrivateTmp=yes
+
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE
+
+RuntimeDirectory=shorewalld-%i
+RuntimeDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

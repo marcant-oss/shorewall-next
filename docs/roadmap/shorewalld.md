@@ -1,5 +1,16 @@
 # shorewalld — async daemon for monitoring + DNS-set API
 
+> **Status 2026-04-11:** All five phases shipped on
+> ``shorewall-nft-release``. Phase 4's original sketch assumed a
+> length-prefixed JSON placeholder — the actual implementation uses
+> **dnstap** (FrameStream + PBDNSMessage protobuf) with a bounded
+> queue and a worker pool of ``os.cpu_count()`` decode threads. An
+> operator template for the producer-side pdns_recursor config lives
+> at ``packaging/pdns-recursor/shorewalld.lua.template``. Everything
+> below the "Phase 4 — DNS API socket" heading is the old design;
+> the real contract is documented in
+> ``shorewall_nft/daemon/dnstap.py``'s module docstring.
+
 ## Context
 
 The reference HA deployment is targeted for migration to
