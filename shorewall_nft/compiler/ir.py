@@ -255,7 +255,7 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
 
     # Process routestopped
     if config.routestopped:
-        _process_routestopped(ir, config.routestopped)
+        _process_routestopped(ir, config.routestopped, config.settings)
 
     # Set self-zone ACCEPT for multi-interface zones and routeback zones
     _set_self_zone_policies(ir, zones)
@@ -1488,24 +1488,60 @@ def _process_blrules(ir: FirewallIR, blrules: list[ConfigLine],
         chain.rules.append(rule)
 
 
-def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine]) -> None:
+_ROUTESTOPPED_VALID_OPTIONS = {
+    "routeback", "source", "dest", "critical", "notrack",
+}
+
+
+def _is_ipv6_addr(host: str) -> bool:
+    """Heuristic: does this host token look like an IPv6 literal/CIDR?"""
+    h = host.strip()
+    if not h:
+        return False
+    addr = h.split("/", 1)[0]
+    return ":" in addr
+
+
+def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
+                          settings: dict[str, str] | None = None) -> None:
     """Process routestopped rules.
 
-    These define the traffic allowed when the firewall is stopped.
-    The chains live in ``ir.stopped_chains`` (not ``ir.chains``) so the
-    regular emitter never mixes them into the running ruleset. The
-    emitter exposes :func:`emit_stopped_nft` to render them as a
-    standalone ``inet shorewall_stopped`` table that ``shorewall-nft
-    stop`` loads after deleting ``inet shorewall``.
+    Renders Shorewall's full ``routestopped`` semantics into the
+    standalone ``inet shorewall_stopped`` table (built by
+    :func:`shorewall_nft.nft.emitter.emit_stopped_nft`). Loaded by
+    ``shorewall-nft stop`` after deleting the running ruleset.
 
-    Base chain layout (matches Shorewall's stopped semantics):
-      * input  — policy DROP, ACCEPT for listed (iface,host) tuples
-      * output — policy DROP, ACCEPT for listed (iface,host) tuples
-      * forward — policy DROP (no transit when stopped)
-      * loopback ACCEPT is added unconditionally to keep the box usable
+    Format::
 
-    Format: INTERFACE HOST(S) OPTIONS PROTO DPORT SPORT
+        INTERFACE  HOST(S)  OPTIONS  PROTO  DPORT  SPORT
+
+    Supported OPTIONS (comma-separated):
+      * ``routeback`` — also forward between hosts on the same iface
+      * ``source``    — only ingress (no matching output rule)
+      * ``dest``      — only egress  (no matching input rule)
+      * ``critical``  — recorded but currently a no-op (we don't ship
+        a ``clear`` command yet)
+      * ``notrack``   — disables conntrack for this iface/host via a
+        ``stopped-raw-prerouting`` chain at priority raw
+
+    Global setting ``ROUTESTOPPED_OPEN=Yes`` opens every interface
+    listed in routestopped wide (no host/proto filtering) — matching
+    Shorewall's "panic but keep the network up" mode.
+
+    Base chain layout:
+      * stopped-input    — policy DROP, ACCEPT for matching traffic
+      * stopped-output   — policy DROP, ACCEPT for matching traffic
+      * stopped-forward  — policy DROP, ACCEPT for routeback pairs
+      * stopped-raw-prerouting — only present if any rule sets notrack
+
+    Loopback ACCEPT and ``ct state established,related`` are added
+    unconditionally so local services and active mgmt sessions
+    survive a stop window.
     """
+    settings = settings or {}
+    open_mode = settings.get("ROUTESTOPPED_OPEN", "No").lower() in (
+        "yes", "1", "true")
+
     stopped_input = Chain(
         name="stopped-input",
         chain_type=ChainType.FILTER,
@@ -1549,6 +1585,25 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine]) -> Non
     ir.stopped_chains[stopped_output.name] = stopped_output
     ir.stopped_chains[stopped_forward.name] = stopped_forward
 
+    # notrack chain is added lazily — only if any rule needs it.
+    stopped_raw: Chain | None = None
+
+    def _saddr_field(host: str) -> str:
+        return "ip6 saddr" if _is_ipv6_addr(host) else "ip saddr"
+
+    def _daddr_field(host: str) -> str:
+        return "ip6 daddr" if _is_ipv6_addr(host) else "ip daddr"
+
+    def _add_proto(rule: Rule, proto: str | None,
+                   dport: str | None, sport: str | None) -> None:
+        if not proto:
+            return
+        rule.matches.append(Match(field="meta l4proto", value=proto))
+        if dport:
+            rule.matches.append(Match(field=f"{proto} dport", value=dport))
+        if sport:
+            rule.matches.append(Match(field=f"{proto} sport", value=sport))
+
     for line in routestopped:
         cols = line.columns
         if not cols:
@@ -1556,45 +1611,113 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine]) -> Non
 
         iface = cols[0]
         hosts = cols[1] if len(cols) > 1 and cols[1] != "-" else None
-        options = cols[2] if len(cols) > 2 and cols[2] != "-" else ""
+        options_raw = cols[2] if len(cols) > 2 and cols[2] != "-" else ""
         proto = cols[3] if len(cols) > 3 and cols[3] != "-" else None
         dport = cols[4] if len(cols) > 4 and cols[4] != "-" else None
+        sport = cols[5] if len(cols) > 5 and cols[5] != "-" else None
 
-        # Input rule: allow traffic from this interface
-        rule_in = Rule(verdict=Verdict.ACCEPT)
-        rule_in.matches.append(Match(field="iifname", value=iface))
+        opts = {o.strip() for o in options_raw.split(",") if o.strip()}
+        unknown = opts - _ROUTESTOPPED_VALID_OPTIONS
+        if unknown:
+            # Best effort: keep going, but warn — matches Shorewall's
+            # behaviour of accepting and ignoring unknown options.
+            import warnings
+            warnings.warn(
+                f"routestopped {line.file}:{line.lineno}: unknown "
+                f"option(s) {sorted(unknown)} — ignored",
+                stacklevel=2)
+
+        emit_in = "dest" not in opts
+        emit_out = "source" not in opts
+        do_routeback = "routeback" in opts
+        do_notrack = "notrack" in opts
+
+        # ROUTESTOPPED_OPEN: collapse to wildcard accept on this
+        # interface, ignoring host/proto filtering. The single rule
+        # per direction supersedes everything else for this iface.
+        if open_mode:
+            if emit_in:
+                r = Rule(verdict=Verdict.ACCEPT)
+                r.matches.append(Match(field="iifname", value=iface))
+                stopped_input.rules.append(r)
+            if emit_out:
+                r = Rule(verdict=Verdict.ACCEPT)
+                r.matches.append(Match(field="oifname", value=iface))
+                stopped_output.rules.append(r)
+            if do_routeback:
+                r = Rule(verdict=Verdict.ACCEPT)
+                r.matches.append(Match(field="iifname", value=iface))
+                r.matches.append(Match(field="oifname", value=iface))
+                stopped_forward.rules.append(r)
+            if do_notrack:
+                if stopped_raw is None:
+                    stopped_raw = Chain(
+                        name="stopped-raw-prerouting",
+                        chain_type=ChainType.FILTER,
+                        hook=Hook.PREROUTING,
+                        priority=-300,  # raw
+                        policy=None,
+                    )
+                    ir.stopped_chains[stopped_raw.name] = stopped_raw
+                r = Rule(verdict=Verdict.ACCEPT, verdict_args="notrack:")
+                r.matches.append(Match(field="iifname", value=iface))
+                stopped_raw.rules.append(r)
+            continue
+
+        host_list: list[str | None]
         if hosts:
-            for host in hosts.split(","):
-                h = host.strip()
-                if h:
-                    r = Rule(verdict=Verdict.ACCEPT)
-                    r.matches.append(Match(field="iifname", value=iface))
-                    r.matches.append(Match(field="ip saddr", value=h))
-                    if proto:
-                        r.matches.append(Match(field="meta l4proto", value=proto))
-                        if dport:
-                            r.matches.append(Match(field=f"{proto} dport", value=dport))
-                    ir.stopped_chains["stopped-input"].rules.append(r)
-
-                    # Corresponding output rule
-                    r_out = Rule(verdict=Verdict.ACCEPT)
-                    r_out.matches.append(Match(field="oifname", value=iface))
-                    r_out.matches.append(Match(field="ip daddr", value=h))
-                    if proto:
-                        r_out.matches.append(Match(field="meta l4proto", value=proto))
-                    ir.stopped_chains["stopped-output"].rules.append(r_out)
+            host_list = [h.strip() for h in hosts.split(",") if h.strip()]
         else:
-            if proto:
-                rule_in.matches.append(Match(field="meta l4proto", value=proto))
-                if dport:
-                    rule_in.matches.append(Match(field=f"{proto} dport", value=dport))
-            ir.stopped_chains["stopped-input"].rules.append(rule_in)
+            host_list = [None]  # iface-wide
 
-            rule_out = Rule(verdict=Verdict.ACCEPT)
-            rule_out.matches.append(Match(field="oifname", value=iface))
-            if proto:
-                rule_out.matches.append(Match(field="meta l4proto", value=proto))
-            ir.stopped_chains["stopped-output"].rules.append(rule_out)
+        for h in host_list:
+            if emit_in:
+                r = Rule(verdict=Verdict.ACCEPT)
+                r.matches.append(Match(field="iifname", value=iface))
+                if h:
+                    r.matches.append(Match(field=_saddr_field(h), value=h))
+                _add_proto(r, proto, dport, sport)
+                stopped_input.rules.append(r)
+
+            if emit_out:
+                r = Rule(verdict=Verdict.ACCEPT)
+                r.matches.append(Match(field="oifname", value=iface))
+                if h:
+                    r.matches.append(Match(field=_daddr_field(h), value=h))
+                # Output direction swaps src/dst port semantics —
+                # keep dport on dport (it's the listening port on
+                # the host we're talking to) and sport on sport.
+                _add_proto(r, proto, dport, sport)
+                stopped_output.rules.append(r)
+
+            if do_routeback:
+                r = Rule(verdict=Verdict.ACCEPT)
+                r.matches.append(Match(field="iifname", value=iface))
+                r.matches.append(Match(field="oifname", value=iface))
+                if h:
+                    # transit between two hosts on the same iface —
+                    # the listed host can be either side, so we emit
+                    # one rule per side instead of constraining both.
+                    r.matches.append(Match(field=_daddr_field(h), value=h))
+                _add_proto(r, proto, dport, sport)
+                stopped_forward.rules.append(r)
+
+            if do_notrack:
+                if stopped_raw is None:
+                    stopped_raw = Chain(
+                        name="stopped-raw-prerouting",
+                        chain_type=ChainType.FILTER,
+                        hook=Hook.PREROUTING,
+                        priority=-300,  # raw
+                        policy=None,
+                    )
+                    ir.stopped_chains[stopped_raw.name] = stopped_raw
+                r = Rule(verdict=Verdict.ACCEPT, verdict_args="notrack:")
+                r.matches.append(Match(field="iifname", value=iface))
+                if h:
+                    r.matches.append(Match(field=_saddr_field(h), value=h))
+                _add_proto(r, proto, dport, sport)
+                stopped_raw.rules.append(r)
 
 
 def _set_self_zone_policies(ir: FirewallIR, zones: ZoneModel) -> None:

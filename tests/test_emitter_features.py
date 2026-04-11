@@ -513,4 +513,87 @@ class TestRoutestopped:
         assert "stopped-output" not in out
         assert "stopped-forward" not in out
         assert "shorewall_stopped" not in out
+
+    def test_option_source_only_emits_input(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_routestopped([
+            ["eth0", "10.0.0.1", "source", "tcp", "22"],
+        ])
+        out = emit_stopped_nft(ir)
+        # input rule present
+        assert "iifname eth0 ip saddr 10.0.0.1" in out
+        # but no matching output rule for that host
+        assert "oifname eth0 ip daddr 10.0.0.1" not in out
+
+    def test_option_dest_only_emits_output(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_routestopped([
+            ["eth0", "10.0.0.1", "dest", "tcp", "22"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "oifname eth0 ip daddr 10.0.0.1" in out
+        assert "iifname eth0 ip saddr 10.0.0.1" not in out
+
+    def test_option_routeback_adds_forward_rule(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_routestopped([
+            ["eth0", "10.0.0.1", "routeback", "-", "-"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "iifname eth0 oifname eth0" in out
+
+    def test_option_notrack_creates_raw_chain(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_routestopped([
+            ["eth0", "10.0.0.1", "notrack", "tcp", "22"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "chain stopped-raw-prerouting {" in out
+        assert "type filter hook prerouting priority -300;" in out
+        assert " notrack" in out
+
+    def test_routestopped_open_setting_collapses_to_wildcard(self):
+        from shorewall_nft.config.parser import ConfigLine, load_config
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        config = load_config(MINIMAL_DIR)
+        config.settings["ROUTESTOPPED_OPEN"] = "Yes"
+        config.routestopped = [
+            ConfigLine(columns=["eth0", "10.0.0.1", "-", "tcp", "22"],
+                       file="routestopped", lineno=0),
+        ]
+        ir = build_ir(config)
+        out = emit_stopped_nft(ir)
+        # Wildcard rule replaces host/proto filtering on this iface.
+        lines = [l for l in out.splitlines()
+                 if "iifname eth0" in l and "accept" in l]
+        # The single open rule must not carry the host or port match.
+        assert any("ip saddr" not in l and "tcp dport" not in l
+                   for l in lines), out
+
+    def test_ipv6_host_uses_ip6_match(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_routestopped([
+            ["eth0", "2001:db8::1", "-", "tcp", "22"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "ip6 saddr 2001:db8::1" in out
+        assert "ip6 daddr 2001:db8::1" in out
+
+    def test_sport_column_emitted(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_routestopped([
+            ["eth0", "10.0.0.1", "-", "tcp", "22", "1024"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "tcp dport 22" in out
+        assert "tcp sport 1024" in out
+
+    def test_critical_option_accepted_silently(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        # Should not raise even though `critical` is currently a no-op.
+        ir = self._build_ir_with_routestopped([
+            ["eth0", "10.0.0.1", "critical", "-", "-"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "iifname eth0 ip saddr 10.0.0.1" in out
         assert "dnat ip to" not in out
