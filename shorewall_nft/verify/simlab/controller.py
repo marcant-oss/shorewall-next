@@ -86,9 +86,14 @@ class SimController:
         workers_max: int | None = None,  # unused in single-process mode
         trace_depth: int = 128,
         num_threads: int | None = None,
+        iface_rp_filter: dict[str, str] | None = None,
     ):
         self.paths = (ip4add, ip4routes, ip6add, ip6routes)
         self.ns_name = ns_name
+        # Forward to SimFwTopology so per-iface routefilter values
+        # from the parsed shorewall config replace the historical
+        # rp_filter=0 forcing.
+        self._iface_rp_filter = dict(iface_rp_filter or {})
         self.state: FwState | None = None
         self.topo: SimFwTopology | None = None
         # Per-iface state held inline by the controller. Replaces the
@@ -152,7 +157,10 @@ class SimController:
         self._register_cleanup()
         self.reload_dumps()
         assert self.state is not None
-        self.topo = SimFwTopology(self.state, ns_name=self.ns_name)
+        self.topo = SimFwTopology(
+            self.state, ns_name=self.ns_name,
+            iface_rp_filter=self._iface_rp_filter,
+        )
         self.topo.build()
 
         # Take ownership of each TUN/TAP fd + per-iface metadata

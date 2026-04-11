@@ -702,6 +702,45 @@ def _iface_to_zone_map(config_dir: Path) -> dict[str, str]:
     return out
 
 
+def _iface_rp_filter_map(config_dir: Path) -> dict[str, str]:
+    """Parse the routefilter / noroutefilter option per iface.
+
+    Returns ``{iface: "0"|"1"|"2"}`` for every iface that has an
+    explicit setting in the interfaces file. Ifaces without an
+    explicit option are absent — the simlab topology then leaves
+    the kernel default in place (or applies the historical
+    rp_filter=0 forcing if the dict is empty entirely).
+    """
+    out: dict[str, str] = {}
+    path = config_dir / "interfaces"
+    if not path.exists():
+        return out
+    for line in path.read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        iface = parts[1]
+        if iface == "-":
+            continue
+        opts_str = parts[3] if len(parts) > 3 else ""
+        opts = {o.strip() for o in opts_str.split(",") if o.strip()}
+        for opt in opts:
+            if opt == "routefilter":
+                out[iface] = "1"
+                break
+            if opt.startswith("routefilter="):
+                v = opt.split("=", 1)[1].strip() or "1"
+                if v in ("0", "1", "2"):
+                    out[iface] = v
+                    break
+        if "noroutefilter" in opts:
+            out[iface] = "0"
+    return out
+
+
 def _percentiles(values: list[int], pcts: list[float]) -> dict[str, int]:
     if not values:
         return {f"p{int(p*100)}": 0 for p in pcts}

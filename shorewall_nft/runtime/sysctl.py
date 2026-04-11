@@ -56,10 +56,19 @@ def generate_sysctl_script(config: ShorewalConfig) -> str:
             if iface_name not in per_iface:
                 per_iface[iface_name] = {}
 
-            # routefilter -> rp_filter
-            if "routefilter" in opts:
-                per_iface[iface_name]["rp_filter"] = "1"
-            elif "noroutefilter" in opts:
+            # routefilter → rp_filter, mirroring Shorewall:
+            #   routefilter         → 1 (strict)
+            #   routefilter=1       → 1 (strict, explicit)
+            #   routefilter=2       → 2 (loose)
+            #   noroutefilter       → 0 (off)
+            for opt in opts:
+                if opt == "routefilter":
+                    per_iface[iface_name]["rp_filter"] = "1"
+                elif opt.startswith("routefilter="):
+                    val = opt.split("=", 1)[1].strip() or "1"
+                    if val in ("0", "1", "2"):
+                        per_iface[iface_name]["rp_filter"] = val
+            if "noroutefilter" in opts:
                 per_iface[iface_name]["rp_filter"] = "0"
 
             # logmartians
