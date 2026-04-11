@@ -49,7 +49,7 @@ def _resource_counts(ns_name: str = "simlab-fw") -> dict[str, int]:
         counts["all_netns"] = -1
     try:
         r = subprocess.run(
-            ["pgrep", "-cf", "simlab-"],
+            ["pgrep", "-c", "-f", "simlab[:-]"],
             capture_output=True, text=True, timeout=2,
         )
         counts["simlab_procs"] = int(r.stdout.strip() or 0)
@@ -118,12 +118,97 @@ class _PeakSampler:
         }
 
 
-def _load_ok(limit: float) -> bool:
-    """True if current 1-min loadavg is below ``limit``."""
+def _set_low_priority(pid: int = 0) -> None:
+    """Drop CPU + I/O priority of ``pid`` (0 = self) to the lowest class.
+
+    Used so a long simlab run never preempts the rest of the box. CPU
+    nice goes to +19; I/O is moved into the idle scheduler class.
+    Best-effort: failures are silent.
+    """
+    if pid == 0:
+        try:
+            os.nice(19)
+        except OSError:
+            pass
+    if hasattr(os, "ioprio_set"):
+        try:
+            # IOPRIO_WHO_PROCESS = 1, IOPRIO_CLASS_IDLE = 3
+            os.ioprio_set(1, pid, (3 << 13))  # type: ignore[attr-defined]
+            return
+        except (OSError, AttributeError):
+            pass
     try:
-        return os.getloadavg()[0] < limit
+        subprocess.run(
+            ["ionice", "-c", "3", "-p", str(pid or os.getpid())],
+            check=False, capture_output=True,
+        )
+    except FileNotFoundError:
+        pass
+
+
+def _read_psi(kind: str) -> float:
+    """Return ``avg10`` of PSI ``some`` for cpu/io/memory, 0.0 if absent."""
+    path = f"/proc/pressure/{kind}"
+    try:
+        with open(path) as f:
+            for line in f:
+                if line.startswith("some"):
+                    for part in line.split()[1:]:
+                        k, _, v = part.partition("=")
+                        if k == "avg10":
+                            return float(v)
+    except (OSError, ValueError):
+        pass
+    return 0.0
+
+
+def _system_busy(load_limit: float, psi_limit: float = 40.0) -> tuple[bool, str]:
+    """Multi-signal busy check.
+
+    PSI is checked first because it reacts in seconds; loadavg lags by
+    tens of seconds. Memory PSI uses a high (80) cutoff so we don't
+    pause for normal pagecache churn.
+    """
+    cpu_psi = _read_psi("cpu")
+    if cpu_psi >= psi_limit:
+        return True, f"cpu PSI avg10={cpu_psi:.0f}"
+    io_psi = _read_psi("io")
+    if io_psi >= psi_limit:
+        return True, f"io PSI avg10={io_psi:.0f}"
+    mem_psi = _read_psi("memory")
+    if mem_psi >= 80.0:
+        return True, f"mem PSI avg10={mem_psi:.0f}"
+    try:
+        la1 = os.getloadavg()[0]
     except OSError:
-        return True
+        la1 = 0.0
+    if la1 >= load_limit:
+        return True, f"loadavg1={la1:.2f}>={load_limit}"
+    return False, "ok"
+
+
+def _load_ok(limit: float) -> bool:
+    """True if the box is idle enough to start more work."""
+    busy, _ = _system_busy(limit)
+    return not busy
+
+
+def _wait_until_idle(load_limit: float, *, max_wait_s: float = 60.0) -> tuple[float, str]:
+    """Block until :func:`_system_busy` clears, capped at ``max_wait_s``.
+
+    Returns ``(waited_s, last_reason)``. Sleeps in 0.5 s steps so we
+    react quickly once headroom appears.
+    """
+    waited = 0.0
+    last_why = "ok"
+    while waited < max_wait_s:
+        busy, why = _system_busy(load_limit)
+        last_why = why
+        if not busy:
+            return waited, why
+        time.sleep(0.5)
+        waited += 0.5
+    return waited, last_why
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -350,6 +435,7 @@ def _build_random_probes(
 def _build_per_rule_probes(
     iptables_dump: Path, fw_state, iface_to_zone: dict,
     topo_tun_mac: dict, *, max_per_pair: int = 10000,
+    random_per_rule: int = 64,
 ) -> list[tuple]:
     """Build one probe per (src_zone, dst_zone) chain rule we understand.
 
@@ -364,7 +450,8 @@ def _build_per_rule_probes(
 
     zone_set = set(iface_to_zone.values())
     cases = derive_tests_all_zones(
-        iptables_dump, zones=zone_set, max_tests=max_per_pair, family=4)
+        iptables_dump, zones=zone_set, max_tests=max_per_pair, family=4,
+        random_per_rule=random_per_rule)
 
     zone_to_iface = {z: ifc for ifc, z in iface_to_zone.items()}
 
@@ -404,6 +491,11 @@ def _build_per_rule_probes(
             "desc": f"{tc.src_zone}→{tc.dst_zone} {tc.src_ip}→{tc.dst_ip} "
                     f"{tc.proto}:{tc.port}",
             "raw": tc.raw,
+            # The matching iptables-save rule line is the oracle's
+            # reasoning for POSITIVE/NEGATIVE probes — carry it as
+            # oracle_reason so mismatches.txt explains WHY the
+            # expectation was what it was.
+            "oracle_reason": tc.raw,
         }))
         pid += 1
     return out
@@ -442,36 +534,55 @@ def _print_category(
     name: str,
     probes: list[tuple],  # (category, expected, ProbeSpec, meta, result)
 ) -> None:
-    """Pretty-print per-category stats."""
+    """Pretty-print per-category stats with the four-way pass/fail split.
+
+    Always surfaces *which direction* mismatches go:
+
+      pass_accept  expected ACCEPT, got ACCEPT   (correct allow)
+      pass_drop    expected DROP,   got DROP     (correct block)
+      fail_drop    expected ACCEPT, got DROP     (should have had access)
+      fail_accept  expected DROP,   got ACCEPT   (shouldn't have had access)
+      unknown_exp  oracle could not classify     (RANDOM only, typically)
+    """
     total = len(probes)
     if total == 0:
         print(f"{name}: (none)")
         return
-    matched = sum(1 for p in probes if p[4].verdict == p[1])
-    mismatched = sum(
-        1 for p in probes
-        if p[4].verdict is not None and p[4].verdict != p[1]
-    )
+
+    pass_accept = sum(1 for p in probes if p[1] == "ACCEPT" and p[4].verdict == "ACCEPT")
+    pass_drop   = sum(1 for p in probes if p[1] == "DROP"   and p[4].verdict == "DROP")
+    fail_drop   = sum(1 for p in probes if p[1] == "ACCEPT" and p[4].verdict == "DROP")
+    fail_accept = sum(1 for p in probes if p[1] == "DROP"   and p[4].verdict == "ACCEPT")
     unknown_exp = sum(1 for p in probes if p[1] == "UNKNOWN")
-    accept_obs = sum(1 for p in probes if p[4].verdict == "ACCEPT")
-    drop_obs = sum(1 for p in probes if p[4].verdict == "DROP")
+    errored     = sum(1 for p in probes if p[4].verdict not in ("ACCEPT", "DROP"))
+
     latencies = [p[4].elapsed_ms for p in probes if p[4].elapsed_ms > 0]
     pct = _percentiles(latencies, [0.5, 0.9, 0.99])
     avg = sum(latencies) // len(latencies) if latencies else 0
+
+    passed = pass_accept + pass_drop
+    failed = fail_drop + fail_accept
+    pct_ok = (100.0 * passed / max(1, total - unknown_exp - errored))
     print(
-        f"{name:>9}: {total:4d} total   "
-        f"match={matched:4d}  mismatch={mismatched:4d}  "
-        f"unknown_expect={unknown_exp:4d}   "
-        f"obs_accept={accept_obs:4d}  obs_drop={drop_obs:4d}   "
-        f"lat avg={avg}ms p50={pct['p50']}ms p90={pct['p90']}ms "
-        f"p99={pct['p99']}ms"
+        f"{name:>9}: {total:4d}  "
+        f"ok={passed:4d} ({pct_ok:5.1f}%)  "
+        f"fail_drop={fail_drop:4d}  fail_accept={fail_accept:4d}  "
+        f"(pass_acc={pass_accept} pass_drp={pass_drop})  "
+        f"unknown={unknown_exp:3d}  err={errored:3d}   "
+        f"lat avg={avg}ms p50={pct['p50']}ms p99={pct['p99']}ms"
     )
+    if failed:
+        print(
+            f"           ↳ fail_drop  = should have had access but was DROPPED\n"
+            f"           ↳ fail_accept = should have been blocked but was ACCEPTED"
+        )
 
 
 def cmd_full(args: argparse.Namespace) -> int:
     """Per-rule positive/negative coverage + N random probes + report."""
     from .controller import SimController
     from .oracle import RulesetOracle
+    _set_low_priority()
     print("=== simlab FULL ===")
 
     warns = _check_sysctls(verbose=args.verbose)
@@ -515,6 +626,7 @@ def cmd_full(args: argparse.Namespace) -> int:
         args.data / "iptables.txt", ctl.state, iface_to_zone,
         ctl.topo.tun_mac if ctl.topo else {},
         max_per_pair=args.max_per_pair,
+        random_per_rule=args.random_per_rule,
     )
     random_probes = _build_random_probes(
         args.random, ctl.topo.tun_mac if ctl.topo else {},
@@ -541,13 +653,27 @@ def cmd_full(args: argparse.Namespace) -> int:
         f"gen={t_build_probes:.2f}s"
     )
 
-    peak = _PeakSampler(interval_s=0.1)
+    peak = _PeakSampler(interval_s=0.25)
     peak.start()
     t_run0 = time.monotonic()
     specs = [p[2] for p in all_probes]
-    asyncio.run(_smoke_one(ctl, specs))
+
+    # Batch the probes so we never have more than ``batch_size`` futures
+    # in flight at once. Between batches we wait for the box to drop
+    # below the configured load / PSI ceiling.
+    batch_size = max(1, args.batch_size)
+    total_throttle = 0.0
+    n_batches = (len(specs) + batch_size - 1) // batch_size
+    for bi in range(n_batches):
+        chunk = specs[bi * batch_size : (bi + 1) * batch_size]
+        waited, why = _wait_until_idle(args.load_limit, max_wait_s=120.0)
+        if waited > 0:
+            total_throttle += waited
+            print(f"  [batch {bi+1}/{n_batches}] throttled {waited:.1f}s ({why})")
+        asyncio.run(_smoke_one(ctl, chunk))
     t_run = time.monotonic() - t_run0
     peaks_summary = peak.stop()
+    peaks_summary["throttle_s"] = round(total_throttle, 1)
     peaks = peaks_summary
 
     # Attach results back into the per-category lists
@@ -605,6 +731,7 @@ def cmd_full(args: argparse.Namespace) -> int:
 
 def cmd_smoke(args: argparse.Namespace) -> int:
     from .controller import SimController
+    _set_low_priority()
     print("=== simlab smoke ===")
     before = _resource_counts()
     print(f"before: {before}")
@@ -656,6 +783,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
 
 def cmd_stress(args: argparse.Namespace) -> int:
     from .controller import SimController
+    _set_low_priority()
     print(f"=== simlab stress × {args.iterations} ===")
     baseline = _resource_counts()
     print(f"baseline: {baseline}")
@@ -725,6 +853,7 @@ def cmd_stress(args: argparse.Namespace) -> int:
 def cmd_limit(args: argparse.Namespace) -> int:
     """Push until build/destroy degrades or fails."""
     from .controller import SimController
+    _set_low_priority()
     print("=== simlab limit ===")
     i = 0
     prev_cycle_s = 0.0
@@ -762,8 +891,8 @@ def main() -> int:
                     help="Dir containing ip4add/ip4routes/ip6add/ip6routes")
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG_DIR,
                     help="shorewall46 config directory")
-    ap.add_argument("--load-limit", type=float, default=10.0,
-                    help="Pause new cycles while 1-min loadavg is >= this value")
+    ap.add_argument("--load-limit", type=float, default=4.0,
+                    help="Pause new work while loadavg1 >= this OR cpu/io PSI avg10 >= 40")
     ap.add_argument("--report-dir", type=Path, default=None,
                     help="Override archive directory for run reports")
     sub = ap.add_subparsers(dest="cmd")
@@ -780,6 +909,11 @@ def main() -> int:
         help="Number of random probes to add on top of rule coverage")
     p_full.add_argument("--seed", type=int, default=None,
         help="Seed for the random probe generator (None = wall clock)")
+    p_full.add_argument("--random-per-rule", type=int, default=64,
+        help="Number of random variants sampled per rule within that rule's "
+             "own src/dst/port constraints (default 64)")
+    p_full.add_argument("--batch-size", type=int, default=64,
+        help="Max probes in flight per batch (lower = less load spike)")
     p_full.add_argument("-v", "--verbose", action="store_true",
         help="Dump raw sysctl values before the run")
 

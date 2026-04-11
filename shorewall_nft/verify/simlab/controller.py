@@ -33,7 +33,7 @@ from typing import Any, Callable
 from .dumps import FwState, load_fw_state
 from .packets import PacketSummary, parse
 from .topology import NS_FW_DEFAULT, SimFwTopology
-from .worker import worker_main
+from .worker import _proc_name_for, worker_main
 
 
 @dataclass
@@ -99,7 +99,7 @@ class SimController:
                 target=worker_main,
                 args=(name, fd, self.topo.tun_kind[name],
                       self.topo.tun_mac.get(name), child_conn),
-                name=f"simlab-{name}",
+                name=_proc_name_for(name),
                 daemon=False,
             )
             # Only pass the relevant fd + the child pipe end to the

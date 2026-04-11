@@ -41,6 +41,20 @@ from .packets import (
 )
 
 
+def _proc_name_for(iface: str) -> str:
+    """Build a /proc/comm name for a worker.
+
+    Linux caps comm at 15 bytes (TASK_COMM_LEN = 16 incl NUL). We try
+    progressively shorter prefixes so the iface name itself stays
+    visible — `ps` shows e.g. ``simlab:bond1`` or ``s:bond0.123``.
+    """
+    for prefix in ("simlab:", "sim:", "s:", ""):
+        candidate = f"{prefix}{iface}"
+        if len(candidate.encode()) <= 15:
+            return candidate
+    return iface[:15]
+
+
 # Synthetic MAC for the worker-side of every TAP — used as
 # hwsrc in ARP replies and ether src in outgoing frames. Same MAC
 # on every worker is fine: each TAP is a separate L2 segment.
@@ -88,6 +102,29 @@ class InterfaceWorker:
         # the controller's _shutdown doesn't fire in the child.
         import atexit as _atexit
         _atexit._clear()  # type: ignore[attr-defined]
+
+        # Lower CPU + I/O priority of this worker so a long simlab run
+        # cannot starve the rest of the box. nice +19 + ioprio idle.
+        try:
+            os.nice(19)
+        except OSError:
+            pass
+        if hasattr(os, "ioprio_set"):
+            try:
+                os.ioprio_set(1, 0, (3 << 13))  # type: ignore[attr-defined]
+            except (OSError, AttributeError):
+                pass
+
+        # Rename /proc/<pid>/comm so `ps` / `top` show the iface this
+        # worker is bound to (e.g. ``simlab:bond1`` / ``s:bond0.123``).
+        try:
+            import ctypes as _ct
+            _libc = _ct.CDLL("libc.so.6", use_errno=True)
+            _PR_SET_NAME = 15
+            _libc.prctl(_PR_SET_NAME, _proc_name_for(self.iface_name).encode(),
+                        0, 0, 0)
+        except Exception:
+            pass
 
         os.set_blocking(self.fd, False)
         self._loop = asyncio.new_event_loop()
