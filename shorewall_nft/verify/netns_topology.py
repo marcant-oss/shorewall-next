@@ -293,11 +293,30 @@ class NetnsTopology:
                    capture_output: bool = True) -> subprocess.CompletedProcess:
         """Run an external binary inside a named netns.
 
-        Uses `ip netns exec NAME ARGV…` so the child process is
-        properly reparented. Keeps shell-out for the handful of
-        external binaries we drive (nft, nc, ping, conntrack, iptables).
+        Uses a ``preexec_fn`` that calls ``setns(CLONE_NEWNET)``
+        right after fork and before exec, so the child lands in
+        the target namespace while the parent's namespace is
+        untouched. Avoids the ``ip netns exec`` wrapper binary
+        entirely — one less fork, one less dependency on iproute2
+        binary path, and it still works when ``/sbin/ip`` isn't in
+        PATH.
+
+        Keeps shell-out for the external binaries themselves (nft,
+        conntrack, ping, …) — those aren't Python-callable. Phase B
+        of the exec-reduction plan replaces the *wrapper*, not the
+        targets.
         """
+        ns_path = f"/run/netns/{ns_name}"
+
+        def _enter_ns() -> None:  # runs post-fork, pre-exec in child
+            fd = os.open(ns_path, os.O_RDONLY)
+            try:
+                _setns(fd)
+            finally:
+                os.close(fd)
+
         return subprocess.run(
-            ["ip", "netns", "exec", ns_name, *argv],
+            argv,
             capture_output=capture_output, text=True, timeout=timeout,
+            preexec_fn=_enter_ns,
         )
