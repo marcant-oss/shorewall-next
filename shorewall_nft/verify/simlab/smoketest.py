@@ -126,6 +126,89 @@ def _load_ok(limit: float) -> bool:
         return True
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  sysctl / sysfs health check
+# ─────────────────────────────────────────────────────────────────────
+
+
+# Tunables relevant for high-volume TUN/TAP testing. Each entry:
+# (path, expected_min_value_as_int, description)
+_SYSCTL_CHECKS: list[tuple[str, int, str]] = [
+    ("/proc/sys/fs/file-max", 65536,
+     "global fd ceiling — each worker holds ~4 fds"),
+    ("/proc/sys/fs/nr_open", 65536,
+     "per-process fd limit"),
+    ("/proc/sys/kernel/pid_max", 65536,
+     "pid namespace cap — many workers/stubs"),
+    ("/proc/sys/net/core/somaxconn", 1024,
+     "TCP accept backlog — listener sockets"),
+    ("/proc/sys/net/core/rmem_max", 1048576,
+     "SO_RCVBUF ceiling for raw / AF_PACKET sockets"),
+    ("/proc/sys/net/core/wmem_max", 1048576,
+     "SO_SNDBUF ceiling"),
+    ("/proc/sys/net/netfilter/nf_conntrack_max", 131072,
+     "conntrack table size — probe flows"),
+    ("/proc/sys/net/ipv4/ip_local_port_range", 0,
+     "range of ephemeral ports (informational)"),
+]
+
+_SYSCTL_OFF_OR_ON: list[tuple[str, str, str]] = [
+    ("/proc/sys/net/ipv4/conf/all/rp_filter", "0",
+     "rp_filter breaks spoofed-source injection"),
+    ("/proc/sys/net/ipv4/ip_forward", "1",
+     "forwarding must be on for routed probes"),
+]
+
+
+def _check_sysctls(verbose: bool = False) -> list[str]:
+    """Return a list of human-readable warnings, empty if everything OK."""
+    warnings: list[str] = []
+    for path, minimum, desc in _SYSCTL_CHECKS:
+        try:
+            raw = open(path).read().strip()
+        except OSError:
+            warnings.append(f"sysctl {path} unreadable ({desc})")
+            continue
+        if verbose:
+            print(f"  {path} = {raw}")
+        if minimum <= 0:
+            continue
+        try:
+            first = int(raw.split()[0]) if raw else 0
+        except ValueError:
+            continue
+        if first < minimum:
+            warnings.append(
+                f"{path}={first} below recommended {minimum} ({desc})"
+            )
+
+    for path, expected, desc in _SYSCTL_OFF_OR_ON:
+        try:
+            raw = open(path).read().strip()
+        except OSError:
+            continue
+        if raw != expected:
+            warnings.append(
+                f"{path}={raw} should be {expected} ({desc})"
+            )
+
+    # CPU governor — performance helps deterministic probe timing
+    try:
+        governors = set()
+        for d in os.listdir("/sys/devices/system/cpu"):
+            gov_path = f"/sys/devices/system/cpu/{d}/cpufreq/scaling_governor"
+            if os.path.exists(gov_path):
+                governors.add(open(gov_path).read().strip())
+        if governors and governors - {"performance"}:
+            warnings.append(
+                f"CPU governors {sorted(governors)} — consider 'performance'"
+            )
+    except OSError:
+        pass
+
+    return warnings
+
+
 def _compile_ruleset(config_dir: Path, out_path: Path) -> None:
     """Shell-out to shorewall-nft to emit the ruleset."""
     r = subprocess.run(
@@ -141,63 +224,383 @@ async def _smoke_one(controller, probes: list) -> list:
     return await controller.run_probes(probes)
 
 
-def _build_probes(topo_tun_mac: dict) -> list:
-    """Build a representative set of probes covering every protocol.
+class TestCategory:
+    POSITIVE = "positive"     # ruleset says ACCEPT, simlab should also ACCEPT
+    NEGATIVE = "negative"     # ruleset says DROP/REJECT, simlab should DROP
+    RANDOM = "random"         # no a-priori expectation; plausibility vs oracle
 
-    Destinations are chosen so each lands on a zone handled by the
-    marcant ruleset: bond0.20 (host), bond0.18 (adm), bond0.17 (siem).
+
+def _match(**kw):
+    def inner(obs):
+        for k, v in kw.items():
+            if obs.get(k) != v:
+                return False
+        return True
+    return inner
+
+
+def _build_static_probes(topo_tun_mac: dict) -> list[tuple]:
+    """Representative hand-picked probes across POSITIVE + NEGATIVE.
+
+    Returns a list of (category, expected_verdict, ProbeSpec, meta).
     """
     from .controller import ProbeSpec
     from . import packets as P
-    probes: list = []
-    pid = 1
 
-    def m(**kw):
-        """Return a match-callback that requires all kw to match obs."""
-        def inner(obs):
-            for k, v in kw.items():
-                if obs.get(k) != v:
-                    return False
-            return True
-        return inner
+    out: list[tuple] = []
+    pid = 100
 
-    # host-r (net) → host:203.0.113.230:80 TCP SYN
-    probes.append(ProbeSpec(
-        probe_id=pid, inject_iface="bond1", expect_iface="bond0.20",
-        payload=P.build_tcp(
-            "203.0.113.69", "203.0.113.230", 80,
-            dst_mac=topo_tun_mac.get("bond1"),
-        ),
-        match=m(proto="tcp", dst="203.0.113.230", dport=80),
-    ))
-    pid += 1
+    def add(cat, expect, inject, observe, payload, match, meta):
+        nonlocal pid
+        out.append((cat, expect, ProbeSpec(
+            probe_id=pid, inject_iface=inject, expect_iface=observe,
+            payload=payload, match=match,
+        ), meta))
+        pid += 1
 
-    # net → host UDP/53 (DNS-style)
-    probes.append(ProbeSpec(
-        probe_id=pid, inject_iface="bond1", expect_iface="bond0.20",
-        payload=P.build_udp(
-            "203.0.113.69", "203.0.113.230", 53, sport=30000,
-            dst_mac=topo_tun_mac.get("bond1"),
-        ),
-        match=m(proto="udp", dst="203.0.113.230", dport=53),
-    ))
-    pid += 1
+    # POSITIVE: net → adm ICMP (net2adm has ACCEPT rules for ICMP)
+    add(TestCategory.POSITIVE, "ACCEPT",
+        "bond1", "bond0.18",
+        P.build_icmp("203.0.113.69", "203.0.113.34",
+                      dst_mac=topo_tun_mac.get("bond1")),
+        _match(proto="icmp", dst="203.0.113.34"),
+        {"desc": "net → adm ICMP (host-r)"})
 
-    # net → adm ICMP echo
-    probes.append(ProbeSpec(
-        probe_id=pid, inject_iface="bond1", expect_iface="bond0.18",
-        payload=P.build_icmp(
-            "203.0.113.69", "203.0.113.34",
-            dst_mac=topo_tun_mac.get("bond1"),
-        ),
-        match=m(proto="icmp", dst="203.0.113.34"),
-    ))
-    pid += 1
+    # POSITIVE: adm → cdn tcp:443 (explicit ACCEPT in adm2cdn)
+    add(TestCategory.POSITIVE, "ACCEPT",
+        "bond0.18", "bond0.23",
+        P.build_tcp("203.0.113.34", "198.51.100.11", 443,
+                     dst_mac=topo_tun_mac.get("bond0.18")),
+        _match(proto="tcp", dst="198.51.100.11", dport=443),
+        {"desc": "adm → cdn tcp:443"})
 
-    return probes
+    # NEGATIVE: host-r (net) → host:100:80 (no net2host rule)
+    add(TestCategory.NEGATIVE, "DROP",
+        "bond1", "bond0.20",
+        P.build_tcp("203.0.113.69", "203.0.113.230", 80,
+                     dst_mac=topo_tun_mac.get("bond1")),
+        _match(proto="tcp", dst="203.0.113.230", dport=80),
+        {"desc": "net → host tcp:80 (should be dropped — no rule)"})
+
+    # NEGATIVE: net → fw tcp:22 (net2fw drops ssh unless src is host-r)
+    add(TestCategory.NEGATIVE, "DROP",
+        "bond1", "bond1",   # fw zone — input chain
+        P.build_tcp("1.2.3.4", "203.0.113.75", 22,
+                     dst_mac=topo_tun_mac.get("bond1")),
+        _match(proto="tcp", dst="203.0.113.75", dport=22),
+        {"desc": "random net IP → fw tcp:22 (should be dropped)"})
+
+    return out
+
+
+def _build_random_probes(
+    n: int, topo_tun_mac: dict, iface_to_zone: dict, fw_state,
+    oracle, seed: int | None = None,
+) -> list[tuple]:
+    """Generate `n` random probes from routable IPs; oracle-classify each."""
+    from .controller import ProbeSpec
+    from . import packets as P
+    from .oracle import RandomProbeGenerator
+
+    rgen = RandomProbeGenerator(fw_state, iface_to_zone, seed=seed)
+    out: list[tuple] = []
+    pid = 1000
+    for _ in range(n):
+        r = rgen.next()
+        if r is None:
+            break
+        pid16 = pid & 0xffff
+        if r.proto == "tcp":
+            payload = P.build_tcp(r.src_ip, r.dst_ip, r.port,
+                                   dst_mac=topo_tun_mac.get(r.src_iface),
+                                   probe_id=pid16)
+            match = _match(proto="tcp", dst=r.dst_ip, dport=r.port)
+        elif r.proto == "udp":
+            payload = P.build_udp(r.src_ip, r.dst_ip, r.port,
+                                   dst_mac=topo_tun_mac.get(r.src_iface),
+                                   probe_id=pid16)
+            match = _match(proto="udp", dst=r.dst_ip, dport=r.port)
+        else:  # icmp
+            payload = P.build_icmp(r.src_ip, r.dst_ip,
+                                    dst_mac=topo_tun_mac.get(r.src_iface),
+                                    probe_id=pid16)
+            match = _match(proto="icmp", dst=r.dst_ip)
+
+        verdict = oracle.classify(
+            src_zone=r.src_zone, dst_zone=r.dst_zone,
+            src_ip=r.src_ip, dst_ip=r.dst_ip,
+            proto=r.proto, port=r.port,
+        )
+        expected = verdict.verdict  # "ACCEPT"/"DROP"/"UNKNOWN"
+        spec = ProbeSpec(
+            probe_id=pid16, inject_iface=r.src_iface,
+            expect_iface=r.dst_iface, payload=payload, match=match,
+        )
+        out.append((TestCategory.RANDOM, expected, spec,
+                    {"desc": f"{r.src_zone}→{r.dst_zone} "
+                              f"{r.src_ip}→{r.dst_ip} {r.proto}:{r.port}",
+                     "oracle_reason": verdict.reason}))
+        pid += 1
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────
+
+
+def _build_per_rule_probes(
+    iptables_dump: Path, fw_state, iface_to_zone: dict,
+    topo_tun_mac: dict, *, max_per_pair: int = 10000,
+) -> list[tuple]:
+    """Build one probe per (src_zone, dst_zone) chain rule we understand.
+
+    Uses ``derive_tests_all_zones`` with an effectively unlimited cap
+    so every ACCEPT/DROP/REJECT rule contributes a TestCase. Each
+    becomes a concrete simlab probe with the expected verdict copied
+    from the rule target.
+    """
+    from .controller import ProbeSpec
+    from . import packets as P
+    from shorewall_nft.verify.simulate import derive_tests_all_zones
+
+    zone_set = set(iface_to_zone.values())
+    cases = derive_tests_all_zones(
+        iptables_dump, zones=zone_set, max_tests=max_per_pair, family=4)
+
+    zone_to_iface = {z: ifc for ifc, z in iface_to_zone.items()}
+
+    out: list[tuple] = []
+    pid = 10000
+    for tc in cases:
+        if tc.src_zone is None or tc.dst_zone is None:
+            continue
+        src_iface = zone_to_iface.get(tc.src_zone)
+        dst_iface = zone_to_iface.get(tc.dst_zone)
+        if not src_iface or not dst_iface:
+            continue
+        pid16 = pid & 0xffff
+        if tc.proto == "tcp":
+            payload = P.build_tcp(
+                tc.src_ip, tc.dst_ip, tc.port,
+                dst_mac=topo_tun_mac.get(src_iface), probe_id=pid16)
+            match = _match(proto="tcp", dst=tc.dst_ip, dport=tc.port)
+        elif tc.proto == "udp":
+            payload = P.build_udp(
+                tc.src_ip, tc.dst_ip, tc.port,
+                dst_mac=topo_tun_mac.get(src_iface), probe_id=pid16)
+            match = _match(proto="udp", dst=tc.dst_ip, dport=tc.port)
+        elif tc.proto == "icmp":
+            payload = P.build_icmp(
+                tc.src_ip, tc.dst_ip,
+                dst_mac=topo_tun_mac.get(src_iface), probe_id=pid16)
+            match = _match(proto="icmp", dst=tc.dst_ip)
+        else:
+            continue
+        cat = (TestCategory.POSITIVE if tc.expected == "ACCEPT"
+               else TestCategory.NEGATIVE)
+        out.append((cat, tc.expected, ProbeSpec(
+            probe_id=pid16, inject_iface=src_iface, expect_iface=dst_iface,
+            payload=payload, match=match,
+        ), {
+            "desc": f"{tc.src_zone}→{tc.dst_zone} {tc.src_ip}→{tc.dst_ip} "
+                    f"{tc.proto}:{tc.port}",
+            "raw": tc.raw,
+        }))
+        pid += 1
+    return out
+
+
+def _iface_to_zone_map(config_dir: Path) -> dict[str, str]:
+    """Read shorewall interfaces file → iface → zone."""
+    out: dict[str, str] = {}
+    path = config_dir / "interfaces"
+    if not path.exists():
+        return out
+    for line in path.read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            zone, iface = parts[0], parts[1]
+            if zone != "-" and iface != "-":
+                out[iface] = zone
+    return out
+
+
+def _percentiles(values: list[int], pcts: list[float]) -> dict[str, int]:
+    if not values:
+        return {f"p{int(p*100)}": 0 for p in pcts}
+    vs = sorted(values)
+    out: dict[str, int] = {}
+    for p in pcts:
+        idx = min(len(vs) - 1, int(len(vs) * p))
+        out[f"p{int(p*100)}"] = vs[idx]
+    return out
+
+
+def _print_category(
+    name: str,
+    probes: list[tuple],  # (category, expected, ProbeSpec, meta, result)
+) -> None:
+    """Pretty-print per-category stats."""
+    total = len(probes)
+    if total == 0:
+        print(f"{name}: (none)")
+        return
+    matched = sum(1 for p in probes if p[4].verdict == p[1])
+    mismatched = sum(
+        1 for p in probes
+        if p[4].verdict is not None and p[4].verdict != p[1]
+    )
+    unknown_exp = sum(1 for p in probes if p[1] == "UNKNOWN")
+    accept_obs = sum(1 for p in probes if p[4].verdict == "ACCEPT")
+    drop_obs = sum(1 for p in probes if p[4].verdict == "DROP")
+    latencies = [p[4].elapsed_ms for p in probes if p[4].elapsed_ms > 0]
+    pct = _percentiles(latencies, [0.5, 0.9, 0.99])
+    avg = sum(latencies) // len(latencies) if latencies else 0
+    print(
+        f"{name:>9}: {total:4d} total   "
+        f"match={matched:4d}  mismatch={mismatched:4d}  "
+        f"unknown_expect={unknown_exp:4d}   "
+        f"obs_accept={accept_obs:4d}  obs_drop={drop_obs:4d}   "
+        f"lat avg={avg}ms p50={pct['p50']}ms p90={pct['p90']}ms "
+        f"p99={pct['p99']}ms"
+    )
+
+
+def cmd_full(args: argparse.Namespace) -> int:
+    """Per-rule positive/negative coverage + N random probes + report."""
+    from .controller import SimController
+    from .oracle import RulesetOracle
+    print("=== simlab FULL ===")
+
+    warns = _check_sysctls(verbose=args.verbose)
+    if warns:
+        print("sysctl health WARNINGS:")
+        for w in warns:
+            print(f"  ! {w}")
+    else:
+        print("sysctl health: ok")
+
+    before = _resource_counts()
+    print(f"before: {before}")
+
+    t0 = time.monotonic()
+    ctl = SimController(
+        ip4add=args.data / "ip4add",
+        ip4routes=args.data / "ip4routes",
+        ip6add=args.data / "ip6add",
+        ip6routes=args.data / "ip6routes",
+    )
+    ctl.build()
+    t_build = time.monotonic() - t0
+
+    nft = Path("/tmp/simlab-ruleset.nft")
+    _compile_ruleset(args.config, nft)
+    try:
+        ctl.load_nft(str(nft))
+    except RuntimeError as e:
+        print(f"nft LOAD FAILED: {e}")
+        ctl.shutdown()
+        return 2
+    t_load = time.monotonic() - t0 - t_build
+    time.sleep(0.2)
+
+    iface_to_zone = _iface_to_zone_map(args.config)
+    oracle = RulesetOracle(args.data / "iptables.txt")
+
+    # Build probes across categories
+    t_build_p0 = time.monotonic()
+    rules_probes = _build_per_rule_probes(
+        args.data / "iptables.txt", ctl.state, iface_to_zone,
+        ctl.topo.tun_mac if ctl.topo else {},
+        max_per_pair=args.max_per_pair,
+    )
+    random_probes = _build_random_probes(
+        args.random, ctl.topo.tun_mac if ctl.topo else {},
+        iface_to_zone, ctl.state, oracle, seed=args.seed,
+    )
+    t_build_probes = time.monotonic() - t_build_p0
+
+    all_probes = rules_probes + random_probes
+    # Split by category for reporting (we'll also run them together)
+    by_cat: dict[str, list] = {
+        TestCategory.POSITIVE: [],
+        TestCategory.NEGATIVE: [],
+        TestCategory.RANDOM: [],
+    }
+    for p in all_probes:
+        by_cat[p[0]].append(p)
+
+    print(
+        f"build={t_build:.2f}s load={t_load:.2f}s "
+        f"probes={len(all_probes)} "
+        f"(pos={len(by_cat[TestCategory.POSITIVE])} "
+        f"neg={len(by_cat[TestCategory.NEGATIVE])} "
+        f"rnd={len(by_cat[TestCategory.RANDOM])}) "
+        f"gen={t_build_probes:.2f}s"
+    )
+
+    peak = _PeakSampler(interval_s=0.1)
+    peak.start()
+    t_run0 = time.monotonic()
+    specs = [p[2] for p in all_probes]
+    asyncio.run(_smoke_one(ctl, specs))
+    t_run = time.monotonic() - t_run0
+    peaks_summary = peak.stop()
+    peaks = peaks_summary
+
+    # Attach results back into the per-category lists
+    enriched: list[list] = []
+    for cat, expect, spec, meta in all_probes:
+        enriched.append((cat, expect, spec, meta, spec))
+    by_cat_res: dict[str, list] = {
+        TestCategory.POSITIVE: [],
+        TestCategory.NEGATIVE: [],
+        TestCategory.RANDOM: [],
+    }
+    for cat, expect, spec, meta in all_probes:
+        by_cat_res[cat].append((cat, expect, spec, meta, spec))
+
+    print()
+    print(f"=== results (run {t_run:.2f}s) ===")
+    _print_category("POSITIVE", by_cat_res[TestCategory.POSITIVE])
+    _print_category("NEGATIVE", by_cat_res[TestCategory.NEGATIVE])
+    _print_category("RANDOM  ", by_cat_res[TestCategory.RANDOM])
+
+    print()
+    print(f"peak fds:   {peaks['peak_fds']}")
+    print(f"peak procs: {peaks['peak_procs']}")
+    print(f"peak load:  {peaks['peak_load']}")
+
+    ctl.shutdown()
+    after = _resource_counts()
+    print(f"after: {after}")
+    delta = {k: after.get(k, 0) - before.get(k, 0) for k in after}
+    print(f"delta: {delta}")
+
+    # Persist a full archive report for later regression hunts.
+    try:
+        from .report import DEFAULT_REPORT_DIR, write_report
+        run_dir = write_report(
+            archive_root=args.report_dir or DEFAULT_REPORT_DIR,
+            run_name="full",
+            probes=all_probes,
+            timings={
+                "build": t_build, "nft_load": t_load,
+                "probe_build": t_build_probes, "run": t_run,
+            },
+            peaks=peaks,
+            resource_delta=delta,
+            sysctl_warnings=warns,
+            iface_count=len(ctl.state.interfaces) if ctl.state else 0,
+            route_count_v4=len(ctl.state.routes4) if ctl.state else 0,
+            route_count_v6=len(ctl.state.routes6) if ctl.state else 0,
+        )
+        print(f"report written: {run_dir}")
+    except Exception as e:
+        print(f"report FAILED to write: {e}")
+    return 0
 
 
 def cmd_smoke(args: argparse.Namespace) -> int:
@@ -356,11 +759,24 @@ def main() -> int:
                     help="shorewall46 config directory")
     ap.add_argument("--load-limit", type=float, default=10.0,
                     help="Pause new cycles while 1-min loadavg is >= this value")
+    ap.add_argument("--report-dir", type=Path, default=None,
+                    help="Override archive directory for run reports")
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("smoke", help="one build, one probe per representative pair")
     p_stress = sub.add_parser("stress", help="N build+destroy cycles")
     p_stress.add_argument("iterations", type=int, nargs="?", default=10)
     sub.add_parser("limit", help="push build/destroy until something breaks")
+    p_full = sub.add_parser("full",
+        help="every rule positive+negative, plus N random probes, "
+             "archive report")
+    p_full.add_argument("--max-per-pair", type=int, default=10000,
+        help="Cap probes per (src,dst) chain — high default = 'all'")
+    p_full.add_argument("--random", type=int, default=50,
+        help="Number of random probes to add on top of rule coverage")
+    p_full.add_argument("--seed", type=int, default=None,
+        help="Seed for the random probe generator (None = wall clock)")
+    p_full.add_argument("-v", "--verbose", action="store_true",
+        help="Dump raw sysctl values before the run")
 
     args = ap.parse_args()
     if args.cmd == "smoke" or args.cmd is None:
@@ -369,6 +785,8 @@ def main() -> int:
         return cmd_stress(args)
     if args.cmd == "limit":
         return cmd_limit(args)
+    if args.cmd == "full":
+        return cmd_full(args)
     ap.print_help()
     return 1
 

@@ -200,7 +200,20 @@ class SimController:
         tag = msg[0]
         if tag == "observed":
             _, obs_iface, _ts, summary = msg
-            # Match against any active probe expecting this iface.
+            # Primary correlation: probe_id stashed in IP.id / IPv6.fl.
+            # Falls back to the per-probe match() callback if the id
+            # didn't survive (e.g. DNAT rewrote the packet).
+            obs_id = summary.get("probe_id")
+            if obs_id is not None:
+                probe = self._probes.get(obs_id & 0xffff)
+                if probe and probe.expect_iface == obs_iface:
+                    probe.verdict = "ACCEPT"
+                    probe.elapsed_ms = int(
+                        (time.monotonic_ns() - probe.started_ns) / 1e6)
+                    fut = self._probe_futures.get(probe.probe_id)
+                    if fut and not fut.done():
+                        fut.set_result(summary)
+                    return
             for probe_id, probe in list(self._probes.items()):
                 if probe.expect_iface != obs_iface:
                     continue

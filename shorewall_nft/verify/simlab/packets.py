@@ -70,63 +70,117 @@ class PacketSummary:
     ndp_type: int | None = None # ICMPv6 NDP subtype (NS=135, NA=136, …)
     length: int = 0
     raw: bytes = b""            # original bytes (for re-injection/debug)
+    # Probe-id stash: encoded into IPv4 ``id`` (16 bits) or IPv6 flow
+    # label (20 bits). The controller uses this to correlate an
+    # observed packet to the probe that sourced it without relying on
+    # fragile src/dst/port matching.
+    probe_id: int | None = None
 
 
 # ── Builders (host → wire) ───────────────────────────────────────────
 
 
+def _ipv4(src: str, dst: str, proto: int | None = None,
+          probe_id: int | None = None) -> Any:
+    """Build an IPv4 layer with optional probe_id stashed in the id field."""
+    s = _sc()
+    kwargs: dict[str, Any] = {"src": src, "dst": dst}
+    if proto is not None:
+        kwargs["proto"] = proto
+    if probe_id is not None:
+        kwargs["id"] = probe_id & 0xffff
+    return s.IP(**kwargs)
+
+
+def _ipv6(src: str, dst: str, nh: int | None = None,
+          probe_id: int | None = None) -> Any:
+    """Build an IPv6 layer with optional probe_id stashed in fl."""
+    s = _sc()
+    kwargs: dict[str, Any] = {"src": src, "dst": dst}
+    if nh is not None:
+        kwargs["nh"] = nh
+    if probe_id is not None:
+        kwargs["fl"] = probe_id & 0xfffff
+    return s.IPv6(**kwargs)
+
+
 def build_tcp(src_ip: str, dst_ip: str, dport: int, *,
               sport: int | None = None, flags: str = "S",
               family: int = 4, payload: bytes = b"",
+              probe_id: int | None = None,
               src_mac: str | None = None, dst_mac: str | None = None,
               wrap_ether: bool = True) -> bytes:
     """Build a TCP probe packet (default SYN). Returns raw bytes."""
     s = _sc()
     sport = sport or _next_sport()
-    if family == 6:
-        layer = s.IPv6(src=src_ip, dst=dst_ip) / s.TCP(sport=sport, dport=dport, flags=flags) / payload
-    else:
-        layer = s.IP(src=src_ip, dst=dst_ip) / s.TCP(sport=sport, dport=dport, flags=flags) / payload
+    ip = _ipv6(src_ip, dst_ip, probe_id=probe_id) if family == 6 \
+        else _ipv4(src_ip, dst_ip, probe_id=probe_id)
+    layer = ip / s.TCP(sport=sport, dport=dport, flags=flags) / payload
     return _finalize(layer, src_mac, dst_mac, wrap_ether)
 
 
 def build_udp(src_ip: str, dst_ip: str, dport: int, *,
               sport: int | None = None, family: int = 4,
               payload: bytes = b"PING",
+              probe_id: int | None = None,
               src_mac: str | None = None, dst_mac: str | None = None,
               wrap_ether: bool = True) -> bytes:
     s = _sc()
     sport = sport or _next_sport()
-    if family == 6:
-        layer = s.IPv6(src=src_ip, dst=dst_ip) / s.UDP(sport=sport, dport=dport) / payload
-    else:
-        layer = s.IP(src=src_ip, dst=dst_ip) / s.UDP(sport=sport, dport=dport) / payload
+    ip = _ipv6(src_ip, dst_ip, probe_id=probe_id) if family == 6 \
+        else _ipv4(src_ip, dst_ip, probe_id=probe_id)
+    layer = ip / s.UDP(sport=sport, dport=dport) / payload
     return _finalize(layer, src_mac, dst_mac, wrap_ether)
 
 
 def build_icmp(src_ip: str, dst_ip: str, *,
                type: int = 8, code: int = 0, family: int = 4,
                payload: bytes = b"simlab",
+               probe_id: int | None = None,
                src_mac: str | None = None, dst_mac: str | None = None,
                wrap_ether: bool = True) -> bytes:
     """Build an ICMP echo request (v4)."""
     s = _sc()
-    layer = s.IP(src=src_ip, dst=dst_ip) / s.ICMP(type=type, code=code) / payload
+    ip = _ipv4(src_ip, dst_ip, probe_id=probe_id)
+    layer = ip / s.ICMP(type=type, code=code) / payload
     return _finalize(layer, src_mac, dst_mac, wrap_ether)
 
 
 def build_icmpv6(src_ip: str, dst_ip: str, *,
                  type: int = 128, code: int = 0,
                  payload: bytes = b"simlab",
+                 probe_id: int | None = None,
                  src_mac: str | None = None, dst_mac: str | None = None,
                  wrap_ether: bool = True) -> bytes:
     """Build an ICMPv6 echo request (type 128)."""
     s = _sc()
+    ip = _ipv6(src_ip, dst_ip, probe_id=probe_id)
     if type == 128:
-        layer = s.IPv6(src=src_ip, dst=dst_ip) / s.ICMPv6EchoRequest(data=payload)
+        layer = ip / s.ICMPv6EchoRequest(data=payload)
     else:
         from scapy.layers.inet6 import ICMPv6Unknown
-        layer = s.IPv6(src=src_ip, dst=dst_ip) / ICMPv6Unknown(type=type, code=code)
+        layer = ip / ICMPv6Unknown(type=type, code=code)
+    return _finalize(layer, src_mac, dst_mac, wrap_ether)
+
+
+def build_raw_ip(src_ip: str, dst_ip: str, proto: int, *,
+                 family: int = 4, payload: bytes = b"",
+                 probe_id: int | None = None,
+                 src_mac: str | None = None, dst_mac: str | None = None,
+                 wrap_ether: bool = True) -> bytes:
+    """Catch-all for arbitrary IP protocols (SCTP, AH, PIM, …).
+
+    When scapy has a dedicated layer for the protocol use the
+    specific builder instead — this helper's only role is to
+    exercise chains whose rule says ``-p <unknown number>``.
+    """
+    s = _sc()
+    ip = (
+        _ipv6(src_ip, dst_ip, nh=proto, probe_id=probe_id)
+        if family == 6 else
+        _ipv4(src_ip, dst_ip, proto=proto, probe_id=probe_id)
+    )
+    layer = ip / s.Raw(load=payload)
     return _finalize(layer, src_mac, dst_mac, wrap_ether)
 
 
@@ -399,6 +453,10 @@ def parse(raw: bytes, *, is_tap: bool = True) -> PacketSummary:
         summary.family = 4
         summary.src = ip.src
         summary.dst = ip.dst
+        try:
+            summary.probe_id = int(ip.id)
+        except Exception:
+            pass
         if pkt.haslayer(s.TCP):
             tcp = pkt[s.TCP]
             summary.proto = "tcp"
@@ -426,6 +484,10 @@ def parse(raw: bytes, *, is_tap: bool = True) -> PacketSummary:
             summary.family = 6
             summary.src = ip6.src
             summary.dst = ip6.dst
+            try:
+                summary.probe_id = int(ip6.fl)
+            except Exception:
+                pass
             if pkt.haslayer(ICMPv6ND_NS):
                 summary.proto = "ndp"
                 summary.ndp_type = 135

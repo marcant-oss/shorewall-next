@@ -71,9 +71,22 @@ def _stub_main(name: str, read_fd: int, write_fd: int) -> None:  # pragma: no co
     )
 
     def cleanup(signum: int = 0, frame: Any = None) -> None:
-        # Best-effort umount + unlink + exit.
+        # Best-effort umount + unlink + exit. Writes a marker file so
+        # the operator can tell whether this path actually ran when
+        # debugging SIGKILL-based tests.
         try:
-            _libc.umount(target.encode())
+            with open(f"/tmp/simlab-stub-cleanup.{os.getpid()}", "w") as f:
+                f.write(f"signum={signum} target={target}\n")
+        except OSError:
+            pass
+        try:
+            rc = _libc.umount(target.encode())
+            if rc != 0:
+                try:
+                    with open(f"/tmp/simlab-stub-cleanup.{os.getpid()}", "a") as f:
+                        f.write(f"umount rc={rc} errno={ctypes.get_errno()}\n")
+                except OSError:
+                    pass
         except Exception:
             pass
         try:

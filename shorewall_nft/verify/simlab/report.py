@@ -1,0 +1,254 @@
+"""Simlab run report writer — persistent archive for later reference.
+
+Every completed simlab run emits a pair of files under
+``<repo>/docs/testing/simlab-reports/<UTC-timestamp>/``:
+
+  * ``report.json`` — full structured dump, including every probe
+    and its observed verdict. Machine-parseable for later
+    regression hunts.
+  * ``report.md`` — condensed human-readable summary with per-
+    category statistics, sysctl warnings, resource peaks, and a
+    top-of-mismatches list. Also includes environment (kernel,
+    python, scapy, nft, shorewall-nft versions) so we can correlate
+    behaviour changes to software updates.
+  * ``mismatches.txt`` — one line per probe whose observed verdict
+    did NOT match the expected one. Lets you grep-find a regression
+    later.
+
+The writer is deliberately dependency-free: it only uses stdlib
+``json``, ``pathlib``, and ``subprocess`` to collect version info.
+Absence of a writable report dir → log a warning and continue.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import platform
+import subprocess
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+# Default archive location: ``docs/testing/simlab-reports`` under the
+# repository root. A simlab run on the test VM mounts the repo at
+# /root/shorewall-nft so that path also lives on disk there; results
+# are rsync'd back to the host by the operator.
+DEFAULT_REPORT_DIR = Path(__file__).resolve().parents[3] / \
+    "docs" / "testing" / "simlab-reports"
+
+
+@dataclass
+class CategoryStats:
+    name: str
+    total: int = 0
+    match: int = 0
+    mismatch: int = 0
+    unknown_expected: int = 0
+    observed_accept: int = 0
+    observed_drop: int = 0
+    latencies_ms: list[int] = field(default_factory=list)
+
+    def summary(self) -> dict[str, Any]:
+        from statistics import mean, median, quantiles
+        latmin = min(self.latencies_ms) if self.latencies_ms else 0
+        latmax = max(self.latencies_ms) if self.latencies_ms else 0
+        latavg = int(mean(self.latencies_ms)) if self.latencies_ms else 0
+        latp50 = int(median(self.latencies_ms)) if self.latencies_ms else 0
+        p99 = 0
+        if len(self.latencies_ms) >= 100:
+            try:
+                p99 = int(quantiles(self.latencies_ms, n=100)[-1])
+            except Exception:
+                p99 = latmax
+        else:
+            p99 = latmax
+        return {
+            "total": self.total, "match": self.match,
+            "mismatch": self.mismatch,
+            "unknown_expected": self.unknown_expected,
+            "observed_accept": self.observed_accept,
+            "observed_drop": self.observed_drop,
+            "latency_ms": {
+                "min": latmin, "avg": latavg, "p50": latp50,
+                "p99": p99, "max": latmax,
+            },
+        }
+
+
+def _env_versions() -> dict[str, str]:
+    """Collect env info for the report header."""
+    out: dict[str, str] = {}
+    out["kernel"] = platform.uname().release
+    out["python"] = platform.python_version()
+    try:
+        r = subprocess.run(["nft", "--version"],
+                           capture_output=True, text=True, timeout=2)
+        out["nft"] = r.stdout.strip().splitlines()[0] if r.stdout else ""
+    except Exception:
+        out["nft"] = "n/a"
+    try:
+        import scapy
+        out["scapy"] = scapy.__version__
+    except Exception:
+        out["scapy"] = "n/a"
+    try:
+        from shorewall_nft import __version__ as _v
+        out["shorewall_nft"] = _v
+    except Exception:
+        out["shorewall_nft"] = "n/a"
+    # Git HEAD if we're running out of a checkout
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parents[3]),
+             "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+        out["git_head"] = r.stdout.strip() or "n/a"
+    except Exception:
+        out["git_head"] = "n/a"
+    return out
+
+
+def _serialise_probe(probe_tuple: tuple) -> dict[str, Any]:
+    cat, expected, spec, meta = probe_tuple
+    return {
+        "category": cat,
+        "probe_id": spec.probe_id,
+        "inject_iface": spec.inject_iface,
+        "expect_iface": spec.expect_iface,
+        "expected": expected,
+        "observed": spec.verdict,
+        "elapsed_ms": spec.elapsed_ms,
+        "desc": meta.get("desc", ""),
+        "oracle_reason": meta.get("oracle_reason", ""),
+    }
+
+
+def write_report(
+    archive_root: Path,
+    run_name: str,
+    probes: list[tuple],
+    timings: dict[str, float],
+    peaks: dict[str, Any],
+    resource_delta: dict[str, int],
+    sysctl_warnings: list[str],
+    iface_count: int,
+    route_count_v4: int,
+    route_count_v6: int,
+) -> Path:
+    """Write a full report + markdown summary + mismatch list.
+
+    Returns the path to the run directory.
+    """
+    now = datetime.now(timezone.utc)
+    ts = now.strftime("%Y%m%dT%H%M%SZ")
+    run_dir = archive_root / ts
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Per-category breakdown
+    cats: dict[str, CategoryStats] = {}
+    for cat, expected, spec, _meta in probes:
+        cs = cats.setdefault(cat, CategoryStats(name=cat))
+        cs.total += 1
+        observed = spec.verdict or "NONE"
+        if expected == "UNKNOWN":
+            cs.unknown_expected += 1
+        elif observed == expected:
+            cs.match += 1
+        else:
+            cs.mismatch += 1
+        if observed == "ACCEPT":
+            cs.observed_accept += 1
+        elif observed == "DROP":
+            cs.observed_drop += 1
+        if spec.elapsed_ms > 0:
+            cs.latencies_ms.append(spec.elapsed_ms)
+
+    # JSON report
+    report: dict[str, Any] = {
+        "timestamp_utc": now.isoformat(),
+        "run_name": run_name,
+        "env": _env_versions(),
+        "topology": {
+            "iface_count": iface_count,
+            "routes_v4": route_count_v4,
+            "routes_v6": route_count_v6,
+        },
+        "timings": timings,
+        "peaks": peaks,
+        "resource_delta": resource_delta,
+        "sysctl_warnings": sysctl_warnings,
+        "categories": {
+            name: cs.summary() for name, cs in cats.items()
+        },
+        "probes": [_serialise_probe(p) for p in probes],
+    }
+    (run_dir / "report.json").write_text(json.dumps(report, indent=2))
+
+    # Markdown summary
+    md: list[str] = []
+    md.append(f"# simlab run — {ts}")
+    md.append("")
+    md.append("## Environment")
+    for k, v in report["env"].items():
+        md.append(f"- **{k}**: {v}")
+    md.append("")
+    md.append("## Topology")
+    md.append(f"- interfaces: {iface_count}")
+    md.append(f"- v4 routes installed: {route_count_v4}")
+    md.append(f"- v6 routes installed: {route_count_v6}")
+    md.append("")
+    md.append("## Timings")
+    for k, v in timings.items():
+        md.append(f"- {k}: {v:.3f}s")
+    md.append("")
+    md.append("## Peaks")
+    for k, v in peaks.items():
+        md.append(f"- {k}: {v}")
+    md.append("")
+    md.append("## Resource delta (after − before)")
+    for k, v in resource_delta.items():
+        md.append(f"- {k}: {v:+d}")
+    md.append("")
+    md.append("## sysctl warnings")
+    if sysctl_warnings:
+        for w in sysctl_warnings:
+            md.append(f"- ⚠ {w}")
+    else:
+        md.append("- ✓ none")
+    md.append("")
+    md.append("## Category results")
+    md.append("")
+    md.append("| Category | Total | Match | Mismatch | Unknown | ACCEPT | DROP |"
+              " avg | p50 | p99 | max |")
+    md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    for name in sorted(cats):
+        cs = cats[name].summary()
+        md.append(
+            f"| {name} | {cs['total']} | {cs['match']} | {cs['mismatch']} "
+            f"| {cs['unknown_expected']} | {cs['observed_accept']} "
+            f"| {cs['observed_drop']} | {cs['latency_ms']['avg']}ms "
+            f"| {cs['latency_ms']['p50']}ms | {cs['latency_ms']['p99']}ms "
+            f"| {cs['latency_ms']['max']}ms |"
+        )
+    md.append("")
+    (run_dir / "report.md").write_text("\n".join(md) + "\n")
+
+    # Mismatches file
+    mismatches: list[str] = []
+    for cat, expected, spec, meta in probes:
+        if expected == "UNKNOWN":
+            continue
+        if spec.verdict and spec.verdict != expected:
+            mismatches.append(
+                f"{cat:10} [{spec.inject_iface}→{spec.expect_iface}] "
+                f"expected={expected} got={spec.verdict} "
+                f"[{meta.get('desc','')}]"
+            )
+    if mismatches:
+        (run_dir / "mismatches.txt").write_text("\n".join(mismatches) + "\n")
+    return run_dir
