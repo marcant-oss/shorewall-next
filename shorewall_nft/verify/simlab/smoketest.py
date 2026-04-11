@@ -382,9 +382,13 @@ def _build_random_probes(
     n: int, topo_tun_mac: dict, iface_to_zone: dict, fw_state,
     oracle, seed: int | None = None,
 ) -> list[tuple]:
-    """Generate `n` random probes from routable IPs; oracle-classify each."""
-    from .controller import ProbeSpec
-    from . import packets as P
+    """Generate `n` random probe plans from routable IPs; oracle-classify each.
+
+    Returns lightweight plan dicts (no ProbeSpec, no scapy payload
+    bytes, no match closure) so the full probe list can stay in
+    memory cheaply. ProbeSpec construction happens on demand in the
+    cmd_full batch loop via :func:`_plan_to_spec`.
+    """
     from .oracle import RandomProbeGenerator
 
     rgen = RandomProbeGenerator(fw_state, iface_to_zone, seed=seed)
@@ -394,37 +398,29 @@ def _build_random_probes(
         r = rgen.next()
         if r is None:
             break
+        if r.proto not in ("tcp", "udp", "icmp"):
+            continue
         pid16 = pid & 0xffff
-        if r.proto == "tcp":
-            payload = P.build_tcp(r.src_ip, r.dst_ip, r.port,
-                                   dst_mac=topo_tun_mac.get(r.src_iface),
-                                   probe_id=pid16)
-            match = _match(proto="tcp", dst=r.dst_ip, dport=r.port)
-        elif r.proto == "udp":
-            payload = P.build_udp(r.src_ip, r.dst_ip, r.port,
-                                   dst_mac=topo_tun_mac.get(r.src_iface),
-                                   probe_id=pid16)
-            match = _match(proto="udp", dst=r.dst_ip, dport=r.port)
-        else:  # icmp
-            payload = P.build_icmp(r.src_ip, r.dst_ip,
-                                    dst_mac=topo_tun_mac.get(r.src_iface),
-                                    probe_id=pid16)
-            match = _match(proto="icmp", dst=r.dst_ip)
-
         verdict = oracle.classify(
             src_zone=r.src_zone, dst_zone=r.dst_zone,
             src_ip=r.src_ip, dst_ip=r.dst_ip,
             proto=r.proto, port=r.port,
         )
-        expected = verdict.verdict  # "ACCEPT"/"DROP"/"UNKNOWN"
-        spec = ProbeSpec(
-            probe_id=pid16, inject_iface=r.src_iface,
-            expect_iface=r.dst_iface, payload=payload, match=match,
-        )
-        out.append((TestCategory.RANDOM, expected, spec,
-                    {"desc": f"{r.src_zone}→{r.dst_zone} "
-                              f"{r.src_ip}→{r.dst_ip} {r.proto}:{r.port}",
-                     "oracle_reason": verdict.reason}))
+        plan = {
+            "probe_id": pid16,
+            "src_iface": r.src_iface,
+            "dst_iface": r.dst_iface,
+            "src_ip": r.src_ip,
+            "dst_ip": r.dst_ip,
+            "proto": r.proto,
+            "port": r.port,
+        }
+        meta = {
+            "desc": f"{r.src_zone}→{r.dst_zone} "
+                    f"{r.src_ip}→{r.dst_ip} {r.proto}:{r.port}",
+            "oracle_reason": verdict.reason,
+        }
+        out.append((TestCategory.RANDOM, verdict.verdict, plan, meta))
         pid += 1
     return out
 
@@ -476,20 +472,61 @@ def _build_zone_to_concrete_src(
     return out
 
 
+def _plan_to_spec(plan: dict, topo_tun_mac: dict):
+    """Build a ProbeSpec from a lightweight plan dict on demand.
+
+    Streaming-probes pass: the cmd_full batch loop calls this just
+    before firing a batch and discards the ProbeSpec after collecting
+    results. That way 116k cheap plan dicts stay in memory but the
+    heavy (payload bytes, match closure, trace list) ProbeSpec
+    objects never exist all at once.
+    """
+    from .controller import ProbeSpec
+    from . import packets as P
+
+    src_iface = plan["src_iface"]
+    dst_iface = plan["dst_iface"]
+    proto = plan["proto"]
+    pid16 = plan["probe_id"]
+    src_ip = plan["src_ip"]
+    dst_ip = plan["dst_ip"]
+    port = plan.get("port")
+    dst_mac = topo_tun_mac.get(src_iface)
+
+    if proto == "tcp":
+        payload = P.build_tcp(src_ip, dst_ip, port, dst_mac=dst_mac,
+                              probe_id=pid16)
+        match = _match(proto="tcp", dst=dst_ip, dport=port)
+    elif proto == "udp":
+        payload = P.build_udp(src_ip, dst_ip, port, dst_mac=dst_mac,
+                              probe_id=pid16)
+        match = _match(proto="udp", dst=dst_ip, dport=port)
+    elif proto == "icmp":
+        payload = P.build_icmp(src_ip, dst_ip, dst_mac=dst_mac,
+                               probe_id=pid16)
+        match = _match(proto="icmp", dst=dst_ip)
+    else:
+        return None
+
+    return ProbeSpec(
+        probe_id=pid16, inject_iface=src_iface,
+        expect_iface=dst_iface, payload=payload, match=match,
+    )
+
+
 def _build_per_rule_probes(
     iptables_dump: Path, fw_state, iface_to_zone: dict,
     topo_tun_mac: dict, *, max_per_pair: int = 10000,
     random_per_rule: int = 64,
 ) -> list[tuple]:
-    """Build one probe per (src_zone, dst_zone) chain rule we understand.
+    """Build lightweight plan dicts for every (src,dst) chain rule we understand.
 
-    Uses ``derive_tests_all_zones`` with an effectively unlimited cap
-    so every ACCEPT/DROP/REJECT rule contributes a TestCase. Each
-    becomes a concrete simlab probe with the expected verdict copied
-    from the rule target.
+    Returns ``list[(category, expected, plan_dict, meta)]`` where
+    ``plan_dict`` is cheap (~200 bytes) compared to a full ProbeSpec
+    (~3 KB with payload + match closure). The batch loop in cmd_full
+    converts plan → ProbeSpec just before firing a batch and discards
+    after, keeping parent RSS bounded to ~batch_size ProbeSpecs.
     """
-    from .controller import ProbeSpec
-    from . import packets as P
     from shorewall_nft.verify.simulate import (
         DEFAULT_SRC, derive_tests_all_zones,
     )
@@ -560,39 +597,30 @@ def _build_per_rule_probes(
         dst_iface = zone_to_iface.get(tc.dst_zone)
         if not src_iface or not dst_iface:
             continue
-        pid16 = pid & 0xffff
-        if tc.proto == "tcp":
-            payload = P.build_tcp(
-                tc.src_ip, tc.dst_ip, tc.port,
-                dst_mac=topo_tun_mac.get(src_iface), probe_id=pid16)
-            match = _match(proto="tcp", dst=tc.dst_ip, dport=tc.port)
-        elif tc.proto == "udp":
-            payload = P.build_udp(
-                tc.src_ip, tc.dst_ip, tc.port,
-                dst_mac=topo_tun_mac.get(src_iface), probe_id=pid16)
-            match = _match(proto="udp", dst=tc.dst_ip, dport=tc.port)
-        elif tc.proto == "icmp":
-            payload = P.build_icmp(
-                tc.src_ip, tc.dst_ip,
-                dst_mac=topo_tun_mac.get(src_iface), probe_id=pid16)
-            match = _match(proto="icmp", dst=tc.dst_ip)
-        else:
+        if tc.proto not in ("tcp", "udp", "icmp"):
             continue
+        pid16 = pid & 0xffff
         cat = (TestCategory.POSITIVE if tc.expected == "ACCEPT"
                else TestCategory.NEGATIVE)
-        out.append((cat, tc.expected, ProbeSpec(
-            probe_id=pid16, inject_iface=src_iface, expect_iface=dst_iface,
-            payload=payload, match=match,
-        ), {
-            "desc": f"{tc.src_zone}→{tc.dst_zone} {tc.src_ip}→{tc.dst_ip} "
-                    f"{tc.proto}:{tc.port}",
+        plan = {
+            "probe_id": pid16,
+            "src_iface": src_iface,
+            "dst_iface": dst_iface,
+            "src_ip": tc.src_ip,
+            "dst_ip": tc.dst_ip,
+            "proto": tc.proto,
+            "port": tc.port,
+        }
+        meta = {
+            "desc": f"{tc.src_zone}→{tc.dst_zone} "
+                    f"{tc.src_ip}→{tc.dst_ip} {tc.proto}:{tc.port}",
             "raw": tc.raw,
             # The matching iptables-save rule line is the oracle's
-            # reasoning for POSITIVE/NEGATIVE probes — carry it as
-            # oracle_reason so mismatches.txt explains WHY the
-            # expectation was what it was.
+            # reasoning — carry it as oracle_reason so mismatches.txt
+            # explains WHY the expectation was what it was.
             "oracle_reason": tc.raw,
-        }))
+        }
+        out.append((cat, tc.expected, plan, meta))
         pid += 1
     return out
 
@@ -780,30 +808,43 @@ def cmd_full(args: argparse.Namespace) -> int:
     peak = _PeakSampler(interval_s=0.25)
     peak.start()
     t_run0 = time.monotonic()
-    specs = [p[2] for p in all_probes]
 
-    # Batch the probes so we never have more than ``batch_size`` futures
-    # in flight at once. Between batches we wait for the box to drop
-    # below the configured load / PSI ceiling.
+    # Streaming probes: all_probes holds lightweight plan dicts (cheap).
+    # Per batch, we materialise ProbeSpecs via _plan_to_spec, fire them,
+    # collect (verdict, elapsed_ms) per probe_id, then let the
+    # ProbeSpec objects go out of scope so the GC reclaims their
+    # payload bytes and match closures. Peak parent RSS during the
+    # run stays at ~batch_size ProbeSpecs, not at N × ProbeSpec.
+    topo_mac = ctl.topo.tun_mac if ctl.topo else {}
+    results_by_pid: dict[int, tuple[str | None, int]] = {}
+
     batch_size = max(1, args.batch_size)
     total_throttle = 0.0
-    n_batches = (len(specs) + batch_size - 1) // batch_size
-    # Print a progress line every ``report_every`` batches so an
-    # operator tailing the log can see the run advancing. Cap at 200
-    # lines total so the log stays scannable.
+    n_batches = (len(all_probes) + batch_size - 1) // batch_size
     report_every = max(1, n_batches // 200)
     _flush_print(f"run: {n_batches} batches × {batch_size} probes, "
                  f"progress every {report_every} batches")
     last_log = time.monotonic()
     for bi in range(n_batches):
-        chunk = specs[bi * batch_size : (bi + 1) * batch_size]
+        batch = all_probes[bi * batch_size : (bi + 1) * batch_size]
+        # Materialise specs for this batch only
+        batch_specs: list = []
+        for _cat, _exp, plan, _meta in batch:
+            spec = _plan_to_spec(plan, topo_mac)
+            if spec is not None:
+                batch_specs.append(spec)
         waited, why = _wait_until_idle(args.load_limit, max_wait_s=120.0)
         if waited > 0:
             total_throttle += waited
             _flush_print(
                 f"  [batch {bi+1}/{n_batches}] throttled "
                 f"{waited:.1f}s ({why})")
-        asyncio.run(_smoke_one(ctl, chunk))
+        asyncio.run(_smoke_one(ctl, batch_specs))
+        # Collect results keyed by probe_id so the full-N categorisation
+        # still works after the ProbeSpec batch is discarded.
+        for spec in batch_specs:
+            results_by_pid[spec.probe_id] = (spec.verdict, spec.elapsed_ms)
+        del batch_specs  # make the GC hint explicit
         now = time.monotonic()
         if (bi + 1) % report_every == 0 or (now - last_log) > 30:
             elapsed = now - t_run0
@@ -820,10 +861,34 @@ def cmd_full(args: argparse.Namespace) -> int:
     peaks_summary["throttle_s"] = round(total_throttle, 1)
     peaks = peaks_summary
 
-    # Attach results back into the per-category lists
-    enriched: list[list] = []
-    for cat, expect, spec, meta in all_probes:
-        enriched.append((cat, expect, spec, meta, spec))
+    # Rebuild the all_probes list with spec-like SimpleNamespaces carrying
+    # just the fields downstream code reads (verdict, elapsed_ms,
+    # probe_id, inject/expect iface, payload — regenerated only for
+    # failed probes so the pcap writer still has real bytes).
+    from types import SimpleNamespace
+    enriched_probes: list[tuple] = []
+    for cat, expected, plan, meta in all_probes:
+        pid = plan["probe_id"]
+        verdict, elapsed = results_by_pid.get(pid, (None, 0))
+        # Only regenerate payload bytes if this probe is a failure
+        # needing pcap output; otherwise leave None to save memory.
+        payload = None
+        if verdict is not None and verdict != expected and expected != "UNKNOWN":
+            rebuilt = _plan_to_spec(plan, topo_mac)
+            if rebuilt is not None:
+                payload = rebuilt.payload
+        spec_like = SimpleNamespace(
+            probe_id=pid,
+            inject_iface=plan["src_iface"],
+            expect_iface=plan["dst_iface"],
+            verdict=verdict,
+            elapsed_ms=elapsed,
+            payload=payload,
+            trace=[],
+        )
+        enriched_probes.append((cat, expected, spec_like, meta))
+    all_probes = enriched_probes
+
     by_cat_res: dict[str, list] = {
         TestCategory.POSITIVE: [],
         TestCategory.NEGATIVE: [],
