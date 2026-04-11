@@ -1579,3 +1579,81 @@ def config_export(directory: Path | None, fmt: str, output: Path | None,
         click.echo(f"wrote {output} ({len(text)} bytes)")
     else:
         click.echo(text, nl=False)
+
+
+@config.command("import")
+@click.argument("source", type=click.Path(path_type=Path),
+                required=True)
+@click.option("--format", "fmt",
+              type=click.Choice(["json", "yaml", "auto"]), default="auto",
+              show_default=True,
+              help="Input format. 'auto' selects by file extension.")
+@click.option("--to", "target", type=click.Path(path_type=Path), default=None,
+              help="Target directory (not yet implemented — this "
+                   "command currently validates and prints a summary).")
+@click.option("--dry-run", is_flag=True,
+              help="Parse + validate only, print a summary.")
+def config_import(source: Path, fmt: str, target: Path | None,
+                  dry_run: bool) -> None:
+    """Import a structured JSON/YAML config blob into a ShorewalConfig.
+
+    Currently the CLI validates the blob and prints a summary
+    (zones / interfaces / rules / etc counts). Writing back to a
+    target directory is a follow-up — the in-memory path is already
+    enough for the ``--override-json`` wiring and for round-trip
+    testing.
+    """
+    from shorewall_nft.config.importer import (
+        ImportError as CfgImportError,
+        blob_to_config,
+    )
+
+    if source.name == "-":
+        text = sys.stdin.read()
+        suffix = ""
+    else:
+        if not source.exists():
+            click.echo(f"input not found: {source}", err=True)
+            sys.exit(2)
+        text = source.read_text()
+        suffix = source.suffix
+
+    if fmt == "auto":
+        fmt = "yaml" if suffix in (".yaml", ".yml") else "json"
+    if fmt == "yaml":
+        try:
+            import yaml  # type: ignore[import-not-found]
+        except ImportError:
+            click.echo("YAML input requested but PyYAML not installed.",
+                       err=True)
+            sys.exit(2)
+        blob = yaml.safe_load(text)
+    else:
+        import json as _json
+        blob = _json.loads(text)
+
+    try:
+        config = blob_to_config(blob)
+    except CfgImportError as e:
+        click.echo(f"import failed: {e}", err=True)
+        sys.exit(2)
+
+    click.echo(f"imported schema_version={blob.get('schema_version')}")
+    click.echo(f"  shorewall.conf: {len(config.settings)} keys")
+    click.echo(f"  params:         {len(config.params)} keys")
+    click.echo(f"  zones:          {len(config.zones)} rows")
+    click.echo(f"  interfaces:     {len(config.interfaces)} rows")
+    click.echo(f"  hosts:          {len(config.hosts)} rows")
+    click.echo(f"  policy:         {len(config.policy)} rows")
+    click.echo(f"  rules:          {len(config.rules)} rows")
+    click.echo(f"  blrules:        {len(config.blrules)} rows")
+    click.echo(f"  masq:           {len(config.masq)} rows")
+    click.echo(f"  conntrack:      {len(config.conntrack)} rows")
+    click.echo(f"  macros:         {len(config.macros)} defined")
+    click.echo(f"  scripts:        {len(config.scripts)} files")
+
+    if target is not None and not dry_run:
+        click.echo(
+            "on-disk writer not yet implemented — use --dry-run for "
+            "validation only.", err=True)
+        sys.exit(2)
