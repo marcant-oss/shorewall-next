@@ -32,6 +32,10 @@ _HASHED_FILES = frozenset({
     "blacklist", "helpers",
     "arprules", "proxyarp", "proxyndp", "ecn",
     "nfacct", "rawnat", "scfilter",
+    # Perl extension hook + shell library — content changes
+    # affect runtime behaviour even though shorewall-nft itself
+    # doesn't execute them.
+    "compile", "lib.private",
 })
 
 # Subdirectories whose contents contribute
