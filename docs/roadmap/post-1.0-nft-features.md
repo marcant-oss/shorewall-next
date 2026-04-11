@@ -172,19 +172,113 @@ ACCEPT  fw      dns:github.com          tcp     443
 ACCEPT  net     dns:*.apt.example.com   tcp     80,443
 ```
 
-**Resolver plumbing:** each node queries BOTH configured
-pdns_recursor instances (the marcant deployment runs two for
-redundancy). Preferred integration is via the recursor's Lua
-hooks — `postresolve_ffi` / `lua-config-file` notifies a local
-shorewall-nft sidecar over a unix socket whenever a watched
-name is resolved. Fallback: a systemd timer that polls
-`getent ahosts` every 30–60 s and diffs the set.
+### Integration path — recursor-native (RPZ + protobuf)
 
-**HA considerations:** conntrackd does not replicate nft named
-set contents. The sidecar runs on the active AND passive node
-so the passive's set is warm on failover. Set entries use
-`timeout max(dns_ttl, 300s)` so a dead sidecar degrades
-gracefully instead of instantly revoking access.
+The preferred plumbing is **not** a `postresolve_ffi` Lua hook
+feeding a unix socket. The recursor already has a purpose-built
+mechanism for "notify me only about these names" that filters in
+C++ before the Lua layer:
+
+1. Shorewall-nft's compiler walks rule references and writes
+   `/etc/powerdns/recursor.d/shorewall-watchlist.rpz`:
+   ```
+   $TTL 60
+   @ IN SOA localhost. root.localhost. 1 60 60 604800 60
+     IN NS  localhost.
+   github.com            CNAME rpz-passthru.
+   api.github.com        CNAME rpz-passthru.
+   ```
+2. The recursor's `lua-config-file` loads the zone with
+   `Policy.NoAction` so the answer is untouched, and tags every
+   hit for the protobuf stream:
+   ```lua
+   rpzFile("/etc/powerdns/recursor.d/shorewall-watchlist.rpz", {
+     policyName = "fw-watch",
+     defpol     = Policy.NoAction,
+     tags       = { "fw-watch" },
+   })
+   protobufServer("127.0.0.1:4242", {
+     taggedOnly   = true,
+     logQueries   = false,
+     logResponses = true,
+     exportTypes  = { pdns.A, pdns.AAAA, pdns.CNAME },
+     asyncConnect = true,
+     reconnectWaitTime = 1,
+   })
+   ```
+3. On each firewall node, a **shorewall-nft-dnsd** sidecar
+   listens on `127.0.0.1:4242`, decodes length-prefixed
+   `PBDNSMessage` frames, and for each A/AAAA rr:
+   ```
+   nft add element inet shorewall dns_github_com \
+       { 140.82.121.4 timeout 360s }
+   ```
+   The nft `flags timeout` auto-expires stale entries, so no
+   polling refresh loop is needed — the sidecar is purely
+   additive.
+
+### Why RPZ + protobuf beats a Lua+socket hook
+
+| | rpz+protobuf (option 1) | postresolve_ffi (option 2) |
+|---|---|---|
+| Per-qps cost | **zero** for non-watched names — filtered in C++ | gated by a `DNSSuffixMatchGroup` check in Lua; runs on each cache miss |
+| Configuration surface | RPZ zone file + ~20 lines of Lua config | Lua script maintained per node |
+| Serialization | Upstream-supplied protobuf schema | Home-rolled socket protocol |
+| Multi-node sync | Same RPZ zone shipped to both recursors | Script + socket per node |
+| Firehose risk | None — tagged-only stream is tiny | Small, but every cache miss runs Lua |
+
+### rec_control and why it isn't the answer
+
+`rec_control dump-cache FILE` was the first idea that came up.
+It's unusable: the man page states **"while dumping, the
+recursor might not answer questions"** — on a busy HA node that
+is a hard blocker. There is also no `rec_control get-rrset NAME`
+or equivalent read API, and the HTTP `/api/v1/.../cache`
+endpoint is flush-only. Polling is the wrong shape.
+
+### Fallback: postresolve_ffi hook
+
+If enterprise policy blocks the protobuf port or RPZ:
+
+```lua
+watch = newDNSNameSet()
+for _, n in ipairs({"github.com","api.github.com"}) do
+    watch:add(newDN(n))
+end
+
+function postresolve_ffi(handle)
+    local qn = -- qname via ffi
+    if not watch:check(qn) then return false end
+    -- iterate RRs, write {name,type,ip,ttl} to AF_UNIX DGRAM
+    return false
+end
+```
+
+`postresolve_ffi` only fires on packet-cache miss — a popular
+name with TTL 300 is seen roughly once per TTL window per
+recursor, not once per query. The "too noisy" concern from
+the original design premise was overstated, but this remains
+the fallback because RPZ+protobuf pushes the filter into the
+C++ core.
+
+### HA considerations
+
+- conntrackd does not replicate nft named set contents. The
+  sidecar runs on the active AND passive node so the passive's
+  set is warm on failover.
+- Each firewall node drives its own local recursor. Each
+  recursor streams protobuf to its own local sidecar. No
+  cross-node coordination is needed — if the active resolves a
+  name the passive hasn't seen, that's fine because the passive
+  isn't currently forwarding that flow.
+- Set entries use `timeout = max(dns_ttl + grace, 300s)` so a
+  dead sidecar degrades gracefully instead of instantly
+  revoking access. Grace should be tuned to the observed VRRP
+  switchover time so a failover mid-flow does not race.
+- Both recursors get the **same** RPZ zone file from the same
+  shorewall-nft compile pass; a shorewall-nft post-compile hook
+  issues `rec_control reload-zones` + `rec_control reload-lua-config`
+  on each node after a rule edit.
 
 Not targeted for 1.1 — ships after the core nft features below
 have a full release behind them.
