@@ -472,15 +472,9 @@ def _build_zone_to_concrete_src(
     return out
 
 
-def _plan_to_spec(plan: dict, topo_tun_mac: dict):
-    """Build a ProbeSpec from a lightweight plan dict on demand.
-
-    Streaming-probes pass: the cmd_full batch loop calls this just
-    before firing a batch and discards the ProbeSpec after collecting
-    results. That way 116k cheap plan dicts stay in memory but the
-    heavy (payload bytes, match closure, trace list) ProbeSpec
-    objects never exist all at once.
-    """
+def _plan_to_spec(plan: dict, topo_tun_mac: dict,
+                  timeout_s: float = 2.0):
+    """Build a ProbeSpec from a lightweight plan dict on demand."""
     from .controller import ProbeSpec
     from . import packets as P
 
@@ -511,6 +505,7 @@ def _plan_to_spec(plan: dict, topo_tun_mac: dict):
     return ProbeSpec(
         probe_id=pid16, inject_iface=src_iface,
         expect_iface=dst_iface, payload=payload, match=match,
+        timeout_s=timeout_s,
     )
 
 
@@ -830,7 +825,8 @@ def cmd_full(args: argparse.Namespace) -> int:
         # Materialise specs for this batch only
         batch_specs: list = []
         for _cat, _exp, plan, _meta in batch:
-            spec = _plan_to_spec(plan, topo_mac)
+            spec = _plan_to_spec(plan, topo_mac,
+                                 timeout_s=args.probe_timeout)
             if spec is not None:
                 batch_specs.append(spec)
         waited, why = _wait_until_idle(args.load_limit, max_wait_s=120.0)
@@ -1121,8 +1117,14 @@ def main() -> int:
     p_full.add_argument("--random-per-rule", type=int, default=64,
         help="Number of random variants sampled per rule within that rule's "
              "own src/dst/port constraints (default 64)")
-    p_full.add_argument("--batch-size", type=int, default=64,
-        help="Max probes in flight per batch (lower = less load spike)")
+    p_full.add_argument("--batch-size", type=int, default=256,
+        help="Max probes in flight per batch. Higher = more throughput, "
+             "more transient RAM for the ProbeSpec batch (default 256)")
+    p_full.add_argument("--probe-timeout", type=float, default=0.7,
+        help="Per-probe timeout in seconds. On TUN/TAP loopback a probe "
+             "round-trip is <10 ms, so 0.7 s is massive headroom while "
+             "giving ~3x throughput vs the old 2 s default. Raise back "
+             "to 2.0 for pathological forwarding behaviour (default 0.7)")
     p_full.add_argument("-v", "--verbose", action="store_true",
         help="Dump raw sysctl values before the run")
 
