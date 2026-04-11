@@ -5,6 +5,15 @@
 tools/deploy.json
 
 # ─────────────────────────────────────────────────────────────
+# Simlab per-probe pcaps — one file per failed probe. Useful
+# locally for wireshark triage but far too many files (and too
+# session-specific) to keep in git history. Keep report.json /
+# report.md / mismatches.txt / fail-pcaps.txt (the grep-friendly
+# index); drop the raw pcap dir.
+# ─────────────────────────────────────────────────────────────
+docs/testing/simlab-reports/*/fail-pcaps/
+
+# ─────────────────────────────────────────────────────────────
 # Claude Code local state
 # ─────────────────────────────────────────────────────────────
 .claude/
