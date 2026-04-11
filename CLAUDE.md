@@ -146,22 +146,20 @@ Already committed on this branch since 1.0.0:
    (simlab-peer) mit VRRP + conntrackd sync zwischen den zwei,
    dann failover-Szenarios durchspielen. Dafür braucht die
    simlab ein Mehrfach-NS-Konzept (bisher nur eins).
-9. **Compiler/emitter für neue Config-Files** — parser +
-   exporter kennen seit dem structured-io groundwork commit
-   die folgenden Files, aber IR/emitter ignorieren sie noch:
-   - **`arprules`** — ARP anti-spoof-Regeln (arp table chain)
-   - **`proxyarp`** — proxy-arp Adresstabelle
-   - **`proxyndp`** — proxy-ndp Adresstabelle
-   - **`ecn`** — ECN-Disable pro Interface/Host-Paar
-   - **`nfacct`** — named conntrack accounting objects
-   - **`rawnat`** — raw-table NAT (early DNAT vor conntrack)
-   - **`stoppedrules`** — Regeln die aktiv bleiben wenn FW
-     gestoppt ist (Nachfolger von `routestopped`)
-   - **`scfilter`** — source CIDR sanity filter
-   Jedes Item = eigener Commit mit emitter-Pass + pytest-case.
-   Reihenfolge nach Häufigkeit in echten Configs:
-   stoppedrules > proxyarp > rawnat > arprules > nfacct >
-   proxyndp > scfilter > ecn.
+9. ~~**Compiler/emitter für neue Config-Files**~~ ✅ — alle 8
+   Files sind end-to-end verdrahtet:
+   - ✅ `stoppedrules` (modern routestopped successor; routes
+     ACCEPT/DROP/REJECT/NOTRACK in shorewall_stopped table)
+   - ✅ `proxyarp` / `proxyndp` (pyroute2 apply/remove via
+     start/stop, NTF_PROXY neigh entries + optional /32 routes)
+   - ✅ `rawnat` (NOTRACK/ACCEPT/DROP in raw-prerouting/output)
+   - ✅ `arprules` (separate `table arp filter` block)
+   - ✅ `nfacct` (named counter object declarations)
+   - ✅ `scfilter` (anti-spoof drops at top of input/forward)
+   - ✅ `ecn` (`ip ecn set not-ect` in mangle-postrouting)
+   Bonus from this round: legacy routestopped also got the full
+   parity treatment (routeback/source/dest/critical/notrack
+   options + SPORT + IPv6 saddr/daddr + ROUTESTOPPED_OPEN).
 10. **Flame graph for simlab runs** — profile the controller
     during a ``full`` scan and export a flame graph (via
     ``py-spy record --format flamegraph`` or ``perf record``
