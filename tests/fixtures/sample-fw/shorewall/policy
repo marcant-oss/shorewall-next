@@ -1,0 +1,12 @@
+#SOURCE	DEST	POLICY		LOGLEVEL	BURST
+$FW	all	ACCEPT
+loc	$FW	ACCEPT
+loc	net	ACCEPT
+loc	dmz	ACCEPT
+dmz	net	ACCEPT
+dmz	$FW	REJECT		$LOG
+dmz	loc	REJECT		$LOG
+net	$FW	DROP		$LOG
+net	loc	DROP		$LOG
+net	dmz	DROP		$LOG
+all	all	REJECT		$LOG

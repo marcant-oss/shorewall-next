@@ -1,0 +1,18 @@
+shorewall-nft (1.0.0-1) unstable; urgency=medium
+
+  * First stable release.
+  * Simplified to a single binary package (shorewall-nft).
+  * Full feature set: dual-stack inet table, plugin system, optimizer,
+    debug mode, merge-config, verified against three production
+    firewalls at 100% coverage.
+
+ -- shorewall-nft maintainers <shorewall-nft@example.com>  Sat, 11 Apr 2026 12:00:00 +0000
+
+shorewall-nft (0.12.0-1) unstable; urgency=medium
+
+  * Initial Debian packaging for shorewall-nft.
+  * Conflicts with legacy shorewall, shorewall6, shorewall-lite and
+    shorewall6-lite so the nft-native replacement cannot coexist with
+    the iptables-based Perl stack on the same host.
+
+ -- shorewall-nft maintainers <shorewall-nft@example.com>  Sat, 11 Apr 2026 00:00:00 +0000

@@ -1,0 +1,5 @@
+#ZONE	TYPE
+fw	firewall
+net	ipv4
+loc	ipv4
+dmz	ipv4

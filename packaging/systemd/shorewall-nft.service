@@ -1,0 +1,29 @@
+[Unit]
+Description=shorewall-nft firewall
+Documentation=file:///usr/share/doc/shorewall-nft/index.md
+# Bring up after networking so interfaces exist when we generate rules
+After=network.target
+Before=network-pre.target
+Wants=network-pre.target
+# Do not run alongside legacy shorewall / shorewall6 / iptables services
+Conflicts=iptables.service ip6tables.service shorewall.service shorewall6.service shorewall-lite.service shorewall6-lite.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Start applies the config from /etc/shorewall46 (or /etc/shorewall fallback)
+ExecStart=/usr/bin/shorewall-nft start
+ExecReload=/usr/bin/shorewall-nft reload
+ExecStop=/usr/bin/shorewall-nft clear
+# Security: no new privileges, read-only file system except /var, no home
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/shorewall-nft /var/log /run
+PrivateTmp=yes
+# Capabilities: only what's needed to load nftables rules
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

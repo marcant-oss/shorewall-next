@@ -1,0 +1,28 @@
+?SECTION NEW
+
+#ACTION		SOURCE	DEST	PROTO	DPORT
+# Administrative access
+SSH(ACCEPT)	net:<$ORG_ADM>	$FW
+
+# DNS from LAN and DMZ
+DNS(ACCEPT)	loc	$FW:<$DNS1>,<$DNS2>
+DNS(ACCEPT)	dmz	$FW:<$DNS1>,<$DNS2>
+
+# NTP
+NTP(ACCEPT)	all:<$ORG_PFX>	$FW:<$TIME>
+
+?COMMENT mandant-b
+ACCEPT	net		dmz:<$WEB1>	tcp	80,443
+ACCEPT	net		dmz:<$WEB2>	tcp	80,443
+ACCEPT	dmz:<$WEB1>	net
+ACCEPT	dmz:<$WEB2>	net
+?COMMENT
+
+?COMMENT customer-a
+ACCEPT	net		dmz:<$MAIL1>	tcp	25,587,993,465
+ACCEPT	dmz:<$MAIL1>	net		tcp	25
+?COMMENT
+
+# Ping + NDP (NDP is auto-allowed by shorewall-nft)
+Ping(ACCEPT)	all	$FW
+Ping(ACCEPT)	$FW	all

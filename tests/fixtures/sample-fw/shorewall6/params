@@ -1,0 +1,11 @@
+# Generic IPv6 example parameters — documentation-prefix only (RFC 3849).
+
+ORG_PFX=2001:db8::/32
+ORG_ADM=2001:db8::a,2001:db8::b
+DNS1=2001:db8::53
+DNS2=2001:db8::54
+MAIL1=2001:db8::25
+WEB1=2001:db8::80
+WEB2=2001:db8::81
+TIME=2001:db8:1::123
+SYSLOG=2001:db8:1::514

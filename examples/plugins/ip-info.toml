@@ -1,0 +1,36 @@
+# Example ip-info.toml for shorewall-nft
+#
+# The ip-info plugin provides pattern-based IPv4 ↔ IPv6 mapping per
+# subnet. It is a fallback when no authoritative source (netbox) is
+# configured or when the host isn't registered there.
+#
+# Embedding scheme: "v4-in-host" means the last 64 bits of the IPv6
+# address are the IPv4 address encoded as 4 decimal-looking groups.
+# Example with subnet 203.0.113.0/24 mapped to 2001:db8:0:100::/64:
+#
+#   v4:  203.0.113.42
+#   v6:  2001:db8:0:100:203:0:113:42
+#        │─── /64 prefix ──│─── v4 bytes in "hex" form ─│
+#
+# The plugin looks up an IPv4 address, finds the matching /24 subnet,
+# and emits the /64 prefix + host part.
+#
+# Replace the mappings below with your own /24 → /64 pairs. These
+# examples use documentation prefixes (RFC 5737 / RFC 3849) and are
+# not real addresses. See docs/shorewall-nft/plugins.md for details.
+
+embedding = "v4-in-host"
+
+# Example 1: a single /24 mapped to a /64.
+[[mappings]]
+v4_subnet = "203.0.113.0/24"
+v6_prefix = "2001:db8:0:100::/64"
+
+# Example 2: another /24 for a different zone/site.
+[[mappings]]
+v4_subnet = "198.51.100.0/24"
+v6_prefix = "2001:db8:0:200::/64"
+
+# Add more [[mappings]] blocks as needed. The plugin falls back to
+# the netbox plugin first (higher priority); ip-info only answers
+# lookups netbox cannot.
