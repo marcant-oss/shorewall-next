@@ -1041,6 +1041,15 @@ def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
         elif special_type == "dscp":
             parts.append(f"ip dscp set {special_target}")
             return _finish(parts)
+        elif special_type == "ecn_clear":
+            # Clear the two ECN bits in the IP DSCP/ECN byte. The
+            # nft `ecn set` statement is the canonical form; we
+            # use `ip ecn set not-ect` to map to plain text.
+            # Falls back gracefully on kernels without ip-ecn
+            # support — those will raise at load time and the
+            # operator can opt out by removing the ecn file.
+            parts.append("ip ecn set not-ect")
+            return _finish(parts)
         elif special_type == "classify":
             parts.append(f"meta priority set {special_target}")
             return _finish(parts)

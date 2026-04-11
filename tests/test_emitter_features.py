@@ -809,3 +809,58 @@ class TestNfacct:
         # The "Named accounting counters" comment is the marker for
         # the nfacct block; absence proves nothing was emitted.
         assert "Named accounting counters" not in out
+
+
+# ──────────────────────────────────────────────────────────────────────
+# scfilter — source CIDR sanity filter
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestScfilter:
+    def _ir(self, columns_list):
+        from shorewall_nft.config.parser import ConfigLine, load_config
+        config = load_config(MINIMAL_DIR)
+        config.scfilter = [
+            ConfigLine(columns=cols, file="scfilter", lineno=i)
+            for i, cols in enumerate(columns_list)
+        ]
+        return build_ir(config)
+
+    def test_v4_negated_set_drop(self):
+        ir = self._ir([["eth0", "10.0.0.0/8,192.168.0.0/16"]])
+        out = emit_nft(ir)
+        assert ("iifname eth0 ip saddr != "
+                "{ 10.0.0.0/8, 192.168.0.0/16 } drop") in out
+
+    def test_v6_negated_set_drop(self):
+        ir = self._ir([["eth0", "2001:db8::/32"]])
+        out = emit_nft(ir)
+        assert "iifname eth0 ip6 saddr != { 2001:db8::/32 } drop" in out
+
+
+# ──────────────────────────────────────────────────────────────────────
+# ecn — clear ECN bits per iface/host
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestEcn:
+    def _ir(self, columns_list):
+        from shorewall_nft.config.parser import ConfigLine, load_config
+        config = load_config(MINIMAL_DIR)
+        config.ecn = [
+            ConfigLine(columns=cols, file="ecn", lineno=i)
+            for i, cols in enumerate(columns_list)
+        ]
+        return build_ir(config)
+
+    def test_iface_only(self):
+        ir = self._ir([["eth0"]])
+        out = emit_nft(ir)
+        assert "chain mangle-postrouting {" in out
+        assert "oifname eth0 meta l4proto tcp ip ecn set not-ect" in out
+
+    def test_iface_and_host(self):
+        ir = self._ir([["eth0", "10.0.0.5"]])
+        out = emit_nft(ir)
+        assert ("oifname eth0 meta l4proto tcp ip daddr 10.0.0.5 "
+                "ip ecn set not-ect") in out
