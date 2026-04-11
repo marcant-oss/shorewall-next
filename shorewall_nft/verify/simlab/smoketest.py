@@ -484,10 +484,29 @@ def _build_zone_to_concrete_src(
 
     The fix: at probe-construction time, look up the source zone's
     first interface's first IPv4 subnet, then pick a host in that
-    subnet that's NOT the firewall's own address. That gives us a
-    valid spoof-free source for every rule.
+    subnet that's
+
+      * not the firewall's own address (any of them — interfaces
+        often carry multiple secondaries)
+      * not the network or broadcast address
+      * preferably towards the high end of the subnet so we don't
+        collide with .1/.2 addresses commonly used by gateways or
+        VRRP virtual IPs
+
+    Without the "skip all fw-local addrs" rule we used to pick e.g.
+    217.14.160.25 on bond0.10 — which was a secondary IP on that
+    very interface — and the kernel rejected those probes as a
+    martian source before they ever reached the nft ruleset.
     """
     import ipaddress as _ipaddr
+
+    # Collect every IP the firewall owns across every interface so we
+    # can avoid colliding with secondaries on a different iface too.
+    fw_local_ips: set[str] = set()
+    for iface in fw_state.interfaces.values():
+        for addr in getattr(iface, "addrs4", []) or []:
+            fw_local_ips.add(addr.addr)
+
     out: dict[str, str] = {}
     for iface_name, zone in iface_to_zone.items():
         if zone in out:
@@ -504,11 +523,14 @@ def _build_zone_to_concrete_src(
             hosts = [str(h) for h in net.hosts()]
             if not hosts:
                 continue
-            fw_ip = addr.addr
-            for h in hosts:
-                if h != fw_ip:
-                    out[zone] = h
-                    break
+            # Walk the host list from the high end downwards so we
+            # tend to pick e.g. .254 instead of .2 — gateways and
+            # VRRP/keepalived virtual IPs cluster at the low end.
+            for h in reversed(hosts):
+                if h in fw_local_ips:
+                    continue
+                out[zone] = h
+                break
             if zone in out:
                 break
     return out
