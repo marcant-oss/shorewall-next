@@ -459,4 +459,58 @@ class TestAllFeaturesTogether:
         assert "chain sw_zone_tag {" in out
         # DNAT map only fires if there are DNAT rules — minimal config
         # has none, so the absence here is expected.
+
+
+# ──────────────────────────────────────────────────────────────────────
+# routestopped → standalone shorewall_stopped table
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestRoutestopped:
+    def _build_ir_with_routestopped(self, columns_list):
+        from shorewall_nft.config.parser import ConfigLine, load_config
+        config = load_config(MINIMAL_DIR)
+        config.routestopped = [
+            ConfigLine(columns=cols, file="routestopped", lineno=i)
+            for i, cols in enumerate(columns_list)
+        ]
+        return build_ir(config)
+
+    def test_no_routestopped_emits_nothing(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        config = load_config(MINIMAL_DIR)
+        ir = build_ir(config)
+        assert emit_stopped_nft(ir) == ""
+        # Main emitter must not leak stopped chains either.
+        out = emit_nft(ir)
+        assert "stopped-input" not in out
+        assert "shorewall_stopped" not in out
+
+    def test_emits_standalone_table(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_routestopped([
+            ["eth0", "192.168.1.0/24", "-", "tcp", "22"],
+            ["eth1", "-", "-", "-", "-"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "table inet shorewall_stopped {" in out
+        assert "chain stopped-input {" in out
+        assert "chain stopped-output {" in out
+        assert "chain stopped-forward {" in out
+        assert "type filter hook input priority 0; policy drop;" in out
+        assert "type filter hook forward priority 0; policy drop;" in out
+        assert "iifname lo accept" in out
+        assert "ct state { established, related } accept" in out
+        assert "iifname eth0 ip saddr 192.168.1.0/24" in out
+        assert "iifname eth1 accept" in out
+
+    def test_main_table_excludes_stopped_chains(self):
+        ir = self._build_ir_with_routestopped([
+            ["eth0", "-", "-", "-", "-"],
+        ])
+        out = emit_nft(ir)
+        assert "stopped-input" not in out
+        assert "stopped-output" not in out
+        assert "stopped-forward" not in out
+        assert "shorewall_stopped" not in out
         assert "dnat ip to" not in out

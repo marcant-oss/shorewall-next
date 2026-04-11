@@ -387,31 +387,99 @@ def start(directory, netns, config_dir, config_dir4, config6_dir,
 
     from shorewall_nft.netns.apply import apply_nft
     apply_nft(script, netns=netns)
+
+    # Tear down any leftover shorewall_stopped table so the two
+    # rulesets never run side by side. Best-effort: missing is fine.
+    from shorewall_nft.nft.netlink import NftError, NftInterface
+    _nft = NftInterface()
+    try:
+        if netns:
+            import subprocess
+            subprocess.run(
+                ["sudo", "/usr/local/bin/run-netns", "exec", netns,
+                 _nft._nft_bin, "delete table inet shorewall_stopped"],
+                check=False, capture_output=True, text=True)
+        elif _nft.has_library:
+            try:
+                _nft.cmd("delete table inet shorewall_stopped")
+            except NftError:
+                pass
+        else:
+            import subprocess
+            subprocess.run(
+                [_nft._nft_bin, "delete table inet shorewall_stopped"],
+                check=False, capture_output=True, text=True)
+    except Exception:
+        pass
+
     click.echo(f"Shorewall-nft started ({len(ir.chains)} chains).")
 
 
 @cli.command()
+@click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @click.option("--netns", type=str, default=None, help="Target network namespace.")
-def stop(netns: str | None):
-    """Stop the firewall (remove all rules)."""
+@config_options
+def stop(directory, netns, config_dir, config_dir4, config6_dir,
+         no_auto_v4, no_auto_v6):
+    """Stop the firewall.
+
+    Removes the running ``inet shorewall`` table. If the configuration
+    contains a ``routestopped`` file, the compiled
+    ``inet shorewall_stopped`` table is loaded so the listed
+    (interface, host) pairs remain reachable while the firewall is down.
+    Without ``routestopped`` the kernel falls back to its default
+    (typically wide-open) policy — same behaviour as before.
+    """
     from shorewall_nft.nft.netlink import NftError, NftInterface
     nft = NftInterface()
+
+    # Try to compile so we can load shorewall_stopped if defined.
+    # Compile failures must not block the stop — fall through to the
+    # plain `delete table inet shorewall` path.
+    stopped_script: str | None = None
     try:
-        cmd = "delete table inet shorewall"
+        (ir, _script, _sets), _paths = _compile_from_cli(
+            directory, config_dir, config_dir4, config6_dir,
+            no_auto_v4, no_auto_v6)
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        s = emit_stopped_nft(ir)
+        if s.strip():
+            stopped_script = s
+    except Exception as e:
+        click.echo(f"Note: stopped-table compile failed ({e}); "
+                   "falling back to plain delete.", err=True)
+
+    def _run(cmd_str: str) -> None:
         if netns:
             import subprocess
             subprocess.run(
-                ["sudo", "/usr/local/bin/run-netns", "exec", netns, nft._nft_bin, cmd],
-                check=True, capture_output=True, text=True
-            )
+                ["sudo", "/usr/local/bin/run-netns", "exec", netns,
+                 nft._nft_bin, cmd_str],
+                check=True, capture_output=True, text=True)
         elif nft.has_library:
-            nft.cmd(cmd)
+            nft.cmd(cmd_str)
         else:
             import subprocess
-            subprocess.run([nft._nft_bin, cmd], check=True, capture_output=True, text=True)
-        click.echo("Shorewall-nft stopped.")
+            subprocess.run([nft._nft_bin, cmd_str],
+                           check=True, capture_output=True, text=True)
+
+    # Best-effort delete of the running table.
+    try:
+        _run("delete table inet shorewall")
     except (NftError, Exception) as e:
         click.echo(f"Note: {e}", err=True)
+
+    if stopped_script is not None:
+        from shorewall_nft.netns.apply import apply_nft
+        try:
+            apply_nft(stopped_script, netns=netns)
+            click.echo("Shorewall-nft stopped (routestopped table loaded).")
+            return
+        except Exception as e:
+            click.echo(f"Note: failed to load shorewall_stopped: {e}",
+                       err=True)
+
+    click.echo("Shorewall-nft stopped.")
 
 
 @cli.command()
