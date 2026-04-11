@@ -255,6 +255,14 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     if getattr(config, "nfacct", None):
         _process_nfacct(ir, config.nfacct)
 
+    # Process scfilter (source CIDR sanity filter)
+    if getattr(config, "scfilter", None):
+        _process_scfilter(ir, config.scfilter)
+
+    # Process ecn (clear ECN bits per iface/host)
+    if getattr(config, "ecn", None):
+        _process_ecn(ir, config.ecn)
+
     # Process conntrack helpers
     if config.conntrack:
         _process_conntrack(ir, config.conntrack)
@@ -1765,6 +1773,129 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
                     r.matches.append(Match(field=_saddr_field(h), value=h))
                 _add_proto(r, proto, dport, sport)
                 stopped_raw.rules.append(r)
+
+
+def _process_scfilter(ir: FirewallIR, scfilter_lines: list[ConfigLine]) -> None:
+    """Process the ``scfilter`` config file (source CIDR sanity filter).
+
+    scfilter declares per-interface allow-lists for source IPs:
+    any packet whose source address does NOT fall in the listed
+    CIDRs gets dropped at ingress. Useful as an anti-spoof gate
+    on uplinks where you know the legitimate source ranges.
+
+    We emit drop rules at the top of the forward + input base
+    chains (so they fire before any zone dispatch). The simpler
+    form is one rule per (iface, !cidr-list) tuple:
+
+        iifname X ip saddr != { allowed cidrs } drop
+
+    Format::
+
+        INTERFACE  HOST(S)  OPTIONS
+    """
+    if not scfilter_lines:
+        return
+
+    # Insert at the top of the forward + input chains. Both base
+    # chains exist by now (created in _create_base_chains).
+    forward = ir.chains.get("forward")
+    inp = ir.chains.get("input")
+
+    inserts: list[Rule] = []
+    for line in scfilter_lines:
+        cols = line.columns
+        if not cols:
+            continue
+        iface = cols[0]
+        hosts_raw = cols[1] if len(cols) > 1 and cols[1] != "-" else ""
+        if not hosts_raw:
+            continue
+        hosts = [h.strip() for h in hosts_raw.split(",") if h.strip()]
+        v4 = [h for h in hosts if not _is_ipv6(h)]
+        v6 = [h for h in hosts if _is_ipv6(h)]
+
+        if v4:
+            r = Rule(verdict=Verdict.DROP)
+            r.matches.append(Match(field="iifname", value=iface))
+            r.matches.append(Match(
+                field="ip saddr",
+                value="{ " + ", ".join(v4) + " }",
+                negate=True))
+            inserts.append(r)
+        if v6:
+            r = Rule(verdict=Verdict.DROP)
+            r.matches.append(Match(field="iifname", value=iface))
+            r.matches.append(Match(
+                field="ip6 saddr",
+                value="{ " + ", ".join(v6) + " }",
+                negate=True))
+            inserts.append(r)
+
+    # Prepend so the sanity drop fires before zone dispatch.
+    if forward:
+        forward.rules = inserts + list(forward.rules)
+    if inp:
+        inp.rules = inserts + list(inp.rules)
+
+
+def _process_ecn(ir: FirewallIR, ecn_lines: list[ConfigLine]) -> None:
+    """Process the ``ecn`` config file (clear ECN bits per iface/host).
+
+    Shorewall's ``ecn`` file lists (interface, host) tuples whose
+    TCP traffic should have ECN bits cleared — historically used
+    when a buggy peer rejects ECN-marked packets. The original
+    implementation used iptables' ``-j ECN --ecn-tcp-remove``
+    target. nftables expresses the same with::
+
+        ip dscp set ip dscp and 0xfc
+
+    on the matching tcp flow (DSCP field is 6 bits, ECN is the
+    low 2 bits — masking with 0xfc clears them). The rule lands
+    in the mangle-postrouting chain so the change applies just
+    before the packet leaves the box.
+
+    Format::
+
+        INTERFACE  HOST(S)
+    """
+    if not ecn_lines:
+        return
+
+    # Lazily create the mangle-postrouting chain.
+    chain_name = "mangle-postrouting"
+    if chain_name not in ir.chains:
+        ir.add_chain(Chain(
+            name=chain_name,
+            chain_type=ChainType.ROUTE,
+            hook=Hook.POSTROUTING,
+            priority=-150,  # mangle
+        ))
+    chain = ir.chains[chain_name]
+
+    for line in ecn_lines:
+        cols = line.columns
+        if not cols:
+            continue
+        iface = cols[0]
+        hosts_raw = cols[1] if len(cols) > 1 and cols[1] != "-" else None
+
+        hosts: list[str | None]
+        if hosts_raw:
+            hosts = [h.strip() for h in hosts_raw.split(",") if h.strip()]
+        else:
+            hosts = [None]
+
+        for h in hosts:
+            r = Rule(
+                verdict=Verdict.ACCEPT,
+                verdict_args="ecn_clear:",
+            )
+            r.matches.append(Match(field="oifname", value=iface))
+            r.matches.append(Match(field="meta l4proto", value="tcp"))
+            if h:
+                field = "ip6 daddr" if _is_ipv6(h) else "ip daddr"
+                r.matches.append(Match(field=field, value=h))
+            chain.rules.append(r)
 
 
 def _process_nfacct(ir: FirewallIR, nfacct_lines: list[ConfigLine]) -> None:
