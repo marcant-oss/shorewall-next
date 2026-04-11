@@ -204,6 +204,50 @@ Already committed on this branch since 1.0.0:
     (sister repo) has the metric shape and the Prometheus
     registry already — the port is mostly replacing its
     counter-read path with the shorewall-nft netlink one.
+13. **3-firewall config-merge replay + cleanup pass.** Re-do
+    the merged ``/etc/shorewall46`` build from all three
+    production firewalls (fw-primary, fw-secondary, third — IDENTIFY
+    THE THIRD before starting; the local checkout under
+    ``../fw-primary`` and ``../fw-secondary`` only ships two of them, the
+    keepalived configs in ``../old/etc/keepalived/`` only carry
+    ``@fw-primary`` / ``@fw-secondary`` / ``@marcant`` host-tag prefixes
+    so the third is most likely a separate netns in the same
+    box or a sibling host that lives outside this repo). Goals
+    of the replay:
+      * **Aesthetics** — re-emit ``rules`` with consistent
+        column widths, comment grouping, and section headers
+        so a human can scan it. The structured exporter
+        already round-trips; this is about pretty-printing
+        on the way OUT.
+      * **Reihenfolge / ordering** — group by zone-pair
+        chain affinity (all ``foo→bar`` rules adjacent), put
+        catch-all DROP rules at the BOTTOM of each block so
+        the kind of mid-chain shadowing we just fixed in
+        ``compiler/ir._add_rule`` can't sneak back in via a
+        future hand-edit.
+      * **Metadata pass** — every rule should carry a
+        ``?COMMENT`` line stating *why* it exists (which
+        ticket / RFC / customer / network requirement); the
+        per-firewall reload script writes the merged result
+        with provenance markers (``# from fw-primary:rules:1042``)
+        so a future bisect can blame the origin.
+      * **Discovered necessary rule adjustments** — the
+        simlab green-run + the ``DROP:$LOG customer-a any``
+        catch-all-shadowing fix surfaced a class of rules
+        whose ordering was load-bearing in iptables but
+        accidentally redundant in nft (because the iptables
+        backend had its own ``-g log108`` collapsing pass).
+        The merge should re-emit these as the *intended*
+        block order, not the legacy file order.
+    Pre-flight: walk ``../fw-primary/etc/netns.cfg/fw/`` and
+    ``../fw-secondary/etc/netns.cfg/fw/`` for what's already
+    there (``10-bond0.10-addr.interface``, ``conntrackd``,
+    ``keepalived``) and the legacy host-tag prefixes in
+    ``../old/etc/`` to see how the current merge handles
+    per-host divergence — that pattern (``@host directive``)
+    is currently NOT supported by ``shorewall-nft`` and would
+    need to land in the parser before the merge replay can
+    begin.
 12. **routefilter / rp_filter parity with Shorewall.** Today
     ``simlab/topology.py`` writes ``net.ipv4.conf.{all,default}.
     rp_filter = 0`` and the compiler does nothing with the
