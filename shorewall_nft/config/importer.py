@@ -304,6 +304,165 @@ def _columns_to_line(cols: list[str]) -> str:
     return "\t".join(cols)
 
 
+def _zone_pair_key(line: ConfigLine) -> tuple[str, str]:
+    """Return a (src_zone, dst_zone) key for sorting rule blocks.
+
+    Used by the rules pretty-printer to group ``foo→bar`` lines
+    next to each other regardless of file order. Anything we can't
+    parse falls back to ``("", "")`` so it sorts to the front and
+    keeps relative order with its peers (Python's sort is stable).
+    """
+    cols = line.columns
+    if len(cols) < 3:
+        return ("", "")
+    src = (cols[1] or "").split(":", 1)[0].split(",", 1)[0].strip()
+    dst = (cols[2] or "").split(":", 1)[0].split(",", 1)[0].strip()
+    return (src, dst)
+
+
+_DROP_LIKE_ACTIONS = frozenset({
+    "DROP", "REJECT", "DROP/LOG", "REJECT/LOG", "Drop", "Reject",
+    "DROP_DEFAULT", "REJECT_DEFAULT",
+})
+
+
+def _is_catchall_drop(line: ConfigLine) -> bool:
+    """True if a rule is a catch-all DROP/REJECT (no host/proto/port).
+
+    These belong at the BOTTOM of each zone-pair group so the kind
+    of mid-chain shadowing we just fixed in
+    ``compiler/ir._add_rule`` (catch-all expansions getting placed
+    before later more-specific rules) doesn't sneak back via a
+    future hand-edit. The exporter is the second line of defence:
+    even if the user re-orders the on-disk file, write_config_dir
+    moves the catch-alls back to the tail.
+    """
+    cols = line.columns
+    if not cols:
+        return False
+    action_raw = cols[0].split(":", 1)[0]
+    action = action_raw.split("(", 1)[0].rstrip("+")
+    if action not in _DROP_LIKE_ACTIONS:
+        return False
+    src = cols[1] if len(cols) > 1 else ""
+    dst = cols[2] if len(cols) > 2 else ""
+    proto = cols[3] if len(cols) > 3 else ""
+    dport = cols[4] if len(cols) > 4 else ""
+    sport = cols[5] if len(cols) > 5 else ""
+    # Catch-all = no proto/port narrowing AND no host narrowing in
+    # either zone spec.
+    has_host = (":" in src or ":" in dst)
+    has_proto = bool(proto and proto != "-")
+    has_port = (
+        (dport and dport != "-") or (sport and sport != "-"))
+    return not (has_host or has_proto or has_port)
+
+
+def _reorder_rules_block(rows: list[ConfigLine]) -> list[ConfigLine]:
+    """Group rules by zone-pair affinity and push catch-all DROPs
+    to the tail of each group.
+
+    Stable sort by ``(src_zone, dst_zone)`` keeps the relative
+    order of rules within a single zone-pair so a hand-curated
+    sequence (DNS macro before HTTP macro before generic catch)
+    survives the round-trip. The catch-all DROP/REJECT pass runs
+    AFTER the group sort so the order inside each group becomes
+    "specific accepts → catch-all drop" — same shape Shorewall's
+    iptables backend produces.
+    """
+    grouped = sorted(rows, key=_zone_pair_key)
+    final: list[ConfigLine] = []
+    cur_key: tuple[str, str] | None = None
+    cur_block: list[ConfigLine] = []
+
+    def _flush() -> None:
+        catchalls = [r for r in cur_block if _is_catchall_drop(r)]
+        rest = [r for r in cur_block if not _is_catchall_drop(r)]
+        final.extend(rest)
+        final.extend(catchalls)
+
+    for ln in grouped:
+        k = _zone_pair_key(ln)
+        if cur_key is None:
+            cur_key = k
+        if k != cur_key:
+            _flush()
+            cur_block = []
+            cur_key = k
+        cur_block.append(ln)
+    if cur_block:
+        _flush()
+    return final
+
+
+def _aligned_block(rows: list[list[str]], header_cols: list[str] | None,
+                   *, min_pad: int = 2, max_col_width: int = 28) -> list[str]:
+    """Render a block of rows with per-column space padding.
+
+    Walks every row in the block to compute the maximum width of
+    each column (capped at ``max_col_width``), then pads each
+    cell to that width with at least ``min_pad`` trailing spaces.
+    The header row (if present) is aligned the same way.
+
+    The width cap matters: a single rule with a 200-character
+    comma-separated SOURCE list would otherwise force every row
+    in the file to use 200 characters of padding for the SOURCE
+    column. With the cap, the over-wide cell breaks the grid
+    for its own row only and the rest of the file stays
+    scannable. Default 28 fits the common ``zone:host`` ::
+    ``port`` shapes.
+
+    The whitespace separation parses the same as the tab form
+    (Shorewall's parser is whitespace-tolerant), so the round-
+    trip test still passes byte-equivalent through ``split()``.
+    """
+    if not rows and not header_cols:
+        return []
+
+    # Pad rows to the longest row's length so column-width
+    # computation doesn't go out of bounds for trailing-default
+    # rows (Shorewall lets you drop trailing ``-`` columns).
+    width = max(
+        (len(r) for r in rows),
+        default=0,
+    )
+    if header_cols and len(header_cols) > width:
+        width = len(header_cols)
+    norm_rows: list[list[str]] = [
+        list(r) + [""] * (width - len(r)) for r in rows
+    ]
+    norm_header: list[str] | None = None
+    if header_cols:
+        norm_header = list(header_cols) + [""] * (width - len(header_cols))
+
+    col_widths = [0] * width
+    if norm_header:
+        for i, cell in enumerate(norm_header):
+            col_widths[i] = max(col_widths[i], min(len(cell), max_col_width))
+    for r in norm_rows:
+        for i, cell in enumerate(r):
+            col_widths[i] = max(col_widths[i], min(len(cell), max_col_width))
+
+    def _fmt(row: list[str]) -> str:
+        parts: list[str] = []
+        for i, cell in enumerate(row):
+            if i == width - 1:
+                parts.append(cell)  # last column — no trailing pad
+            elif len(cell) >= col_widths[i]:
+                # Over-wide cell → break the grid for this row only.
+                parts.append(cell + " " * min_pad)
+            else:
+                parts.append(cell.ljust(col_widths[i] + min_pad))
+        return "".join(parts).rstrip()
+
+    out: list[str] = []
+    if norm_header:
+        out.append("#" + _fmt(norm_header))
+    for r in norm_rows:
+        out.append(_fmt(r))
+    return out
+
+
 def _render_toml_value(v: Any) -> str:
     """Minimal TOML value serialiser — strings, ints, bools, lists."""
     if v is None:
@@ -372,6 +531,7 @@ def write_config_dir(
     config: ShorewalConfig, target_dir: Path, *,
     force: bool = False,
     write_scripts: bool = True,
+    pretty: bool = True,
 ) -> list[Path]:
     """Serialise a :class:`ShorewalConfig` back to on-disk Shorewall files.
 
@@ -429,25 +589,56 @@ def write_config_dir(
         schema = columns_for(name) or []
         lines_out: list[str] = []
 
-        if schema:
-            header = "#" + "\t".join(c.upper() for c in schema)
-            lines_out.append(header)
-
-        if is_sectioned(name):
-            # Group by section so we can re-emit ?SECTION headers
-            by_section: dict[str, list[ConfigLine]] = {}
-            for ln in rows:
-                by_section.setdefault(ln.section or "NEW", []).append(ln)
-            first = True
-            for section, rows_in_section in by_section.items():
-                if not first or section != "NEW":
-                    lines_out.append(f"?SECTION {section}")
-                first = False
-                for ln in rows_in_section:
-                    lines_out.append(_columns_to_line(ln.columns))
+        if pretty:
+            header_cols = (
+                [c.upper() for c in schema] if schema else None)
+            # Rules-file reordering: group by zone-pair affinity,
+            # push catch-all DROPs to the tail of each group. Only
+            # applied to ``rules`` and ``blrules`` — other files
+            # don't have a meaningful zone-pair semantic.
+            should_reorder = name in ("rules", "blrules")
+            if is_sectioned(name):
+                by_section: dict[str, list[ConfigLine]] = {}
+                for ln in rows:
+                    by_section.setdefault(
+                        ln.section or "NEW", []).append(ln)
+                first = True
+                for section, rows_in_section in by_section.items():
+                    if not first or section != "NEW":
+                        lines_out.append(f"?SECTION {section}")
+                    first = False
+                    if should_reorder:
+                        rows_in_section = _reorder_rules_block(
+                            rows_in_section)
+                    block_rows = [list(ln.columns)
+                                  for ln in rows_in_section]
+                    lines_out.extend(
+                        _aligned_block(block_rows, header_cols))
+                    header_cols = None  # only the first section gets one
+            else:
+                ordered = (
+                    _reorder_rules_block(rows) if should_reorder else rows)
+                block_rows = [list(ln.columns) for ln in ordered]
+                lines_out.extend(_aligned_block(block_rows, header_cols))
         else:
-            for ln in rows:
-                lines_out.append(_columns_to_line(ln.columns))
+            if schema:
+                header = "#" + "\t".join(c.upper() for c in schema)
+                lines_out.append(header)
+            if is_sectioned(name):
+                by_section = {}
+                for ln in rows:
+                    by_section.setdefault(
+                        ln.section or "NEW", []).append(ln)
+                first = True
+                for section, rows_in_section in by_section.items():
+                    if not first or section != "NEW":
+                        lines_out.append(f"?SECTION {section}")
+                    first = False
+                    for ln in rows_in_section:
+                        lines_out.append(_columns_to_line(ln.columns))
+            else:
+                for ln in rows:
+                    lines_out.append(_columns_to_line(ln.columns))
 
         _write(name, "\n".join(lines_out) + "\n")
 

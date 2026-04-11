@@ -170,7 +170,11 @@ def test_roundtrip_through_disk_minimal(tmp_path):
 
     cfg_b = blob_to_config(blob_a)
     target = tmp_path / "written"
-    written = write_config_dir(cfg_b, target)
+    # pretty=False — the round-trip contract is byte-identical
+    # JSON. The pretty-printing path (default) reorders rules
+    # by zone-pair affinity which is a perfectly valid emit but
+    # not byte-identical input vs output.
+    written = write_config_dir(cfg_b, target, pretty=False)
     assert len(written) > 0
 
     cfg_c = load_config(target)
