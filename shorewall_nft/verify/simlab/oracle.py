@@ -65,15 +65,36 @@ class RulesetOracle:
                                   f"no {chain_name} chain")
 
         for rule in rules:
-            # Skip pure conntrack-state rules (``ct state
-            # established,related accept`` etc.). They have no
-            # address/proto/port fields, so _rule_matches() would
-            # return True for every tuple and classify would
-            # short-circuit on the very first such rule in the
-            # chain — wiping out every DROP expectation. Matches
-            # the same filter that derive_tests_all_zones applies
-            # on the generator side.
+            # Skip rules whose match predicate we can't evaluate
+            # from the parsed fields alone. Without these skips,
+            # ``_rule_matches`` treats absent fields as "no check"
+            # and the rule short-circuits on every probe, silently
+            # wiping out every ACCEPT / DROP expectation below
+            # the rule in question.
+            #
+            # - ``--ctstate`` / ``--ctstatus``: pure conntrack
+            #   state rules (est,related accept / invalid drop)
+            #   sitting at the top of every zone-pair chain under
+            #   FASTACCEPT=No.
+            # - ``--match-set`` / ``-m set``: ipset membership
+            #   checks. The parser stores the ipset name in
+            #   ``rule.raw`` but not in any field ``_rule_matches``
+            #   can read, so the rule *looks* unconstrained even
+            #   though it really is constrained by set membership.
+            #   Skipping is the conservative choice; we don't
+            #   have the ipset contents loaded at classify time.
+            # - ``-m conntrack --ctorigdst``: original-destination
+            #   match (used for pre-DNAT filters). Same reason —
+            #   the parser doesn't surface ctorigdst as a field.
+            # - ``-m multiport``: parsed, but the parser stores a
+            #   comma list in ``rule.dport`` which
+            #   ``_port_in_spec`` handles correctly, so multiport
+            #   DOES work — no skip needed.
             if "--ctstate" in rule.raw or "--ctstatus" in rule.raw:
+                continue
+            if "--match-set" in rule.raw or " -m set " in rule.raw:
+                continue
+            if "--ctorigdst" in rule.raw:
                 continue
             if not self._rule_matches(rule, src_ip, dst_ip, proto, port):
                 continue
