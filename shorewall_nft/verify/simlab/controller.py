@@ -33,7 +33,7 @@ from typing import Any, Callable
 from .dumps import FwState, load_fw_state
 from .packets import PacketSummary, parse
 from .topology import NS_FW_DEFAULT, SimFwTopology
-from .worker import _proc_name_for, worker_main
+from .worker import _proc_name_for, worker_main, worker_main_multi
 
 
 @dataclass
@@ -63,17 +63,28 @@ class SimController:
         ip6add: Path | None = None,
         ip6routes: Path | None = None,
         ns_name: str = NS_FW_DEFAULT,
+        workers_max: int | None = None,
     ):
         self.paths = (ip4add, ip4routes, ip6add, ip6routes)
         self.ns_name = ns_name
         self.state: FwState | None = None
         self.topo: SimFwTopology | None = None
+        # iface_name → (Process, Pipe) mapping. In the consolidated
+        # worker model multiple iface names share the same (Process,
+        # Pipe) pair — all distinct entries just happen to point at
+        # the same worker. The _probe dispatch code reads by iface
+        # name and doesn't care that the process is shared.
         self.workers: dict[str, tuple[mp.Process, Any]] = {}
+        # Unique list of (Process, Pipe) so shutdown iterates each
+        # worker exactly once.
+        self._worker_procs: list[tuple[mp.Process, Any]] = []
         self._probes: dict[int, ProbeSpec] = {}
         self._probe_futures: dict[int, asyncio.Future] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
         self._cleanup_registered = False
+        # None = auto-detect based on CPU count (fallback to 4)
+        self._workers_max = workers_max
 
     # ── lifecycle ─────────────────────────────────────────────────
 
@@ -83,32 +94,72 @@ class SimController:
         return self.state
 
     def build(self) -> None:
-        """Build the NS_FW topology and spawn one worker per interface."""
+        """Build the NS_FW topology and spawn consolidated workers.
+
+        Instead of one fork per interface (which burns ~80 MB of
+        Python heap per worker = ~2 GB for 24 interfaces), we
+        partition the TUN/TAP fds across a small pool of workers.
+        Each worker handles N fds via asyncio, sharing one Python
+        interpreter. The number of workers defaults to
+        ``max(2, cpu_count)`` so every core can process packets
+        in parallel but no core is starved by a heap-heavy process.
+        Override with ``SimController(workers_max=N)``.
+        """
         self._register_cleanup()
         self.reload_dumps()
         assert self.state is not None
         self.topo = SimFwTopology(self.state, ns_name=self.ns_name)
         self.topo.build()
 
-        # Fork one worker per TUN/TAP. We use the fork context so
-        # children inherit the fds we just opened.
+        # Decide how many workers to spawn
+        if self._workers_max is not None:
+            n_workers = max(1, self._workers_max)
+        else:
+            try:
+                n_workers = max(2, os.cpu_count() or 4)
+            except Exception:
+                n_workers = 4
+        iface_list = list(self.topo.tun_fds.items())
+        n_workers = min(n_workers, max(1, len(iface_list)))
+
+        # Partition iface_list into n_workers chunks round-robin.
+        # Round-robin over a sorted list gives stable assignment
+        # so the same iface lands on the same worker across runs.
+        chunks: list[list[tuple[str, int]]] = [[] for _ in range(n_workers)]
+        for i, entry in enumerate(sorted(iface_list)):
+            chunks[i % n_workers].append(entry)
+
         ctx = mp.get_context("fork")
-        for name, fd in self.topo.tun_fds.items():
+        for wi, chunk in enumerate(chunks):
+            if not chunk:
+                continue
+            ifaces_arg = {
+                name: {
+                    "fd": fd,
+                    "kind": self.topo.tun_kind[name],
+                    "mac": self.topo.tun_mac.get(name),
+                }
+                for name, fd in chunk
+            }
             parent_conn, child_conn = ctx.Pipe(duplex=True)
+            # Name the process after the first iface (or ``w<i>:Nifs``
+            # when there are many). The worker will rename its own
+            # /proc/comm to a 15-char variant once it starts.
+            if len(chunk) == 1:
+                proc_name = _proc_name_for(chunk[0][0])
+            else:
+                proc_name = _proc_name_for(f"w{wi}:{len(chunk)}ifs")
             proc = ctx.Process(
-                target=worker_main,
-                args=(name, fd, self.topo.tun_kind[name],
-                      self.topo.tun_mac.get(name), child_conn),
-                name=_proc_name_for(name),
+                target=worker_main_multi,
+                args=(ifaces_arg, child_conn),
+                name=proc_name,
                 daemon=False,
             )
-            # Only pass the relevant fd + the child pipe end to the
-            # child; Python's fork implicitly inherits everything
-            # else, but close_fds=True isn't available on Process.
             proc.start()
-            # Parent closes its child-end copy.
             child_conn.close()
-            self.workers[name] = (proc, parent_conn)
+            self._worker_procs.append((proc, parent_conn))
+            for name, _fd in chunk:
+                self.workers[name] = (proc, parent_conn)
         # Parent no longer needs the TUN/TAP fds — the workers own them.
         for name, fd in list(self.topo.tun_fds.items()):
             try:
@@ -133,10 +184,16 @@ class SimController:
     async def run_probes(self, probes: list[ProbeSpec]) -> list[ProbeSpec]:
         """Inject every probe and wait for its matching response."""
         self._loop = asyncio.get_running_loop()
-        # Register a reader for every worker pipe.
-        for name, (_, conn) in self.workers.items():
-            self._loop.add_reader(
-                conn.fileno(), self._on_worker_msg, name, conn)
+        # Register a reader for every distinct worker process pipe
+        # (not one per iface — multiple ifaces share the same pipe
+        # now).
+        registered_fds: set[int] = set()
+        for _proc, conn in self._worker_procs:
+            fd = conn.fileno()
+            if fd in registered_fds:
+                continue
+            registered_fds.add(fd)
+            self._loop.add_reader(fd, self._on_worker_msg, None, conn)
 
         # Kick off each probe — fire-and-observe, async per probe.
         futures: list[asyncio.Future] = []
@@ -152,9 +209,9 @@ class SimController:
         # timeouts handled by _wait_probe).
         await asyncio.gather(*futures, return_exceptions=True)
 
-        for name, (_, conn) in list(self.workers.items()):
+        for fd in registered_fds:
             try:
-                self._loop.remove_reader(conn.fileno())
+                self._loop.remove_reader(fd)
             except Exception:
                 pass
         return probes
@@ -181,7 +238,10 @@ class SimController:
             return
         _, conn = worker
         try:
-            conn.send(("inject", probe.payload))
+            # Modern 3-tuple routes the inject to the right fd inside
+            # a multi-iface worker. Single-iface workers still accept
+            # this shape.
+            conn.send(("inject", probe.inject_iface, probe.payload))
         except (BrokenPipeError, ConnectionError):
             probe.verdict = "ERROR"
             fut = self._probe_futures.get(probe.probe_id)
@@ -236,15 +296,20 @@ class SimController:
             pass  # ack
 
     async def _collect_traces(self) -> list[dict]:
-        """Ask every worker for its ring-buffer snapshot."""
+        """Ask every worker for its ring-buffer snapshot.
+
+        Iterates ``_worker_procs`` (unique per process) rather than
+        ``workers`` (per iface) so a multi-iface worker only gets
+        one trace_dump request and dumps all its ifaces in one go.
+        """
         out: list[dict] = []
-        for name, (_, conn) in self.workers.items():
+        for _proc, conn in self._worker_procs:
             try:
                 conn.send(("trace_dump",))
             except Exception:
                 continue
         await asyncio.sleep(0.05)  # let workers reply
-        for name, (_, conn) in self.workers.items():
+        for _proc, conn in self._worker_procs:
             try:
                 while conn.poll():
                     msg = conn.recv()
@@ -282,21 +347,23 @@ class SimController:
         if self._shutdown_done:
             return
         self._shutdown_done = True
+        # Iterate _worker_procs so each process is shut down exactly
+        # once, no matter how many ifaces it owned.
         # 1. Tell workers to quit
-        for name, (proc, conn) in list(self.workers.items()):
+        for _proc, conn in self._worker_procs:
             try:
                 conn.send(("quit",))
             except Exception:
                 pass
         # 2. Wait briefly, then SIGTERM stragglers
         deadline = time.monotonic() + 2.0
-        for name, (proc, conn) in list(self.workers.items()):
+        for proc, _conn in self._worker_procs:
             left = max(0.0, deadline - time.monotonic())
             try:
                 proc.join(timeout=left)
             except Exception:
                 pass
-        for name, (proc, _) in list(self.workers.items()):
+        for proc, _conn in self._worker_procs:
             if proc.is_alive():
                 try:
                     proc.terminate()
@@ -308,11 +375,12 @@ class SimController:
                     proc.kill()
                 except Exception:
                     pass
-        for _, conn in self.workers.values():
+        for _proc, conn in self._worker_procs:
             try:
                 conn.close()
             except Exception:
                 pass
+        self._worker_procs.clear()
         self.workers.clear()
         # 3. Destroy the topology (closes any remaining TUN fds,
         #    deletes the NS_FW netns).
