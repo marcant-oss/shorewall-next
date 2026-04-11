@@ -190,6 +190,42 @@ class ConfigParser:
                     lines = self._parse_columnar(macro_file)
                     config.macros[macro_name] = lines
 
+        # 6. Plugin config files — plugins.conf (TOML) and the
+        # plugins/ directory (TOML files + .token files for
+        # secrets). Loaded into ``config.plugin_files`` so a
+        # round-trip via ``write_config_dir`` preserves them
+        # byte-for-byte. Without this load step the structured-io
+        # importer/exporter only saw plugin files when they came
+        # via a JSON overlay.
+        try:
+            import tomllib  # type: ignore[import-not-found]
+        except ImportError:
+            tomllib = None  # type: ignore[assignment]
+        plugins_conf = self.config_dir / "plugins.conf"
+        if plugins_conf.is_file() and tomllib is not None:
+            try:
+                with plugins_conf.open("rb") as f:
+                    config.plugin_files["plugins.conf"] = tomllib.load(f)
+            except (OSError, Exception):
+                pass
+        plugins_dir = self.config_dir / "plugins"
+        if plugins_dir.is_dir():
+            for sub in sorted(plugins_dir.iterdir()):
+                if not sub.is_file():
+                    continue
+                rel = f"plugins/{sub.name}"
+                if sub.suffix == ".toml" and tomllib is not None:
+                    try:
+                        with sub.open("rb") as f:
+                            config.plugin_files[rel] = tomllib.load(f)
+                    except (OSError, Exception):
+                        pass
+                elif sub.suffix == ".token" or sub.name.endswith(".secret"):
+                    try:
+                        config.plugin_files[rel] = sub.read_text().rstrip("\n")
+                    except (OSError, UnicodeDecodeError):
+                        pass
+
         return config
 
     def _parse_params(self, path: Path) -> None:
