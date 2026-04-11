@@ -1008,6 +1008,11 @@ def generate_set_loader(directory, config_dir, config_dir4, config6_dir,
               help="Override the dst-zone interface name in the FW netns "
                    f"(default: {'bond0.20'}). Use to exercise a different "
                    "destination zone than host.")
+@click.option("--all-zones", is_flag=True,
+              help="Multi-zone topology: create one veth pair per zone "
+                   "from the shorewall config and derive test cases across "
+                   "every <src>2<dst> chain in the iptables dump. Runs as "
+                   "a single simulate pass against one loaded ruleset.")
 @click.option("--max-tests", "-n", default=60,
               help="Max test cases per target.")
 @click.option("--seed", default=42, help="Random seed for sampling.")
@@ -1016,7 +1021,7 @@ def generate_set_loader(directory, config_dir, config_dir4, config6_dir,
 @click.option("--no-trace", is_flag=True, help="Disable nft trace logging.")
 @config_options
 def simulate(directory, iptables, target, targets, ip6tables_dump, targets6,
-             src_iface, dst_iface, max_tests, seed, sim_verbose,
+             src_iface, dst_iface, all_zones, max_tests, seed, sim_verbose,
              parallel, no_trace,
              config_dir, config_dir4, config6_dir, no_auto_v4, no_auto_v6):
     """Run packet-level simulation in 3 network namespaces."""
@@ -1060,6 +1065,10 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets6,
                    f"parallel: {parallel}, trace: {not no_trace}")
     click.echo()
 
+    if all_zones:
+        click.echo("All-zones mode: one topology, derive tests across every "
+                   "known <src>2<dst> chain in the dump.")
+
     results = run_simulation(
         config_dir=config_dir,
         iptables_dump=iptables,
@@ -1072,6 +1081,7 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets6,
         verbose=sim_verbose,
         parallel=parallel,
         trace=not no_trace,
+        all_zones_from_config=all_zones,
         src_iface=sif,
         dst_iface=dif,
     )

@@ -141,9 +141,11 @@ class TestCtZoneTag:
         out = _emit(CT_ZONE_TAG="Yes")
         assert "chain sw_zone_tag {" in out
         assert "type filter hook prerouting priority mangle" in out
-        # With the default 0xff mask the iifname map is wrapped in a
-        # bitwise clamp so the upper 24 bits of ct mark are preserved.
-        assert "ct mark set ct mark and 0xffffff00 or iifname map" in out
+        # With the default 0xff mask nft rejects `ct mark and X or MAP`
+        # (rhs of `or` must be a constant), so we emit one rule per
+        # iface with a per-iface constant instead.
+        assert 'iifname "eth0" ct mark set ct mark and 0xffffff00 or ' in out
+        assert 'iifname "eth1" ct mark set ct mark and 0xffffff00 or ' in out
 
     def test_zone_marks_per_interface(self):
         out = _emit(CT_ZONE_TAG="Yes")
@@ -166,12 +168,12 @@ class TestCtZoneTag:
     def test_mask_default_is_0xff(self):
         out = _emit(CT_ZONE_TAG="Yes")
         # Default mask 0xff keeps the upper 24 bits of ct mark untouched
-        assert "ct mark set ct mark and 0xffffff00 or iifname map" in out
+        assert "ct mark and 0xffffff00 or " in out
 
     def test_mask_custom_16bit(self):
         out = _emit(CT_ZONE_TAG="Yes", CT_ZONE_TAG_MASK="0xffff")
         # Custom 16-bit mask — upper 16 bits preserved
-        assert "ct mark set ct mark and 0xffff0000 or iifname map" in out
+        assert "ct mark and 0xffff0000 or " in out
 
     def test_mask_full_no_bitwise(self):
         """A 32-bit-wide mask means we overwrite ct mark entirely."""
@@ -334,6 +336,112 @@ class TestDnatConcatMap:
 # ──────────────────────────────────────────────────────────────────────
 # Combined — all four features at once
 # ──────────────────────────────────────────────────────────────────────
+
+
+class TestSimulateHelpers:
+    """Unit tests for simulate helpers that don't need netns privileges."""
+
+    def test_slave_ns_naming(self):
+        from shorewall_nft.verify.simulate import slave_ns
+        assert slave_ns("net") == "sw-z-net"
+        assert slave_ns("host") == "sw-z-host"
+
+    def test_slave_ns_caps_zone_name(self):
+        from shorewall_nft.verify.simulate import slave_ns
+        # netns names cap at IFNAMSIZ; long zone names get truncated
+        # so the full ns name fits.
+        assert len(slave_ns("averyverylongzonename")) <= 16
+
+    def test_split_chain_zones_basic(self):
+        from shorewall_nft.verify.simulate import _split_chain_zones
+        assert _split_chain_zones("net2host") == ("net", "host")
+        assert _split_chain_zones("adm2fw") == ("adm", "fw")
+
+    def test_split_chain_zones_base_chains_none(self):
+        from shorewall_nft.verify.simulate import _split_chain_zones
+        assert _split_chain_zones("INPUT") == (None, None)
+        assert _split_chain_zones("FORWARD") == (None, None)
+        assert _split_chain_zones("PREROUTING") == (None, None)
+
+    def test_split_chain_zones_helper_suffix(self):
+        from shorewall_nft.verify.simulate import _split_chain_zones
+        # Shorewall emits names like "net2adm_frwd" for helper chains;
+        # the suffix gets stripped.
+        assert _split_chain_zones("net2adm_frwd") == ("net", "adm")
+        assert _split_chain_zones("net2adm_dnat") == ("net", "adm")
+        assert _split_chain_zones("adm2host_input") == ("adm", "host")
+
+    def test_zone_subnet_deterministic(self):
+        from shorewall_nft.verify.simulate import SimTopology
+        # SimTopology() constructor requires no root for in-memory cache
+        topo = SimTopology.__new__(SimTopology)
+        topo.zones = {"net": "bond1"}
+        topo._zone_subnets = {}
+        a = topo._zone_subnet("net", "src")
+        b = topo._zone_subnet("net", "src")
+        assert a == b
+        # Different side gets different /30
+        c = topo._zone_subnet("net", "dst")
+        assert a != c
+        assert a[0].startswith("10.201.") or a[1].startswith("10.201.")
+        assert c[0].startswith("10.202.") or c[1].startswith("10.202.")
+
+    def test_zone_subnet_different_zones_different_slots(self):
+        from shorewall_nft.verify.simulate import SimTopology
+        topo = SimTopology.__new__(SimTopology)
+        topo.zones = {}
+        topo._zone_subnets = {}
+        net_subnet = topo._zone_subnet("net", "src")
+        host_subnet = topo._zone_subnet("host", "src")
+        adm_subnet = topo._zone_subnet("adm", "src")
+        assert len({net_subnet, host_subnet, adm_subnet}) == 3
+
+
+class TestDeriveTestsAllZones:
+    """derive_tests_all_zones should annotate with src_zone/dst_zone."""
+
+    def test_walks_zone_pair_chains(self, tmp_path):
+        from shorewall_nft.verify.simulate import derive_tests_all_zones
+        dump = tmp_path / "ipt.txt"
+        dump.write_text(
+            "*filter\n"
+            ":INPUT ACCEPT [0:0]\n"
+            ":FORWARD ACCEPT [0:0]\n"
+            ":OUTPUT ACCEPT [0:0]\n"
+            ":net2host - [0:0]\n"
+            ":adm2host - [0:0]\n"
+            "-A net2host -s 10.0.0.0/24 -d 203.0.113.5/32 -p tcp -m tcp --dport 80 -j ACCEPT\n"
+            "-A net2host -d 203.0.113.5/32 -p tcp -m tcp --dport 443 -j DROP\n"
+            "-A adm2host -s 10.1.0.5/32 -d 203.0.113.6/32 -p udp -m udp --dport 53 -j ACCEPT\n"
+            "COMMIT\n"
+        )
+        cases = derive_tests_all_zones(
+            dump, zones={"net", "host", "adm"},
+            max_tests=10, family=4)
+        assert len(cases) == 3
+        by_chain = {(c.src_zone, c.dst_zone, c.proto, c.port): c for c in cases}
+        assert ("net", "host", "tcp", 80) in by_chain
+        assert ("net", "host", "tcp", 443) in by_chain
+        assert ("adm", "host", "udp", 53) in by_chain
+
+    def test_skips_unknown_zones(self, tmp_path):
+        """Chains whose zones aren't in the supplied set are skipped."""
+        from shorewall_nft.verify.simulate import derive_tests_all_zones
+        dump = tmp_path / "ipt.txt"
+        dump.write_text(
+            "*filter\n"
+            ":INPUT ACCEPT [0:0]\n"
+            ":FORWARD ACCEPT [0:0]\n"
+            ":OUTPUT ACCEPT [0:0]\n"
+            ":secret2host - [0:0]\n"
+            "-A secret2host -d 203.0.113.5/32 -p tcp -m tcp --dport 80 -j ACCEPT\n"
+            "COMMIT\n"
+        )
+        cases = derive_tests_all_zones(
+            dump, zones={"net", "host"},
+            max_tests=10, family=4)
+        # secret isn't in the zones set → rule is filtered out
+        assert len(cases) == 0
 
 
 class TestAllFeaturesTogether:
