@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] — 2026-04-11
 
 nft-native feature expansion and verifier robustness fixes driven
-by a full end-to-end validation against the marcant-fw HA firewall
+by a full end-to-end validation against a production HA firewall
 release config.
 
 ### Added
@@ -78,7 +78,7 @@ release config.
   Without this fix `OPTIMIZE=4` and higher produced rules like
   `ip saddr { 1.1.1.1, 1.1.1.2 }` whose first/last element
   carried the literal `{`/`}` character into the fingerprint,
-  causing the marcant-fw release config to drop from 100.0 % →
+  causing the reference config to drop from 100.0 % →
   74.2 % IPv4 / 71.6 % IPv6 rule coverage purely because of the
   tokenisation bug.
 - Triangle verifier follows `OPTIMIZE=8` chain_merge redirects
@@ -99,7 +99,160 @@ release config.
   broad source subnet instead of skipping every rule whose
   source prefix is shorter than /24.
 
-### Measured on marcant-fw
+### simlab packet-level verifier
+
+- `shorewall_nft.verify.simlab` — TUN/TAP-based reproduction of
+  the target firewall's real namespace topology. Forks a pool
+  of asyncio workers (one or more per TUN/TAP), loads the
+  compiled nft ruleset into an NS_FW network namespace pinned
+  via `nsstub` (kernel-level cleanup on controller death),
+  injects packets via scapy builders, correlates observed
+  packets through IPv4 `id` / IPv6 flow-label stashed probe
+  ids, and reports per-probe pass/fail with per-zone-pair
+  statistics. Superseding the fixed-topology `simulate.py`
+  for packet-level coverage of multi-homed configs.
+- `smoketest` CLI subcommand (`smoke`, `stress N`, `limit`,
+  `full`) with load throttle (`--load-limit`), probe
+  batching (`--batch-size`), per-rule random sampling
+  (`--random-per-rule`), per-zone-pair budget
+  (`--max-per-pair`), and a scrubbable archive report at
+  `docs/testing/simlab-reports/<UTC>/` (report.json, report.md,
+  mismatches.txt, fail-pcaps/).
+- Four-way pass/fail split in every probe-report surface:
+  `pass_accept`, `pass_drop`, `fail_drop` ("should have had
+  access but was DROPPED"), `fail_accept` ("should have been
+  blocked but was ACCEPTED"). Replaces the old "N matches / N
+  mismatches" reporting with the direction-aware split that
+  triage actually uses.
+- Autorepair pass 1 rewrites `derive_tests`' `DEFAULT_SRC`
+  placeholder (TEST-NET-1 `192.0.2.69`) with a host from the
+  source zone's own subnet so the FW's rp_filter doesn't drop
+  probes at ingress. On the reference config this recovered
+  ~12.7k probes that were previously reported as spurious
+  `fail_drop`.
+- Autorepair pass 2 runs every per-rule TestCase back through
+  `RulesetOracle.classify` against the iptables-save dump
+  (Point of Truth per `docs/testing/point-of-truth.md`) so
+  each random variant inherits its authoritative expected
+  verdict from a full chain walk instead of the generator's
+  source rule's target.
+- pcap-on-failure: every failed probe gets a single-frame pcap
+  dumped under `<run_dir>/fail-pcaps/<probe_id>-<inject>-<expect>-
+  <direction>.pcap` plus a grep-friendly index.
+- Worker consolidation: the fork pool defaults to
+  `max(2, cpu_count)` multi-interface asyncio workers instead
+  of one fork per TUN/TAP. On the 2-core reference VM this
+  drops worker count 24 → 2 and pool RSS ~2 GB → ~170 MB.
+- Streaming probe materialisation: the parent keeps only
+  lightweight plan dicts (`~150 B`) in memory for the entire
+  run; ProbeSpec objects with payload bytes + match closures
+  are built per batch and garbage-collected after fire.
+- Unit-testable autorepair helpers
+  (`_build_zone_to_concrete_src`, `_expand_port_spec`) with
+  11 pytest cases that run without nft/root/netns.
+
+### Structured config I/O (`--override-json` / `config export` / `config import`)
+
+- Central column schema at `shorewall_nft/config/schema.py`
+  — single source of truth for 33 columnar Shorewall files +
+  13 extension scripts, verified against the positions the
+  compiler actually reads (not just the upstream manpages).
+  Files added as parseable columnar this release:
+  `arprules`, `proxyarp`, `proxyndp`, `ecn`, `nfacct`,
+  `rawnat`, `stoppedrules`, `scfilter`.
+- `shorewall_nft/config/exporter.py` — emits a parsed
+  `ShorewalConfig` as a structured JSON/YAML blob. File
+  names are top-level keys, KEY=VALUE files flatten to dicts,
+  columnar files emit one object per row with column names
+  as keys, `rules`/`blrules` are nested under their
+  `?SECTION` labels. Extension scripts round-trip as
+  `{name: {lang: sh, lines: [...]}}`.
+- `shorewall_nft/config/importer.py` — the round-trip
+  counterpart. `blob_to_config(blob)` builds a fresh
+  `ShorewalConfig`; `apply_overlay(config, overlay)` merges
+  an overlay on top (used by `--override-json`); `write_
+  config_dir(config, target_dir)` serialises back to
+  on-disk Shorewall files (columnar + macros + scripts).
+  Parse → export → import → export is byte-identical on
+  the 202 979-byte reference config.
+- Global CLI flags `--override-json JSON_OR_@FILE` and
+  `--override FILE=JSON_OR_@FILE` (repeatable). Accepts
+  literal JSON, `@path` file, `-` stdin, YAML via `.yaml`
+  extension. Load order: defaults → on-disk → overlay.
+  Every compile-touching subcommand (compile, check, start,
+  simulate, …) picks up the overlay automatically.
+- `shorewall-nft config export [DIR] --format=json|yaml
+  [-o FILE]` — read-only dump of the parsed config directory.
+- `shorewall-nft config import FILE --to DIR [--force]` —
+  writes a structured blob back as on-disk Shorewall files.
+  Refuses to overwrite a non-empty target without `--force`.
+- 18 new pytest cases for the structured-io pipeline (10
+  round-trip + 8 CLI end-to-end via subprocess).
+
+### netbox plugin deployment wiring
+
+- `tools/*-deploy.env.example` template + gitignored
+  per-deployment `.env` for netbox API config.
+  `setup-remote-test-host.sh` sources it and writes
+  `/etc/shorewall46/plugins.conf` plus `plugins/netbox.toml`
+  and `plugins/netbox.token` (mode 0600) on the target.
+- Bootstrap also runs `shorewall-nft merge-config` on the
+  remote as the final step, so `/etc/shorewall46` is the
+  plugin-aware merged output, not a static copy.
+
+### Exec reduction Phase A + B (libnftables + setns preexec)
+
+- `shorewall_nft/nft/netlink.py` refactored so every high-
+  level op (`load_file`, `list_table`, `list_counters`,
+  `list_set_elements`, `add/delete_set_element`, `cmd`)
+  goes through a single `_run_text` helper that prefers
+  libnftables and falls back to subprocess only when the
+  library is absent or `setns()` fails. A new
+  `_in_netns(name)` contextmanager saves
+  `/proc/self/ns/net`, opens `/run/netns/<name>`, calls
+  `setns(CLONE_NEWNET)`, yields, and restores the original
+  namespace on exit so the process stays hot between
+  successive nft calls in a target namespace.
+- `verify/netns_topology.py::exec_in_ns` drops the
+  `ip netns exec` wrapper in favour of a `preexec_fn` that
+  `setns()`s the child right after fork and before exec.
+  One fewer fork, no iproute2 binary dependency.
+- `verify/simulate.py::_ns` and `_kill_ns_pids` get the same
+  treatment. `_kill_ns_pids` also stops shelling out to
+  `ip netns pids` and walks `/proc/*/ns/net` inodes directly.
+
+### Documentation
+
+- `docs/cli/override-json.md` — full structured-io plan
+  (input + output + schema + load order + seams).
+- `docs/testing/point-of-truth.md` — conflict resolution
+  ranking when verifiers disagree. `old/iptables.txt` wins,
+  simlab is the weakest signal.
+- `docs/concepts/marks-and-connmark.md` — modern reference
+  for packet mark / ct mark / ct zone: mental model,
+  lifecycle, tooling (nft/ip/tc/conntrackd), masking,
+  save/restore, seven practical patterns, 8-point pitfall
+  list. Replaces the legacy `PacketMarking.md` for new
+  content.
+- `docs/concepts/security-defaults.md` — opinionated modern
+  baseline for shorewall.conf, sysctl floor, kernel module
+  matrix, logging, and what we deliberately don't enable
+  by default. Copy-paste deployment checklist.
+- `docs/concepts/dynamic-routing.md` — bird/FRR/keepalived
+  integration on a shorewall-nft edge. Firewall rules the
+  routing stack needs, ECMP merge_paths vs conntrack
+  lock-in, HA failover dance, seven common pitfalls.
+- `docs/concepts/naming-and-layout.md` — meta-chapter on
+  zone/interface/chain/set/mark/param/file naming
+  conventions, `/etc/shorewall46` layout, 13 extension
+  scripts, and the 6-point naming bootstrap for new
+  deployments.
+- `docs/concepts/multipath-and-ecmp.md` — deep dive on
+  classic ECMP, nexthop objects, per-provider tables,
+  hash policy, metric layout, five failure modes, and
+  monitoring checklist.
+
+### Measured on the reference config
 
 - 264 pytest tests green on the grml test host (35 skipped).
 - Triangle verify with `OPTIMIZE=8 + OPTIMIZE_VMAP=Yes +
