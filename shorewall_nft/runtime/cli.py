@@ -269,6 +269,36 @@ def _compile_from_cli(directory, config_dir, config_dir4, config6_dir,
 @click.version_option(version=__version__)
 @click.option("-q", is_flag=True, help="Quiet mode.")
 @click.option("-v", "verbose", count=True, help="Verbose mode (-v, -vv).")
+# FUTURE (planned, not wired yet): add a global
+#     @click.option("--override-json", "override_json", default=None,
+#                   help="Structured JSON merged over every parsed config "
+#                        "file at runtime (works even if a file is absent).")
+# and stash the parsed dict on ``ctx.obj["override_json"]`` so every
+# subcommand that calls ``_compile`` / ``load_config`` can pass it
+# through to the parser.
+#
+# Structure: top-level keys are config-file names (relative to the
+# shorewall config dir), values are the file-specific overlay shape:
+#
+#   {
+#     "shorewall.conf":       {"NETBOX_URL": "...", "OPTIMIZE": "8"},
+#     "params":               {"NETMASK": "24"},
+#     "interfaces":           [{"zone":"net","iface":"bond1","options":"..."}],
+#     "rules":                [{"action":"ACCEPT","source":"net","dest":"fw", ...}],
+#     "plugins/netbox.toml":  {"url":"https://...", "cache_ttl": 3600}
+#   }
+#
+# For KEY=VALUE files (shorewall.conf, params) values are dicts
+# merged over self.settings / self.params. For column-based files
+# (interfaces, rules, hosts, policy, ...) values are lists of
+# structured rows that get appended to the parsed list (or replace
+# it when the corresponding file is absent). Plugin-TOML files
+# merge into the plugin-specific config dict loaded by PluginManager.
+#
+# Load order (each later layer wins): defaults → on-disk file →
+# override-json. This makes the tool usable even with NO config
+# files on disk — just `shorewall-nft compile --override-json @cfg.json`.
+# See matching TODO in shorewall_nft/config/parser.py::_parse_conf.
 @click.pass_context
 def cli(ctx, q, verbose):
     """shorewall-nft: nftables-native firewall compiler."""
