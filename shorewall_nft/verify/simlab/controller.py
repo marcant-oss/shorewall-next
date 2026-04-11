@@ -83,6 +83,7 @@ class SimController:
         ns_name: str = NS_FW_DEFAULT,
         workers_max: int | None = None,  # unused in single-process mode
         trace_depth: int = 128,
+        num_threads: int | None = None,
     ):
         self.paths = (ip4add, ip4routes, ip6add, ip6routes)
         self.ns_name = ns_name
@@ -100,6 +101,20 @@ class SimController:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
         self._cleanup_registered = False
+        # Thread pool — one reader thread per CPU core by default.
+        # Each thread runs its own asyncio loop and registers
+        # add_reader() for a partition of the TUN/TAP fds. Observed
+        # packets are handed to the main loop's correlation code via
+        # a thread-safe queue.
+        if num_threads is None:
+            try:
+                num_threads = max(1, os.cpu_count() or 2)
+            except Exception:
+                num_threads = 2
+        self._num_threads = num_threads
+        self._reader_threads: list = []
+        self._reader_stop_events: list = []
+        self._obs_queue: "Any | None" = None
         # No-op back-compat alias used by legacy tests / callers that
         # inspect ``workers`` to see which interfaces exist.
         self.workers: dict[str, tuple[Any, Any]] = {}
@@ -158,19 +173,41 @@ class SimController:
     async def run_probes(self, probes: list[ProbeSpec]) -> list[ProbeSpec]:
         """Inject every probe and wait for its matching response.
 
-        Single-process design: registers one asyncio reader per
-        TUN/TAP fd on the controller's own event loop, then fires
-        every probe via a direct ``os.write(fd, payload)``. The
-        reader callbacks handle ARP / NDP reply inline and dispatch
-        observed packets into the per-probe futures.
+        Spawns ``self._num_threads`` reader threads (default:
+        ``os.cpu_count()``). Each runs its own asyncio loop with
+        a partition of the TUN/TAP fds registered as readers;
+        ARP / NDP are answered inline and observations are pushed
+        onto ``self._obs_queue``. The main loop drains the queue
+        into ``_on_observed`` for probe correlation.
         """
-        self._loop = asyncio.get_running_loop()
-        registered: list[int] = []
-        for iface_name, fd in self._iface_fds.items():
-            self._loop.add_reader(fd, self._on_tap_read, iface_name)
-            registered.append(fd)
+        import queue as _queue
+        import threading as _threading
 
-        # Kick off each probe — fire-and-observe, async per probe.
+        self._loop = asyncio.get_running_loop()
+        self._obs_queue = _queue.SimpleQueue()
+
+        ifaces = sorted(self._iface_fds.keys())
+        n_threads = max(1, min(self._num_threads, len(ifaces)))
+        groups: list[list[str]] = [[] for _ in range(n_threads)]
+        for i, iface in enumerate(ifaces):
+            groups[i % n_threads].append(iface)
+
+        self._reader_threads = []
+        self._reader_stop_events = []
+        for tid, group in enumerate(groups):
+            stop_ev = _threading.Event()
+            self._reader_stop_events.append(stop_ev)
+            t = _threading.Thread(
+                target=self._reader_thread_main,
+                args=(tid, group, stop_ev),
+                name=f"simlab-reader-{tid}",
+                daemon=True,
+            )
+            t.start()
+            self._reader_threads.append(t)
+
+        drainer_task = asyncio.create_task(self._drain_observations())
+
         futures: list[asyncio.Future] = []
         for probe in probes:
             self._probes[probe.probe_id] = probe
@@ -182,12 +219,145 @@ class SimController:
 
         await asyncio.gather(*futures, return_exceptions=True)
 
-        for fd in registered:
+        drainer_task.cancel()
+        try:
+            await drainer_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        for stop_ev in self._reader_stop_events:
+            stop_ev.set()
+        for t in self._reader_threads:
             try:
-                self._loop.remove_reader(fd)
+                t.join(timeout=1.0)
             except Exception:
                 pass
+        self._reader_threads = []
+        self._reader_stop_events = []
+        self._obs_queue = None
+
         return probes
+
+    async def _drain_observations(self) -> None:
+        """Feed observations from reader threads into probe correlation."""
+        import queue as _queue
+        try:
+            while True:
+                drained = 0
+                while True:
+                    try:
+                        iface, summary = self._obs_queue.get_nowait()  # type: ignore[union-attr]
+                    except _queue.Empty:
+                        break
+                    self._on_observed(iface, summary)
+                    drained += 1
+                    if drained >= 256:
+                        break
+                await asyncio.sleep(0 if drained else 0.001)
+        except asyncio.CancelledError:
+            try:
+                while True:
+                    iface, summary = self._obs_queue.get_nowait()  # type: ignore[union-attr]
+                    self._on_observed(iface, summary)
+            except _queue.Empty:
+                pass
+            except Exception:
+                pass
+            raise
+
+    def _reader_thread_main(self, tid: int, ifaces: list[str], stop_ev) -> None:
+        """Entry point for one reader thread.
+
+        Runs its own asyncio loop with the assigned subset of TUN/TAP
+        fds. ARP / NDP are handled inline. Observed IP packets are
+        pushed onto ``self._obs_queue`` for the main thread to
+        correlate against outstanding probes.
+        """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        def on_read(iface_name: str) -> None:
+            fd = self._iface_fds[iface_name]
+            is_tap = self._iface_kind[iface_name] == "tap"
+            try:
+                while True:
+                    try:
+                        buf = os.read(fd, 65536)
+                    except BlockingIOError:
+                        return
+                    except OSError:
+                        return
+                    if not buf:
+                        return
+                    pkt = parse(buf, is_tap=is_tap)
+                    self._iface_trace[iface_name].append(pkt)
+
+                    if (pkt.proto == "arp" and pkt.arp_op == 1
+                            and pkt.src and pkt.dst):
+                        reply = build_arp_reply(
+                            src_mac=_WORKER_MAC,
+                            src_ip=pkt.dst,
+                            dst_mac=_extract_src_mac(buf),
+                            dst_ip=pkt.src,
+                        )
+                        try:
+                            os.write(fd, reply)
+                        except OSError:
+                            pass
+                        continue
+
+                    if (pkt.proto == "ndp" and pkt.ndp_type == 135
+                            and pkt.src and pkt.dst):
+                        try:
+                            from scapy.layers.inet6 import ICMPv6ND_NS
+                            import scapy.all as s
+                            layer = s.Ether(buf)
+                            if layer.haslayer(ICMPv6ND_NS):
+                                target = layer[ICMPv6ND_NS].tgt
+                                src_ll = "fe80::200:5eff:fe00:1"
+                                na = build_ndp_na(
+                                    src_mac=_WORKER_MAC,
+                                    src_ip=src_ll,
+                                    dst_mac=_extract_src_mac(buf),
+                                    dst_ip=pkt.src,
+                                    target_ip=str(target),
+                                )
+                                os.write(fd, na)
+                        except Exception:
+                            pass
+                        continue
+
+                    summary = {
+                        "family": pkt.family, "proto": pkt.proto,
+                        "src": pkt.src, "dst": pkt.dst,
+                        "sport": pkt.sport, "dport": pkt.dport,
+                        "flags": pkt.flags, "length": pkt.length,
+                        "probe_id": pkt.probe_id,
+                    }
+                    if self._obs_queue is not None:
+                        self._obs_queue.put((iface_name, summary))
+            except Exception:
+                return
+
+        for iface_name in ifaces:
+            loop.add_reader(self._iface_fds[iface_name],
+                            on_read, iface_name)
+
+        async def _waiter() -> None:
+            while not stop_ev.is_set():
+                await asyncio.sleep(0.02)
+
+        try:
+            loop.run_until_complete(_waiter())
+        finally:
+            for iface_name in ifaces:
+                try:
+                    loop.remove_reader(self._iface_fds[iface_name])
+                except Exception:
+                    pass
+            try:
+                loop.close()
+            except Exception:
+                pass
 
     async def _wait_probe(self, probe: ProbeSpec, fut: asyncio.Future) -> None:
         try:
@@ -368,6 +538,19 @@ class SimController:
         if self._shutdown_done:
             return
         self._shutdown_done = True
+        # 0. Signal reader threads to stop + join.
+        for stop_ev in list(self._reader_stop_events):
+            try:
+                stop_ev.set()
+            except Exception:
+                pass
+        for t in list(self._reader_threads):
+            try:
+                t.join(timeout=1.0)
+            except Exception:
+                pass
+        self._reader_threads = []
+        self._reader_stop_events = []
         # 1. Remove asyncio readers if the loop is still alive.
         if self._loop is not None:
             for fd in list(self._iface_fds.values()):
