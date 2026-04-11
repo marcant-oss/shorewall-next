@@ -1837,6 +1837,83 @@ def config_import(source: Path, fmt: str, target: Path | None,
         click.echo(f"wrote {len(written)} files to {target}")
 
 
+@config.command("template")
+@click.argument("source", type=click.Path(exists=True, dir_okay=False,
+                                          path_type=Path),
+                required=True)
+@click.option("--host", "host_name", required=True,
+              help="Target host name. Lines prefixed with `@<other>` "
+                   "are dropped, lines prefixed with `@<host>` keep "
+                   "the rest of the line, unprefixed lines pass "
+                   "through unchanged.")
+@click.option("-o", "--output", type=click.Path(path_type=Path),
+              default=None,
+              help="Write to FILE. Defaults to stdout.")
+def config_template(source: Path, host_name: str,
+                    output: Path | None) -> None:
+    """Expand a multi-host text template against a target host name.
+
+    Implements the prefix-templating convention used by the legacy
+    keepalived / conntrackd snapshots: every line that's specific
+    to a single host is tagged with ``@<hostname>`` at column 1
+    (followed by a tab or space), and lines without a tag are
+    shared. This subcommand walks one input file, drops every
+    line tagged for a host other than ``--host``, strips the tag
+    from lines that match, and emits the result.
+
+    Shorewall config files don't use this convention — only
+    keepalived/conntrackd do — so the helper lives here as a
+    generic file-level utility rather than a parser feature.
+
+    Example::
+
+        shorewall-nft config template ../legacy/keepalived.conf \\
+            --host elgar -o /etc/keepalived/keepalived.conf
+    """
+    import re
+    text = source.read_text()
+    out_lines: list[str] = []
+    # Match lines that begin with `@<word>` followed by ONE
+    # whitespace separator. Capturing only one whitespace char
+    # (not the whole run) preserves the writer's intended
+    # indentation: a row written as `@elgar\t\trouter_id ELGAR`
+    # round-trips to `\trouter_id ELGAR` after the tag + first
+    # tab are stripped, keeping the body aligned with the
+    # surrounding shared lines.
+    tag_re = re.compile(r"^@(\S+)[ \t](.*)$")
+    kept = 0
+    dropped = 0
+    untagged = 0
+    for raw in text.splitlines():
+        m = tag_re.match(raw)
+        if m is None:
+            out_lines.append(raw)
+            untagged += 1
+            continue
+        tag = m.group(1)
+        rest = m.group(2)
+        if tag == host_name:
+            out_lines.append(rest)
+            kept += 1
+        else:
+            dropped += 1
+            continue
+
+    body = "\n".join(out_lines)
+    if not body.endswith("\n"):
+        body += "\n"
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(body)
+        click.echo(
+            f"wrote {output} — {kept} kept, {dropped} dropped, "
+            f"{untagged} untagged for host {host_name}",
+            err=True)
+    else:
+        click.echo(body, nl=False)
+
+
 @config.command("merge")
 @click.argument("sources", nargs=-1, required=True,
                 type=click.Path(exists=True, file_okay=False,
@@ -1910,10 +1987,10 @@ def config_merge(sources: tuple[Path, ...], target: Path, force: bool,
         if merged is None:
             merged = cfg
             continue
-        # Concatenate the columnar lists. The pretty exporter's
-        # zone-pair sort takes care of grouping; duplicates that
-        # come from overlapping snapshots stay in until a future
-        # dedup pass detects them by columns equality.
+        # Concatenate the columnar lists. Dedup happens after
+        # all sources are loaded so the order across sources is
+        # preserved (first occurrence wins, later duplicates
+        # drop).
         for attr in ("zones", "interfaces", "hosts", "policy",
                      "rules", "blrules", "masq", "conntrack",
                      "notrack", "rawnat", "stoppedrules",
@@ -1935,6 +2012,41 @@ def config_merge(sources: tuple[Path, ...], target: Path, force: bool,
                 merged.params[k] = v
 
     assert merged is not None
+
+    # Dedup pass: drop later occurrences of byte-equal rows in
+    # the columnar lists. The merge of multiple host snapshots
+    # often produces overlapping rules — dedup is the difference
+    # between a tidy unified config and a config that lists every
+    # rule twice. The match key is ``(section, columns)`` so
+    # rules in different ``?SECTION`` blocks (NEW vs ESTABLISHED
+    # in the legacy v4 dump) stay separate.
+    deduped_total = 0
+    for attr in ("zones", "interfaces", "hosts", "policy",
+                 "rules", "blrules", "masq", "conntrack",
+                 "notrack", "rawnat", "stoppedrules",
+                 "routestopped", "providers", "tunnels",
+                 "maclist", "accounting", "tcrules", "mangle",
+                 "netmap", "blacklist", "arprules", "proxyarp",
+                 "proxyndp", "ecn", "nfacct", "scfilter"):
+        rows = getattr(merged, attr, None) or []
+        if len(rows) < 2:
+            continue
+        seen: set[tuple] = set()
+        out_list = []
+        dropped = 0
+        for ln in rows:
+            key = (ln.section or "", tuple(ln.columns))
+            if key in seen:
+                dropped += 1
+                continue
+            seen.add(key)
+            out_list.append(ln)
+        if dropped:
+            setattr(merged, attr, out_list)
+            deduped_total += dropped
+    if deduped_total:
+        click.echo(f"dedup: dropped {deduped_total} byte-equal "
+                   f"duplicate rows across all columnar files")
     try:
         written = write_config_dir(
             merged, target, force=force, pretty=True,
