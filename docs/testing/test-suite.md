@@ -77,7 +77,9 @@ after all tests in the module have run. Used by lifecycle tests.
 def swnft_cli_netns():
     _run([*RUN_NETNS, "add", NS])
     yield NS
-    _run([*RUN_NETNS, "exec", NS, "kill", "-9", "-1"], timeout=5)
+    _kill_ns_pids(NS)  # NEVER use `ip netns exec NS kill -9 -1` — ip netns
+                       # does not isolate PIDs from the host, so -1 would
+                       # target every process the caller can signal.
     _run([*RUN_NETNS, "delete", NS])
 ```
 

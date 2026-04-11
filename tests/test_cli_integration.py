@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -63,6 +64,19 @@ def _ns_exists() -> bool:
     return NS in r.stdout
 
 
+def _kill_ns_pids(ns: str) -> None:
+    # `ip netns exec NS kill -9 -1` is UNSAFE: ip netns shares the host PID
+    # namespace, so -1 targets every process the caller can signal on the host.
+    r = subprocess.run([*RUN_NETNS, "pids", ns],
+                       capture_output=True, text=True, timeout=5)
+    for tok in r.stdout.split():
+        if tok.isdigit():
+            try:
+                os.kill(int(tok), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Fixtures
 # ──────────────────────────────────────────────────────────────────────
@@ -74,7 +88,7 @@ def swnft_cli_netns():
     _run([*RUN_NETNS, "add", NS])
     yield NS
     # Cleanup
-    _run([*RUN_NETNS, "exec", NS, "kill", "-9", "-1"], timeout=5)
+    _kill_ns_pids(NS)
     import time
     time.sleep(0.2)
     _run([*RUN_NETNS, "delete", NS])

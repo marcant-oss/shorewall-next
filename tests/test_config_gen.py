@@ -10,6 +10,8 @@ Uses sudo /usr/local/bin/run-netns for namespace operations.
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -22,13 +24,25 @@ NS = "shorewall-next-sim-fuzz"
 SWNFT = str(Path(__file__).parent.parent / ".venv" / "bin" / "shorewall-nft")
 
 
+def _kill_ns_pids(ns: str) -> None:
+    # See tests/test_cli_integration.py — `ip netns exec NS kill -9 -1` is
+    # UNSAFE because ip netns does not isolate PIDs from the host.
+    r = subprocess.run([*RUN_NETNS, "pids", ns],
+                       capture_output=True, text=True, timeout=5)
+    for tok in r.stdout.split():
+        if tok.isdigit():
+            try:
+                os.kill(int(tok), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 @pytest.fixture(scope="module")
 def fuzz_netns():
     """Create namespace for fuzz testing."""
     subprocess.run([*RUN_NETNS, "add", NS], capture_output=True)
     yield NS
-    subprocess.run([*RUN_NETNS, "exec", NS, "kill", "-9", "-1"],
-                   capture_output=True, timeout=5)
+    _kill_ns_pids(NS)
     import time
     time.sleep(0.2)
     subprocess.run([*RUN_NETNS, "delete", NS], capture_output=True)
