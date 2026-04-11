@@ -143,18 +143,25 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
         lines.append("\tchain sw_zone_tag {")
         lines.append("\t\ttype filter hook prerouting priority mangle;")
         if ct_mask == 0xffffffff:
+            # Full 32-bit mask → vmap form is valid.
             lines.append("\t\tct state new ct mark set iifname map {")
+            entries = []
+            for iface, mark in sorted(zone_marks.items()):
+                entries.append(f'\t\t\t"{iface}" : {mark & ct_mask:#x}')
+            lines.append(",\n".join(entries))
+            lines.append("\t\t}")
         else:
-            lines.append(
-                f"\t\tct state new ct mark set ct mark and {inv_mask:#010x} "
-                f"or iifname map {{"
-            )
-        entries = []
-        for iface, mark in sorted(zone_marks.items()):
-            masked_mark = mark & ct_mask
-            entries.append(f'\t\t\t"{iface}" : {masked_mark:#x}')
-        lines.append(",\n".join(entries))
-        lines.append("\t\t}")
+            # Masked form: emit one rule per iface. nft rejects
+            # `ct mark and CONST or MAP` because the rhs of `or` must
+            # be a constant. Per-iface rules with two constants each
+            # are the correct idiom and compile cleanly.
+            for iface, mark in sorted(zone_marks.items()):
+                masked_mark = mark & ct_mask
+                lines.append(
+                    f'\t\tct state new iifname "{iface}" '
+                    f"ct mark set ct mark and {inv_mask:#010x} "
+                    f"or {masked_mark:#x}"
+                )
         lines.append("\t}")
 
     flowtable_devices = _parse_flowtable_devices(ir)
