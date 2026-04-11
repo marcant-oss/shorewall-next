@@ -19,6 +19,8 @@ import atexit
 import logging
 import os
 import signal
+import socket
+from pathlib import Path
 from typing import Any
 
 from shorewall_nft.nft.netlink import NftInterface
@@ -42,6 +44,19 @@ class Daemon:
         netns_spec: list[str] | str,
         scrape_interval: float,
         reprobe_interval: float,
+        allowlist_file: Path | None = None,
+        pbdns_socket: str | None = None,
+        peer_bind_host: str | None = None,
+        peer_bind_port: int | None = None,
+        peer_host: str | None = None,
+        peer_port: int | None = None,
+        peer_auth_key_file: Path | None = None,
+        peer_heartbeat_interval: float = 5.0,
+        state_dir: Path | None = None,
+        state_enabled: bool = True,
+        state_no_load: bool = False,
+        state_flush: bool = False,
+        reload_poll_interval: float = 2.0,
     ) -> None:
         self.prom_host = prom_host
         self.prom_port = prom_port
@@ -49,6 +64,21 @@ class Daemon:
         self.netns_spec = netns_spec
         self.scrape_interval = scrape_interval
         self.reprobe_interval = reprobe_interval
+
+        # DNS-set pipeline opt-in config.
+        self.allowlist_file = allowlist_file
+        self.pbdns_socket = pbdns_socket
+        self.peer_bind_host = peer_bind_host
+        self.peer_bind_port = peer_bind_port
+        self.peer_host = peer_host
+        self.peer_port = peer_port
+        self.peer_auth_key_file = peer_auth_key_file
+        self.peer_heartbeat_interval = peer_heartbeat_interval
+        self.state_dir = state_dir
+        self.state_enabled = state_enabled
+        self.state_no_load = state_no_load
+        self.state_flush = state_flush
+        self.reload_poll_interval = reload_poll_interval
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
@@ -64,6 +94,16 @@ class Daemon:
 
         self._prom_server: Any | None = None
         self._dnstap_server: Any | None = None
+
+        # DNS-set pipeline subsystems (opt-in via allowlist_file).
+        self._tracker: Any | None = None
+        self._router: Any | None = None
+        self._set_writer: Any | None = None
+        self._tracker_bridge: Any | None = None
+        self._state_store: Any | None = None
+        self._reload_monitor: Any | None = None
+        self._pbdns_server: Any | None = None
+        self._peer_link: Any | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────
 
@@ -106,6 +146,14 @@ class Daemon:
         self._reprobe_task = asyncio.create_task(
             self._reprobe_loop(), name="shorewalld.reprobe")
 
+        # Optional DNS-set pipeline (Phase 5–10). Requires a compiled
+        # allowlist file to bootstrap the tracker; everything else
+        # (pbdns / peer link / state / reload monitor) layers on top.
+        # Started BEFORE the dnstap server so the DnstapServer can
+        # pick up the tracker bridge for its routing path.
+        if self.allowlist_file is not None:
+            await self._start_dns_pipeline(netns_list)
+
         # Optional dnstap consumer (Phase 4). Off by default.
         if self.api_socket:
             await self._start_dnstap_server(netns_list)
@@ -113,8 +161,146 @@ class Daemon:
         try:
             await self._stop_event.wait()
         finally:
-            self._shutdown()
+            await self._async_shutdown()
         return 0
+
+    async def _start_dns_pipeline(self, netns_list: list[str]) -> None:
+        """Wire up tracker + router + setwriter + optional ingress/peer.
+
+        All subsystems are optional; this is only called when the
+        caller passed ``allowlist_file`` because without a compiled
+        allowlist the tracker has nothing to dedup against.
+        """
+        assert self.allowlist_file is not None
+        assert self._nft is not None
+        from shorewall_nft.nft.dns_sets import read_compiled_allowlist
+
+        from .dns_set_tracker import DnsSetTracker
+        from .dnstap_bridge import TrackerBridge
+        from .reload_monitor import ReloadMonitor, TableFingerprintProbe
+        from .setwriter import SetWriter
+        from .state import StateConfig, StateStore
+        from .worker_router import WorkerRouter
+
+        try:
+            registry = read_compiled_allowlist(self.allowlist_file)
+        except Exception:
+            log.exception(
+                "failed to read allowlist file %s", self.allowlist_file)
+            return
+
+        self._tracker = DnsSetTracker()
+        self._tracker.load_registry(registry)
+        log.info(
+            "dns pipeline: loaded allowlist (%d qnames)",
+            sum(1 for _ in registry.iter_sorted()),
+        )
+
+        loop = asyncio.get_running_loop()
+        self._router = WorkerRouter(tracker=self._tracker, loop=loop)
+        for netns in netns_list:
+            try:
+                await self._router.add_netns(netns)
+            except Exception:
+                log.exception(
+                    "router: failed to add netns %r", netns)
+
+        self._set_writer = SetWriter(self._tracker, self._router, loop=loop)
+        await self._set_writer.start()
+
+        self._tracker_bridge = TrackerBridge(
+            self._tracker, self._set_writer,
+            default_netns=netns_list[0] if netns_list else "",
+        )
+
+        # State persistence: load first so the pre-populated tracker
+        # gets repopulated to the live ruleset by ReloadMonitor's
+        # startup pass, then schedule periodic saves.
+        if self.state_enabled:
+            state_cfg = StateConfig(
+                state_dir=self.state_dir or StateConfig().state_dir,
+                enabled=True,
+                load_on_start=not self.state_no_load,
+                flush_on_start=self.state_flush,
+            )
+            self._state_store = StateStore(self._tracker, state_cfg)
+            try:
+                self._state_store.load()
+            except Exception:
+                log.exception("state load failed")
+            await self._state_store.start(loop)
+
+        # Reload monitor: one fingerprint probe per netns. Cheap
+        # (one list_table per poll) — the 2 s default poll interval
+        # catches ``nft -f`` swaps within a couple of seconds.
+        probes = {
+            netns: TableFingerprintProbe(self._nft, netns=netns)
+            for netns in netns_list
+        }
+        self._reload_monitor = ReloadMonitor(
+            tracker=self._tracker,
+            router=self._router,
+            probes=probes,
+            poll_interval=self.reload_poll_interval,
+        )
+        try:
+            await self._reload_monitor.start(loop)
+        except Exception:
+            log.exception("reload monitor start failed")
+
+        # PBDNSMessage (PowerDNS recursor protobuf logger) ingress.
+        if self.pbdns_socket:
+            from .pbdns import PbdnsServer
+            self._pbdns_server = PbdnsServer(
+                socket_path=self.pbdns_socket,
+                bridge=self._tracker_bridge,
+            )
+            try:
+                await self._pbdns_server.start()
+            except Exception:
+                log.exception(
+                    "pbdns server failed to bind %s", self.pbdns_socket)
+                self._pbdns_server = None
+
+        # HA peer link.
+        if (self.peer_host and self.peer_port
+                and self.peer_auth_key_file is not None):
+            from .peer import HmacSha256Auth, PeerLink
+            try:
+                auth = HmacSha256Auth.from_file(self.peer_auth_key_file)
+            except Exception:
+                log.exception(
+                    "peer auth key load failed from %s",
+                    self.peer_auth_key_file)
+                auth = None
+            if auth is not None:
+                self._peer_link = PeerLink(
+                    tracker=self._tracker,
+                    writer=self._set_writer,
+                    auth=auth,
+                    bind_host=self.peer_bind_host or "0.0.0.0",
+                    bind_port=self.peer_bind_port or 9749,
+                    peer_host=self.peer_host,
+                    peer_port=self.peer_port,
+                    origin_node=socket.gethostname(),
+                    heartbeat_interval=self.peer_heartbeat_interval,
+                )
+                try:
+                    await self._peer_link.start(loop)
+                except Exception:
+                    log.exception(
+                        "peer link start failed on %s:%d → %s:%d",
+                        self.peer_bind_host, self.peer_bind_port,
+                        self.peer_host, self.peer_port)
+                    self._peer_link = None
+
+        log.info(
+            "dns pipeline: ready "
+            "(pbdns=%s peer=%s state=%s reload_monitor=on)",
+            "on" if self._pbdns_server else "off",
+            "on" if self._peer_link else "off",
+            "on" if self._state_store else "off",
+        )
 
     def _start_prom_server(self) -> None:
         """Stand up a prometheus_client-backed HTTP scrape endpoint.
@@ -158,7 +344,13 @@ class Daemon:
         assert self._nft is not None and self.api_socket is not None
         assert self._registry is not None
         self._dnstap_server = DnstapServer(
-            self.api_socket, self._nft, netns_list)
+            self.api_socket, self._nft, netns_list,
+            # If the DNS pipeline was initialised first, route every
+            # decoded DnsUpdate through the tracker-aware bridge
+            # (dedup + batch + persistent worker) instead of the
+            # legacy direct-nft SetWriter.
+            bridge=self._tracker_bridge,
+        )
         try:
             await self._dnstap_server.start()
         except Exception:
@@ -219,6 +411,70 @@ class Daemon:
 
     def shutdown(self) -> None:
         """Public idempotent shutdown entry point (for tests)."""
+        self._shutdown()
+
+    async def _async_shutdown(self) -> None:
+        """Shutdown path called from ``run()`` while the loop is alive.
+
+        Tears down the async DNS-pipeline subsystems in reverse wiring
+        order, then delegates the synchronous parts to :meth:`_shutdown`.
+        """
+        if self._shutdown_done:
+            return
+
+        # Peer link: stop sending heartbeats and close the UDP socket.
+        if self._peer_link is not None:
+            try:
+                await self._peer_link.stop()
+            except Exception:
+                log.exception("peer link stop failed")
+            self._peer_link = None
+
+        # pbdns ingress server.
+        if self._pbdns_server is not None:
+            try:
+                await self._pbdns_server.close()
+            except Exception:
+                log.exception("pbdns server close failed")
+            self._pbdns_server = None
+
+        # Reload monitor.
+        if self._reload_monitor is not None:
+            try:
+                await self._reload_monitor.stop()
+            except Exception:
+                log.exception("reload monitor stop failed")
+            self._reload_monitor = None
+
+        # State store: final save before the tracker gets torn down.
+        if self._state_store is not None:
+            try:
+                await self._state_store.stop()
+            except Exception:
+                log.exception("state store stop failed")
+            self._state_store = None
+
+        # SetWriter: flush pending batches through the worker router.
+        if self._set_writer is not None:
+            try:
+                await self._set_writer.shutdown()
+            except Exception:
+                log.exception("set writer shutdown failed")
+            self._set_writer = None
+
+        # Worker router: terminate every per-netns fork worker.
+        if self._router is not None:
+            try:
+                await self._router.shutdown()
+            except Exception:
+                log.exception("worker router shutdown failed")
+            self._router = None
+
+        # Drop tracker + bridge references — they own no kernel state.
+        self._tracker_bridge = None
+        self._tracker = None
+
+        # Synchronous subsystems (prom server, profile teardown, …).
         self._shutdown()
 
     def _shutdown(self) -> None:

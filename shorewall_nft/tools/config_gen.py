@@ -83,7 +83,7 @@ class ConfigGenerator:
             'LOGFORMAT="Shorewall:%s:%s:"',
             "IP_FORWARDING=On",
             f"FASTACCEPT={'No' if 'accounting' in features else 'Yes'}",
-            "OPTIMIZE=3",
+            "OPTIMIZE=8",
         ]
         if "blacklist" in features:
             lines.append("DYNAMIC_BLACKLIST=Yes")
