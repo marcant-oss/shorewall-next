@@ -85,6 +85,10 @@ install -Dm644 packaging/systemd/shorewall-nft.service \
     %{buildroot}%{_unitdir}/shorewall-nft.service
 install -Dm644 packaging/systemd/shorewall-nft@.service \
     %{buildroot}%{_unitdir}/shorewall-nft@.service
+install -Dm644 packaging/systemd/shorewalld.service \
+    %{buildroot}%{_unitdir}/shorewalld.service
+install -Dm644 packaging/systemd/shorewalld@.service \
+    %{buildroot}%{_unitdir}/shorewalld@.service
 
 # man page
 install -Dm644 tools/man/shorewall-nft.8 \
@@ -127,8 +131,11 @@ fi
 %doc README.md CHANGELOG.md
 %{_bindir}/shorewall-nft
 %{_bindir}/shorewall-nft-migrate
+%{_bindir}/shorewalld
 %{_unitdir}/shorewall-nft.service
 %{_unitdir}/shorewall-nft@.service
+%{_unitdir}/shorewalld.service
+%{_unitdir}/shorewalld@.service
 %{_mandir}/man8/shorewall-nft.8*
 %{_datadir}/bash-completion/completions/shorewall-nft
 %{_datadir}/zsh/site-functions/_shorewall-nft
