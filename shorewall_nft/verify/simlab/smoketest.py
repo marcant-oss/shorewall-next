@@ -1218,12 +1218,14 @@ def main() -> int:
     p_full.add_argument("--batch-size", type=int, default=512,
         help="Max probes in flight per batch. Higher = more throughput, "
              "more transient RAM for the ProbeSpec batch (default 512)")
-    p_full.add_argument("--probe-timeout", type=float, default=0.35,
-        help="Per-probe timeout in seconds. On TUN/TAP loopback the "
-             "round-trip is ~10 ms post-ARP-cache (p50 ~30 ms, p99 ~100 "
-             "ms), so 0.35 s is 35x safety. Raise to 0.7 if a run gets "
-             "false fail_drops from a slow TUN backend; raise to 2.0 "
-             "for pathological forwarding (default 0.35)")
+    p_full.add_argument("--probe-timeout", type=float, default=0.15,
+        help="Per-probe timeout in seconds. TUN/TAP loopback + "
+             "threaded reader + fast-path probe_id extraction brings "
+             "p99 latency to ~200 ms; 0.15 s is just above p99 so "
+             "batches move as fast as the OS can schedule them. "
+             "Raise to 0.35/0.7/2.0 if a run reports false fail_drops "
+             "from a slow TUN backend or pathological forwarding "
+             "(default 0.15)")
     p_full.add_argument("-v", "--verbose", action="store_true",
         help="Dump raw sysctl values before the run")
 
