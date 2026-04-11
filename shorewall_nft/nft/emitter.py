@@ -315,14 +315,35 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
             lines.append(f"{indent}\tmeta l4proto {{ tcp, udp }} flow add @ft")
             lines.append("")
 
+        # DNAT concat-map: collapse groups of `ip daddr X tcp/udp dport Y
+        # dnat to Z` rules into a single `ip daddr . tcp dport dnat ip to
+        # map { X . Y : Z:Q, ... }`. Gated on OPTIMIZE_DNAT_MAP=Yes. Must
+        # run before the per-rule loop so it can rewrite the rule list.
+        use_dnat_map = (ir.settings.get("OPTIMIZE_DNAT_MAP", "No").lower()
+                        in ("yes", "1", "true"))
+        emitted_dnat_map = False
+        if (use_dnat_map and chain.hook == Hook.PREROUTING
+                and chain.chain_type == ChainType.NAT):
+            dnat_lines, remaining_rules = _emit_dnat_concat_map(
+                chain.rules, indent + "\t")
+            if dnat_lines:
+                lines.extend(dnat_lines)
+                lines.append("")
+                emitted_dnat_map = True
+                chain_rules_to_emit = remaining_rules
+            else:
+                chain_rules_to_emit = chain.rules
+        else:
+            chain_rules_to_emit = chain.rules
+
         # Emit ct state rules first (before dispatch)
-        for idx, rule in enumerate(chain.rules):
+        for idx, rule in enumerate(chain_rules_to_emit):
             rule_str = _emit_rule(rule, debug_ctx=debug_ctx,
                                    chain_name=chain.name, rule_idx=idx)
             if rule_str:
                 lines.append(f"{indent}\t{rule_str}")
 
-        if chain.rules:
+        if chain_rules_to_emit or emitted_dnat_map:
             lines.append("")
 
         # Add dispatch jumps to zone-pair chains (filter chains only)
@@ -348,6 +369,134 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
 
     lines.append(f"{indent}}}")
     return lines
+
+
+def _emit_dnat_concat_map(
+    rules: list["Rule"], indent: str
+) -> tuple[list[str], list["Rule"]]:
+    """Collapse adjacent DNAT rules into concat-map expressions.
+
+    Groups `dnat to` rules by (saddr, proto) and turns each group into
+    a single ``ip daddr . L4 dport dnat ip to map { X . Y : Z . Q, … }``
+    expression. Rules that are not DNAT-to-addr:port, or that carry
+    extra matches we don't understand, pass through untouched.
+
+    Returns (emitted_lines, remaining_rules) — the caller emits the
+    lines and then continues with the remaining rules.
+    """
+    emitted: list[str] = []
+    remaining: list["Rule"] = []
+
+    # Group signatures → list of (daddr, dport, target_ip, target_port)
+    Bucket = tuple[frozenset[str], str]  # (saddr_key, proto)
+    buckets: dict[Bucket, list[tuple[str, str, str, str | None]]] = {}
+    bucket_order: list[Bucket] = []
+
+    for rule in rules:
+        if not rule.verdict_args or not rule.verdict_args.startswith("dnat:"):
+            remaining.append(rule)
+            continue
+
+        target = rule.verdict_args[len("dnat:"):]
+        if "@" in target or "map" in target:
+            remaining.append(rule)
+            continue
+
+        # Target must be ip[:port] — no address ranges, no interface specs.
+        if ":" in target:
+            tip, tport = target.rsplit(":", 1)
+            if not tport.isdigit():
+                remaining.append(rule)
+                continue
+        else:
+            tip, tport = target, None
+
+        # Walk matches for daddr + proto + dport. Bail on anything else
+        # we don't recognise so correctness is preserved.
+        daddr: str | None = None
+        proto: str | None = None
+        dport: str | None = None
+        saddr_parts: list[str] = []
+        weird = False
+        for m in rule.matches:
+            if m.field == "ip daddr" and not m.negate:
+                daddr = m.value
+            elif m.field == "ip saddr" and not m.negate:
+                saddr_parts.append(m.value)
+            elif m.field == "meta l4proto" and not m.negate:
+                proto = m.value
+            elif m.field in ("tcp dport", "udp dport") and not m.negate:
+                dport = m.value
+                if proto is None:
+                    proto = m.field.split()[0]
+            elif m.field in ("iifname", "oifname") and not m.negate:
+                # interface constraints are pair-level, leave these
+                # alone rather than flattening
+                weird = True
+            else:
+                weird = True
+
+        if weird or daddr is None or proto is None or dport is None:
+            remaining.append(rule)
+            continue
+        if "{" in daddr or "{" in dport:
+            # Already an anonymous set — leave it.
+            remaining.append(rule)
+            continue
+
+        # Explode comma-separated dports into one bucket entry each so
+        # the final concat-map is syntactically valid nft.
+        dport_clean = dport.strip().lstrip("{").rstrip("}").strip()
+        for p in [p.strip() for p in dport_clean.split(",") if p.strip()]:
+            key: Bucket = (frozenset(saddr_parts), proto)
+            if key not in buckets:
+                buckets[key] = []
+                bucket_order.append(key)
+            # Target port: explicit tport > source port (for 1:1 passthroughs)
+            effective_tport = tport or p
+            buckets[key].append((daddr, p, tip, effective_tport))
+
+    for key in bucket_order:
+        items = buckets[key]
+        if len(items) < 2:
+            # Single-element buckets: pass-through, we'd gain nothing.
+            for daddr, dport, tip, tport in items:
+                # Re-synthesize the rule string directly. Easier than
+                # manufacturing a Rule and re-emitting.
+                saddr_key, proto = key
+                lead = ""
+                if saddr_key:
+                    sval = ", ".join(sorted(saddr_key))
+                    if "," in sval:
+                        sval = f"{{ {sval} }}"
+                    lead = f"ip saddr {sval} "
+                target_str = f"{tip}:{tport}" if tport else tip
+                emitted.append(
+                    f"{indent}{lead}ip daddr {daddr} meta l4proto {proto} "
+                    f"{proto} dport {dport} dnat to {target_str}"
+                )
+            continue
+
+        saddr_key, proto = key
+        lead = ""
+        if saddr_key:
+            sval = ", ".join(sorted(saddr_key))
+            if "," in sval:
+                sval = f"{{ {sval} }}"
+            lead = f"ip saddr {sval} "
+
+        emitted.append(f"{indent}# DNAT concat-map ({len(items)} entries)")
+        emitted.append(
+            f"{indent}{lead}dnat ip to ip daddr . {proto} dport map {{"
+        )
+        rendered = []
+        for daddr, dport, tip, tport in items:
+            tgt = f"{tip} . {tport}" if tport else f"{tip} . {dport}"
+            rendered.append(f"{indent}\t{daddr} . {dport} : {tgt}")
+        emitted.append(",\n".join(rendered))
+        emitted.append(f"{indent}}}")
+
+    return emitted, remaining
 
 
 def _compute_zone_marks(ir: FirewallIR) -> dict[str, int]:
