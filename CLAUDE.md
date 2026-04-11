@@ -126,10 +126,13 @@ Already committed on this branch since 1.0.0:
    stream sidecar statt naïver postresolve Lua hook. Jede
    FW-Node konsultiert **beide** pdns_recursor-Instanzen. Design
    in memory `project_dns_filtering.md`.
-5. **pcap-on-failure** in simlab — jede gefailte probe dumpt
-   die worker trace-buffers via `packets.export_trace_pcap()`
-   in `docs/testing/simlab-reports/<ts>/fail-<probe_id>.pcap`.
-   Gehört in den `cmd_full` post-run path.
+5. ~~pcap-on-failure~~ ✅ (erste Iteration): report.py::_write_fail_pcaps
+   schreibt pro failed probe eine .pcap mit dem injizierten
+   Frame nach `<run_dir>/fail-pcaps/<id>-<inject>-<expect>-
+   <dir>.pcap` + grep'barer Index `fail-pcaps.txt`. Nächste
+   Iteration: auch die Worker-Ring-Buffer (tatsächlich beobachtete
+   Frames, nicht nur der Injizierte) reinpacken, sobald der Worker
+   sie beim `trace_dump` mitliefert.
 6. **VRRP/BGP/RADIUS probe injection** — die builders
    existieren in `simlab/packets.py`, aber es gibt noch keine
    controller-side Abfrage die sie automatisch aus dem

@@ -313,4 +313,73 @@ def write_report(
             out_lines.extend(errored)
             out_lines.append("")
         (run_dir / "mismatches.txt").write_text("\n".join(out_lines))
+
+    _write_fail_pcaps(run_dir, probes)
     return run_dir
+
+
+def _write_fail_pcaps(run_dir: Path, probes: list[tuple]) -> None:
+    """Dump one pcap per failed probe into ``run_dir/fail-pcaps/``.
+
+    Each pcap holds the raw bytes that were injected for that probe,
+    parsed as a single Ethernet frame (TAP) or bare IP packet (TUN).
+    Filenames encode ``<probe_id>-<inject>-<expect>-<direction>.pcap``
+    so triage can grep by probe id or by zone pair without opening
+    the files.
+
+    Silent on scapy import error — the operator sees a single note
+    in the fail-pcaps.txt index instead of an exception.
+    """
+    fails: list[tuple] = []
+    for cat, expected, spec, meta in probes:
+        if expected == "UNKNOWN":
+            continue
+        if spec.verdict and spec.verdict != expected and spec.payload:
+            fails.append((cat, expected, spec, meta))
+    if not fails:
+        return
+
+    pcap_dir = run_dir / "fail-pcaps"
+    pcap_dir.mkdir(parents=True, exist_ok=True)
+    index_lines: list[str] = [
+        f"# {len(fails)} failed probes — one pcap per probe",
+        "# format: <probe_id>  <pcap>  expected=<v> got=<v>  "
+        "<inject>→<expect>  <desc>",
+        "",
+    ]
+
+    try:
+        import scapy.all as _sc  # type: ignore[import-not-found]
+        from scapy.utils import wrpcap as _wrpcap  # type: ignore[import-not-found]
+    except ImportError:
+        (run_dir / "fail-pcaps.txt").write_text(
+            "# scapy not installed — pcap dump skipped\n"
+        )
+        return
+
+    for cat, expected, spec, meta in fails:
+        direction = (
+            "fail_drop" if expected == "ACCEPT" else
+            "fail_accept" if expected == "DROP" else
+            "error"
+        )
+        fname = (
+            f"{spec.probe_id:05d}-{spec.inject_iface}-"
+            f"{spec.expect_iface}-{direction}.pcap"
+        )
+        path = pcap_dir / fname
+        try:
+            pkt = _sc.Ether(spec.payload)
+            _wrpcap(str(path), [pkt])
+        except Exception as e:
+            index_lines.append(
+                f"{spec.probe_id:05d}  (pcap write failed: {e})")
+            continue
+        index_lines.append(
+            f"{spec.probe_id:05d}  fail-pcaps/{fname}  "
+            f"expected={expected} got={spec.verdict}  "
+            f"{spec.inject_iface}→{spec.expect_iface}  "
+            f"{meta.get('desc', '')}"
+        )
+
+    (run_dir / "fail-pcaps.txt").write_text("\n".join(index_lines) + "\n")
