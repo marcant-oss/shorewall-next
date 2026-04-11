@@ -104,6 +104,19 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
             lines.append("\t\tflags timeout;")
             lines.append("\t}")
 
+    # nfacct counter declarations — named counter objects from the
+    # nfacct config file. Must come before any chain that references
+    # them via `counter name "<name>"`.
+    if getattr(ir, "nfacct_counters", None):
+        lines.append("")
+        lines.append("\t# Named accounting counters (from nfacct file)")
+        for name, (pkt, byt) in sorted(ir.nfacct_counters.items()):
+            if pkt or byt:
+                lines.append(
+                    f'\tcounter {name} {{ packets {pkt} bytes {byt} }}')
+            else:
+                lines.append(f"\tcounter {name} {{ }}")
+
     # Emit CT helper objects (must be before chains that reference them)
     _emit_ct_helper_objects(lines, ir)
 
