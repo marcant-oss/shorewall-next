@@ -863,6 +863,28 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     and fastaccept):
                 continue
 
+            # Symmetric optimisation for DROP/REJECT: a rule like
+            # `DROP:$LOG agfeo any` expands into every agfeo→X chain.
+            # If the chain's policy is *also* drop-class, the inline
+            # rule is redundant — and worse, when it lands mid-chain
+            # (because file order has it BEFORE later `all → adm:host`
+            # accept rules) it shadows everything that follows. The
+            # iptables backend simply omits these rules; we mirror
+            # that behaviour. Only triggers for catch-all expansions
+            # without any host/proto/port narrowing — explicit
+            # `agfeo→adm DROP` stays in the chain.
+            drop_like = (Verdict.DROP, Verdict.REJECT)
+            chain_drops = chain.policy in drop_like
+            rule_is_drop_like = verdict in drop_like
+            if (is_all_expansion and rule_is_drop_like and chain_drops
+                    and not verdict_args
+                    and not src_addrs and not dst_addrs
+                    and not proto and not dport and not sport
+                    and not origdest and not headers
+                    and not mark and not connlimit and not user
+                    and not time_match and not switch and not helper):
+                continue
+
             rule = Rule(
                 verdict=verdict,
                 verdict_args=verdict_args,
