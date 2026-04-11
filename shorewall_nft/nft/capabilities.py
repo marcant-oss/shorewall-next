@@ -100,6 +100,7 @@ class NftCapabilities:
 
     # Flowtable
     has_flowtable: bool = False
+    has_flowtable_offload: bool = False  # software + HW fastpath
 
     # Kernel modules
     kernel_modules: list[str] = field(default_factory=list)
@@ -192,6 +193,19 @@ class NftCapabilities:
         # Flowtable
         rc, _, _ = _nft(f'add flowtable inet {_PROBE_TABLE} __ft {{ hook ingress priority 0; devices = {{}}; }}', netns)
         caps.has_flowtable = rc == 0
+        if caps.has_flowtable:
+            _nft(f"delete flowtable inet {_PROBE_TABLE} __ft", netns)
+        # Flowtable hardware/software offload flag. Kernel may accept
+        # `flags offload` even without NIC support — the actual hardware
+        # offload is validated at packet time. Probing the flag at
+        # config-load time is the best we can do from userspace.
+        rc, _, _ = _nft(
+            f'add flowtable inet {_PROBE_TABLE} __ft2 '
+            f'{{ hook ingress priority 0; devices = {{}}; flags offload; }}',
+            netns)
+        caps.has_flowtable_offload = rc == 0
+        if caps.has_flowtable_offload:
+            _nft(f"delete flowtable inet {_PROBE_TABLE} __ft2", netns)
 
         # Kernel modules — always check on the HOST (modules are global, not per-netns)
         import os
