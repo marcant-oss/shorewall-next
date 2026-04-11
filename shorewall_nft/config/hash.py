@@ -28,6 +28,10 @@ _HASHED_FILES = frozenset({
     "providers", "snat", "init", "netmap",
     "accounting", "actions", "routes", "routestopped",
     "stoppedrules",
+    # Files added in the structured-io coverage round.
+    "blacklist", "helpers",
+    "arprules", "proxyarp", "proxyndp", "ecn",
+    "nfacct", "rawnat", "scfilter",
 })
 
 # Subdirectories whose contents contribute

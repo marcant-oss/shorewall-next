@@ -171,6 +171,13 @@ _COLUMNS: dict[str, list[str]] = {
     "scfilter": [
         "interface", "hosts", "options",
     ],
+    # Static blacklist file: address-or-subnet plus optional
+    # proto/port narrowing. Distinct from blrules (which has the
+    # full rule grammar) — blacklist is the legacy "drop these
+    # sources outright" list.
+    "blacklist": [
+        "address", "proto", "port",
+    ],
 }
 
 
@@ -198,6 +205,11 @@ _SCRIPT_FILES: frozenset[str] = frozenset({
     "refresh", "refreshed", "restored",
     "findgw", "ifup", "isusable",
     "savesets",
+    # Helpers file is the legacy `loadmodule …` list — shorewall
+    # invokes it at startup to load the kernel conntrack helper
+    # modules. Treat as a line-based script so the round-trip
+    # preserves it byte-for-byte.
+    "helpers",
 })
 
 

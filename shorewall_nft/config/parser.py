@@ -66,6 +66,10 @@ class ShorewalConfig:
     nfacct: list[ConfigLine] = field(default_factory=list)
     rawnat: list[ConfigLine] = field(default_factory=list)
     scfilter: list[ConfigLine] = field(default_factory=list)
+    # Legacy static blacklist (CIDR + optional proto/port).
+    # Distinct from blrules (full rule grammar) — blacklist is
+    # the simple "drop these sources outright" list.
+    blacklist: list[ConfigLine] = field(default_factory=list)
     macros: dict[str, list[ConfigLine]] = field(default_factory=dict)
     # Line-based extension scripts — raw line lists so the structured
     # blob can round-trip them without pretending they have columns.
@@ -145,7 +149,8 @@ class ConfigParser:
                      # - stoppedrules: rules that stay when FW is stopped
                      # - scfilter:   source CIDR filter
                      "arprules", "proxyarp", "proxyndp", "ecn",
-                     "nfacct", "rawnat", "scfilter"):
+                     "nfacct", "rawnat", "scfilter",
+                     "blacklist"):
             path = self.config_dir / name
             if path.exists():
                 lines = self._parse_columnar(path)
