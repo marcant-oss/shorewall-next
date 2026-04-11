@@ -47,9 +47,20 @@ class SimFwTopology:
     forked worker children and then closes its own copy.
     """
 
-    def __init__(self, fw_state: FwState, ns_name: str = NS_FW_DEFAULT):
+    def __init__(self, fw_state: FwState, ns_name: str = NS_FW_DEFAULT,
+                 *, iface_rp_filter: dict[str, str] | None = None):
         self.state = fw_state
         self.ns_name = ns_name
+        # Per-iface rp_filter values resolved from the parsed
+        # shorewall config (matches the per-iface routefilter
+        # option). When None, the previous behaviour applies:
+        # rp_filter is forced to 0 globally so the simlab can
+        # inject spoofed-source probes for autorepair coverage.
+        # When supplied, values are written per-iface AFTER the
+        # interface lands in the netns so the test environment
+        # mirrors what production would see.
+        self.iface_rp_filter: dict[str, str] = dict(
+            iface_rp_filter or {})
         # iface name → file descriptor (owned by this process)
         self.tun_fds: dict[str, int] = {}
         # iface name → device kind ("tap" or "tun")
@@ -124,8 +135,17 @@ class SimFwTopology:
         # Sysctls via setns trick
         self._sysctl_write(["net", "ipv4", "ip_forward"], "1")
         self._sysctl_write(["net", "ipv6", "conf", "all", "forwarding"], "1")
-        self._sysctl_write(["net", "ipv4", "conf", "all", "rp_filter"], "0")
-        self._sysctl_write(["net", "ipv4", "conf", "default", "rp_filter"], "0")
+        # If we don't have per-iface rp_filter overrides we keep
+        # the historical behaviour: force rp_filter=0 globally so
+        # autorepair-rewritten spoofed-src probes can be injected
+        # without the kernel discarding them at ingress. With
+        # overrides we let the per-iface step (in
+        # ``_configure_all_interfaces``) write the real values.
+        if not self.iface_rp_filter:
+            self._sysctl_write(
+                ["net", "ipv4", "conf", "all", "rp_filter"], "0")
+            self._sysctl_write(
+                ["net", "ipv4", "conf", "default", "rp_filter"], "0")
 
     def _sysctl_write(self, path_parts: list[str], value: str) -> None:
         """Write a sysctl inside NS_FW via a short setns() hop."""
@@ -245,6 +265,19 @@ class SimFwTopology:
                     ipr.link("set", index=idx, state="up")
                 except NetlinkError:
                     pass
+
+        # Apply per-iface rp_filter overrides AFTER all interfaces
+        # are configured. The values come from the parsed shorewall
+        # config (routefilter / noroutefilter / routefilter=N option
+        # on the interfaces file). Without overrides we keep the
+        # historical "all=0 default=0" forcing applied earlier in
+        # _ensure_ns so spoofed-src probes still work.
+        if self.iface_rp_filter:
+            for name, value in self.iface_rp_filter.items():
+                if name not in self.tun_fds:
+                    continue
+                self._sysctl_write(
+                    ["net", "ipv4", "conf", name, "rp_filter"], value)
 
     def _apply_routes(self) -> None:
         """Step 4: install every parsed route in NS_FW, skipping
