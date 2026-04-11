@@ -307,6 +307,15 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     create_action_chains(ir)
     create_dynamic_blacklist(ir, config.settings)
 
+    # FASTACCEPT=No: classic shorewall puts `ctstate RELATED,ESTABLISHED
+    # -j ACCEPT` + `ctstate INVALID -j DROP` inside every zone-pair chain
+    # instead of at the top of the FORWARD base chain. shorewall-nft's
+    # base-chain pass already handles the FASTACCEPT=Yes case; mirror
+    # the classic behaviour here for FASTACCEPT=No so return traffic
+    # through zone-pair chains still gets accepted.
+    if not getattr(ir, "_fastaccept", True):
+        _prepend_ct_state_to_zone_pair_chains(ir)
+
     # Optimize: run all applicable optimizations
     optimize_level = int(config.settings.get("OPTIMIZE", "0"))
     if optimize_level >= 1:
@@ -378,6 +387,48 @@ def _create_base_chains(ir: FirewallIR) -> None:
                     comment="NDP essential",
                 ))
         ir.add_chain(chain)
+
+
+def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR) -> None:
+    """Prepend ct state RELATED,ESTABLISHED accept + invalid drop to every
+    zone-pair chain. Used when FASTACCEPT=No.
+
+    Classic shorewall iptables with FASTACCEPT=No emits this pattern at
+    the top of every generated zone2zone chain:
+
+        -A adm2cdn -m conntrack --ctstate INVALID,NEW,UNTRACKED -j dynamic
+        -A adm2cdn -m conntrack --ctstate INVALID,NEW,UNTRACKED -j smurfs
+        -A adm2cdn -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+    We match the established/invalid semantics here. Zone-pair chains
+    are identified as non-base chains whose names contain a dash
+    matching a known zone pair (emitter convention: "<src>-<dst>").
+    Chains starting with "sw_" are action chains — skipped.
+    """
+    all_zones = set(ir.zones.all_zone_names())
+    for name, chain in ir.chains.items():
+        if chain.is_base_chain:
+            continue
+        if name.startswith("sw_"):
+            continue
+        if "-" not in name:
+            continue
+        src, _, dst = name.partition("-")
+        if src not in all_zones or dst not in all_zones:
+            continue
+        # Prepend the established accept + invalid drop so they fire
+        # before any explicit rule in the chain.
+        ct_rules = [
+            Rule(
+                matches=[Match(field="ct state", value="established,related")],
+                verdict=Verdict.ACCEPT,
+            ),
+            Rule(
+                matches=[Match(field="ct state", value="invalid")],
+                verdict=Verdict.DROP,
+            ),
+        ]
+        chain.rules = ct_rules + list(chain.rules)
 
 
 def _process_policies(ir: FirewallIR, policy_lines: list[ConfigLine],
