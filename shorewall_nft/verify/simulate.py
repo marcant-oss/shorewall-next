@@ -20,7 +20,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 RUN_NETNS = ["sudo", "/usr/local/bin/run-netns"]
 
@@ -142,6 +142,11 @@ class SimTopology:
         self._zone_table_ids: dict[str, int] = {}
         # Slave namespaces created in setup_zone_slaves()
         self._slave_ns_names: list[str] = []
+        # Fork-worker process + parent-side Pipe per slave zone.
+        # Keyed by zone_name, not ns_name, so test runner dispatch
+        # can look up directly via tc.src_zone.
+        self._slave_workers: dict[str, tuple[Any, Any]] = {}
+        self._slave_worker_lock = None  # created lazily — threading.Lock
 
         self.src_ips: list[str] = []
         self.src_ips6: list[str] = []
@@ -364,11 +369,25 @@ class SimTopology:
             #    /32 routes for every individual dst IP.
             self._install_slave_redirect(slave)
 
-            # 4. Listener: dual-stack TCP + UDP echo on 65000/65001
-            self._start_slave_listener(slave)
-
         # Track slaves so destroy() can clean them up.
         self._slave_ns_names = [slave_ns(z) for z in self.zones]
+
+        # 4. Spawn one worker process per zone (fork, no exec). Each
+        #    worker setns()'s into its slave and runs native Python
+        #    listeners + on-demand probes over an mp.Pipe. All test
+        #    traffic uses the socket API from here on — no nc / ping.
+        #
+        # Drop cached pyroute2 NetNS helper handles BEFORE forking so
+        # the worker children don't inherit live netlink sockets that
+        # both parent and child would try to use.
+        self._net.refresh_handles()
+        from shorewall_nft.verify.slave_worker import spawn_worker
+        import threading
+        self._slave_worker_lock = threading.Lock()
+        for zone_name in self.zones:
+            slave = slave_ns(zone_name)
+            proc, conn = spawn_worker(slave)
+            self._slave_workers[zone_name] = (proc, conn)
 
     def _install_slave_redirect(self, slave: str) -> None:
         """Load a tiny nft REDIRECT rule into a slave namespace."""
@@ -401,50 +420,35 @@ class SimTopology:
         finally:
             Path(path).unlink(missing_ok=True)
 
-    def _start_slave_listener(self, slave: str) -> None:
-        """Start a backgrounded dual-stack TCP+UDP echo listener."""
-        # `&` and `nohup` are awkward through ip-netns-exec; spawn a
-        # detached child via subprocess directly so the parent can
-        # return immediately.
-        script = (
-            "import socket, threading, time, sys\n"
-            "def serve_tcp(fam, addr):\n"
-            "  s = socket.socket(fam, socket.SOCK_STREAM)\n"
-            "  s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
-            "  try: s.bind((addr, 65000))\n"
-            "  except OSError: return\n"
-            "  s.listen(64)\n"
-            "  while True:\n"
-            "    try: c, _ = s.accept(); c.close()\n"
-            "    except OSError: return\n"
-            "def serve_udp(fam, addr):\n"
-            "  s = socket.socket(fam, socket.SOCK_DGRAM)\n"
-            "  try: s.bind((addr, 65001))\n"
-            "  except OSError: return\n"
-            "  while True:\n"
-            "    try:\n"
-            "      d, p = s.recvfrom(1024)\n"
-            "      s.sendto(b'PONG', p)\n"
-            "    except OSError: return\n"
-            "for fn, fam, addr in [\n"
-            "  (serve_tcp, socket.AF_INET, '0.0.0.0'),\n"
-            "  (serve_tcp, socket.AF_INET6, '::'),\n"
-            "  (serve_udp, socket.AF_INET, '0.0.0.0'),\n"
-            "  (serve_udp, socket.AF_INET6, '::'),\n"
-            "]:\n"
-            "  threading.Thread(target=fn, args=(fam, addr), daemon=True).start()\n"
-            "while True: time.sleep(60)\n"
-        )
-        # Spawn detached: launch python3 -c via ip netns exec, redirect
-        # output to /dev/null, send to background.
-        import subprocess
-        subprocess.Popen(
-            ["ip", "netns", "exec", slave, "python3", "-c", script],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+    def probe(self, tc: "TestCase", timeout_s: float = 2.0) -> "TestResult":
+        """Run a single probe via the slave worker for tc.src_zone.
+
+        Uses the persistent fork-worker's pipe connection — zero fork
+        cost per probe, pure Python socket API on the worker side.
+        Falls back to a DROP result if the worker is missing.
+        """
+        worker = self._slave_workers.get(tc.src_zone or "")
+        if worker is None:
+            return TestResult(test=tc, got="DROP", passed=False, ms=0)
+        proc, conn = worker
+        start = time.monotonic_ns()
+        # Serialise pipe access — mp.Pipe isn't thread-safe.
+        with self._slave_worker_lock:
+            try:
+                conn.send((
+                    "probe", tc.proto, tc.src_ip, tc.dst_ip,
+                    tc.port or 0, tc.family, float(timeout_s),
+                ))
+                msg = conn.recv()
+            except (BrokenPipeError, EOFError, ConnectionError):
+                ms = (time.monotonic_ns() - start) // 1_000_000
+                return TestResult(test=tc, got="ERROR", passed=False, ms=ms)
+        ms = (time.monotonic_ns() - start) // 1_000_000
+        if not msg or msg[0] != "ok":
+            return TestResult(test=tc, got="ERROR", passed=False, ms=ms)
+        _, verdict, _ = msg
+        return TestResult(test=tc, got=verdict,
+                          passed=(verdict == tc.expected), ms=ms)
 
     def setup_src_multi(self, zone_src_ips: dict[str, list[str]],
                         zone_src_ips6: dict[str, list[str]] | None = None) -> None:
@@ -627,6 +631,28 @@ while True: time.sleep(60)
 
     def destroy(self) -> None:
         """Kill all processes and remove all namespaces."""
+        # Stop fork-workers first — quit msg + join, no exec cleanup.
+        for zone_name, (proc, conn) in list(self._slave_workers.items()):
+            try:
+                conn.send(("quit",))
+            except Exception:
+                pass
+            try:
+                proc.join(timeout=2)
+            except Exception:
+                pass
+            if proc.is_alive():
+                try:
+                    proc.terminate()
+                    proc.join(timeout=1)
+                except Exception:
+                    pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+        self._slave_workers.clear()
+
         # Slave namespaces (multi-zone mode)
         for slave in list(self._slave_ns_names):
             _kill_ns_pids(slave)
@@ -682,8 +708,18 @@ def run_icmp_test(src_ip: str, dst_ip: str, family: int = 4,
     return verdict, ms
 
 
-def _run_single_test(tc: TestCase, ns_name: str = NS_SRC) -> TestResult:
-    """Run a single test case. Suitable for parallel execution."""
+def _run_single_test(tc: TestCase, ns_name: str = NS_SRC,
+                     topo: "SimTopology | None" = None) -> TestResult:
+    """Run a single test case. Suitable for parallel execution.
+
+    In multi-zone mode (``topo.zones`` non-empty) the probe is
+    dispatched to the persistent worker process bound to the
+    matching src_zone slave namespace. That avoids forking ``nc``
+    for every test case.
+    """
+    if topo is not None and topo.zones and tc.src_zone in topo.zones:
+        return topo.probe(tc)
+
     start = time.monotonic_ns()
     try:
         if tc.proto == "tcp":
@@ -1194,7 +1230,7 @@ def run_simulation(
         # Step 4b: Run derived tests (parallel)
         if parallel > 1 and len(tests) > 1:
             with ThreadPoolExecutor(max_workers=parallel) as pool:
-                futures = {pool.submit(_run_single_test, tc, _ns_for(tc)): tc
+                futures = {pool.submit(_run_single_test, tc, _ns_for(tc), topo): tc
                            for tc in tests}
                 for future in as_completed(futures):
                     result = future.result()
@@ -1210,7 +1246,7 @@ def run_simulation(
         else:
             # Sequential fallback
             for tc in tests:
-                result = _run_single_test(tc, _ns_for(tc))
+                result = _run_single_test(tc, _ns_for(tc), topo)
                 results.append(result)
                 if verbose or not result.passed:
                     status = "PASS" if result.passed else "FAIL"
