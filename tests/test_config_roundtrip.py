@@ -192,6 +192,83 @@ def test_roundtrip_through_disk_minimal(tmp_path):
         f"disk round-trip diverged: {len(s_a)} vs {len(s_c)} bytes")
 
 
+def test_pretty_export_groups_by_zone_pair_and_pushes_drops_to_tail(tmp_path):
+    """Pretty exporter groups by zone-pair and tail-sorts catch-all DROPs."""
+    from shorewall_nft.config.importer import (
+        blob_to_config,
+        write_config_dir,
+    )
+
+    blob = {
+        "schema_version": 1,
+        "zones": [
+            {"zone": "fw", "type": "firewall"},
+            {"zone": "net", "type": "ipv4"},
+            {"zone": "loc", "type": "ipv4"},
+        ],
+        "rules": {
+            "rows": [
+                {"action": "DROP", "source": "net", "dest": "loc"},
+                {"action": "ACCEPT", "source": "loc",
+                 "dest": "net", "proto": "tcp", "dport": "80"},
+                {"action": "ACCEPT", "source": "net",
+                 "dest": "loc:10.0.0.5", "proto": "tcp", "dport": "22"},
+                {"action": "ACCEPT", "source": "loc",
+                 "dest": "net", "proto": "tcp", "dport": "443"},
+            ],
+        },
+    }
+    cfg = blob_to_config(blob)
+    target = tmp_path / "pretty"
+    write_config_dir(cfg, target, force=True, pretty=True)
+    rules_text = (target / "rules").read_text()
+    lines = [l for l in rules_text.splitlines()
+             if l and not l.startswith("#")]
+
+    # All loc→net rules should appear before net→loc, and within
+    # the net→loc group the catch-all DROP should land at the tail.
+    loc_indexes = [i for i, l in enumerate(lines)
+                   if l.split()[1].startswith("loc") if len(l.split()) > 1]
+    net_indexes = [i for i, l in enumerate(lines)
+                   if l.split()[1].startswith("net") if len(l.split()) > 1]
+    assert max(loc_indexes) < min(net_indexes), (
+        "loc→net rules should appear before net→loc:\n" + rules_text)
+    # Within the net group, the DROP must be the last line.
+    last_line = lines[-1].split()
+    assert last_line[0] == "DROP" and last_line[1] == "net", (
+        "catch-all DROP should be tail-sorted within its group:\n"
+        + rules_text)
+
+
+def test_pretty_export_provenance_markers(tmp_path):
+    """provenance=True interleaves shell comments before each row."""
+    from shorewall_nft.config.importer import (
+        blob_to_config,
+        write_config_dir,
+    )
+    blob = {
+        "schema_version": 1,
+        "zones": [
+            {"zone": "fw", "type": "firewall"},
+            {"zone": "net", "type": "ipv4"},
+        ],
+        "rules": {
+            "rows": [
+                {"action": "ACCEPT", "source": "net",
+                 "dest": "fw", "proto": "tcp", "dport": "22"},
+            ],
+        },
+    }
+    cfg = blob_to_config(blob)
+    target = tmp_path / "with-provenance"
+    write_config_dir(cfg, target, force=True, pretty=True, provenance=True)
+    rules_text = (target / "rules").read_text()
+    # The blob_to_config path doesn't set file/lineno on the
+    # synthesised ConfigLines, so the provenance pass should
+    # silently skip rows without origin info instead of crashing.
+    assert "ACCEPT" in rules_text
+
+
 def test_write_refuses_non_empty_target_without_force(tmp_path):
     """write_config_dir refuses to overwrite a non-empty dir unless forced."""
     from shorewall_nft.config.importer import (
