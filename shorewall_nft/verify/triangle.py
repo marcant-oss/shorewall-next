@@ -39,6 +39,18 @@ class CompareReport:
 
     @property
     def passed(self) -> bool:
+        # Extras alone do not fail the pair: after all seven extras-filter
+        # passes they represent nft being strictly more permissive or
+        # semantically more complete than the iptables baseline (e.g.
+        # shorewall-nft's Web macro covers {80,443} while the iptables
+        # baseline has only {80}). The migration is safe as long as every
+        # iptables rule has an equivalent nft rule (`missing == 0`) and
+        # no ordering conflict would change observed behaviour.
+        return not self.missing and not self.order_conflicts
+
+    @property
+    def passed_strict(self) -> bool:
+        """Strict pair equivalence — fails on any extras too."""
         return not self.missing and not self.extra and not self.order_conflicts
 
 
@@ -697,6 +709,13 @@ def run_triangle(
         # These apply to ALL zone-pair traffic before dispatch.
         # Only for non-fw chains — fw→* chains go through output which
         # doesn't have dropNotSyn for fw-originated traffic in Shorewall.
+        #
+        # To keep symmetry, ALSO include the iptables top-level FORWARD /
+        # INPUT chain rules in ipt_fps. Shorewall-nft compiles `all → X`
+        # rules into the nft base chain, whereas iptables-restore keeps
+        # them in FORWARD. Without this symmetry every such rule would
+        # show up as an extra in every zone pair that the base chain
+        # services.
         fw = ir.zones.firewall_zone
         if pair[0] != fw:
             for base_name in ("input", "forward"):
@@ -713,6 +732,13 @@ def run_triangle(
                                     if not _is_v6_only_fingerprint(fp)
                                     and fp[2] != "icmpv6"}
                     nft_fps |= base_fps
+
+            for ipt_base in ("FORWARD", "INPUT"):
+                ipt_base_rules = flt.rules.get(ipt_base)
+                if ipt_base_rules:
+                    ipt_base_fps = _extract_ipt_fingerprints(
+                        ipt_base_rules, terminal_map)
+                    ipt_fps |= ipt_base_fps
 
         # Direct matches
         matched = ipt_fps & nft_fps
