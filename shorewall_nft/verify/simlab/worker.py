@@ -225,6 +225,7 @@ class InterfaceWorker:
                     "src": pkt.src, "dst": pkt.dst,
                     "sport": pkt.sport, "dport": pkt.dport,
                     "flags": pkt.flags, "length": pkt.length,
+                    "probe_id": pkt.probe_id,
                 },
             ))
         except (BrokenPipeError, ConnectionError):
