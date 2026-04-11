@@ -86,10 +86,32 @@ class TestResult:
 
 
 def _ns(ns: str, cmd: str, timeout: int = 10) -> subprocess.CompletedProcess:
-    """Run a command inside a network namespace."""
+    """Run a shell command inside a network namespace.
+
+    Exec-reduction Phase B: instead of shelling out via
+    ``ip netns exec NS sh -c CMD`` (two extra fork+execs), we use a
+    ``preexec_fn`` that calls ``setns(CLONE_NEWNET)`` on
+    ``/run/netns/<ns>`` right after fork and before exec. The child
+    lands in the target namespace directly; the parent's namespace
+    stays untouched. One less fork, no iproute2 binary dependency.
+    """
+    ns_path = f"/run/netns/{ns}"
+
+    def _enter_ns() -> None:  # runs in child, post-fork, pre-exec
+        import ctypes
+        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        _CLONE_NEWNET = 0x40000000
+        fd = os.open(ns_path, os.O_RDONLY)
+        try:
+            if _libc.setns(fd, _CLONE_NEWNET) != 0:
+                raise OSError(ctypes.get_errno(), "setns failed")
+        finally:
+            os.close(fd)
+
     return subprocess.run(
-        [*RUN_NETNS, "exec", ns, "sh", "-c", cmd],
-        capture_output=True, text=True, timeout=timeout
+        ["sh", "-c", cmd],
+        capture_output=True, text=True, timeout=timeout,
+        preexec_fn=_enter_ns,
     )
 
 
@@ -101,20 +123,39 @@ def _ns_check(ns: str, cmd: str, timeout: int = 10) -> None:
 
 
 def _kill_ns_pids(ns: str) -> None:
-    # `ip netns exec NS kill -9 -1` would target every process the caller can
-    # signal on the host, because ip netns provides only network isolation.
-    # Enumerate via `ip netns pids` and SIGKILL each PID individually.
+    """SIGKILL every pid whose net namespace matches ``ns``.
+
+    Exec-reduction Phase B: replaces ``ip netns pids NS`` with a
+    direct /proc scan. For each pid, read the inode of
+    ``/proc/<pid>/ns/net`` and compare against ``/run/netns/<name>``.
+    Matching pids get SIGKILL'd. No subprocess, no iproute2
+    dependency, and much faster than fork+exec for large pid
+    spaces because we only stat — no exec of ``ip``.
+
+    Never targets ``kill -9 -1`` in-namespace (that would reach host
+    processes since ip netns doesn't isolate PIDs).
+    """
     try:
-        r = subprocess.run([*RUN_NETNS, "pids", ns],
-                           capture_output=True, text=True, timeout=5)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+        target_inode = os.stat(f"/run/netns/{ns}").st_ino
+    except (OSError, FileNotFoundError):
         return
-    for tok in r.stdout.split():
-        if tok.isdigit():
-            try:
-                os.kill(int(tok), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+    try:
+        pid_entries = os.listdir("/proc")
+    except OSError:
+        return
+    for entry in pid_entries:
+        if not entry.isdigit():
+            continue
+        try:
+            pid_ns_inode = os.stat(f"/proc/{entry}/ns/net").st_ino
+        except (OSError, FileNotFoundError, PermissionError):
+            continue
+        if pid_ns_inode != target_inode:
+            continue
+        try:
+            os.kill(int(entry), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
 
 
 class SimTopology:
