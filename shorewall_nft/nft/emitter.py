@@ -91,6 +91,23 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
 
     # Collect all @setname references and declare undeclared sets as empty
     declared_sets = {s.name for s in (nft_sets or [])}
+
+    # DNS-managed sets (populated at runtime by shorewalld). Declared
+    # here with ``flags timeout; size N;`` so the daemon's ``add
+    # element ... timeout Xs`` calls succeed and the ``_declare_missing_sets``
+    # fallback below doesn't produce a second, ill-typed declaration.
+    if getattr(ir, "dns_registry", None) and ir.dns_registry.specs:
+        from shorewall_nft.nft.dns_sets import (
+            emit_dns_set_declarations,
+            qname_to_set_name,
+        )
+        dns_lines = emit_dns_set_declarations(ir.dns_registry)
+        if dns_lines:
+            lines.extend(dns_lines)
+        for spec in ir.dns_registry.iter_sorted():
+            declared_sets.add(qname_to_set_name(spec.qname, "v4"))
+            declared_sets.add(qname_to_set_name(spec.qname, "v6"))
+
     _declare_missing_sets(lines, ir, declared_sets)
 
     # Dynamic blacklist set (with timeout support)

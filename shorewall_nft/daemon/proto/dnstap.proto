@@ -1,0 +1,71 @@
+// dnstap: a flexible DNS software event replication format.
+//
+// Upstream: https://dnstap.info/ — schema is BSD-licensed and has
+// been stable since 2013. Vendored here so the shorewalld build
+// does not depend on fetching an external schema at release time.
+//
+// Only the fields shorewalld actively reads are commented with
+// "— used by shorewalld"; the rest are kept for round-trip
+// fidelity and so the generated python module can decode any
+// standards-compliant dnstap frame without falling over on
+// optional fields we don't consume.
+syntax = "proto2";
+package dnstap;
+
+message Dnstap {
+    enum Type {
+        MESSAGE = 1;
+    }
+    // Identifier — e.g. "pdns_recursor". Opaque to us.
+    optional bytes identity = 1;
+    optional bytes version = 2;
+    optional bytes extra = 3;
+    required Type type = 15;
+    optional Message message = 14;    // — used by shorewalld
+}
+
+message Message {
+    enum Type {
+        AUTH_QUERY = 1;
+        AUTH_RESPONSE = 2;
+        RESOLVER_QUERY = 3;
+        RESOLVER_RESPONSE = 4;
+        CLIENT_QUERY = 5;
+        CLIENT_RESPONSE = 6;         // — used by shorewalld
+        FORWARDER_QUERY = 7;
+        FORWARDER_RESPONSE = 8;
+        STUB_QUERY = 9;
+        STUB_RESPONSE = 10;
+        TOOL_QUERY = 11;
+        TOOL_RESPONSE = 12;
+        UPDATE_QUERY = 13;
+        UPDATE_RESPONSE = 14;
+    }
+    enum SocketFamily {
+        INET = 1;
+        INET6 = 2;
+    }
+    enum SocketProtocol {
+        UDP = 1;
+        TCP = 2;
+        DOT = 3;
+        DOH = 4;
+        DNSCryptUDP = 5;
+        DNSCryptTCP = 6;
+        QUIC = 7;
+    }
+    required Type type = 1;              // — used by shorewalld
+    optional SocketFamily socket_family = 2;
+    optional SocketProtocol socket_protocol = 3;
+    optional bytes query_address = 4;
+    optional bytes response_address = 5;
+    optional uint32 query_port = 6;
+    optional uint32 response_port = 7;
+    optional uint64 query_time_sec = 8;
+    optional fixed32 query_time_nsec = 9;
+    optional bytes query_message = 10;
+    optional bytes query_zone = 11;
+    optional uint64 response_time_sec = 12;
+    optional fixed32 response_time_nsec = 13;
+    optional bytes response_message = 14;  // — used by shorewalld
+}

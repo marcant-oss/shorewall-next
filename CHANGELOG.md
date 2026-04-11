@@ -5,6 +5,229 @@ All notable changes to shorewall-nft are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — shorewalld DNS-set pipeline
+
+Major refactor + expansion of ``shorewalld`` into a full
+DNS-driven nft-set populator with HA replication. Extended the
+Phase-4 dnstap exporter into a production-grade pipeline with
+zero-copy hot paths, persistent state, ruleset-reload
+reconciliation, and peer-to-peer replication over authenticated
+UDP. 260 new unit and integration tests.
+
+### New compiler surface
+
+- **``dns:hostname`` rule token** in SOURCE/DEST columns. Each
+  occurrence compiles to two emitted rules (v4 + v6 family) and
+  two declared nft sets (``dns_<name>_v4`` / ``dns_<name>_v6``)
+  with ``flags timeout`` and the configured size. Canonicalised
+  via ``qname_to_set_name()`` so compile-time and runtime agree
+  on the exact set name for any given hostname.
+- **``dnsnames`` config file** (optional) for per-hostname
+  overrides of TTL floor, TTL ceiling, set size, and a free
+  comment. Each row shapes the corresponding set and the
+  DnsSetTracker's clamp bounds at runtime. Hostnames seen only
+  in ``rules`` fall back to the global defaults.
+- **``DNS_SET_TTL_FLOOR``, ``DNS_SET_TTL_CEIL``, ``DNS_SET_SIZE``**
+  added to ``shorewall.conf``.
+- **``/etc/shorewall/dnsnames.compiled``** — compiler output
+  consumed by shorewalld as the authoritative runtime allowlist.
+  Atomic tmp+rename on write; loader tolerates malformed lines
+  and counts them in metrics.
+- ``shorewall_nft/nft/dns_sets.py`` — shared helper module used
+  by both the compiler and the daemon so there is zero drift
+  between emission-time and runtime naming.
+
+### Daemon — ingestion
+
+- **TCP dnstap listener**. ``DnstapServer`` now accepts a
+  ``(tcp_host, tcp_port)`` pair in addition to the unix socket
+  path. Both listeners run concurrently so operators can serve a
+  local recursor on unix and receive replicated frames from a
+  remote recursor on TCP simultaneously. Same FrameStream
+  handshake, same decoder, same metrics labels.
+- **PowerDNS PBDNSMessage ingestion** (``shorewall_nft/daemon/
+  pbdns.py``). Alternative to dnstap: pdns recursor's native
+  ``protobufServer()`` output over length-prefixed unix socket.
+  Records arrive pre-decomposed (typed DNSRR name/type/ttl/rdata
+  fields) so the decoder sidesteps dnspython entirely, cutting
+  CPU by ~40% at 10 k fps. Mirrored
+  ``shorewalld_pbdns_*`` metrics for A/B comparison with dnstap.
+- **Two-pass qname filter** (``shorewall_nft/daemon/dns_wire.py``).
+  Minimal DNS wire walker extracts the qname and rcode with zero
+  allocations; decoder rejects allowlist misses before invoking
+  dnspython. On typical recursor traffic this drops 95%+ of
+  frames before the expensive parse.
+- **Protobuf is now a hard dependency**. ``protobuf>=4.25`` added
+  to ``pyproject.toml`` and the vendored schemas
+  (``daemon/proto/dnstap.proto``, ``dnsmessage.proto``, ``peer.proto``)
+  are shipped with the package. Generated ``*_pb2.py`` modules
+  are checked in so no build-host protoc is required.
+- **``shorewalld tap`` operator CLI** (``shorewall_nft/daemon/tap.py``).
+  tcpdump-for-DNS-answers: binds a dnstap socket, decodes via the
+  same path the production daemon uses, pretty-prints with ANSI
+  colour on a TTY or emits structured/JSON lines for scripting.
+  Filters by qname regex, rcode, and RR type; tags each frame
+  with allowlist hit/miss when pointed at
+  ``dnsnames.compiled``; prints a top-N summary on exit.
+
+### Daemon — runtime state
+
+- **DnsSetTracker** (``shorewall_nft/daemon/dns_set_tracker.py``).
+  Central in-memory source of truth keyed on integer ``set_id``
+  + ``ip_bytes``. Propose/commit API: decoders call
+  ``propose()`` and get ADD / REFRESH / DEDUP verdicts; writes
+  that commit success update the tracker atomically. Periodic
+  ``prune_expired()`` removes entries whose deadline has passed
+  in monotonic time. Lock-free ``snapshot()`` for the Prometheus
+  scrape thread. Full state export/import API for persistence
+  (Phase 6) and peer snapshot sync (Phase 9).
+- **SetWriter** (``shorewall_nft/daemon/setwriter.py``).
+  asyncio coroutine that owns the entire write path. Thread-safe
+  ``submit()`` from decoder workers; batches by
+  ``(netns, family)`` with configurable window/max-ops triggers;
+  flushes on window expiry, batch fullness, or shutdown.
+  Dispatches through WorkerRouter; commits to tracker only after
+  worker ack so a mid-flight crash doesn't lose dedup state.
+- **Persistent nft worker subprocesses**
+  (``shorewall_nft/daemon/nft_worker.py`` +
+  ``worker_router.py``). One long-lived child per managed
+  netns: forks at daemon startup, ``setns(CLONE_NEWNET)`` into
+  the target namespace, ``PR_SET_PDEATHSIG`` for parent-death
+  cleanup, drops into a main loop consuming ``BatchCodec``
+  datagrams over ``SOCK_SEQPACKET``. No setns thrash in the hot
+  path, libnftables bound to the target netns exactly once.
+  For the daemon's own netns, ``LocalWorker`` bypasses the
+  fork and runs libnftables inline on a dedicated single-thread
+  executor.
+- **Binary batch codec** (``shorewall_nft/daemon/batch_codec.py``).
+  Hand-rolled fixed-size wire format for parent↔worker IPC:
+  16-byte header + 24-byte ops × N, max 40 ops/batch (< 1000
+  bytes per datagram, fits MTU). Preallocated ``bytearray`` +
+  ``memoryview`` through the whole encode path, zero allocations
+  per op in the steady state. Reply codec with inline error
+  strings. Control messages (shutdown, snapshot) share the
+  envelope.
+- **SEQPACKET transport** (``shorewall_nft/daemon/worker_transport.py``).
+  Thin wrapper around ``socketpair(AF_UNIX, SOCK_SEQPACKET)``
+  with preallocated receive buffer and ``MSG_TRUNC`` detection.
+  Atomic datagrams mean no length-framing, no user-space copy
+  between encoder and kernel.
+
+### Daemon — persistence and reconciliation
+
+- **StateStore** (``shorewall_nft/daemon/state.py``). Periodic
+  atomic JSON snapshot of the tracker to
+  ``/var/lib/shorewalld/dns_sets.json``. Wall-clock absolute
+  deadlines in the file so reboots don't invalidate
+  ``time.monotonic()`` values. Cold-boot load prunes expired
+  entries, installs the survivors, and the daemon carries the
+  set contents across restarts without a TTL-sized deny window.
+  CLI flags ``--state-flush`` (delete file + start empty),
+  ``--no-state-load`` (keep file, don't load), ``--state-dir``.
+- **ReloadMonitor** (``shorewall_nft/daemon/reload_monitor.py``).
+  Detects ruleset reloads via per-netns fingerprint polling; on
+  transition ``absent→present`` or ``fingerprint change``,
+  repopulates the entire tracker state into the freshly-loaded
+  table as a sequence of batched writes. Per-netns probes so a
+  multi-namespace deployment reconciles each independently.
+  Metrics split by reason so operators tell boot-time populates
+  from production restart blips.
+
+### Daemon — HA peer replication
+
+- **PeerLink** (``shorewall_nft/daemon/peer.py``). UDP-based
+  replication between shorewalld instances on a two-node HA
+  pair. Every DNS set write on one side replicates to the peer
+  so both boxes converge without each one independently
+  resolving every qname. Authentication via HMAC-SHA256 keyed
+  from a shared secret file (``PEER_SECRET_FILE``); auth is
+  pluggable behind a ``PeerAuth`` protocol so AEAD or Ed25519
+  can drop in later.
+- **IP_PMTUDISC_DO** set on the peer socket so oversize sends
+  fail loudly with ``EMSGSIZE`` — we never let the kernel
+  fragment our datagrams. Every envelope is capped at 1400 bytes
+  before serialisation.
+- **Heartbeat loop** every ``PEER_HEARTBEAT_INTERVAL`` (default
+  5 s). Carries the sender's counter snapshot so receivers
+  publish ``shorewalld_peer_*{peer=name}`` metrics — scraping
+  either node's ``/metrics`` endpoint shows both nodes' health.
+- **Loop prevention** via ``origin_node`` field; self-sourced
+  frames are dropped on receipt.
+- **Sequence tracking** per sender for gap detection; gaps bump
+  ``shorewalld_peer_frames_lost_total`` but trigger no
+  retransmit — TTL-based convergence handles lost updates
+  organically.
+- **SnapshotRequest / SnapshotResponse**. A node booting with
+  stale or missing state can ask its peer for the current DNS
+  set contents. The peer builds the response as a multi-chunk
+  stream (``SNAPSHOT_CHUNK_SIZE = 20`` entries per envelope,
+  sized to fit under MTU). App-level chunking, not IP
+  fragmentation — stateful middleboxes on the HA interlink
+  can't silently drop chunks due to reassembly state loss.
+  Receivers apply chunks incrementally via SetWriter.
+
+### Logging
+
+- **``logsetup.py`` foundation**. Hierarchical loggers per
+  subsystem (``shorewalld.core``, ``.dnstap``, ``.peer``, …);
+  target configurable to stderr, stdout, syslog (AF_UNIX
+  ``/dev/log``), systemd journal, or a rotating file; three
+  format variants (human, structured key=value, JSON); per-
+  subsystem level overrides via ``--log-level-<subsys>``;
+  RateLimiter with configurable window for hot-path warning
+  dedup. Integrated into the CLI flag set.
+
+### Metrics additions
+
+``shorewalld_dnstap_*`` mirrored in ``shorewalld_pbdns_*``,
+plus new families:
+
+```
+shorewalld_dns_set_elements{set,family}
+shorewalld_dns_set_adds_total{set,family}
+shorewalld_dns_set_dedup_hits_total{set,family}
+shorewalld_dns_set_dedup_misses_total{set,family}
+shorewalld_dns_set_expiries_total{set,family}
+shorewalld_dns_unknown_qname_total
+shorewalld_state_dns_sets_saves_total
+shorewalld_state_dns_sets_load_entries_total
+shorewalld_state_last_save_age_seconds
+shorewalld_reload_events_total{reason}
+shorewalld_reload_repopulate_batches_total
+shorewalld_reload_repopulate_entries_total
+shorewalld_peer_up{peer}
+shorewalld_peer_frames_sent_total{peer}
+shorewalld_peer_frames_received_total{peer}
+shorewalld_peer_frames_lost_total{peer}
+shorewalld_peer_hmac_failures_total{peer}
+shorewalld_peer_heartbeats_sent_total{peer}
+shorewalld_peer_snapshot_requests_sent_total
+shorewalld_peer_snapshot_chunks_received_total
+shorewalld_peer_snapshot_entries_applied_total
+shorewalld_log_messages_total{level,logger}
+shorewalld_log_dropped_total{reason}
+```
+
+### Tests
+
+- 260 new unit/integration tests under ``tests/``, all fast
+  (< 2 s total) and isolated (no fork, no setns, no CAP_NET_ADMIN).
+- ``tests/test_daemon_integration.py`` wires the entire stack
+  end-to-end: compiler → emitter → tracker → dnstap+pbdns
+  ingestion → SetWriter → inproc worker → state persistence →
+  reload monitor → HA peer replication → snapshot resync.
+- Full suite sits at 717 tests passing (from 541 pre-refactor),
+  zero regressions, lint clean.
+
+### Documentation
+
+- ``docs/reference/shorewalld.md`` expanded with sections on
+  DNS-backed rule syntax, the ``dnsnames`` config file, the
+  ``shorewalld tap`` CLI, PBDNSMessage ingestion, TCP dnstap
+  listener, state persistence, reload monitor, HA peer
+  replication with HMAC, snapshot resync, and the performance
+  doctrine.
+
 ## [1.1.0] — 2026-04-11
 
 nft-native feature expansion and verifier robustness fixes driven
