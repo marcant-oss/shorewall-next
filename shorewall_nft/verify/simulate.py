@@ -13,7 +13,9 @@ Uses sudo /usr/local/bin/run-netns for all namespace operations.
 
 from __future__ import annotations
 
+import os
 import random
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -68,6 +70,23 @@ def _ns_check(ns: str, cmd: str, timeout: int = 10) -> None:
     r = _ns(ns, cmd, timeout)
     if r.returncode != 0:
         raise RuntimeError(f"Command failed in {ns}: {cmd}\n{r.stderr}")
+
+
+def _kill_ns_pids(ns: str) -> None:
+    # `ip netns exec NS kill -9 -1` would target every process the caller can
+    # signal on the host, because ip netns provides only network isolation.
+    # Enumerate via `ip netns pids` and SIGKILL each PID individually.
+    try:
+        r = subprocess.run([*RUN_NETNS, "pids", ns],
+                           capture_output=True, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return
+    for tok in r.stdout.split():
+        if tok.isdigit():
+            try:
+                os.kill(int(tok), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
 
 
 class SimTopology:
@@ -184,10 +203,7 @@ while True:
     def destroy(self) -> None:
         """Kill all processes and remove all namespaces."""
         for ns in (NS_DST, NS_FW, NS_SRC):
-            # Kill all processes in the namespace first
-            # We have root via run-netns, so we can kill everything
-            _ns(ns, "kill -9 -1 2>/dev/null || true")
-            # Small delay to let processes die
+            _kill_ns_pids(ns)
             time.sleep(0.1)
             subprocess.run([*RUN_NETNS, "delete", ns],
                            capture_output=True, timeout=5)
@@ -288,10 +304,21 @@ def derive_tests(
             saddr = rule.saddr
             src = saddr.rstrip("/32").split("/")[0] if saddr else DEFAULT_SRC
 
-            # Skip broad subnets as source (can't test /8)
+            # For broad subnets, pick a concrete host IP instead of skipping.
+            # Covers real-world configs where firewalls allow whole /20s or
+            # /16s from trusted nets — we still want to exercise these rules.
             if saddr and "/" in saddr:
-                prefix = int(saddr.split("/")[1])
-                if prefix < 24:
+                import ipaddress as _ipaddr
+                try:
+                    net = _ipaddr.ip_network(saddr, strict=False)
+                    if net.version != 4:
+                        continue  # simulate topology is IPv4 only
+                    # Deterministic pick: second usable host (.1 + 1).
+                    hosts = list(net.hosts())
+                    if not hosts:
+                        continue
+                    src = str(hosts[1] if len(hosts) > 1 else hosts[0])
+                except ValueError:
                     continue
 
             port = None
