@@ -14,6 +14,56 @@ It serves two jobs:
 Both jobs are off by default for the second one. Running `shorewalld`
 with no flags starts a pure exporter bound to `:9748`.
 
+## Configuration file
+
+Operator settings live in `shorewalld.conf`, searched at these
+locations in order (first hit wins):
+
+1. `--config-file PATH` on the CLI
+2. `/etc/shorewall/shorewalld.conf`
+3. `/etc/shorewalld.conf`
+
+A missing file is a silent no-op; the daemon falls back entirely
+to CLI flags + built-in defaults. **Precedence** is always:
+explicit CLI flag > config-file value > built-in default, so an
+operator can temporarily override a file value without editing
+the file.
+
+Shell-flavoured `KEY=value` lines, `#` comments, optional `'`/`"`
+quoting:
+
+```
+# /etc/shorewall/shorewalld.conf
+
+LISTEN_PROM=:9748
+NETNS=fw,rns1,rns2
+SCRAPE_INTERVAL=30
+REPROBE_INTERVAL=300
+
+ALLOWLIST_FILE=/var/lib/shorewalld/dns-allowlist.tsv
+LISTEN_API=/run/shorewalld/dnstap.sock
+PBDNS_SOCKET=/run/shorewalld/pbdns.sock
+
+PEER_LISTEN=0.0.0.0:9749
+PEER_ADDRESS=10.0.0.2:9749
+PEER_SECRET_FILE=/etc/shorewall/peer.key
+PEER_HEARTBEAT_INTERVAL=5
+
+STATE_DIR=/var/lib/shorewalld
+RELOAD_POLL_INTERVAL=2
+
+LOG_LEVEL=info
+LOG_TARGET=syslog
+LOG_FORMAT=structured
+LOG_LEVEL_peer=debug   # per-subsystem override
+```
+
+Unknown keys are silently ignored so adding future knobs doesn't
+break older deployments. Malformed lines or unparseable values
+(e.g. `STATE_ENABLED=maybe`) raise an error at startup — the
+daemon refuses to run with a broken config rather than silently
+falling back.
+
 ## Install
 
 Ships as part of the `shorewall-nft` package. The daemon itself is the

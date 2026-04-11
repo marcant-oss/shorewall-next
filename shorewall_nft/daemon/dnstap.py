@@ -469,6 +469,7 @@ class DnstapServer:
         socket_mode: int = 0o660,
         tcp_host: str | None = None,
         tcp_port: int | None = None,
+        bridge: Any | None = None,
     ) -> None:
         # At least one of the two listen targets must be configured.
         # Both may be active simultaneously — pdns_recursor supports
@@ -492,6 +493,11 @@ class DnstapServer:
         self._filter = QnameFilter(qname_allowlist)
         self._nft = nft
         self._netns_list = netns_list
+        # When a ``bridge`` is supplied the legacy per-netns nft.add_set_element
+        # path is bypassed entirely: DnsUpdate records are routed through the
+        # Phase 2 tracker → setwriter → worker pipeline. The legacy SetWriter
+        # stays in the object for tests that still drive it directly.
+        self._bridge = bridge
         self._set_writer = SetWriter(nft, netns_list, self.metrics)
 
         self._server: asyncio.base_events.Server | None = None
@@ -645,11 +651,21 @@ class DnstapServer:
             log.info("dnstap client disconnected (peer=%s)", peer)
 
     def _on_update(self, upd: DnsUpdate) -> None:
-        """Runs on the event loop. Delegates nft writes to SetWriter."""
+        """Runs on the event loop. Dispatches nft writes.
+
+        If a ``TrackerBridge`` was supplied at construction time, the
+        update flows through the Phase 2 pipeline (tracker.propose →
+        SetWriter batch → WorkerRouter → persistent nft worker).
+        Otherwise the legacy direct-nft SetWriter is used.
+        """
         try:
-            self._set_writer.apply(upd)
+            if self._bridge is not None:
+                self._bridge.apply(
+                    upd.qname, upd.a_rrs, upd.aaaa_rrs, upd.ttl)
+            else:
+                self._set_writer.apply(upd)
         except Exception:
-            log.exception("set_writer.apply failed")
+            log.exception("dnstap on_update failed")
         self._recent_qnames.append((time.monotonic(), upd.qname))
 
     @property

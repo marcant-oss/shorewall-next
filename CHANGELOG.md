@@ -14,6 +14,58 @@ zero-copy hot paths, persistent state, ruleset-reload
 reconciliation, and peer-to-peer replication over authenticated
 UDP. 260 new unit and integration tests.
 
+### Compiler default
+
+- **``OPTIMIZE=8`` is now the compiler default** when a config
+  omits ``OPTIMIZE`` entirely. Previously the fallback was
+  ``OPTIMIZE=0`` (no optimisation). The reference HA ruleset
+  has been validated at ``OPTIMIZE=8`` via simlab ``full``
+  runs (seed=42 and seed=7, 934/934 deterministic probes pass,
+  no ``fail_drop`` / ``fail_accept``, zero drift against the
+  iptables point-of-truth oracle). Configs that explicitly set
+  ``OPTIMIZE=N`` are unaffected. The config generator
+  (``config_gen``) also emits ``OPTIMIZE=8`` in newly
+  synthesised ``shorewall.conf`` templates.
+
+### Daemon lifecycle integration
+
+- **``Daemon.run()`` now owns the full DNS-set pipeline** as
+  opt-in subsystems. When the operator passes ``--allowlist-file``
+  (or sets ``ALLOWLIST_FILE`` in ``shorewalld.conf``), the
+  daemon builds tracker + WorkerRouter + SetWriter + TrackerBridge
+  + StateStore + ReloadMonitor, and conditionally adds the
+  PbdnsServer (``LISTEN_PBDNS``) and HA PeerLink
+  (``PEER_HOST``/``PEER_ADDRESS`` + ``PEER_SECRET_FILE``).
+  Shutdown runs async cleanup in reverse wiring order
+  (peer → pbdns → reload_monitor → state_store → set_writer →
+  router) before calling the synchronous teardown for the
+  Prometheus server / profile builder / reprobe task.
+- **DnstapServer bridge mode.** The legacy Phase-4 dnstap
+  consumer now accepts an optional ``TrackerBridge`` and, when
+  supplied, routes decoded ``DnsUpdate`` records through the
+  tracker + batched SetWriter + persistent worker pipeline
+  instead of the direct ``nft.add_set_element`` path. ``Daemon``
+  wires this automatically when both ``--listen-api`` and
+  ``--allowlist-file`` are set.
+
+### Operator config file
+
+- **``shorewalld.conf`` parser** (``shorewall_nft/daemon/config.py``).
+  Shell-flavoured ``KEY=value`` file searched at
+  ``/etc/shorewall/shorewalld.conf`` then ``/etc/shorewalld.conf``,
+  overridable via ``--config-file PATH``. Supports
+  ``LISTEN_PROM``, ``LISTEN_API``, ``NETNS``, ``SCRAPE_INTERVAL``,
+  ``REPROBE_INTERVAL``, ``ALLOWLIST_FILE``, ``PBDNS_SOCKET``,
+  ``PEER_LISTEN``, ``PEER_ADDRESS``, ``PEER_SECRET_FILE``,
+  ``PEER_HEARTBEAT_INTERVAL``, ``STATE_DIR``, ``STATE_ENABLED``,
+  ``RELOAD_POLL_INTERVAL``, ``LOG_LEVEL``, ``LOG_TARGET``,
+  ``LOG_FORMAT``, ``LOG_RATE_LIMIT_WINDOW``, plus
+  ``LOG_LEVEL_<subsys>`` per-subsystem overrides. Precedence:
+  explicit CLI flag > config-file value > built-in default.
+  Unknown keys are silently ignored so future knobs are
+  forward-compatible. Malformed files raise ``ConfigError`` at
+  startup (the daemon does not start with a broken config).
+
 ### New compiler surface
 
 - **``dns:hostname`` rule token** in SOURCE/DEST columns. Each

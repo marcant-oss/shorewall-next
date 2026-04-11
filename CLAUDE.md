@@ -248,8 +248,16 @@ your change respects, you're probably making it slower.
     with FrameStream handshake, hand-rolled protobuf decoder,
     ``os.cpu_count()`` decode threads, bounded queue with drop
     counters, and per-netns nft set population for DNS-based
-    filtering (TODO #4 wire-up). Original requirements preserved
-    below for audit:
+    filtering (TODO #4 wire-up). ``Daemon.run()`` now also wires
+    the Phase 5–10 DNS-set pipeline (tracker + persistent-fork
+    WorkerRouter + SetWriter + TrackerBridge + StateStore +
+    ReloadMonitor + optional PbdnsServer + optional PeerLink) as
+    opt-in subsystems behind ``--allowlist-file``. dnstap routes
+    through the bridge when both are active, otherwise falls
+    back to the legacy direct-nft path. Operators configure via
+    ``shorewalld.conf`` (``/etc/shorewall/shorewalld.conf``, then
+    ``/etc/shorewalld.conf``; CLI flags always override conf
+    values). Original requirements preserved below for audit:
     - **Multi-netns aware.** One exporter instance serves N
       namespaces at once (one scrape endpoint, per-netns
       label on every metric, or one port per netns —
@@ -343,6 +351,24 @@ your change respects, you're probably making it slower.
     as the default for unset interfaces. Cross-check with the
     upstream Shorewall ``Compiler::*`` perl module for the
     exact mapping table.
+14. **shorewalld dnstap smoke harness on the ram-only VM.** A
+    script modelled on ``tools/setup-remote-test-host.sh`` that
+    also ``apt install``s ``pdns-recursor`` and drops in a
+    tuned ``recursor.conf`` / Lua fragment enabling dnstap
+    over a unix socket that shorewalld consumes. Validation
+    flow: (1) start ``shorewalld`` with
+    ``--allowlist-file=...`` + ``--listen-api=/run/shorewalld/
+    dnstap.sock``; (2) start ``pdns_recursor`` pointing its
+    dnstap FrameStream at the same socket; (3) run
+    ``shorewalld tap --socket ...`` in a second window for
+    live trace output; (4) drive the recursor with ``dig``
+    (`dig @127.0.0.1 github.com`) and assert the corresponding
+    ``dns_github_com_v4`` / ``_v6`` nft sets populate within
+    one TTL. Template fragments live under
+    ``packaging/pdns-recursor/shorewalld.lua.template``.
+    Script target: one-shot bootstrap on
+    ``192.0.2.83``, clean stop via systemd-run. Useful
+    for manual verification and as a pre-release smoke gate.
 
 ## Release checklist (carry-forward from pre-1.0 work)
 
