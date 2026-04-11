@@ -141,7 +141,9 @@ class TestCtZoneTag:
         out = _emit(CT_ZONE_TAG="Yes")
         assert "chain sw_zone_tag {" in out
         assert "type filter hook prerouting priority mangle" in out
-        assert "ct state new ct mark set iifname map" in out
+        # With the default 0xff mask the iifname map is wrapped in a
+        # bitwise clamp so the upper 24 bits of ct mark are preserved.
+        assert "ct mark set ct mark and 0xffffff00 or iifname map" in out
 
     def test_zone_marks_per_interface(self):
         out = _emit(CT_ZONE_TAG="Yes")
@@ -160,6 +162,71 @@ class TestCtZoneTag:
         # Every emitted entry must be for a real iifname, not "fw"
         for ln in lines_in_tag_chain:
             assert '"fw"' not in ln
+
+    def test_mask_default_is_0xff(self):
+        out = _emit(CT_ZONE_TAG="Yes")
+        # Default mask 0xff keeps the upper 24 bits of ct mark untouched
+        assert "ct mark set ct mark and 0xffffff00 or iifname map" in out
+
+    def test_mask_custom_16bit(self):
+        out = _emit(CT_ZONE_TAG="Yes", CT_ZONE_TAG_MASK="0xffff")
+        # Custom 16-bit mask — upper 16 bits preserved
+        assert "ct mark set ct mark and 0xffff0000 or iifname map" in out
+
+    def test_mask_full_no_bitwise(self):
+        """A 32-bit-wide mask means we overwrite ct mark entirely."""
+        out = _emit(CT_ZONE_TAG="Yes", CT_ZONE_TAG_MASK="0xffffffff")
+        # No bitwise clamp, just a direct set
+        assert "ct state new ct mark set iifname map" in out
+        assert "ct mark and" not in out.split("sw_zone_tag")[1].split("}")[0]
+
+    def test_mask_invalid_falls_back_with_warning(self):
+        out = _emit(CT_ZONE_TAG="Yes", CT_ZONE_TAG_MASK="garbage")
+        assert "CT_ZONE_TAG_MASK" in out and "0xff" in out
+        # Warning comment present
+        assert "WARNING: CT_ZONE_TAG_MASK" in out
+
+
+# ──────────────────────────────────────────────────────────────────────
+# conntrackd fragment generator
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestConntrackdFragment:
+    def _config(self, **settings: str):
+        config = load_config(MINIMAL_DIR)
+        config.settings.update(settings)
+        return config
+
+    def test_default_renders(self):
+        from shorewall_nft.runtime.conntrackd import generate_conntrackd_fragment
+        out = generate_conntrackd_fragment(self._config())
+        assert "Sync {" in out
+        assert "Mode FTFW" in out
+        assert "Multicast Default" in out
+        assert "General {" in out
+
+    def test_sync_iface_override(self):
+        from shorewall_nft.runtime.conntrackd import generate_conntrackd_fragment
+        out = generate_conntrackd_fragment(
+            self._config(), sync_iface="bond9")
+        assert "Interface bond9" in out
+
+    def test_ct_zone_tag_emits_mark_filter(self):
+        """When CT_ZONE_TAG is on, the sync filter narrows to the mask."""
+        from shorewall_nft.runtime.conntrackd import generate_conntrackd_fragment
+        out = generate_conntrackd_fragment(
+            self._config(CT_ZONE_TAG="Yes", CT_ZONE_TAG_MASK="0x0f"))
+        assert "Mark {" in out
+        assert "Value 0x0000000f" in out
+        assert "Mask 0x0000000f" in out
+
+    def test_no_mark_filter_without_ct_tag(self):
+        from shorewall_nft.runtime.conntrackd import generate_conntrackd_fragment
+        out = generate_conntrackd_fragment(self._config())
+        # Filter block exists but no Mark stanza
+        assert "Protocol Accept" in out
+        assert "Mark {" not in out
 
 
 # ──────────────────────────────────────────────────────────────────────

@@ -1393,6 +1393,44 @@ def generate_systemd(netns: bool, output_dir: Path | None):
         click.echo(content)
 
 
+@cli.command("generate-conntrackd")
+@click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
+@click.option("--sync-iface", default=None,
+              help="Interface used for the conntrackd sync link. "
+                   "Defaults to the CONNTRACKD_IFACE setting.")
+@click.option("--peer-ip", default=None,
+              help="IPv4 of the other HA node on the sync link.")
+@click.option("--local-ip", default=None,
+              help="IPv4 of this node on the sync link.")
+@click.option("--cluster-ip", default=None,
+              help="Shared VIP that HA failover moves.")
+@config_options
+def generate_conntrackd(directory, sync_iface, peer_ip, local_ip, cluster_ip,
+                        config_dir, config_dir4, config6_dir,
+                        no_auto_v4, no_auto_v6):
+    """Generate a conntrackd.conf fragment for an HA firewall pair.
+
+    Honours CT_ZONE_TAG_MASK to build a Mark filter that replicates
+    only zone bits across the sync link, keeping routing / policy
+    marks local to each node.
+    """
+    from shorewall_nft.config.parser import load_config
+    from shorewall_nft.runtime.conntrackd import generate_conntrackd_fragment
+
+    primary, secondary, skip = _resolve_config_paths(
+        directory, config_dir, config_dir4, config6_dir,
+        no_auto_v4, no_auto_v6)
+    config = load_config(primary, config6_dir=secondary,
+                         skip_sibling_merge=skip)
+    click.echo(generate_conntrackd_fragment(
+        config,
+        sync_iface=sync_iface,
+        peer_ip=peer_ip,
+        local_ip=local_ip,
+        cluster_ip=cluster_ip,
+    ))
+
+
 @cli.command("generate-tc")
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @config_options
