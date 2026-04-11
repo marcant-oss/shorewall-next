@@ -210,6 +210,16 @@ _SCRIPT_FILES: frozenset[str] = frozenset({
     # modules. Treat as a line-based script so the round-trip
     # preserves it byte-for-byte.
     "helpers",
+    # Perl-format ``compile`` extension hook — shorewall (perl
+    # backend) lets you inject custom rules at compile time.
+    # shorewall-nft doesn't run it, but the file is part of the
+    # config dir and shouldn't disappear on round-trip.
+    "compile",
+    # Shell library sourced by shorewall start/stop scripts.
+    # Shorewall-nft doesn't source it either, but again it's
+    # part of the config and operators rely on it surviving
+    # the round-trip.
+    "lib.private",
 })
 
 
