@@ -1188,14 +1188,15 @@ def main() -> int:
     p_full.add_argument("--random-per-rule", type=int, default=64,
         help="Number of random variants sampled per rule within that rule's "
              "own src/dst/port constraints (default 64)")
-    p_full.add_argument("--batch-size", type=int, default=256,
+    p_full.add_argument("--batch-size", type=int, default=512,
         help="Max probes in flight per batch. Higher = more throughput, "
-             "more transient RAM for the ProbeSpec batch (default 256)")
-    p_full.add_argument("--probe-timeout", type=float, default=0.7,
-        help="Per-probe timeout in seconds. On TUN/TAP loopback a probe "
-             "round-trip is <10 ms, so 0.7 s is massive headroom while "
-             "giving ~3x throughput vs the old 2 s default. Raise back "
-             "to 2.0 for pathological forwarding behaviour (default 0.7)")
+             "more transient RAM for the ProbeSpec batch (default 512)")
+    p_full.add_argument("--probe-timeout", type=float, default=0.35,
+        help="Per-probe timeout in seconds. On TUN/TAP loopback the "
+             "round-trip is ~10 ms post-ARP-cache (p50 ~30 ms, p99 ~100 "
+             "ms), so 0.35 s is 35x safety. Raise to 0.7 if a run gets "
+             "false fail_drops from a slow TUN backend; raise to 2.0 "
+             "for pathological forwarding (default 0.35)")
     p_full.add_argument("-v", "--verbose", action="store_true",
         help="Dump raw sysctl values before the run")
 
