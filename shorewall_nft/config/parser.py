@@ -42,6 +42,7 @@ class ShorewalConfig:
     notrack: list[ConfigLine] = field(default_factory=list)
     blrules: list[ConfigLine] = field(default_factory=list)
     routestopped: list[ConfigLine] = field(default_factory=list)
+    stoppedrules: list[ConfigLine] = field(default_factory=list)
     tcrules: list[ConfigLine] = field(default_factory=list)
     tcdevices: list[ConfigLine] = field(default_factory=list)
     tcinterfaces: list[ConfigLine] = field(default_factory=list)
@@ -57,7 +58,18 @@ class ShorewalConfig:
     secmarks: list[ConfigLine] = field(default_factory=list)
     maclist: list[ConfigLine] = field(default_factory=list)
     netmap: list[ConfigLine] = field(default_factory=list)
+    # Files added as part of the structured-io groundwork
+    arprules: list[ConfigLine] = field(default_factory=list)
+    proxyarp: list[ConfigLine] = field(default_factory=list)
+    proxyndp: list[ConfigLine] = field(default_factory=list)
+    ecn: list[ConfigLine] = field(default_factory=list)
+    nfacct: list[ConfigLine] = field(default_factory=list)
+    rawnat: list[ConfigLine] = field(default_factory=list)
+    scfilter: list[ConfigLine] = field(default_factory=list)
     macros: dict[str, list[ConfigLine]] = field(default_factory=dict)
+    # Line-based extension scripts — raw line lists so the structured
+    # blob can round-trip them without pretending they have columns.
+    scripts: dict[str, list[str]] = field(default_factory=dict)
 
 
 class ParseError(Exception):
@@ -109,11 +121,25 @@ class ConfigParser:
         # 3. Parse column-based config files
         for name in ("zones", "interfaces", "hosts", "policy", "rules",
                      "masq", "conntrack", "notrack", "blrules", "routestopped",
+                     "stoppedrules",
                      "tcrules", "tcdevices", "tcinterfaces", "tcclasses",
                      "tcfilters", "tcpri", "mangle",
                      "providers", "routes", "rtrules", "tunnels",
                      "accounting", "secmarks",
-                     "maclist", "netmap"):
+                     "maclist", "netmap",
+                     # Structured-io groundwork additions. These are
+                     # now parsed + exported, but the compiler/emitter
+                     # does not yet consume them. TODO per file:
+                     # - arprules:   ARP anti-spoof rules (arp table)
+                     # - proxyarp:   proxy-arp address table
+                     # - proxyndp:   proxy-ndp address table
+                     # - ecn:        ECN disable per iface/host pair
+                     # - nfacct:     named conntrack accounting objects
+                     # - rawnat:     raw-table NAT rules (early DNAT)
+                     # - stoppedrules: rules that stay when FW is stopped
+                     # - scfilter:   source CIDR filter
+                     "arprules", "proxyarp", "proxyndp", "ecn",
+                     "nfacct", "rawnat", "scfilter"):
             path = self.config_dir / name
             if path.exists():
                 lines = self._parse_columnar(path)
@@ -130,7 +156,21 @@ class ConfigParser:
                         lines = self._parse_columnar(sub)
                         getattr(config, name).extend(lines)
 
-        # 4. Parse custom macros from macros/ directory
+        # 4. Line-based extension scripts — stored as raw line lists
+        # so structured export/import can round-trip them. The files
+        # themselves stay shell (or perl for ``compile``); we don't
+        # try to parse or validate them here.
+        from shorewall_nft.config.schema import all_script_files
+        for script_name in all_script_files():
+            path = self.config_dir / script_name
+            if path.is_file():
+                try:
+                    text = path.read_text()
+                except (OSError, UnicodeDecodeError):
+                    continue
+                config.scripts[script_name] = text.splitlines()
+
+        # 5. Parse custom macros from macros/ directory
         macros_dir = self.config_dir / "macros"
         if macros_dir.is_dir():
             for macro_file in sorted(macros_dir.iterdir()):

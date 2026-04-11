@@ -143,6 +143,22 @@ Already committed on this branch since 1.0.0:
    (simlab-peer) mit VRRP + conntrackd sync zwischen den zwei,
    dann failover-Szenarios durchspielen. Dafür braucht die
    simlab ein Mehrfach-NS-Konzept (bisher nur eins).
+9. **Compiler/emitter für neue Config-Files** — parser +
+   exporter kennen seit dem structured-io groundwork commit
+   die folgenden Files, aber IR/emitter ignorieren sie noch:
+   - **`arprules`** — ARP anti-spoof-Regeln (arp table chain)
+   - **`proxyarp`** — proxy-arp Adresstabelle
+   - **`proxyndp`** — proxy-ndp Adresstabelle
+   - **`ecn`** — ECN-Disable pro Interface/Host-Paar
+   - **`nfacct`** — named conntrack accounting objects
+   - **`rawnat`** — raw-table NAT (early DNAT vor conntrack)
+   - **`stoppedrules`** — Regeln die aktiv bleiben wenn FW
+     gestoppt ist (Nachfolger von `routestopped`)
+   - **`scfilter`** — source CIDR sanity filter
+   Jedes Item = eigener Commit mit emitter-Pass + pytest-case.
+   Reihenfolge nach Häufigkeit in echten Configs:
+   stoppedrules > proxyarp > rawnat > arprules > nfacct >
+   proxyndp > scfilter > ecn.
 
 ## Release checklist (carry-forward from pre-1.0 work)
 
