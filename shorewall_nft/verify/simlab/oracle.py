@@ -111,8 +111,16 @@ class RulesetOracle:
             # Unknown jump → keep walking
             continue
 
-        return OracleVerdict("UNKNOWN", None,
-                              f"{chain_name} fell through to end")
+        # Fall-through: every Shorewall zone-pair chain ends with a
+        # ``-g`` to a policy chain (~log108 / Reject / Drop). The
+        # policy file effectively guarantees DROP/REJECT for any
+        # cross-zone pair that doesn't explicitly accept earlier.
+        # Self-zone (e.g. mgmt→mgmt) chains are normally ACCEPT-
+        # policy and have an early explicit accept rule, so a
+        # fall-through here means we hit nothing matchable —
+        # safest default is DROP, matching reality.
+        return OracleVerdict("DROP", None,
+                              f"{chain_name} fell through to end (policy)")
 
     # ── matching ──────────────────────────────────────────────────
 
@@ -238,6 +246,15 @@ class RandomProbeGenerator:
         self.state = fw_state
         self.iface_to_zone = iface_to_zone
         self.rng = random.Random(seed)
+        # Collect every IP the firewall owns so _pick_host can avoid
+        # them — picking a fw-local IP as src/dst means the kernel
+        # treats the packet as a martian source / a packet for itself
+        # and short-circuits the forwarding path before the ruleset
+        # ever evaluates.
+        self._fw_local_ips: set[str] = set()
+        for iface in fw_state.interfaces.values():
+            for a in getattr(iface, "addrs4", []) or []:
+                self._fw_local_ips.add(a.addr)
         # Pre-compute list of (iface, subnet) candidates so we only
         # walk parsed state once.
         self._candidates: list[tuple[str, _ipaddr.IPv4Network]] = []
@@ -292,8 +309,13 @@ class RandomProbeGenerator:
         )
 
     def _pick_host(self, net: _ipaddr.IPv4Network) -> _ipaddr.IPv4Address:
-        """Return a usable host IP that is NOT the network / broadcast."""
-        hosts = list(net.hosts())
+        """Return a usable host IP that is NOT the network / broadcast
+        and NOT one of the firewall's own interface addresses."""
+        hosts = [h for h in net.hosts() if str(h) not in self._fw_local_ips]
         if not hosts:
-            return net.network_address
+            # Subnet is fully fw-owned (e.g. /31 with both addrs local)
+            # — fall back to the original behaviour rather than crash.
+            hosts = list(net.hosts())
+            if not hosts:
+                return net.network_address
         return self.rng.choice(hosts)
