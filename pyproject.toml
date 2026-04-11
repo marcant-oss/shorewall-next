@@ -45,6 +45,7 @@ classifiers = [
 dependencies = [
     "click>=8.0",
     "pyroute2>=0.7",
+    "protobuf>=4.25",
 ]
 
 [project.optional-dependencies]
@@ -90,7 +91,10 @@ filterwarnings = [
 include = ["shorewall_nft*"]
 
 [tool.setuptools.package-data]
-shorewall_nft = ["data/macros/macro.*"]
+shorewall_nft = [
+    "data/macros/macro.*",
+    "daemon/proto/*.proto",
+]
 
 [tool.ruff]
 line-length = 100

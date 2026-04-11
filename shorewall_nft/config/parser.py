@@ -70,6 +70,10 @@ class ShorewalConfig:
     # Distinct from blrules (full rule grammar) — blacklist is
     # the simple "drop these sources outright" list.
     blacklist: list[ConfigLine] = field(default_factory=list)
+    # DNS-backed nft sets — hostnames that the compiler declares as
+    # empty timeout sets and shorewalld populates at runtime from
+    # dnstap/pbdns frames. See docs/roadmap/shorewalld.md.
+    dnsnames: list[ConfigLine] = field(default_factory=list)
     macros: dict[str, list[ConfigLine]] = field(default_factory=dict)
     # Line-based extension scripts — raw line lists so the structured
     # blob can round-trip them without pretending they have columns.
@@ -150,7 +154,7 @@ class ConfigParser:
                      # - scfilter:   source CIDR filter
                      "arprules", "proxyarp", "proxyndp", "ecn",
                      "nfacct", "rawnat", "scfilter",
-                     "blacklist"):
+                     "blacklist", "dnsnames"):
             path = self.config_dir / name
             if path.exists():
                 lines = self._parse_columnar(path)
