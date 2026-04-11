@@ -1508,3 +1508,74 @@ def _load_sets(config_dir: Path) -> list | None:
     init_path = config_dir / "init"
     sets = parse_init_for_sets(init_path, config_dir)
     return sets if sets else None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Structured config I/O (docs/cli/override-json.md)
+# ──────────────────────────────────────────────────────────────────────
+# Read-only first slice: ``config export`` serialises a parsed config
+# directory into the structured blob shape documented in the roadmap.
+# ``config import`` and ``config edit`` + full ``--override-json``
+# wiring land in a follow-up commit once the importer + overlay
+# applier are in place.
+
+@cli.group()
+def config() -> None:
+    """Structured config I/O (export / import / edit — planned)."""
+
+
+@config.command("export")
+@click.argument("directory", type=click.Path(exists=True, file_okay=False,
+                                             path_type=Path),
+                required=False)
+@click.option("--format", "fmt",
+              type=click.Choice(["json", "yaml"]), default="json",
+              show_default=True,
+              help="Output format. YAML needs PyYAML available.")
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None,
+              help="Write to FILE instead of stdout. Extension auto-"
+                   "selects the format if --format is not given.")
+@click.option("--include-trace", is_flag=True,
+              help="Keep _file / _lineno / _comment diagnostics in the "
+                   "output (off by default for stable diffs).")
+@click.option("--indent", type=int, default=2, show_default=True,
+              help="JSON indent (ignored for YAML).")
+def config_export(directory: Path | None, fmt: str, output: Path | None,
+                  include_trace: bool, indent: int) -> None:
+    """Dump a Shorewall config directory as a structured JSON/YAML blob.
+
+    Columnar files emit one object per row with column names as keys;
+    ``rules`` / ``blrules`` / ``policy`` are nested under their
+    ``?SECTION`` labels.
+    """
+    from shorewall_nft.config.exporter import export_config
+    from shorewall_nft.config.parser import load_config
+
+    cfg_dir = directory or Path("/etc/shorewall46")
+    cfg = load_config(cfg_dir)
+    blob = export_config(cfg, include_trace=include_trace)
+
+    # Auto-format from extension when -o is given and --format wasn't.
+    if output is not None and output.suffix in (".yaml", ".yml"):
+        fmt = "yaml"
+
+    if fmt == "yaml":
+        try:
+            import yaml  # type: ignore[import-not-found]
+        except ImportError:
+            click.echo(
+                "YAML output requested but PyYAML is not installed. "
+                "Install python3-yaml or pass --format=json.", err=True)
+            sys.exit(2)
+        text = yaml.safe_dump(blob, sort_keys=False, default_flow_style=False,
+                              allow_unicode=True)
+    else:
+        import json as _json
+        text = _json.dumps(blob, indent=indent, ensure_ascii=False,
+                           sort_keys=False) + "\n"
+
+    if output is not None:
+        output.write_text(text)
+        click.echo(f"wrote {output} ({len(text)} bytes)")
+    else:
+        click.echo(text, nl=False)
