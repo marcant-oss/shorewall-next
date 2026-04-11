@@ -37,6 +37,8 @@ from .packets import (
     PacketSummary,
     build_arp_reply,
     build_ndp_na,
+    fast_is_arp_or_ndp_ns,
+    fast_probe_id,
     parse,
 )
 from .topology import NS_FW_DEFAULT, SimFwTopology
@@ -284,17 +286,23 @@ class SimController:
         return probes
 
     async def _drain_observations(self) -> None:
-        """Feed observations from reader threads into probe correlation."""
+        """Feed observations from reader threads into probe correlation.
+
+        Each queue item is a ``(iface_name, probe_id_int)`` tuple
+        pushed by the reader thread's fast path. Correlation is a
+        single dict lookup plus expect_iface check — no scapy, no
+        dict allocation per packet.
+        """
         import queue as _queue
         try:
             while True:
                 drained = 0
                 while True:
                     try:
-                        iface, summary = self._obs_queue.get_nowait()  # type: ignore[union-attr]
+                        iface, pid_val = self._obs_queue.get_nowait()  # type: ignore[union-attr]
                     except _queue.Empty:
                         break
-                    self._on_observed(iface, summary)
+                    self._on_observed_fast(iface, pid_val)
                     drained += 1
                     if drained >= 256:
                         break
@@ -302,13 +310,35 @@ class SimController:
         except asyncio.CancelledError:
             try:
                 while True:
-                    iface, summary = self._obs_queue.get_nowait()  # type: ignore[union-attr]
-                    self._on_observed(iface, summary)
+                    iface, pid_val = self._obs_queue.get_nowait()  # type: ignore[union-attr]
+                    self._on_observed_fast(iface, pid_val)
             except _queue.Empty:
                 pass
             except Exception:
                 pass
             raise
+
+    def _on_observed_fast(self, obs_iface: str, probe_id: int) -> None:
+        """Match an observed probe_id against outstanding probes.
+
+        No packet summary, no match() fallback — correlation is the
+        primary ``probe_id → probe`` dict lookup only. If a probe
+        has been NAT-rewritten (rare on simlab, no nat rules by
+        default), it'll fall through to a timeout; the test
+        infrastructure can re-run it at full scapy parse fidelity
+        by toggling a debug flag (not wired yet).
+        """
+        probe = self._probes.get(probe_id & 0xffff)
+        if probe is None:
+            return
+        if probe.expect_iface != obs_iface:
+            return
+        probe.verdict = "ACCEPT"
+        probe.elapsed_ms = int(
+            (time.monotonic_ns() - probe.started_ns) / 1e6)
+        fut = self._probe_futures.get(probe.probe_id)
+        if fut and not fut.done():
+            fut.set_result(None)
 
     def _writer_thread_main(self, pid: int, wq, stop_ev) -> None:
         """Entry point for one writer thread.
@@ -377,6 +407,24 @@ class SimController:
                         return
                     if not buf:
                         return
+
+                    # Fast path: observed IP traffic doesn't need
+                    # the scapy parse — pull the probe_id straight
+                    # out of the IPv4 id / IPv6 flow-label bytes
+                    # and push it onto the observation queue. This
+                    # is ~100x cheaper than scapy.Ether(buf), which
+                    # matters for >1000 probes/s workloads where
+                    # the GIL would otherwise serialise the parse
+                    # across every thread onto a single core.
+                    if not fast_is_arp_or_ndp_ns(buf, is_tap):
+                        pid_val = fast_probe_id(buf, is_tap)
+                        if pid_val is not None and self._obs_queue is not None:
+                            self._obs_queue.put((iface_name, pid_val))
+                        continue
+
+                    # Slow path: ARP / NDP. Full scapy parse so we
+                    # can build the reply frame and also push into
+                    # the diagnostic trace ring.
                     pkt = parse(buf, is_tap=is_tap)
                     self._iface_trace[iface_name].append(pkt)
 
@@ -411,16 +459,6 @@ class SimController:
                         except Exception:
                             pass
                         continue
-
-                    summary = {
-                        "family": pkt.family, "proto": pkt.proto,
-                        "src": pkt.src, "dst": pkt.dst,
-                        "sport": pkt.sport, "dport": pkt.dport,
-                        "flags": pkt.flags, "length": pkt.length,
-                        "probe_id": pkt.probe_id,
-                    }
-                    if self._obs_queue is not None:
-                        self._obs_queue.put((iface_name, summary))
             except Exception:
                 return
 
