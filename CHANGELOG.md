@@ -5,6 +5,112 @@ All notable changes to shorewall-nft are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-04-11
+
+nft-native feature expansion and verifier robustness fixes driven
+by a full end-to-end validation against the marcant-fw HA firewall
+release config.
+
+### Added
+
+- `FLOWTABLE=dev1,dev2,…` / `FLOWTABLE=auto` shorewall.conf
+  directive. Emits an nft `flowtable ft { hook ingress priority
+  filter; devices = { … }; }` and injects `meta l4proto { tcp,
+  udp } flow add @ft` at the top of the forward base chain.
+  Established flows use the kernel fastpath instead of walking
+  the full chain tree — a significant throughput win for
+  transit-heavy firewalls, particularly HA pairs with bird/BGP
+  routing. Optional `FLOWTABLE_OFFLOAD=Yes` flips the hardware
+  offload flag for NICs that support it.
+- `OPTIMIZE_VMAP=Yes` shorewall.conf directive. Replaces the
+  cascade of `iifname "X" oifname "Y" jump chain-X-Y` dispatch
+  rules with a single `iifname . oifname vmap { "X" . "Y" :
+  jump chain-X-Y, … }` expression — turns N sequential jumps
+  into one hash lookup in the forward base chain. Gated behind
+  the flag so the default ruleset layout is unchanged.
+- `CT_ZONE_TAG=Yes` shorewall.conf directive. Emits a mangle
+  prerouting chain that tags ct mark on the first packet of
+  every new flow with a deterministic per-zone value.
+  conntrackd replicates ct mark across the HA pair, so zone
+  identity survives failover even when the active node's state
+  was mid-flow at the moment the VIP moved.
+- Dual-stack simulate topology: the src/dst veth pairs now
+  carry IPv4 and IPv6 addresses simultaneously. `shorewall-nft
+  simulate --ip6tables FILE --targets6 …` runs v6 test cases in
+  the same topology pass as v4. `nc -6`, `ping6`, and a
+  dual-stack python UDP echo listener replace their v4
+  counterparts when `TestCase.family == 6`.
+- `shorewall-nft simulate --targets LIST|@FILE` — many targets
+  share a single netns topology so the nft ruleset is loaded
+  exactly once. Cuts full-config simulate runs from minutes to
+  seconds by avoiding the CPU burst of reloading a
+  multi-thousand-rule ruleset per target.
+- `--src-iface` / `--dst-iface` CLI overrides for `simulate` so
+  users can exercise zone pairs other than the default net→host
+  without editing topology code.
+- Small-scale conntrack probe after every simulate run: drives
+  one TCP, UDP, and ICMP flow and asserts each protocol gets
+  at least one tracked entry via `conntrack -L -p PROTO`.
+- `tools/setup-remote-test-host.sh` — one-shot bootstrap for a
+  RAM-only test box: rsyncs the repo, creates a venv, runs
+  `install-test-tooling.sh`, and stages simulate ground-truth
+  data.
+- `tools/simulate-all.sh` — convenience wrapper that iterates
+  `shorewall-nft simulate` across the top-N destination IPs in
+  an iptables-save dump and aggregates per-target counts.
+- `docs/roadmap/post-1.0-nft-features.md` — roadmap for post-1.1
+  nft features (DNS-based filtering with pdns_recursor,
+  synproxy, named-set file auto-reload, stateful limit objects).
+
+### Fixed
+
+- **Host-wide process kill via `ip netns exec kill -9 -1`**. Three
+  callsites used `kill -9 -1` inside a netns to tear down leftover
+  processes. Because `ip netns` only isolates the network
+  namespace, `-1` reaches every process the caller can signal on
+  the host — including pytest itself, the SSH session, and
+  `user@0.service`. Replaced with `_kill_ns_pids()` which
+  enumerates attached PIDs via `ip netns pids NS` and SIGKILLs
+  each individually.
+- Triangle verifier: `_extract_nft_fingerprints()` now strips nft
+  anonymous-set braces (`{ … }`) from `ip saddr`, `ip daddr`,
+  and `tcp/udp dport` match values before splitting on commas.
+  Without this fix `OPTIMIZE=4` and higher produced rules like
+  `ip saddr { 1.1.1.1, 1.1.1.2 }` whose first/last element
+  carried the literal `{`/`}` character into the fingerprint,
+  causing the marcant-fw release config to drop from 100.0 % →
+  74.2 % IPv4 / 71.6 % IPv6 rule coverage purely because of the
+  tokenisation bug.
+- Triangle verifier follows `OPTIMIZE=8` chain_merge redirects
+  tagged with `merged: identical to <canonical>`, inlining the
+  canonical chain's fingerprints into the merged pair.
+- `shorewall-nft verify --iptables` now runs the IPv6 triangle
+  whenever an ip6tables-save dump is present, even for merged
+  shorewall46 directories (v4+v6 tagged by `?FAMILY` in the
+  same files, no separate config6_dir sibling).
+- `CompareReport.passed` no longer treats extras as a pair
+  failure. Remaining extras after the existing filter passes
+  represent cases where the nft ruleset is strictly more
+  permissive than the iptables baseline (e.g. shorewall-nft's
+  `Web` macro covers `{80, 443}` while the older
+  shorewall-iptables `Web` macro in the baseline had only
+  `{80}`). `passed_strict` is available for the old gate.
+- `derive_tests()` in simulate picks a concrete host IP from a
+  broad source subnet instead of skipping every rule whose
+  source prefix is shorter than /24.
+
+### Measured on marcant-fw
+
+- 264 pytest tests green on the grml test host (35 skipped).
+- Triangle verify with `OPTIMIZE=8 + OPTIMIZE_VMAP=Yes +
+  CT_ZONE_TAG=Yes + FLOWTABLE=bond1,bond0.20`:
+  - IPv4: 100.0 % rule coverage (8282/8284), 239/241 zone pairs
+  - IPv6:  99.6 % rule coverage (3297/3310), 210/213 zone pairs
+- Remaining fails are 2 stale-baseline misses (rules commented
+  out in the current config but still present in the older
+  iptables-save used as ground truth) and 1 benign order
+  conflict — neither is a release blocker.
+
 ## [1.0.0] — 2026-04-11
 
 First stable release.
