@@ -1,39 +1,57 @@
-"""simlab orchestrator.
+"""simlab orchestrator — single-process asyncio design.
 
-Owns the :class:`SimFwTopology`, forks one worker per interface,
-drives probes through the pipe to the matching worker, correlates
-observed packets back to their probe via a dispatch table, and
-tears everything down (workers + namespace + fds) on exit.
+Owns the :class:`SimFwTopology` **and** every TUN/TAP file
+descriptor directly. One Python interpreter, one asyncio event
+loop. No worker subprocesses, no multiprocessing pipes, no ARP/
+NDP slaves. Everything the old worker did (packet parse, ARP
+who-has reply, NDP NS → NA, observed-packet dispatch) runs
+inline as asyncio reader callbacks on the fds.
 
-Design points:
+Why single-process:
 
-* **Workers stay in host NS.** Each worker inherits a single
-  TUN/TAP fd via ``pass_fds``. Parent closes its own copy after
-  fork so only the child holds it.
-* **Asyncio event loop in the parent** — we register each worker
-  pipe as an asyncio reader and dispatch results on arrival.
-* **Cleanup is layered** — an ``atexit`` hook plus a signal
-  handler cover "normal exit", "user ^C", "unhandled exception",
-  and "controller killed". Every layer calls :meth:`_shutdown`,
-  which is idempotent.
+* Each extra Python interpreter ships ~80 MB of heap
+  (stdlib + scapy + shorewall_nft imports). Twenty-four workers
+  cost 2 GB of RAM purely for the interpreters. One process
+  costs ~150 MB total.
+* Inject path is ``os.write(fd, payload)`` — no pipe roundtrip.
+* Shutdown is trivial: close fds, destroy topology. No
+  subprocess join/terminate/kill dance.
+* The packet-handling work is dominated by asyncio reader
+  events and scapy parsing; both are fine in a single process.
 """
 
 from __future__ import annotations
 
 import asyncio
 import atexit
-import multiprocessing as mp
 import os
 import signal
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from .dumps import FwState, load_fw_state
-from .packets import PacketSummary, parse
+from .packets import (
+    PacketSummary,
+    build_arp_reply,
+    build_ndp_na,
+    parse,
+)
 from .topology import NS_FW_DEFAULT, SimFwTopology
-from .worker import _proc_name_for, worker_main, worker_main_multi
+
+
+# Synthetic MAC for every TAP the controller services. Same MAC on
+# every TAP is fine: each TAP is its own L2 segment.
+_WORKER_MAC = "02:00:00:5e:00:01"
+
+
+def _extract_src_mac(raw: bytes) -> str:
+    """Cheap Ethernet src-MAC extraction — bytes 6..12 of the frame."""
+    if len(raw) < 12:
+        return "ff:ff:ff:ff:ff:ff"
+    return ":".join(f"{b:02x}" for b in raw[6:12])
 
 
 @dataclass
@@ -63,28 +81,28 @@ class SimController:
         ip6add: Path | None = None,
         ip6routes: Path | None = None,
         ns_name: str = NS_FW_DEFAULT,
-        workers_max: int | None = None,
+        workers_max: int | None = None,  # unused in single-process mode
+        trace_depth: int = 128,
     ):
         self.paths = (ip4add, ip4routes, ip6add, ip6routes)
         self.ns_name = ns_name
         self.state: FwState | None = None
         self.topo: SimFwTopology | None = None
-        # iface_name → (Process, Pipe) mapping. In the consolidated
-        # worker model multiple iface names share the same (Process,
-        # Pipe) pair — all distinct entries just happen to point at
-        # the same worker. The _probe dispatch code reads by iface
-        # name and doesn't care that the process is shared.
-        self.workers: dict[str, tuple[mp.Process, Any]] = {}
-        # Unique list of (Process, Pipe) so shutdown iterates each
-        # worker exactly once.
-        self._worker_procs: list[tuple[mp.Process, Any]] = []
+        # Per-iface state held inline by the controller. Replaces the
+        # whole subprocess-based worker pool.
+        self._iface_fds: dict[str, int] = {}
+        self._iface_kind: dict[str, str] = {}
+        self._iface_mac: dict[str, str | None] = {}
+        self._iface_trace: dict[str, deque[PacketSummary]] = {}
+        self._trace_depth = trace_depth
         self._probes: dict[int, ProbeSpec] = {}
         self._probe_futures: dict[int, asyncio.Future] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
         self._cleanup_registered = False
-        # None = auto-detect based on CPU count (fallback to 4)
-        self._workers_max = workers_max
+        # No-op back-compat alias used by legacy tests / callers that
+        # inspect ``workers`` to see which interfaces exist.
+        self.workers: dict[str, tuple[Any, Any]] = {}
 
     # ── lifecycle ─────────────────────────────────────────────────
 
@@ -94,16 +112,12 @@ class SimController:
         return self.state
 
     def build(self) -> None:
-        """Build the NS_FW topology and spawn consolidated workers.
+        """Build the NS_FW topology and take ownership of every TUN/TAP fd.
 
-        Instead of one fork per interface (which burns ~80 MB of
-        Python heap per worker = ~2 GB for 24 interfaces), we
-        partition the TUN/TAP fds across a small pool of workers.
-        Each worker handles N fds via asyncio, sharing one Python
-        interpreter. The number of workers defaults to
-        ``max(2, cpu_count)`` so every core can process packets
-        in parallel but no core is starved by a heap-heavy process.
-        Override with ``SimController(workers_max=N)``.
+        Single-process mode: the controller keeps the fds in its own
+        address space. No workers are forked. ``run_probes`` will
+        register one asyncio reader per fd on the controller's own
+        event loop and handle packets inline.
         """
         self._register_cleanup()
         self.reload_dumps()
@@ -111,61 +125,21 @@ class SimController:
         self.topo = SimFwTopology(self.state, ns_name=self.ns_name)
         self.topo.build()
 
-        # Decide how many workers to spawn
-        if self._workers_max is not None:
-            n_workers = max(1, self._workers_max)
-        else:
-            try:
-                n_workers = max(2, os.cpu_count() or 4)
-            except Exception:
-                n_workers = 4
-        iface_list = list(self.topo.tun_fds.items())
-        n_workers = min(n_workers, max(1, len(iface_list)))
-
-        # Partition iface_list into n_workers chunks round-robin.
-        # Round-robin over a sorted list gives stable assignment
-        # so the same iface lands on the same worker across runs.
-        chunks: list[list[tuple[str, int]]] = [[] for _ in range(n_workers)]
-        for i, entry in enumerate(sorted(iface_list)):
-            chunks[i % n_workers].append(entry)
-
-        ctx = mp.get_context("fork")
-        for wi, chunk in enumerate(chunks):
-            if not chunk:
-                continue
-            ifaces_arg = {
-                name: {
-                    "fd": fd,
-                    "kind": self.topo.tun_kind[name],
-                    "mac": self.topo.tun_mac.get(name),
-                }
-                for name, fd in chunk
-            }
-            parent_conn, child_conn = ctx.Pipe(duplex=True)
-            # Name the process after the first iface (or ``w<i>:Nifs``
-            # when there are many). The worker will rename its own
-            # /proc/comm to a 15-char variant once it starts.
-            if len(chunk) == 1:
-                proc_name = _proc_name_for(chunk[0][0])
-            else:
-                proc_name = _proc_name_for(f"w{wi}:{len(chunk)}ifs")
-            proc = ctx.Process(
-                target=worker_main_multi,
-                args=(ifaces_arg, child_conn),
-                name=proc_name,
-                daemon=False,
-            )
-            proc.start()
-            child_conn.close()
-            self._worker_procs.append((proc, parent_conn))
-            for name, _fd in chunk:
-                self.workers[name] = (proc, parent_conn)
-        # Parent no longer needs the TUN/TAP fds — the workers own them.
+        # Take ownership of each TUN/TAP fd + per-iface metadata
         for name, fd in list(self.topo.tun_fds.items()):
+            self._iface_fds[name] = fd
+            self._iface_kind[name] = self.topo.tun_kind[name]
+            self._iface_mac[name] = self.topo.tun_mac.get(name)
+            self._iface_trace[name] = deque(maxlen=self._trace_depth)
             try:
-                os.close(fd)
+                os.set_blocking(fd, False)
             except OSError:
                 pass
+            # Back-compat marker so callers that iterate self.workers
+            # to find "which interfaces exist" still see the full set.
+            self.workers[name] = (None, None)
+        # Clear topo.tun_fds so topo.destroy() doesn't try to close
+        # them a second time — we close them in _shutdown.
         self.topo.tun_fds.clear()
 
     def load_nft(self, nft_script_path: str) -> None:
@@ -182,18 +156,19 @@ class SimController:
     # ── probe dispatch ────────────────────────────────────────────
 
     async def run_probes(self, probes: list[ProbeSpec]) -> list[ProbeSpec]:
-        """Inject every probe and wait for its matching response."""
+        """Inject every probe and wait for its matching response.
+
+        Single-process design: registers one asyncio reader per
+        TUN/TAP fd on the controller's own event loop, then fires
+        every probe via a direct ``os.write(fd, payload)``. The
+        reader callbacks handle ARP / NDP reply inline and dispatch
+        observed packets into the per-probe futures.
+        """
         self._loop = asyncio.get_running_loop()
-        # Register a reader for every distinct worker process pipe
-        # (not one per iface — multiple ifaces share the same pipe
-        # now).
-        registered_fds: set[int] = set()
-        for _proc, conn in self._worker_procs:
-            fd = conn.fileno()
-            if fd in registered_fds:
-                continue
-            registered_fds.add(fd)
-            self._loop.add_reader(fd, self._on_worker_msg, None, conn)
+        registered: list[int] = []
+        for iface_name, fd in self._iface_fds.items():
+            self._loop.add_reader(fd, self._on_tap_read, iface_name)
+            registered.append(fd)
 
         # Kick off each probe — fire-and-observe, async per probe.
         futures: list[asyncio.Future] = []
@@ -205,11 +180,9 @@ class SimController:
             self._inject(probe)
             futures.append(self._wait_probe(probe, fut))
 
-        # Wait for all probes to complete (with their individual
-        # timeouts handled by _wait_probe).
         await asyncio.gather(*futures, return_exceptions=True)
 
-        for fd in registered_fds:
+        for fd in registered:
             try:
                 self._loop.remove_reader(fd)
             except Exception:
@@ -221,104 +194,152 @@ class SimController:
             await asyncio.wait_for(fut, timeout=probe.timeout_s)
         except asyncio.TimeoutError:
             probe.verdict = "DROP"
-            probe.elapsed_ms = int((time.monotonic_ns() - probe.started_ns) / 1e6)
-            # Ask workers for their trace buffers to explain the failure.
-            probe.trace = await self._collect_traces()
+            probe.elapsed_ms = int(
+                (time.monotonic_ns() - probe.started_ns) / 1e6)
+            # Snapshot every iface's trace ring so the report can
+            # explain where the packet disappeared.
+            probe.trace = self._snapshot_traces()
         finally:
             self._probes.pop(probe.probe_id, None)
             self._probe_futures.pop(probe.probe_id, None)
 
     def _inject(self, probe: ProbeSpec) -> None:
-        worker = self.workers.get(probe.inject_iface)
-        if worker is None:
+        fd = self._iface_fds.get(probe.inject_iface)
+        if fd is None:
             probe.verdict = "ERROR"
             fut = self._probe_futures.get(probe.probe_id)
             if fut and not fut.done():
                 fut.set_result(None)
             return
-        _, conn = worker
         try:
-            # Modern 3-tuple routes the inject to the right fd inside
-            # a multi-iface worker. Single-iface workers still accept
-            # this shape.
-            conn.send(("inject", probe.inject_iface, probe.payload))
-        except (BrokenPipeError, ConnectionError):
+            os.write(fd, probe.payload)
+        except OSError:
             probe.verdict = "ERROR"
             fut = self._probe_futures.get(probe.probe_id)
             if fut and not fut.done():
                 fut.set_result(None)
 
-    def _on_worker_msg(self, iface: str, conn: Any) -> None:
-        try:
-            if not conn.poll():
-                return
-            msg = conn.recv()
-        except (EOFError, BrokenPipeError, ConnectionError):
-            return
-        if not msg:
-            return
-        tag = msg[0]
-        if tag == "observed":
-            _, obs_iface, _ts, summary = msg
-            # Primary correlation: probe_id stashed in IP.id / IPv6.fl.
-            # Falls back to the per-probe match() callback if the id
-            # didn't survive (e.g. DNAT rewrote the packet).
-            obs_id = summary.get("probe_id")
-            if obs_id is not None:
-                probe = self._probes.get(obs_id & 0xffff)
-                if probe and probe.expect_iface == obs_iface:
-                    probe.verdict = "ACCEPT"
-                    probe.elapsed_ms = int(
-                        (time.monotonic_ns() - probe.started_ns) / 1e6)
-                    fut = self._probe_futures.get(probe.probe_id)
-                    if fut and not fut.done():
-                        fut.set_result(summary)
-                    return
-            for probe_id, probe in list(self._probes.items()):
-                if probe.expect_iface != obs_iface:
-                    continue
-                if probe.match(summary):
-                    probe.verdict = "ACCEPT"
-                    probe.elapsed_ms = int(
-                        (time.monotonic_ns() - probe.started_ns) / 1e6)
-                    fut = self._probe_futures.get(probe_id)
-                    if fut and not fut.done():
-                        fut.set_result(summary)
-                    break
-        elif tag == "trace":
-            _, _iface, _summaries = msg
-            # Trace responses are returned via _collect_traces()
-            # which installs its own temporary consumer.
-        elif tag == "error":
-            _, _iface, _detail = msg
-            # Could log to controller trace
-        elif tag == "injected":
-            pass  # ack
+    # ── inline TUN/TAP reader (was the worker loop) ───────────────
 
-    async def _collect_traces(self) -> list[dict]:
-        """Ask every worker for its ring-buffer snapshot.
+    def _on_tap_read(self, iface_name: str) -> None:
+        """Drain packets from one TUN/TAP fd and handle them inline.
 
-        Iterates ``_worker_procs`` (unique per process) rather than
-        ``workers`` (per iface) so a multi-iface worker only gets
-        one trace_dump request and dumps all its ifaces in one go.
+        Replaces the old InterfaceWorker._on_tap_read plus its
+        subprocess ↔ controller pipe. ARP / NDP replies are
+        written back to the same fd; observed packets dispatch
+        straight into self._probes / self._probe_futures so a
+        probe's response latency is now one asyncio event round,
+        not one pipe round plus one asyncio round.
         """
+        fd = self._iface_fds[iface_name]
+        try:
+            while True:
+                try:
+                    buf = os.read(fd, 65536)
+                except BlockingIOError:
+                    return
+                except OSError:
+                    return
+                if not buf:
+                    return
+                self._handle_packet(iface_name, buf)
+        except Exception:  # pragma: no cover — worker-level safety net
+            return
+
+    def _handle_packet(self, iface_name: str, raw: bytes) -> None:
+        is_tap = self._iface_kind[iface_name] == "tap"
+        pkt = parse(raw, is_tap=is_tap)
+        self._iface_trace[iface_name].append(pkt)
+        fd = self._iface_fds[iface_name]
+
+        # ARP who-has → reply as if we owned the requested IP
+        if (pkt.proto == "arp" and pkt.arp_op == 1
+                and pkt.src and pkt.dst):
+            reply = build_arp_reply(
+                src_mac=_WORKER_MAC,
+                src_ip=pkt.dst,
+                dst_mac=_extract_src_mac(raw),
+                dst_ip=pkt.src,
+            )
+            try:
+                os.write(fd, reply)
+            except OSError:
+                pass
+            return
+
+        # IPv6 NDP Neighbor Solicitation → reply with NA
+        if (pkt.proto == "ndp" and pkt.ndp_type == 135
+                and pkt.src and pkt.dst):
+            try:
+                from scapy.layers.inet6 import ICMPv6ND_NS
+                import scapy.all as s
+                layer = s.Ether(raw)
+                if layer.haslayer(ICMPv6ND_NS):
+                    target = layer[ICMPv6ND_NS].tgt
+                    src_ll = "fe80::200:5eff:fe00:1"
+                    na = build_ndp_na(
+                        src_mac=_WORKER_MAC,
+                        src_ip=src_ll,
+                        dst_mac=_extract_src_mac(raw),
+                        dst_ip=pkt.src,
+                        target_ip=str(target),
+                    )
+                    os.write(fd, na)
+            except Exception:
+                pass
+            return
+
+        # Observed IP packet → dispatch into the probe correlation
+        # table directly, no pipe.
+        summary = {
+            "family": pkt.family, "proto": pkt.proto,
+            "src": pkt.src, "dst": pkt.dst,
+            "sport": pkt.sport, "dport": pkt.dport,
+            "flags": pkt.flags, "length": pkt.length,
+            "probe_id": pkt.probe_id,
+        }
+        self._on_observed(iface_name, summary)
+
+    def _on_observed(self, obs_iface: str, summary: dict) -> None:
+        """Match an observed packet against outstanding probes."""
+        obs_id = summary.get("probe_id")
+        if obs_id is not None:
+            probe = self._probes.get(obs_id & 0xffff)
+            if probe and probe.expect_iface == obs_iface:
+                probe.verdict = "ACCEPT"
+                probe.elapsed_ms = int(
+                    (time.monotonic_ns() - probe.started_ns) / 1e6)
+                fut = self._probe_futures.get(probe.probe_id)
+                if fut and not fut.done():
+                    fut.set_result(summary)
+                return
+        # Fallback: scan for any probe whose match() likes this
+        # packet on the right iface (DNAT / NAT rewrite cases).
+        for probe_id, probe in list(self._probes.items()):
+            if probe.expect_iface != obs_iface:
+                continue
+            if probe.match(summary):
+                probe.verdict = "ACCEPT"
+                probe.elapsed_ms = int(
+                    (time.monotonic_ns() - probe.started_ns) / 1e6)
+                fut = self._probe_futures.get(probe_id)
+                if fut and not fut.done():
+                    fut.set_result(summary)
+                break
+
+    def _snapshot_traces(self) -> list[dict]:
+        """Collect the per-iface trace ring buffers as a list."""
         out: list[dict] = []
-        for _proc, conn in self._worker_procs:
-            try:
-                conn.send(("trace_dump",))
-            except Exception:
-                continue
-        await asyncio.sleep(0.05)  # let workers reply
-        for _proc, conn in self._worker_procs:
-            try:
-                while conn.poll():
-                    msg = conn.recv()
-                    if msg and msg[0] == "trace":
-                        _, iface, summaries = msg
-                        for s in summaries:
-                            out.append({"iface": iface, **s})
-            except Exception:
-                continue
+        for iface, ring in self._iface_trace.items():
+            for s in ring:
+                out.append({
+                    "iface": iface,
+                    "family": s.family, "proto": s.proto,
+                    "src": s.src, "dst": s.dst,
+                    "sport": s.sport, "dport": s.dport,
+                    "flags": s.flags, "arp_op": s.arp_op,
+                    "ndp_type": s.ndp_type, "length": s.length,
+                })
         return out
 
     # ── shutdown ──────────────────────────────────────────────────
@@ -347,43 +368,26 @@ class SimController:
         if self._shutdown_done:
             return
         self._shutdown_done = True
-        # Iterate _worker_procs so each process is shut down exactly
-        # once, no matter how many ifaces it owned.
-        # 1. Tell workers to quit
-        for _proc, conn in self._worker_procs:
-            try:
-                conn.send(("quit",))
-            except Exception:
-                pass
-        # 2. Wait briefly, then SIGTERM stragglers
-        deadline = time.monotonic() + 2.0
-        for proc, _conn in self._worker_procs:
-            left = max(0.0, deadline - time.monotonic())
-            try:
-                proc.join(timeout=left)
-            except Exception:
-                pass
-        for proc, _conn in self._worker_procs:
-            if proc.is_alive():
+        # 1. Remove asyncio readers if the loop is still alive.
+        if self._loop is not None:
+            for fd in list(self._iface_fds.values()):
                 try:
-                    proc.terminate()
-                    proc.join(timeout=1.0)
+                    self._loop.remove_reader(fd)
                 except Exception:
                     pass
-            if proc.is_alive():
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-        for _proc, conn in self._worker_procs:
+        # 2. Close every TUN/TAP fd we own.
+        for iface_name, fd in list(self._iface_fds.items()):
             try:
-                conn.close()
-            except Exception:
+                os.close(fd)
+            except OSError:
                 pass
-        self._worker_procs.clear()
+        self._iface_fds.clear()
+        self._iface_kind.clear()
+        self._iface_mac.clear()
+        self._iface_trace.clear()
         self.workers.clear()
-        # 3. Destroy the topology (closes any remaining TUN fds,
-        #    deletes the NS_FW netns).
+        # 3. Destroy the topology (unmounts the netns bind via
+        #    nsstub, destroys the TUN/TAP interfaces).
         if self.topo is not None:
             try:
                 self.topo.destroy()
