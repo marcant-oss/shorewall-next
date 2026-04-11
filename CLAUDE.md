@@ -144,6 +144,87 @@ Already committed on this branch since 1.0.0:
    dann failover-Szenarios durchspielen. Dafür braucht die
    simlab ein Mehrfach-NS-Konzept (bisher nur eins).
 
+## Release checklist (carry-forward from pre-1.0 work)
+
+These items were must-haves for tagging 1.0 and most still
+apply to the pending 1.1 tag. Before the next `git tag`:
+
+1. **Version bump** in `pyproject.toml` and
+   `shorewall_nft/__init__.py` (currently 1.1.0).
+2. **CHANGELOG.md** entry closed (1.1.0 section exists but will
+   need the simlab bits appended once the archived run is in).
+3. **`/etc/shorewall46` precedence note** — when both `/etc/
+   shorewall` and `/etc/shorewall46` exist, the latter wins.
+   Backward-incompatible for operators who have both. Documented
+   already but worth a release-notes line every time.
+4. **`?FAMILY` directive** — it's a shorewall-nft extension, a
+   merged `/etc/shorewall46` config will crash stock upstream
+   Shorewall. README calls this out; don't drop the warning.
+5. **Example plugin configs** under `examples/plugins/` — keep
+   them in sync with whatever `plugins/builtin/*.py` actually
+   expects.
+6. **`generate-systemd --netns` template** — has to honour
+   `/etc/shorewall46` as default when present.
+7. **Packaging** — `python -m build` run, verify the wheel
+   actually includes `plugins/builtin/` and the new
+   `simlab/` subpackage.
+
+Deeper open items (not release-blockers, track in issues):
+
+- Pre-existing host-r compiler bug: chain name
+  `linux,vpn-voice` from a zone list with a comma. Surfaces on
+  the host-r corpus config.
+- Debug-mode edge cases: fresh netns with no loaded ruleset
+  during `debug` save → restore; SIGINT during `apply_nft`;
+  unrelated tables (docker, fail2ban) in the save file.
+
+## Packaging (future .deb/.rpm/pacman/apk)
+
+Authoritative list: `docs/reference/dependencies.md`. Short form:
+
+**Required runtime:**
+- Python ≥ 3.11 (stdlib tomllib, PEP 604 unions)
+- python3-click ≥ 8.0, python3-pyroute2 ≥ 0.9
+- `nft`, `ip` binaries (nftables, iproute2)
+
+**Recommended:**
+- python3-nftables (libnftables bindings; subprocess fallback
+  exists but slower)
+- ipset (legacy `init`-script ipset loading)
+
+**Optional (Suggests):**
+- python3-scapy (only for `simulate` and `simlab`)
+- sudo (only when shipping `tools/run-netns` + sudoers)
+
+**Test subpackage `shorewall-nft-tests`:**
+Depends: shorewall-nft, python3-pytest ≥ 8.0, sudo
+Recommends: python3-scapy, python3-pytest-cov
+
+**Kernel module floor:** Linux ≥ 5.8. Needs nf_tables,
+nf_tables_inet, nft_counter/ct/limit/log/nat/reject_inet,
+nft_set_hash/rbtree. Soft deps: nft_objref, nft_connlimit,
+nft_numgen, nft_flow_offload, nft_synproxy.
+
+Packagers: do NOT run `tools/install-test-tooling.sh` from
+postinst — use the underlying `install`, `install-m`, `visudo
+-c` steps directly so dpkg/rpm file ownership stays clean.
+
+## Sister projects for nft context
+
+Two neighbouring repos at `/home/avalentin/projects/marcant-fw/`
+that provide prior art and production reference:
+
+- **shorewall2foomuuri** (`…/shorewall2foomuuri`) — Python
+  translator: Shorewall → foomuuri DSL → nft. Useful as nft
+  syntax reference (`nft_parser.py`) and for the
+  iptables↔nft semantic equivalence checker (`iptables_parser.py`,
+  `verify.py`).
+- **netns-routing** (`…/netns-routing`) — the actual production
+  environment using foomuuri/nftables in netns. 16 zones, ~3300
+  rules, HA with VRRP across two nodes / three namespaces, real
+  flowtables + flow offload. This is the single best
+  "what does marcant-fw really look like" reference.
+
 ## Operator quickstart
 
 ```bash
