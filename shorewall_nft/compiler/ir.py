@@ -87,6 +87,10 @@ class FirewallIR:
     zones: ZoneModel = field(default_factory=ZoneModel)
     chains: dict[str, Chain] = field(default_factory=dict)
     settings: dict[str, str] = field(default_factory=dict)
+    # Chains for the separate `inet shorewall_stopped` table — populated
+    # from routestopped. Kept apart from `chains` so the main emitter
+    # never mixes them into the running ruleset.
+    stopped_chains: dict[str, Chain] = field(default_factory=dict)
 
     def add_chain(self, chain: Chain) -> None:
         self.chains[chain.name] = chain
@@ -1487,16 +1491,63 @@ def _process_blrules(ir: FirewallIR, blrules: list[ConfigLine],
 def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine]) -> None:
     """Process routestopped rules.
 
-    These define traffic allowed when the firewall is stopped.
-    In nft: we create a separate table 'inet shorewall_stopped' that
-    can be loaded when the main table is removed.
+    These define the traffic allowed when the firewall is stopped.
+    The chains live in ``ir.stopped_chains`` (not ``ir.chains``) so the
+    regular emitter never mixes them into the running ruleset. The
+    emitter exposes :func:`emit_stopped_nft` to render them as a
+    standalone ``inet shorewall_stopped`` table that ``shorewall-nft
+    stop`` loads after deleting ``inet shorewall``.
+
+    Base chain layout (matches Shorewall's stopped semantics):
+      * input  — policy DROP, ACCEPT for listed (iface,host) tuples
+      * output — policy DROP, ACCEPT for listed (iface,host) tuples
+      * forward — policy DROP (no transit when stopped)
+      * loopback ACCEPT is added unconditionally to keep the box usable
 
     Format: INTERFACE HOST(S) OPTIONS PROTO DPORT SPORT
     """
-    if "stopped-input" not in ir.chains:
-        ir.add_chain(Chain(name="stopped-input"))
-    if "stopped-output" not in ir.chains:
-        ir.add_chain(Chain(name="stopped-output"))
+    stopped_input = Chain(
+        name="stopped-input",
+        chain_type=ChainType.FILTER,
+        hook=Hook.INPUT,
+        priority=0,
+        policy=Verdict.DROP,
+    )
+    stopped_output = Chain(
+        name="stopped-output",
+        chain_type=ChainType.FILTER,
+        hook=Hook.OUTPUT,
+        priority=0,
+        policy=Verdict.DROP,
+    )
+    stopped_forward = Chain(
+        name="stopped-forward",
+        chain_type=ChainType.FILTER,
+        hook=Hook.FORWARD,
+        priority=0,
+        policy=Verdict.DROP,
+    )
+
+    # Loopback always passes — otherwise local services break.
+    lo_in = Rule(verdict=Verdict.ACCEPT)
+    lo_in.matches.append(Match(field="iifname", value="lo"))
+    stopped_input.rules.append(lo_in)
+    lo_out = Rule(verdict=Verdict.ACCEPT)
+    lo_out.matches.append(Match(field="oifname", value="lo"))
+    stopped_output.rules.append(lo_out)
+
+    # Established/related survive — otherwise short-lived stop windows
+    # would tear down every active mgmt session.
+    est_in = Rule(verdict=Verdict.ACCEPT)
+    est_in.matches.append(Match(field="ct state", value="established,related"))
+    stopped_input.rules.append(est_in)
+    est_out = Rule(verdict=Verdict.ACCEPT)
+    est_out.matches.append(Match(field="ct state", value="established,related"))
+    stopped_output.rules.append(est_out)
+
+    ir.stopped_chains[stopped_input.name] = stopped_input
+    ir.stopped_chains[stopped_output.name] = stopped_output
+    ir.stopped_chains[stopped_forward.name] = stopped_forward
 
     for line in routestopped:
         cols = line.columns
@@ -1523,7 +1574,7 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine]) -> Non
                         r.matches.append(Match(field="meta l4proto", value=proto))
                         if dport:
                             r.matches.append(Match(field=f"{proto} dport", value=dport))
-                    ir.chains["stopped-input"].rules.append(r)
+                    ir.stopped_chains["stopped-input"].rules.append(r)
 
                     # Corresponding output rule
                     r_out = Rule(verdict=Verdict.ACCEPT)
@@ -1531,19 +1582,19 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine]) -> Non
                     r_out.matches.append(Match(field="ip daddr", value=h))
                     if proto:
                         r_out.matches.append(Match(field="meta l4proto", value=proto))
-                    ir.chains["stopped-output"].rules.append(r_out)
+                    ir.stopped_chains["stopped-output"].rules.append(r_out)
         else:
             if proto:
                 rule_in.matches.append(Match(field="meta l4proto", value=proto))
                 if dport:
                     rule_in.matches.append(Match(field=f"{proto} dport", value=dport))
-            ir.chains["stopped-input"].rules.append(rule_in)
+            ir.stopped_chains["stopped-input"].rules.append(rule_in)
 
             rule_out = Rule(verdict=Verdict.ACCEPT)
             rule_out.matches.append(Match(field="oifname", value=iface))
             if proto:
                 rule_out.matches.append(Match(field="meta l4proto", value=proto))
-            ir.chains["stopped-output"].rules.append(rule_out)
+            ir.stopped_chains["stopped-output"].rules.append(rule_out)
 
 
 def _set_self_zone_policies(ir: FirewallIR, zones: ZoneModel) -> None:
