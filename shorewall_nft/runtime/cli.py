@@ -672,9 +672,11 @@ def verify(directory, iptables, config_dir, config_dir4, config6_dir,
     )
     click.echo(f"IPv4: {report.summarize()}")
 
-    # IPv6 verification (auto-detect ip6tables dump)
+    # IPv6 verification (auto-detect ip6tables dump). For a merged
+    # shorewall46 config, there is no separate config6_dir — the v6
+    # rules live in the same directory and are tagged via ?FAMILY.
     ip6_dump = iptables.parent / iptables.name.replace("iptables", "ip6tables")
-    if ip6_dump.exists() and config6_dir:
+    if ip6_dump.exists():
         report6 = run_triangle(
             shorewall_config_dir=config_dir,
             iptables_dump=iptables,

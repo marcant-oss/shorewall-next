@@ -69,6 +69,18 @@ class TriangleReport:
         )
 
 
+def _strip_set_braces(val: str) -> str:
+    """Strip nft anonymous-set braces `{ ... }` from a match value.
+
+    Produced by OPTIMIZE=4 combine_matches. The caller still handles the
+    comma-separated list inside.
+    """
+    v = val.strip()
+    if v.startswith("{") and v.endswith("}"):
+        return v[1:-1].strip()
+    return val
+
+
 def _normalize_addr(addr: str | None) -> str | None:
     """Normalize an address for comparison."""
     if addr is None:
@@ -281,6 +293,10 @@ def _normalize_dport(dport: str | None) -> frozenset[str] | None:
     """Normalize destination port(s) to a frozenset for comparison."""
     if dport is None:
         return None
+    # Strip anonymous-set braces (from OPTIMIZE=4 combine_matches)
+    dport = dport.strip()
+    if dport.startswith("{") and dport.endswith("}"):
+        dport = dport[1:-1]
     # Handle comma-separated (multiport)
     ports: list[str] = []
     for p in dport.replace(" ", "").split(","):
@@ -462,6 +478,18 @@ def _extract_nft_fingerprints(rules: list, ir=None, family: int = 0) -> set[tupl
                 fps.update(action_fps)
             continue
 
+        # OPTIMIZE=8 chain_merge: a zone-pair chain whose rules were
+        # replaced by a single `jump canonical` with comment "merged:
+        # identical to <canonical>". Follow the jump so the merged chain
+        # contributes the canonical chain's fingerprints — without this,
+        # all merged-away pairs look empty to the verifier.
+        if (rule.verdict == Verdict.JUMP and rule.verdict_args
+                and rule.comment and rule.comment.startswith("merged: identical to ")
+                and ir and rule.verdict_args in ir.chains):
+            canonical_chain = ir.chains[rule.verdict_args]
+            fps.update(_extract_nft_fingerprints(canonical_chain.rules, ir=ir, family=family))
+            continue
+
         saddr = None
         daddr = None
         proto = None
@@ -484,16 +512,16 @@ def _extract_nft_fingerprints(rules: list, ir=None, family: int = 0) -> set[tupl
 
         for m in rule.matches:
             if m.field in ("ip saddr", "ip6 saddr"):
-                val = m.value
-                if val.startswith("+"):
+                val = _strip_set_braces(m.value)
+                if val.startswith("+") or val.startswith("@"):
                     saddr_list = [val]
                 elif "," in val:
                     saddr_list = [_normalize_addr(a.strip()) for a in val.split(",")]
                 else:
                     saddr_list = [_normalize_addr(val)]
             elif m.field in ("ip daddr", "ip6 daddr"):
-                val = m.value
-                if val.startswith("+"):
+                val = _strip_set_braces(m.value)
+                if val.startswith("+") or val.startswith("@"):
                     daddr_list = [val]
                 elif "," in val:
                     daddr_list = [_normalize_addr(a.strip()) for a in val.split(",")]
