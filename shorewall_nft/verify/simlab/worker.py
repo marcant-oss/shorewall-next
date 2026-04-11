@@ -62,27 +62,63 @@ WORKER_MAC = "02:00:00:5e:00:01"
 
 
 class InterfaceWorker:
-    """asyncio driver for one TUN/TAP fd."""
+    """asyncio driver for one or more TUN/TAP fds.
+
+    The constructor accepts either the legacy single-interface shape
+    (``iface_name=…, fd=…, kind=…, fw_mac=…``) **or** the modern
+    multi-interface shape (``ifaces={name: {fd, kind, mac}, …}``).
+    The multi-interface form consolidates N TUN/TAPs onto one
+    Python process — drop-in replacement for spinning up one worker
+    per fd, but with **one** 80 MB Python heap instead of N.
+
+    Per-interface state (trace ring, MAC, kind) lives in a dict
+    keyed by iface_name. The asyncio loop registers one reader
+    per fd; each reader is a closure that knows which iface it
+    belongs to.
+    """
 
     def __init__(
         self,
         *,
-        iface_name: str,
-        fd: int,
-        kind: str,           # "tap" or "tun"
-        fw_mac: str | None,  # MAC of the interface inside NS_FW (for TAP)
-        pipe_conn: Any,      # multiprocessing.Pipe() parent-end
+        iface_name: str | None = None,
+        fd: int | None = None,
+        kind: str | None = None,
+        fw_mac: str | None = None,
+        ifaces: dict[str, dict] | None = None,
+        pipe_conn: Any = None,
         trace_depth: int = 128,
     ):
-        self.iface_name = iface_name
-        self.fd = fd
-        self.kind = kind
-        self.is_tap = kind == "tap"
-        self.fw_mac = fw_mac
+        # Normalise to the multi-interface dict shape.
+        if ifaces is None:
+            # Legacy single-interface invocation
+            if iface_name is None or fd is None or kind is None:
+                raise ValueError(
+                    "InterfaceWorker needs either ifaces=… or "
+                    "iface_name/fd/kind")
+            ifaces = {iface_name: {"fd": fd, "kind": kind, "mac": fw_mac}}
+
+        self.ifaces: dict[str, dict] = ifaces
         self.conn = pipe_conn
-        self.trace: deque[PacketSummary] = deque(maxlen=trace_depth)
+        self._trace_depth = trace_depth
+        # Per-iface trace ring
+        self.trace: dict[str, deque[PacketSummary]] = {
+            name: deque(maxlen=trace_depth) for name in ifaces
+        }
         self.running = False
         self._loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def iface_names(self) -> list[str]:
+        return list(self.ifaces.keys())
+
+    @property
+    def primary_comm_name(self) -> str:
+        """Comm rename: use the first iface's name when there's one,
+        or ``sim:<N>ifs`` when the worker handles multiple."""
+        names = self.iface_names
+        if len(names) == 1:
+            return _proc_name_for(names[0])
+        return _proc_name_for(f"{len(names)}ifs")[:15]
 
     # ── entrypoint ─────────────────────────────────────────────────
 
@@ -115,28 +151,43 @@ class InterfaceWorker:
             except (OSError, AttributeError):
                 pass
 
-        # Rename /proc/<pid>/comm so `ps` / `top` show the iface this
-        # worker is bound to (e.g. ``simlab:bond1`` / ``s:bond0.123``).
+        # Rename /proc/<pid>/comm so `ps` / `top` show which ifaces
+        # this worker is bound to (``simlab:bond1`` for single,
+        # ``sim:4ifs`` etc for multi).
         try:
             import ctypes as _ct
             _libc = _ct.CDLL("libc.so.6", use_errno=True)
             _PR_SET_NAME = 15
-            _libc.prctl(_PR_SET_NAME, _proc_name_for(self.iface_name).encode(),
+            _libc.prctl(_PR_SET_NAME, self.primary_comm_name.encode(),
                         0, 0, 0)
         except Exception:
             pass
 
-        os.set_blocking(self.fd, False)
+        # Non-blocking mode on every TAP/TUN fd
+        for meta in self.ifaces.values():
+            try:
+                os.set_blocking(meta["fd"], False)
+            except OSError:
+                pass
+
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
-            self._loop.add_reader(self.fd, self._on_tap_read)
+            for name, meta in self.ifaces.items():
+                # closure-capture the iface name per reader
+                fd = meta["fd"]
+                self._loop.add_reader(
+                    fd, self._on_tap_read, name)
             self._loop.add_reader(self.conn.fileno(), self._on_cmd_read)
             self.running = True
             self._loop.run_forever()
         finally:
             try:
-                self._loop.remove_reader(self.fd)
+                for meta in self.ifaces.values():
+                    try:
+                        self._loop.remove_reader(meta["fd"])
+                    except Exception:
+                        pass
                 self._loop.remove_reader(self.conn.fileno())
             except Exception:
                 pass
@@ -152,12 +203,17 @@ class InterfaceWorker:
 
     # ── readers (non-blocking) ─────────────────────────────────────
 
-    def _on_tap_read(self) -> None:
-        """Drain packets from the TUN/TAP fd and process them."""
+    def _on_tap_read(self, iface_name: str) -> None:
+        """Drain packets from one TUN/TAP fd and process them.
+
+        Called by asyncio for each iface-specific fd; ``iface_name``
+        is the closure capture from ``add_reader``.
+        """
+        fd = self.ifaces[iface_name]["fd"]
         try:
             while True:
                 try:
-                    buf = os.read(self.fd, 65536)
+                    buf = os.read(fd, 65536)
                 except BlockingIOError:
                     return
                 except OSError:
@@ -165,15 +221,22 @@ class InterfaceWorker:
                     return
                 if not buf:
                     return
-                self._handle_packet(buf)
+                self._handle_packet(iface_name, buf)
         except Exception as e:  # pragma: no cover
             try:
-                self.conn.send(("error", self.iface_name, repr(e)))
+                self.conn.send(("error", iface_name, repr(e)))
             except Exception:
                 pass
 
     def _on_cmd_read(self) -> None:
-        """Pull the next command from the controller pipe and dispatch."""
+        """Pull the next command from the controller pipe and dispatch.
+
+        Command format (multi-iface aware):
+          ("inject", iface_name, data)
+          ("trace_dump",)  — dumps every iface's ring
+          ("trace_dump", iface_name) — one iface only
+          ("quit",)
+        """
         try:
             if not self.conn.poll():
                 return
@@ -188,34 +251,59 @@ class InterfaceWorker:
             self._stop()
             return
         if cmd == "inject":
-            _, data = msg
+            # Legacy 2-tuple ("inject", data) routes to the single
+            # iface if this worker owns exactly one; modern 3-tuple
+            # carries the iface name explicitly.
+            if len(msg) == 2:
+                names = self.iface_names
+                if len(names) != 1:
+                    self.conn.send(("error", "?",
+                                    "inject without iface on multi-worker"))
+                    return
+                iface_name, data = names[0], msg[1]
+            else:
+                _, iface_name, data = msg
+            meta = self.ifaces.get(iface_name)
+            if meta is None:
+                self.conn.send(("error", iface_name,
+                                "inject for unknown iface"))
+                return
             try:
-                os.write(self.fd, data)
-                self.conn.send(("injected", self.iface_name, len(data)))
+                os.write(meta["fd"], data)
+                self.conn.send(("injected", iface_name, len(data)))
             except OSError as e:
-                self.conn.send(("error", self.iface_name, f"write: {e}"))
+                self.conn.send(("error", iface_name, f"write: {e}"))
             return
         if cmd == "trace_dump":
-            summaries = [
-                {
-                    "family": s.family, "proto": s.proto, "src": s.src,
-                    "dst": s.dst, "sport": s.sport, "dport": s.dport,
-                    "flags": s.flags, "arp_op": s.arp_op,
-                    "ndp_type": s.ndp_type, "length": s.length,
-                }
-                for s in self.trace
-            ]
-            self.conn.send(("trace", self.iface_name, summaries))
+            # Optional second element selects a single iface
+            want = msg[1] if len(msg) > 1 else None
+            for iface_name, ring in self.trace.items():
+                if want is not None and iface_name != want:
+                    continue
+                summaries = [
+                    {
+                        "family": s.family, "proto": s.proto,
+                        "src": s.src, "dst": s.dst,
+                        "sport": s.sport, "dport": s.dport,
+                        "flags": s.flags, "arp_op": s.arp_op,
+                        "ndp_type": s.ndp_type, "length": s.length,
+                    }
+                    for s in ring
+                ]
+                self.conn.send(("trace", iface_name, summaries))
             return
         # Unknown command — report and keep running
-        self.conn.send(("error", self.iface_name, f"unknown cmd {cmd!r}"))
+        self.conn.send(("error", "?", f"unknown cmd {cmd!r}"))
 
     # ── packet handling ────────────────────────────────────────────
 
-    def _handle_packet(self, raw: bytes) -> None:
-        pkt = parse(raw, is_tap=self.is_tap)
+    def _handle_packet(self, iface_name: str, raw: bytes) -> None:
+        meta = self.ifaces[iface_name]
+        fd = meta["fd"]
+        is_tap = meta["kind"] == "tap"
+        pkt = parse(raw, is_tap=is_tap)
         pkt_ts = time.monotonic()
-        self.trace.append(pkt)
+        self.trace[iface_name].append(pkt)
 
         # ARP who-has → build and send reply (TAP only)
         if pkt.proto == "arp" and pkt.arp_op == 1 and pkt.src and pkt.dst:
@@ -226,21 +314,20 @@ class InterfaceWorker:
                 dst_ip=pkt.src,
             )
             try:
-                os.write(self.fd, reply)
+                os.write(fd, reply)
             except OSError:
                 pass
             return
 
         # IPv6 NDP Neighbor Solicitation → reply with NA (TAP only)
         if pkt.proto == "ndp" and pkt.ndp_type == 135 and pkt.src and pkt.dst:
-            # Reply from a made-up link-local to the NS source
             try:
                 from scapy.layers.inet6 import ICMPv6ND_NS
                 import scapy.all as s
                 layer = s.Ether(raw)
                 if layer.haslayer(ICMPv6ND_NS):
                     target = layer[ICMPv6ND_NS].tgt
-                    src_ll = f"fe80::200:5eff:fe00:1"
+                    src_ll = "fe80::200:5eff:fe00:1"
                     na = build_ndp_na(
                         src_mac=WORKER_MAC,
                         src_ip=src_ll,
@@ -248,7 +335,7 @@ class InterfaceWorker:
                         dst_ip=pkt.src,
                         target_ip=str(target),
                     )
-                    os.write(self.fd, na)
+                    os.write(fd, na)
             except Exception:
                 pass
             return
@@ -256,7 +343,7 @@ class InterfaceWorker:
         # Any other packet: hand off to controller as "observed"
         try:
             self.conn.send((
-                "observed", self.iface_name, pkt_ts,
+                "observed", iface_name, pkt_ts,
                 {
                     "family": pkt.family, "proto": pkt.proto,
                     "src": pkt.src, "dst": pkt.dst,
@@ -286,12 +373,37 @@ def worker_main(
     fw_mac: str | None,
     pipe_conn: Any,
 ) -> None:
-    """Child-process entry point after ``multiprocessing.Process`` fork."""
+    """Child-process entry point — legacy single-iface shape.
+
+    Kept so existing single-worker-per-iface callers keep working
+    unchanged. New multi-iface callers should use
+    :func:`worker_main_multi`.
+    """
     worker = InterfaceWorker(
         iface_name=iface_name,
         fd=fd,
         kind=kind,
         fw_mac=fw_mac,
+        pipe_conn=pipe_conn,
+    )
+    worker.run()
+
+
+def worker_main_multi(
+    ifaces: dict[str, dict],
+    pipe_conn: Any,
+) -> None:
+    """Child-process entry point — multi-iface shape.
+
+    ``ifaces`` is a dict of ``{iface_name: {"fd": int, "kind":
+    "tap"/"tun", "mac": str|None}}``. The worker registers one
+    asyncio reader per fd + one for ``pipe_conn`` and services
+    everything from a single event loop. Saves ~80 MB Python
+    interpreter overhead per additional iface vs
+    one-worker-per-iface.
+    """
+    worker = InterfaceWorker(
+        ifaces=ifaces,
         pipe_conn=pipe_conn,
     )
     worker.run()
