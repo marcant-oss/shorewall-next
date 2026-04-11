@@ -226,6 +226,16 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
     lines.append("}")
     lines.append("")
 
+    # Append the standalone arp filter table when arprules
+    # produced any chains. The arp family is a separate nft
+    # table type so it can't live inside the inet shorewall
+    # table — but loading both in the same script is fine and
+    # keeps `shorewall-nft start` atomic.
+    arp_block = emit_arp_nft(ir)
+    if arp_block:
+        lines.append(arp_block)
+        lines.append("")
+
     # In debug mode, inject counter declarations at the top of the table.
     # Counter names must be unique across the table — keep only the first
     # occurrence (annotate() is called in emission order, and chain+index
@@ -342,6 +352,43 @@ def _hook_order(hook: Hook | None) -> int:
         Hook.POSTROUTING: 4,
     }
     return order.get(hook, 99) if hook else 99
+
+
+def emit_arp_nft(ir: FirewallIR) -> str:
+    """Emit a standalone ``table arp filter`` block from
+    ``ir.arp_chains``.
+
+    The arp family is a separate nft table type from inet/ip/ip6
+    so it can't share the main shorewall table. emit_nft includes
+    the rendered block at the end of its script when present, so
+    a single ``shorewall-nft start`` loads both tables atomically.
+    """
+    if not ir.arp_chains:
+        return ""
+
+    lines: list[str] = []
+    lines.append("")
+    lines.append("table arp filter")
+    lines.append("delete table arp filter")
+    lines.append("")
+    lines.append("table arp filter {")
+    for chain in sorted(ir.arp_chains.values(),
+                        key=lambda c: _hook_order(c.hook)):
+        lines.append(f"\tchain {chain.name} {{")
+        chain_type = chain.chain_type.value if chain.chain_type else "filter"
+        hook = chain.hook.value if chain.hook else "input"
+        policy_str = f" policy {chain.policy.value};" if chain.policy else ""
+        lines.append(
+            f"\t\ttype {chain_type} hook {hook} priority "
+            f"{chain.priority};{policy_str}")
+        for idx, rule in enumerate(chain.rules):
+            rule_str = _emit_rule(rule, chain_name=chain.name, rule_idx=idx)
+            if rule_str:
+                lines.append(f"\t\t{rule_str}")
+        lines.append("\t}")
+        lines.append("")
+    lines.append("}")
+    return "\n".join(lines)
 
 
 def emit_stopped_nft(ir: FirewallIR) -> str:

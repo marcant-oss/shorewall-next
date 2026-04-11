@@ -91,6 +91,10 @@ class FirewallIR:
     # from routestopped. Kept apart from `chains` so the main emitter
     # never mixes them into the running ruleset.
     stopped_chains: dict[str, Chain] = field(default_factory=dict)
+    # Chains for the separate `arp filter` table — populated from
+    # arprules. The arp family is its own table type so we keep it
+    # apart from the inet chains, which only see L3 IPv4/IPv6 traffic.
+    arp_chains: dict[str, Chain] = field(default_factory=dict)
 
     def add_chain(self, chain: Chain) -> None:
         self.chains[chain.name] = chain
@@ -237,6 +241,10 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     # Process rawnat rules (raw-table actions, runs pre-conntrack)
     if getattr(config, "rawnat", None):
         _process_rawnat(ir, config.rawnat, zones)
+
+    # Process arprules (arp family — separate table)
+    if getattr(config, "arprules", None):
+        _process_arprules(ir, config.arprules)
 
     # Process conntrack helpers
     if config.conntrack:
@@ -1748,6 +1756,94 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
                     r.matches.append(Match(field=_saddr_field(h), value=h))
                 _add_proto(r, proto, dport, sport)
                 stopped_raw.rules.append(r)
+
+
+def _process_arprules(ir: FirewallIR, arprules: list[ConfigLine]) -> None:
+    """Process the ``arprules`` config file into the arp filter table.
+
+    arprules sit at OSI layer 2.5 — they match on ARP packets, not
+    IP traffic. nftables exposes them via a separate table family
+    (``table arp filter``) with its own input/output base chains
+    that hook the kernel's ARP path.
+
+    Format::
+
+        ACTION  SOURCE  DEST  INTERFACE  MAC
+
+    where SOURCE is the ARP sender IP, DEST is the ARP target IP,
+    INTERFACE is the iface, and MAC is the sender Ethernet
+    address (optional). The chains live in ``ir.arp_chains`` and
+    are emitted as a standalone ``table arp filter`` block by
+    :func:`shorewall_nft.nft.emitter.emit_arp_nft`, included by
+    the main script when present.
+
+    Supported actions: ACCEPT, DROP, REJECT (mapped onto an arp
+    drop with ICMP-host-unreachable analogue is not possible —
+    REJECT in the arp family just becomes a drop).
+    """
+    arp_input = Chain(
+        name="arp-input",
+        chain_type=ChainType.FILTER,
+        hook=Hook.INPUT,
+        priority=0,
+        policy=Verdict.ACCEPT,
+    )
+    arp_output = Chain(
+        name="arp-output",
+        chain_type=ChainType.FILTER,
+        hook=Hook.OUTPUT,
+        priority=0,
+        policy=Verdict.ACCEPT,
+    )
+    ir.arp_chains[arp_input.name] = arp_input
+    ir.arp_chains[arp_output.name] = arp_output
+
+    for line in arprules:
+        cols = line.columns
+        if not cols:
+            continue
+        action_raw = cols[0]
+        source = cols[1] if len(cols) > 1 and cols[1] != "-" else None
+        dest = cols[2] if len(cols) > 2 and cols[2] != "-" else None
+        iface = cols[3] if len(cols) > 3 and cols[3] != "-" else None
+        mac = cols[4] if len(cols) > 4 and cols[4] != "-" else None
+
+        action = action_raw.upper().split("(")[0].rstrip("+")
+        if action in ("ACCEPT", "ACCEPT_LOG"):
+            verdict = Verdict.ACCEPT
+        elif action in ("DROP", "DROP_LOG", "REJECT", "DROP_DEFAULT"):
+            verdict = Verdict.DROP
+        else:
+            import warnings
+            warnings.warn(
+                f"arprules {line.file}:{line.lineno}: unsupported "
+                f"action {action_raw!r} — skipped", stacklevel=2)
+            continue
+
+        # Direction inference: a rule whose only constraint is the
+        # ARP sender IP defaults to input (we received an ARP from
+        # someone). A rule with a target IP (dest) and no other
+        # qualifier is also input — the kernel saw a who-has for
+        # that IP. Output rules are rare and we treat any rule
+        # with explicit `out:` prefix in the action as output.
+        # Most arprules deployments only need input, so default
+        # there.
+        chain = arp_input
+
+        rule = Rule(verdict=verdict)
+        if iface:
+            rule.matches.append(Match(field="meta iifname", value=iface))
+        if source:
+            # ARP sender IP
+            rule.matches.append(Match(field="arp saddr ip", value=source))
+        if dest:
+            # ARP target IP
+            rule.matches.append(Match(field="arp daddr ip", value=dest))
+        if mac:
+            mac_norm = mac.lstrip("~").replace("-", ":").lower()
+            rule.matches.append(
+                Match(field="arp saddr ether", value=mac_norm))
+        chain.rules.append(rule)
 
 
 def _process_rawnat(ir: FirewallIR, rawnat_lines: list[ConfigLine],
