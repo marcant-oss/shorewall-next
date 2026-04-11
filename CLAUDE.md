@@ -174,6 +174,38 @@ Already committed on this branch since 1.0.0:
     it for the next round of optimisation. Post-flamegraph
     artifact under ``docs/testing/simlab-reports/<ts>/
     flamegraph.svg`` alongside ``report.json``.
+11. **Prometheus exporter (port from foomuuri)** — take the
+    prometheus exporter shape from the
+    ``../shorewall2foomuuri`` sister repo and port it to
+    shorewall-nft. **Hard requirements:**
+    - **Multi-netns aware.** One exporter instance serves N
+      namespaces at once (one scrape endpoint, per-netns
+      label on every metric, or one port per netns —
+      configurable). Production HA stacks run 2–3 namespaces
+      per box (primary/backup/mgmt) and one exporter per
+      netns is wasteful.
+    - **Efficient.** Read counters directly from the kernel
+      via libnftables / ``nft_ct`` / pyroute2.netlink, not
+      by shelling out to ``nft list ruleset`` and parsing
+      text. The existing ``shorewall_nft.nft.netlink``
+      already prefers libnftables; extend it with a
+      ``list_counters(netns=N)`` path that's a single
+      netlink round-trip.
+    - **Per-chain + per-rule counters** exported as
+      ``shorewall_nft_packets_total{table,chain,rule_idx,
+      netns,…}`` and ``..._bytes_total``, plus ct table
+      size / ct state breakdown / per-zone-pair chain totals.
+    - **Cheap scrape.** Scraping should cost <50 ms at the
+      reference config's ruleset size (1600+ rules × 3
+      netns). Amortise netlink dumps across scrapes so a
+      30 s scrape interval has <5 % CPU cost.
+    - **No subprocess per scrape.** The worst way to run a
+      counter exporter is to fork ``nft list ruleset`` every
+      30 s. Direct netlink only.
+    Reference implementation: ``../shorewall2foomuuri``
+    (sister repo) has the metric shape and the Prometheus
+    registry already — the port is mostly replacing its
+    counter-read path with the shorewall-nft netlink one.
 
 ## Release checklist (carry-forward from pre-1.0 work)
 
