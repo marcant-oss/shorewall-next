@@ -114,6 +114,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Unix socket path for the PBDNSMessage logger stream "
              "from PowerDNS recursor (off by default).")
     p.add_argument(
+        "--listen-pbdns-tcp", default=None, metavar="HOST:PORT",
+        help="TCP host:port for the PBDNSMessage logger stream. "
+             "Required for pdns-recursor's protobufServer() Lua "
+             "directive because it speaks TCP only (dnstap accepts "
+             "both, pbdns does not). Runs alongside --listen-pbdns.")
+    p.add_argument(
+        "--socket-mode", default=None, metavar="MODE",
+        help="Octal permission mode applied to every daemon-owned "
+             "unix socket (dnstap, pbdns). Default: 0660. Typical "
+             "production value: 0660 with SOCKET_GROUP=pdns so the "
+             "recursor can connect without root.")
+    p.add_argument(
+        "--socket-owner", default=None, metavar="USER",
+        help="User name or numeric uid to chown the unix sockets "
+             "to after bind. Default: leave the current process "
+             "owner (usually root).")
+    p.add_argument(
+        "--socket-group", default=None, metavar="GROUP",
+        help="Group name or numeric gid to chgrp the unix sockets "
+             "to after bind. Default: leave unchanged. Use this "
+             "with SOCKET_MODE=0660 to grant the DNS producer's "
+             "group write access without changing ownership.")
+    p.add_argument(
         "--peer-host", default=None, metavar="HOST",
         help="HA peer IP/hostname for DNS-set replication (off by default).")
     p.add_argument(
@@ -186,6 +209,10 @@ def _merge_conf_defaults(
     take("reprobe_interval", defaults.reprobe_interval)
     take("allowlist_file", defaults.allowlist_file)
     take("listen_pbdns", defaults.pbdns_socket)
+    take("listen_pbdns_tcp", defaults.pbdns_tcp)
+    take("socket_mode", defaults.socket_mode)
+    take("socket_owner", defaults.socket_owner)
+    take("socket_group", defaults.socket_group)
     take("peer_bind", defaults.peer_listen)
     take("peer_auth_key_file", defaults.peer_secret_file)
     take("peer_heartbeat_interval", defaults.peer_heartbeat_interval)
@@ -262,6 +289,15 @@ def main(argv: list[str] | None = None) -> int:
     # Imported lazily so --help works without prometheus_client installed.
     from .core import Daemon
 
+    socket_mode_int: int | None = None
+    if args.socket_mode is not None:
+        try:
+            socket_mode_int = int(str(args.socket_mode), 8)
+        except ValueError:
+            parser.error(
+                f"--socket-mode/SOCKET_MODE must be octal, "
+                f"got {args.socket_mode!r}")
+
     daemon = Daemon(
         prom_host=prom_host,
         prom_port=prom_port,
@@ -272,6 +308,10 @@ def main(argv: list[str] | None = None) -> int:
         allowlist_file=(
             Path(args.allowlist_file) if args.allowlist_file else None),
         pbdns_socket=args.listen_pbdns,
+        pbdns_tcp=args.listen_pbdns_tcp,
+        socket_mode=socket_mode_int,
+        socket_owner=args.socket_owner,
+        socket_group=args.socket_group,
         peer_bind_host=peer_bind_host,
         peer_bind_port=peer_bind_port,
         peer_host=args.peer_host,

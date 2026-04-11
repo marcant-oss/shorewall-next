@@ -138,6 +138,10 @@ class ConfDefaults:
     reprobe_interval: float | None = None
     allowlist_file: str | None = None
     pbdns_socket: str | None = None
+    pbdns_tcp: str | None = None
+    socket_mode: str | None = None     # octal string, e.g. "0660"
+    socket_owner: str | None = None    # user name or numeric uid
+    socket_group: str | None = None    # group name or numeric gid
     peer_listen: str | None = None
     peer_address: str | None = None
     peer_secret_file: str | None = None
@@ -163,6 +167,10 @@ _CONF_KEY_MAP: dict[str, str] = {
     "REPROBE_INTERVAL": "reprobe_interval",
     "ALLOWLIST_FILE": "allowlist_file",
     "PBDNS_SOCKET": "pbdns_socket",
+    "PBDNS_TCP": "pbdns_tcp",
+    "SOCKET_MODE": "socket_mode",
+    "SOCKET_OWNER": "socket_owner",
+    "SOCKET_GROUP": "socket_group",
     "PEER_LISTEN": "peer_listen",
     "PEER_ADDRESS": "peer_address",
     "PEER_SECRET_FILE": "peer_secret_file",
