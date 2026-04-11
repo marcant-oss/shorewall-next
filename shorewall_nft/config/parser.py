@@ -164,7 +164,19 @@ class ConfigParser:
             self.params[name] = value
 
     def _parse_conf(self, path: Path) -> None:
-        """Parse shorewall.conf: KEY=VALUE settings."""
+        """Parse shorewall.conf: KEY=VALUE settings.
+
+        FUTURE (planned, see runtime/cli.py TODO): every parser
+        method (``_parse_conf``, ``_parse_params``, ``_parse_columnar``
+        for interfaces/rules/hosts/policy/..., plus the plugin TOML
+        loader in ``plugins/manager.py``) should accept a structured
+        override blob and layer it on top of the on-disk content.
+        Because files may be absent, the layering has to happen
+        unconditionally in ``load_config()`` after ``Parser.parse()``,
+        not inside the per-file methods. That lets the tool run
+        with NO files on disk and the full config supplied via
+        ``--override-json``.
+        """
         if not path.exists():
             return
 

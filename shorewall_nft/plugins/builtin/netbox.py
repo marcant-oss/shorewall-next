@@ -33,6 +33,15 @@ Configuration (plugins/netbox.toml):
     snapshot = "path/to/snapshot.json"  # alternative to url+token
     cache_ttl = 86400
     bulk_subnets = ["203.0.113.0/24", "2001:db8::/32"]
+
+FUTURE (planned, not yet implemented): the plugin will also read the
+same keys (NETBOX_URL, NETBOX_TOKEN, NETBOX_CACHE_TTL, ...) straight
+out of ``/etc/shorewall46/shorewall.conf`` as shell-style
+assignments, layered *below* ``plugins/netbox.toml`` (toml wins on
+collision). That lets operators keep a single config file for
+everything. The global CLI flag ``--override-json`` will then layer
+dynamic JSON on top of shorewall.conf at runtime. Load order will
+be:  defaults → shorewall.conf → plugins/netbox.toml → --override-json.
 """
 
 from __future__ import annotations
