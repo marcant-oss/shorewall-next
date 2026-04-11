@@ -24,6 +24,7 @@ from typing import Any
 from shorewall_nft.nft.netlink import NftInterface
 
 from .discover import ProfileBuilder, resolve_netns_list
+from .dnstap import DnstapMetricsCollector, DnstapServer
 from .exporter import NftScraper, ShorewalldRegistry
 
 log = logging.getLogger("shorewalld")
@@ -105,6 +106,10 @@ class Daemon:
         self._reprobe_task = asyncio.create_task(
             self._reprobe_loop(), name="shorewalld.reprobe")
 
+        # Optional dnstap consumer (Phase 4). Off by default.
+        if self.api_socket:
+            await self._start_dnstap_server(netns_list)
+
         try:
             await self._stop_event.wait()
         finally:
@@ -147,6 +152,28 @@ class Daemon:
         self._prom_server = server
         log.info("shorewalld prom endpoint live on %s:%d",
                  self.prom_host, self.prom_port)
+
+    async def _start_dnstap_server(self, netns_list: list[str]) -> None:
+        """Bind the dnstap unix socket and start the decode worker pool."""
+        assert self._nft is not None and self.api_socket is not None
+        assert self._registry is not None
+        self._dnstap_server = DnstapServer(
+            self.api_socket, self._nft, netns_list)
+        try:
+            await self._dnstap_server.start()
+        except Exception:
+            log.exception("failed to start dnstap server on %s",
+                          self.api_socket)
+            self._dnstap_server = None
+            return
+        # Register the metrics collector so queue depth / frame
+        # counters show up on the Prometheus endpoint.
+        self._registry.add(DnstapMetricsCollector(self._dnstap_server))
+        # serve_forever runs as a background task; shutdown() closes
+        # the server which makes it return.
+        asyncio.create_task(
+            self._dnstap_server.serve_forever(),
+            name="shorewalld.dnstap")
 
     async def _reprobe_loop(self) -> None:
         """Tick every ``reprobe_interval`` seconds and refresh profiles."""

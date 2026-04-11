@@ -1,0 +1,70 @@
+-- shorewalld dnstap integration for pdns_recursor
+--
+-- Installs a dnstap FrameStream exporter that sends every
+-- CLIENT_RESPONSE to the shorewalld consumer at a unix socket.
+-- The shorewalld process reads these frames and populates
+-- nft sets (e.g. dns_github_com_v4) so firewall rules can
+-- filter on qname without doing live resolution.
+--
+-- Placement:
+--   /etc/powerdns/recursor.d/shorewalld.lua
+--
+-- After editing, reload pdns_recursor:
+--   systemctl reload pdns-recursor
+-- or for named-netns instances:
+--   ip netns exec rns1 systemctl reload pdns-recursor
+--
+-- Socket path:
+--   shorewalld creates and owns /run/shorewalld/dnstap.sock
+--   (0660 root:shorewall). pdns_recursor needs to be in the
+--   shorewall group, or the socket mode needs to be 0666.
+--
+-- Blocking: the dnstap writer inside pdns_recursor uses an
+-- internal bounded queue and drops frames on overflow. The
+-- resolver hot path is NOT blocked by shorewalld being slow
+-- or dead. Drop counter is visible in rec_control get-all.
+
+dnstapFrameStreamServer({"/run/shorewalld/dnstap.sock"},
+{
+    -- CLIENT_QUERY is not useful for shorewalld; skip it.
+    logQueries   = false,
+
+    -- CLIENT_RESPONSE is the event shorewalld consumes.
+    -- Cache-hits and miss-then-resolve both fire this event,
+    -- which is the behaviour we want (every response to a
+    -- client reveals an IP the client may soon connect to).
+    logResponses = true,
+})
+
+-- OPTIONAL: producer-side qname allowlist.
+--
+-- If you have a large number of uninteresting qnames and
+-- don't want the bandwidth of exporting them all to
+-- shorewalld, you can uncomment the block below to filter
+-- inside the recursor BEFORE the dnstap frame is emitted.
+--
+-- WARNING: postresolve runs in the resolver's main query
+-- thread. Every lookup adds one hash-set membership check.
+-- On a busy recursor (>10k QPS) this is typically fine
+-- (<1 us per query), but if you enable it, benchmark it.
+-- The default shorewalld recommendation is to do the filter
+-- in shorewalld instead (QnameFilter), which never touches
+-- the resolver hot path.
+--
+-- local shorewalld_interesting = {
+--     ["github.com."] = true,
+--     ["example.com."] = true,
+--     -- Add your domains here.
+-- }
+--
+-- function postresolve(dq)
+--     local qname = dq.qname:toString()
+--     if not shorewalld_interesting[qname] then
+--         -- dq.followupFunction is one recursor-supported
+--         -- knob for skipping further processing; check the
+--         -- pdns_recursor manual for your specific version,
+--         -- as the dnstap-suppression mechanism has moved
+--         -- between 4.x and 5.x.
+--     end
+--     return false
+-- end
