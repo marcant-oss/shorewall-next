@@ -1,0 +1,1693 @@
+{
+  "name": "cli",
+  "path": "cli",
+  "help": "shorewall-nft: nftables-native firewall compiler.",
+  "params": [
+    {
+      "kind": "option",
+      "name": "version",
+      "flags": [
+        "--version"
+      ],
+      "help": "Show the version and exit.",
+      "is_flag": true,
+      "default": false
+    },
+    {
+      "kind": "option",
+      "name": "q",
+      "flags": [
+        "-q"
+      ],
+      "help": "Quiet mode.",
+      "is_flag": true,
+      "default": false
+    },
+    {
+      "kind": "option",
+      "name": "verbose",
+      "flags": [
+        "-v"
+      ],
+      "help": "Verbose mode (-v, -vv).",
+      "is_flag": false,
+      "default": 0
+    }
+  ],
+  "subcommands": [
+    {
+      "name": "allow",
+      "path": "cli allow",
+      "help": "Remove addresses from the blacklist (like shorewall allow).",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "addresses",
+          "required": true
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "blacklist",
+      "path": "cli blacklist",
+      "help": "Add address to dynamic blacklist with timeout (like shorewall blacklist).",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "address",
+          "required": true
+        },
+        {
+          "kind": "option",
+          "name": "timeout",
+          "flags": [
+            "-t",
+            "--timeout"
+          ],
+          "help": "Timeout (e.g. 1h, 30m, 1d).",
+          "is_flag": false,
+          "default": "1h"
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "capabilities",
+      "path": "cli capabilities",
+      "help": "Detect nftables capabilities of the running kernel.",
+      "params": [
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Probe in network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "as_json",
+          "flags": [
+            "--json"
+          ],
+          "help": "Output as JSON.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "check",
+      "path": "cli check",
+      "help": "Validate config without applying (like shorewall check).",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "skip_caps",
+          "flags": [
+            "--skip-caps"
+          ],
+          "help": "Skip capability check.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "clear",
+      "path": "cli clear",
+      "help": "Clear all firewall rules (accept all traffic).",
+      "params": [
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "compile",
+      "path": "cli compile",
+      "help": "Compile config to nft script (like shorewall compile).",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "output",
+          "flags": [
+            "-o",
+            "--output"
+          ],
+          "help": "Output file.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "counters",
+      "path": "cli counters",
+      "help": "List all counter values (packets/bytes).",
+      "params": [
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "debug",
+      "path": "cli debug",
+      "help": "Temporarily load a debug-annotated ruleset.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_restore",
+          "flags": [
+            "--no-restore"
+          ],
+          "help": "Do not restore the original ruleset on exit.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "trace_filter",
+          "flags": [
+            "--trace"
+          ],
+          "help": "Auto-install a `meta nftrace set 1` rule in the input chain for the given nft match (e.g. 'ip saddr 1.2.3.4' or 'meta l4proto icmp'). Removed on exit.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "drop",
+      "path": "cli drop",
+      "help": "Dynamically drop traffic from addresses (like shorewall drop).",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "addresses",
+          "required": true
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "show",
+      "path": "cli show",
+      "help": "Show firewall info (like shorewall show). Subcommands: zones, policies, config, connections.",
+      "params": [
+        {
+          "kind": "option",
+          "name": "x",
+          "flags": [
+            "-x"
+          ],
+          "help": "Show exact counters.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "argument",
+          "name": "what",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "enrich",
+      "path": "cli enrich",
+      "help": "Run plugin enrichment in-place on a config directory.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "no_backup",
+          "flags": [
+            "--no-backup"
+          ],
+          "help": "Skip .bak file creation (dangerous)",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "dry_run",
+          "flags": [
+            "--dry-run"
+          ],
+          "help": "Preview changes without touching disk (shows a unified diff).",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "explain-nft-features",
+      "path": "cli explain-nft-features",
+      "help": "Show nft features with syntax examples and availability.",
+      "params": [
+        {
+          "kind": "option",
+          "name": "probe",
+          "flags": [
+            "--probe"
+          ],
+          "help": "Probe kernel for feature availability.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "category",
+          "flags": [
+            "--category",
+            "-c"
+          ],
+          "help": "Filter by category (e.g. 'Sets', 'NAT', 'IPv6').",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "as_json",
+          "flags": [
+            "--json"
+          ],
+          "help": "Output as JSON.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "generate-set-loader",
+      "path": "cli generate-set-loader",
+      "help": "Generate a shell script that loads external sets.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "generate-sysctl",
+      "path": "cli generate-sysctl",
+      "help": "Generate sysctl configuration script.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "generate-systemd",
+      "path": "cli generate-systemd",
+      "help": "Generate systemd service files.",
+      "params": [
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Generate template for network namespaces.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "output_dir",
+          "flags": [
+            "-o",
+            "--output-dir"
+          ],
+          "help": "",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "generate-tc",
+      "path": "cli generate-tc",
+      "help": "Generate tc (traffic control) commands.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "show",
+      "path": "cli show",
+      "help": "Show firewall info (like shorewall show). Subcommands: zones, policies, config, connections.",
+      "params": [
+        {
+          "kind": "option",
+          "name": "x",
+          "flags": [
+            "-x"
+          ],
+          "help": "Show exact counters.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "argument",
+          "name": "what",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "load-sets",
+      "path": "cli load-sets",
+      "help": "Load external sets (ipsets, GeoIP) into nft after apply.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "geoip_dir",
+          "flags": [
+            "--geoip-dir"
+          ],
+          "help": "GeoIP prefix directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "lookup",
+      "path": "cli lookup",
+      "help": "Lookup an IP address across all configured plugins.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "ip",
+          "required": true
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "--config-dir",
+            "-c"
+          ],
+          "help": "Config dir with plugins.conf",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "as_json",
+          "flags": [
+            "--json"
+          ],
+          "help": "Output raw JSON (machine-readable).",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "show",
+      "path": "cli show",
+      "help": "Show firewall info (like shorewall show). Subcommands: zones, policies, config, connections.",
+      "params": [
+        {
+          "kind": "option",
+          "name": "x",
+          "flags": [
+            "-x"
+          ],
+          "help": "Show exact counters.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "argument",
+          "name": "what",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "merge-config",
+      "path": "cli merge-config",
+      "help": "Merge Shorewall + Shorewall6 configs into unified directory.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "shorewall_dir",
+          "required": true
+        },
+        {
+          "kind": "argument",
+          "name": "shorewall6_dir",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "output",
+          "flags": [
+            "-o",
+            "--output"
+          ],
+          "help": "Output directory (default: <parent>/shorewall46)",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "guided",
+          "flags": [
+            "--guided"
+          ],
+          "help": "Interactive mode: ask on each collision",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_plugins",
+          "flags": [
+            "--no-plugins"
+          ],
+          "help": "Disable plugin enrichment even if plugins.conf exists",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "migrate",
+      "path": "cli migrate",
+      "help": "Verify migration from Shorewall to shorewall-nft.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "iptables",
+          "flags": [
+            "--iptables"
+          ],
+          "help": "iptables-save dump for verification.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "output",
+          "flags": [
+            "-o",
+            "--output"
+          ],
+          "help": "",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "dry_run",
+          "flags": [
+            "--dry-run"
+          ],
+          "help": "Validate with nft -c.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "plugins",
+      "path": "cli plugins",
+      "help": "Manage shorewall-nft plugins.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "subcommand",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "--config-dir",
+            "-c"
+          ],
+          "help": "",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "reject",
+      "path": "cli reject",
+      "help": "Dynamically reject traffic from addresses (like shorewall reject).",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "addresses",
+          "required": true
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "reload",
+      "path": "cli reload",
+      "help": "Reload rules (same as restart for nft — atomic replace).",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "reset",
+      "path": "cli reset",
+      "help": "Reset counters (like shorewall reset).",
+      "params": [
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "argument",
+          "name": "chains",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "restart",
+      "path": "cli restart",
+      "help": "Recompile and atomically replace the ruleset.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "path": "cli restore",
+      "help": "Restore a saved ruleset (like shorewall restore).",
+      "params": [
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "argument",
+          "name": "filename",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "save",
+      "path": "cli save",
+      "help": "Save current ruleset (like shorewall save).",
+      "params": [
+        {
+          "kind": "option",
+          "name": "c",
+          "flags": [
+            "-C"
+          ],
+          "help": "Include counters.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "argument",
+          "name": "filename",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "show",
+      "path": "cli show",
+      "help": "Show firewall info (like shorewall show). Subcommands: zones, policies, config, connections.",
+      "params": [
+        {
+          "kind": "option",
+          "name": "x",
+          "flags": [
+            "-x"
+          ],
+          "help": "Show exact counters.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "argument",
+          "name": "what",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "simulate",
+      "path": "cli simulate",
+      "help": "Run packet-level simulation in 3 network namespaces.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "iptables",
+          "flags": [
+            "--iptables"
+          ],
+          "help": "iptables-save dump (ground truth).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "target",
+          "flags": [
+            "--target"
+          ],
+          "help": "Target IP for tests.",
+          "is_flag": false,
+          "default": "203.0.113.5"
+        },
+        {
+          "kind": "option",
+          "name": "max_tests",
+          "flags": [
+            "--max-tests",
+            "-n"
+          ],
+          "help": "Max test cases.",
+          "is_flag": false,
+          "default": 60
+        },
+        {
+          "kind": "option",
+          "name": "seed",
+          "flags": [
+            "--seed"
+          ],
+          "help": "Random seed for sampling.",
+          "is_flag": false,
+          "default": 42
+        },
+        {
+          "kind": "option",
+          "name": "sim_verbose",
+          "flags": [
+            "-V",
+            "--sim-verbose"
+          ],
+          "help": "Show all test results.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "parallel",
+          "flags": [
+            "--parallel",
+            "-j"
+          ],
+          "help": "Parallel test threads.",
+          "is_flag": false,
+          "default": 4
+        },
+        {
+          "kind": "option",
+          "name": "no_trace",
+          "flags": [
+            "--no-trace"
+          ],
+          "help": "Disable nft trace logging.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "start",
+      "path": "cli start",
+      "help": "Compile and apply firewall rules (like shorewall start).",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Apply in network namespace.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "status",
+      "path": "cli status",
+      "help": "Show firewall status.",
+      "params": [
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "stop",
+      "path": "cli stop",
+      "help": "Stop the firewall (remove all rules).",
+      "params": [
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Target network namespace.",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "trace",
+      "path": "cli trace",
+      "help": "Start live packet tracing (nft monitor trace).",
+      "params": [
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Trace in network namespace.",
+          "is_flag": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "verify",
+      "path": "cli verify",
+      "help": "Verify compiled output against iptables baseline.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "iptables",
+          "flags": [
+            "--iptables"
+          ],
+          "help": "Path to iptables-save dump (ground truth).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    }
+  ],
+  "version": "1.2",
+  "shorewall_nft_version": "1.0.0",
+  "generator": "shorewall-nft CLI introspection"
+}

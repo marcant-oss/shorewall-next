@@ -1,0 +1,4 @@
+$FW	all	ACCEPT
+loc	net	ACCEPT
+net	all	DROP	$LOG
+all	all	REJECT	$LOG

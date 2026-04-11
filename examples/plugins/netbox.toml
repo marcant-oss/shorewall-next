@@ -1,0 +1,81 @@
+# Example netbox.toml for shorewall-nft
+#
+# The netbox plugin queries a Netbox IPAM instance for IP address
+# metadata (tenant, hostname, tags, status) and links v4 ↔ v6
+# addresses via shared dns_name.
+#
+# It runs in two modes:
+#   1. Online: live HTTP API queries with TTL-based local cache
+#   2. Snapshot: offline JSON file (for CI / reproducible builds)
+#
+# Pick one. If both `url`/`token` and `snapshot` are set, snapshot
+# mode wins.
+#
+# ─────────────────────────────────────────────────────────────────────
+# Online mode
+# ─────────────────────────────────────────────────────────────────────
+
+# Replace with your Netbox instance URL — no trailing slash needed.
+url = "https://netbox.example.com"
+
+# API token. Options:
+#  a) Inline (insecure for multi-user systems — use chmod 600 on this file):
+#        token = "<your-read-only-api-token>"
+#  b) Read from a separate file (recommended for secrecy and permissions):
+#        token_file = "/etc/shorewall/plugins/netbox.token"
+#     Keep the token file root-owned with mode 0600. Always use a
+#     **read-only** Netbox API token.
+#
+token_file = "/etc/shorewall/plugins/netbox.token"
+
+# Priority: higher is asked first by the plugin manager for v4↔v6
+# lookups. Default 100 — netbox is authoritative.
+priority = 100
+
+# TTL of the on-disk cache in seconds. Cache is auto-refreshed when
+# stale. 24 hours is a reasonable default for static IPAM data.
+cache_ttl = 86400
+
+# Timeout for individual HTTP requests.
+timeout = 30
+
+# On-demand cache write batching. When a single IP is fetched
+# on-demand (not part of the bulk refresh), the cache is dirtied.
+# Writes are flushed to disk at most every N on-demand fetches, or
+# on explicit refresh. Lower = more I/O, higher = more loss on crash.
+dirty_flush_interval = 50
+
+# Hybrid refresh: on `shorewall-nft netbox refresh`, bulk-fetch ALL
+# IP addresses from these subnets. IPs outside are fetched on-demand
+# (individual lookups) and added to the cache incrementally.
+#
+# Narrow these to the prefixes your firewall actually touches —
+# smaller lists mean faster refreshes and less cache bloat.
+bulk_subnets = [
+    "203.0.113.0/24",       # RFC 5737 documentation block (replace)
+    "2001:db8::/32",        # RFC 3849 documentation block (replace)
+]
+
+# ─────────────────────────────────────────────────────────────────────
+# Snapshot mode (uncomment to use instead of the API)
+# ─────────────────────────────────────────────────────────────────────
+#
+# snapshot = "plugins/netbox-snapshot.json"
+#
+# Snapshot file format (compatible with shorewall2foomuuri):
+#
+#   {
+#     "ip_addresses": {
+#       "203.0.113.86": {
+#         "address":     "203.0.113.86/32",
+#         "dns_name":    "mail.example.com",
+#         "tenant":      "12345 - Example Inc",
+#         "status":      "active",
+#         "tags":        ["production", "mail"],
+#         "description": "Primary mail server"
+#       }
+#     }
+#   }
+#
+# Useful for CI (reproducible builds without network access) and for
+# environments where the firewall host has no Netbox connectivity.

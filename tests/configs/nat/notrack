@@ -1,0 +1,2 @@
+net	$WEBSERVER	tcp	80
+$FW	0.0.0.0/0	udp	-	53

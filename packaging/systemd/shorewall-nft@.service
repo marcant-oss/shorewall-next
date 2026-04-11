@@ -1,0 +1,29 @@
+[Unit]
+Description=shorewall-nft firewall for netns %i
+Documentation=file:///usr/share/doc/shorewall-nft/index.md
+# Requires the netns to exist before we can load rules
+Requires=netns@%i.service
+After=netns@%i.service
+BindsTo=netns@%i.service
+# Share the namespace file descriptor with the owning netns unit
+JoinsNamespaceOf=netns@%i.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+PrivateNetwork=yes
+# Load config from /etc/shorewall-nft/%i/ by convention
+ExecStart=/usr/bin/shorewall-nft start /etc/shorewall-nft/%i --netns %i
+ExecReload=/usr/bin/shorewall-nft reload /etc/shorewall-nft/%i --netns %i
+ExecStop=/usr/bin/shorewall-nft clear --netns %i
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/shorewall-nft /run
+PrivateTmp=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+
+[Install]
+WantedBy=multi-user.target

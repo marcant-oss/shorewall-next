@@ -1,0 +1,853 @@
+<div class="caution">
+
+This article applies to Shorewall 4.0 and later. If you are running a version of Shorewall earlier than Shorewall 4.0.0 then please see the documentation for that release.
+
+</div>
+
+# Before Xen
+
+Prior to adopting Xen, I had a home office crowded with 5 systems, three monitors a scanner and a printer. The systems were:
+
+1.  Firewall
+
+2.  Public Server in a DMZ (mail)
+
+3.  Private Server (wookie)
+
+4.  My personal Linux Desktop (ursa)
+
+5.  My work system (docked laptop running Windows XP).
+
+The result was a very crowded and noisy room.
+
+# After Xen
+
+Xen has allowed me to reduce the noise and clutter considerably. I now have three systems with two monitors. I've also replaced the individual printer and scanner with a Multifunction FAX/Scanner/Printer.
+
+The systems now include:
+
+1.  Combination Firewall/Public Server/Private Server/Wireless Gateway using Xen (created by building out my Linux desktop system -- Now replaced by a Hewlett-Packard Pavilion a1510y).
+
+2.  My work system.
+
+3.  My Linux desktop (wookie, which is actually the old public server box)
+
+The Linux systems run either OpenSuSE 10.3 or Ubuntu "Gutsy Gibbon".
+
+Here is a high-level diagram of our network.
+
+As shown in this diagram, the Xen system has three physical network interfaces. These are:
+
+- `eth0` -- connected to our DSL "Modem".
+
+- `eth1` -- connected to the switch in my office.
+
+- `eth2` -- connected to a Wireless Access Point (WAP) that interfaces to our wireless network.
+
+There are three Xen domains.
+
+1.  Dom0 (DNS name **gateway.shorewall.net**) is used as our main firewall and wireless gateway as well as a local file server. It hosts [Squid](../features/Shorewall_Squid_Usage.md) running as a transparent HTTP proxy and a DHCP server that manages IP address assignment for both the LAN and the Wireless network.
+
+2.  A DomU (Domain name **lists**, DNS name **lists.shorewall.net**) that is used as a public Web/FTP/Mail/DNS server.
+
+3.  A DomU (Domain name **test**, DNS name **test.shorewall.net**) that I use for Shorewall testing.
+
+Shorewall runs in Dom0.
+
+<div class="caution">
+
+As the developer of Shorewall, I have enough experience to be very comfortable with Linux networking and Shorewall/iptables. I arrived at this configuration after a fair amount of trial and error experimentation (see [Xen and the art of Consolidation](XenMyWay.md)). If you are a Linux networking novice, I recommend that you do not attempt a configuration like this one for your first Shorewall installation. You are very likely to frustrate both yourself and the Shorewall support team. Rather I suggest that you start with something simple like a [standalone installation](../reference/standalone.md) in a DomU; once you are comfortable with that then you will be ready to try something more substantial.
+
+As Paul Gear says: *Shorewall might make iptables easy, but it doesn't make understanding fundamental networking principles, traffic shaping, or multi-ISP routing any easier*.
+
+The same goes for Xen networking.
+
+</div>
+
+## Domain Configuration
+
+Below are the relevant configuration files for the two domains. I use a partition on my hard drives for the DomU storage device.
+
+There is not much documentation about how to configure Xen for routed operation. I've tried to mark the relevant parts with **bold font**.
+
+<div class="important">
+
+The files from `/etc/xen/auto` shown below correspond to my configuration under Xen 3.0. I'm now running Xen 3.1 which does not use configuration files for the domains but rather keeps the configuration in a database managed by xend. See [below](#Xen3.1).
+
+</div>
+
+> `/boot/grub/menu.lst` — here is the entry that boots Xen in Dom0.
+>
+> >     title Kernel-2.6.18.8-0.1-xen
+> >         root (hd0,5)
+> >         kernel /boot/xen.gz 
+> >         module /boot/vmlinuz-2.6.18.8-0.1-xen root=/dev/sda6 vga=0x31a resume=/dev/sda5 splash=silent showopts
+> >         module /boot/initrd-2.6.18.8-0.1-xen
+>
+> `/etc/modprobe.conf.local` (This may need to go in `/etc/modprobe.conf` or `/etc/modprobe.d/options` on your system)
+>
+> >     options netloop nloopbacks=0 #Stop netloop from creating 8 useless vifs
+>
+> `/etc/xen/auto/01-lists` — configuration file for the lists domain. Placed in `/etc/xen/auto/` so it is started automatically by Xen's *xendomains* service.
+>
+> >     disk = [ 'phy:/dev/sda9,hda,w', 'phy:/dev/hda,hdb,r' ]
+> >     memory = 512
+> >     vcpus = 1
+> >     builder = 'linux'
+> >     name = 'server'
+> >     vif = [ 'mac=00:16:3e:b1:d7:90, ip=206.124.146.177, vifname=eth3' ]
+> >     localtime = 0
+> >     on_poweroff = 'destroy'
+> >     on_reboot = 'restart'
+> >     on_crash = 'restart'
+> >     extra = ' TERM=xterm'
+> >     bootloader = '/usr/lib/xen/boot/domUloader.py'
+> >     bootentry = 'hda2:/boot/vmlinuz-xen,/boot/initrd-xen'
+> >
+> > Note that the vifname is set to 'eth3' for the virtual interface to this DomU. This will cause the Dom0 interface to the server to have a fixed name (`eth3`) which makes it a lot easier to deal with in Shorewall and elsewhere.
+> >
+> > Specifying an IP address (ip=206.124.146.177) causes the vif-route script to create a host route to that IP address on `eth3`.
+> >
+> > >     gateway:~ # ip route ls dev eth3
+> > >     206.124.146.177  scope link  src 206.124.146.176
+> > >     gateway:~ #
+> >
+> > Note that the source for the route is 206.124.146.176. That is the primary IP address of Dom0's `eth0`. Xen configures `eth3` to have that same IP address.
+>
+> `/etc/xen/auto/02-test` — configuration file for the test domain.
+>
+> >     disk = [ 'phy:/dev/hdb4,hda,w', 'phy:/dev/hda,hdb,r' ]
+> >     memory = 512
+> >     vcpus = 1
+> >     builder = 'linux'
+> >     name = 'test'
+> >     vif = [ 'mac=00:16:3e:83:ad:28, ip=192.168.1.7, vifname=eth4' ]
+> >     localtime = 0
+> >     on_poweroff = 'destroy'
+> >     on_reboot = 'restart'
+> >     on_crash = 'restart'
+> >     extra = ' TERM=xterm'
+> >     bootloader = '/usr/lib/xen/boot/domUloader.py'
+> >     bootentry = 'hda2:/boot/vmlinuz-xen,/boot/initrd-xen'
+>
+> Excerpt from `/etc/xen/xend-config.sxp`:
+>
+> >     …
+> >
+> >     # It is possible to use the network-bridge script in more complicated
+> >     # scenarios, such as having two outgoing interfaces, with two bridges, and
+> >     # two fake interfaces per guest domain.  To do things like this, write
+> >     # yourself a wrapper script, and call network-bridge from it, as appropriate.
+> >     #
+> >     #(network-script network-bridge)
+> >
+> >     …
+> >
+> >     # If you are using only one bridge, the vif-bridge script will discover that,
+> >     # so there is no need to specify it explicitly.
+> >     #
+> >     #(vif-script vif-bridge)
+> >
+> >     ## Use the following if network traffic is routed, as an alternative to the
+> >     # settings for bridged networking given above.
+> >     (network-script network-route)
+> >     (vif-script     vif-route)
+> >
+> > <div class="important">
+> >
+> > As of this writing, the vif-route script does not set up Proxy ARP correctly. So the domU can communicate with the dom0 but not with hosts beyond the dom0.
+> >
+> > If you configure Shorewall as described below, Shorewall will correct the Proxy ARP configuration so that it will work.
+> >
+> > </div>
+
+Instructions for editing entries in the Xen 3.1 xend database may be found at <http://www.novell.com/documentation/vmserver/config_options/index.html?page=/documentation/vmserver/config_options/data/b8uh3zr.html>, The following are excerpts from the XML representations of the two user domains (produced by "xm list -l …").
+
+lists domain:
+
+>     … 
+>         (features )
+>         (on_xend_start start)
+>         (on_xend_stop shutdown)
+>         (start_time 1194710550.49)
+>      …
+>         (console_mfn 397179)
+>         (device
+>             (vif
+>                 (mac 00:16:3e:b1:d7:90)
+>                 (script vif-route)
+>                 (ip 206.124.146.177)
+>                 (vifname eth3)
+>                 (type netfront)
+>                 (devid 0)
+>                 (uuid 55676385-7b69-09fd-4027-751b692ead75)
+>             )
+>         )
+>         (device
+>             (vbd
+>      …
+
+test domain:
+
+>     … 
+>        (console_mfn 418003)
+>         (device
+>             (vif
+>                 (uuid 64a1dd48-fa8b-7561-e90b-cd589cbeb7fa)
+>                 (script vif-route)
+>                 (ip 192.168.1.7)
+>                 (mac 00:16:3e:83:ad:28)
+>                 (vifname eth4)
+>                 (devid 0)
+>                 (type netfront)
+>                 (backend 0)
+>             )
+>         )
+>         (device
+>             (vbd
+>     …
+
+With the three Xen domains up and running, the system looks as shown in the following diagram.
+
+The zones correspond to the Shorewall zones in the Dom0 configuration.
+
+Readers who are paying attention will notice that eth4 has the same public IP address (206.124.146.176) as eth0 (and eth3), yet the **test** system connected to that interface has an RFC 1918 address (192.168.1.7). That configuration is established by Xen which clones the primary IP address of eth0 on all of the routed virtual interfaces that it creates. **test** is configured with its default route via 192.168.1.254 which is the IP address of the firewall's br0. That works because of the way that the Linux network stack treats local IPv4 addresses; by default, it will respond to ARP "who-has" broadcasts for any local address and not just for the addresses on the interface that received the broadcast (but of course the MAC address returned in the "here-is" response is that of the interface that received the broadcast). So when **test** broadcasts "who-has 192.168.1.254", the firewall responds with "here-is 192.168.1.254 00:16:3e:83:ad:28" (00:16:3e:83:ad:28 is the MAC of virtual interface eth4).
+
+<div class="caution">
+
+Under some circumstances, UDP and/or TCP communication from a DomU won't work for no obvious reason. That happened with the **lists** domain in my setup. Looking at the IP traffic with `tcpdump -nvvi eth1` in Dom0 showed that UDP packets from the **lists** DomU had incorrect checksums. That problem was corrected by arranging for the following command to be executed in the **lists** and **test** domains when the `eth0` device was brought up:
+
+`ethtool -K eth0 tx off`
+
+Under OpenSuSE 10.2, I placed the following in `/etc/sysconfig/network/ifcfg-eth-id-00:16:3e:b1:d7:90` (the config file for eth0):
+
+    ETHTOOL_OPTIONS='-K iface tx off'
+
+Under other distributions, the technique will vary. For example, under Debian or Ubuntu, you can just add a 'post-up' entry to `/etc/network/interfaces` as shown here:
+
+     iface eth0 inet static
+             address 206.124.146.177
+             netmask 255.255.255.0
+             post-up ethtool -K eth0 tx off
+
+</div>
+
+<div class="caution">
+
+Update. Under OpenSuSE 10.2, communication from a domU works okay without running ethtool **but traffic shaping in dom0 doesn't work!** So it's a good idea to run it just to be safe.
+
+</div>
+
+## Dom0 Shorewall Configuration
+
+In Dom0, I run a conventional three-interface firewall with Proxy ARP DMZ -- it is very similar to the firewall described in the [Shorewall Setup Guide](../reference/shorewall_setup_guide.md) with the exception that I've added a fourth interface for our wireless network. The firewall runs a routed [OpenVPN server](../features/OPENVPN.md) to provide road warrior access for our three laptops and a bridged OpenVPN server for the wireless network in our home. Here is the firewall's view of the network:
+
+The three laptops can be directly attached to the LAN as shown above or they can be attached wirelessly -- their IP addresses are the same in either case; when they are directly attached, the IP address is assigned by the DHCP server running in Dom0 and when they are attached wirelessly, the IP address is assigned by OpenVPN.
+
+The Shorewall configuration files are shown below. All routing and secondary IP addresses are handled in the OpenSuSE network configuration.
+
+> /etc/shorewall/shorewall.conf
+>
+>     STARTUP_ENABLED=Yes
+>     VERBOSITY=0
+>     SHOREWALL_COMPILER=perl
+>     LOGFILE=/var/log/firewall
+>     LOGFORMAT="Shorewall:%s:%s:"
+>     LOGTAGONLY=No
+>     LOGRATE=
+>     LOGBURST=
+>     LOGALLNEW=
+>     BLACKLIST_LOGLEVEL=
+>     MACLIST_LOG_LEVEL=$LOG
+>     TCP_FLAGS_LOG_LEVEL=$LOG
+>     SMURF_LOG_LEVEL=$LOG
+>     LOG_MARTIANS=No
+>     IPTABLES=
+>     SHOREWALL_SHELL=/bin/ash
+>     SUBSYSLOCK=/var/lock/subsys/shorewall
+>     MODULESDIR=
+>     CONFIG_PATH=/etc/shorewall:/usr/share/shorewall
+>     RESTOREFILE=
+>     IPSECFILE=zones
+>     LOCKFILE=
+>     DROP_DEFAULT="Drop"
+>     REJECT_DEFAULT="Reject"
+>     ACCEPT_DEFAULT="none"
+>     QUEUE_DEFAULT="none"
+>     IP_FORWARDING=Yes
+>     ADD_IP_ALIASES=No
+>     ADD_SNAT_ALIASES=No
+>     RETAIN_ALIASES=No
+>     TC_ENABLED=internal
+>     TC_EXPERT=No
+>     CLEAR_TC=Yes
+>     MARK_IN_FORWARD_CHAIN=Yes
+>     CLAMPMSS=Yes
+>     ROUTE_FILTER=No
+>     DETECT_DNAT_IPADDRS=Yes
+>     MUTEX_TIMEOUT=60
+>     ADMINISABSENTMINDED=Yes
+>     BLACKLISTNEWONLY=Yes
+>     DELAYBLACKLISTLOAD=No
+>     MODULE_SUFFIX=
+>     DISABLE_IPV6=Yes
+>     BRIDGING=No
+>     DYNAMIC_ZONES=No
+>     PKTTYPE=No
+>     MACLIST_TABLE=mangle
+>     MACLIST_TTL=60
+>     SAVE_IPSETS=No
+>     MAPOLDACTIONS=No
+>     FASTACCEPT=Yes
+>     IMPLICIT_CONTINUE=Yes
+>     HIGH_ROUTE_MARKS=Yes
+>     USE_ACTIONS=Yes
+>     OPTIMIZE=1
+>     EXPORTPARAMS=No
+>     EXPAND_POLICIES=Yes
+>     KEEP_RT_TABLES=No
+>     DELETE_THEN_ADD=No
+>     BLACKLIST_DISPOSITION=DROP
+>     MACLIST_DISPOSITION=DROP
+>     TCP_FLAGS_DISPOSITION=DROP
+>
+> `/etc/shorewall/zones`:
+>
+>     #ZONE   TYPE            OPTIONS         IN_OPTIONS              OUT_OPTIONS
+>     fw      firewall        #The firewall itself.
+>     net     ipv4            #Internet
+>     loc     ipv4            #Local wired Zone
+>     dmz     ipv4            #DMZ
+>     vpn     ipv4            #Open VPN clients
+>     wifi    ipv4            #Local Wireless Zone
+>
+> `/etc/shorewall/policy`:
+>
+>     #SOURCE         DEST            POLICY          LOGLEVEL        LIMIT
+>     $FW             $FW             ACCEPT
+>     $FW             net             ACCEPT
+>     loc             net             ACCEPT
+>     $FW             vpn             ACCEPT
+>     vpn             net             ACCEPT
+>     vpn             loc             ACCEPT
+>     loc             vpn             ACCEPT
+>     $FW             loc             ACCEPT
+>     loc             $FW             ACCEPT
+>     wifi            all             REJECT          $LOG
+>     net             $FW             DROP            $LOG            1/sec:2
+>     net             loc             DROP            $LOG            2/sec:4
+>     net             dmz             DROP            $LOG            8/sec:30
+>     net             vpn             DROP            $LOG
+>     all             all             REJECT          $LOG
+>
+> `Note that the firewall<->local network interface is wide open so from a security point of view, the firewall system is part of the local zone.`
+>
+> `/etc/shorewall/params (edited)`:
+>
+>     MIRRORS=<comma-separated list of Shorewall mirrors>
+>
+>     NTPSERVERS=<comma-separated list of NTP servers I sync with>
+>
+>     POPSERVERS=<comma-separated list of server IP addresses>
+>
+>     LOG=info
+>
+>     INT_IF=br0
+>     DMZ_IF=eth3
+>     EXT_IF=eth0
+>     WIFI_IF=eth2
+>     TEST_IF=eth4
+>
+>     OMAK=<IP address at our second home>
+>
+> `/etc/shorewall/init`:
+>
+>     echo 1 > /proc/sys/net/ipv4/netfilter/ip_conntrack_tcp_be_liberal
+>
+> `/etc/shorewall/interfaces` (don't specify the BROADCAST addresses if you are using Shorewall-perl):
+>
+>     #ZONE   INTERFACE       BROADCAST               OPTIONS
+>     net     ${EXT_IF}       detect                  dhcp,logmartians=1,blacklist
+>     dmz     $DMZ_IF         detect                  logmartians=1
+>     loc     $INT_IF         detect                  dhcp,logmartians=1,routeback,bridge
+>     loc     $TEST_IF        detect                  optional
+>     loc     $TEST1_IF       detect                  optional
+>     wifi    $WIFI_IF        detect                  dhcp,maclist,mss=1400
+>     vpn     tun+            -
+>
+> `/etc/shorewall/nat`:
+>
+>     #EXTERNAL               INTERFACE       INTERNAL        ALLINTS         LOCAL
+>     COMMENT One-to-one NAT
+>     206.124.146.178         $EXT_IF:0       192.168.1.3     No              No
+>     206.124.146.180         $EXT_IF:2       192.168.1.6     No              No
+>
+> `/etc/shorewall/masq (Note the cute trick here and in the following proxyarp file that allows me to access the DSL "Modem" using its default IP address (192.168.1.1))`. The leading "+" is required to place the rule before the SNAT rules generated by entries in `/etc/shorewall/nat` above.
+>
+>     #INTERFACE              SOURCE          ADDRESS         PROTO   DPORT   IPSEC
+>     COMMENT Handle DSL 'Modem'
+>
+>     +$EXT_IF:192.168.1.1    0.0.0.0/0       192.168.1.254
+>
+>     COMMENT Masquerade VPN clients and Wifi
+>
+>     $EXT_IF                 192.168.2.0/24
+>     $EXT_IF                 192.168.3.0/24
+>
+>     $EXT_IF:192.168.98.1    192.168.99.1    192.168.1.99
+>     $EXT_IF:192.168.99.1    192.168.98.1    192.168.1.98
+>
+>     COMMENT Masquerade Local Network
+>
+>     $EXT_IF                 192.168.1.0/24  206.124.146.179
+>
+> `/etc/shorewall/proxyarp`:
+>
+>     #ADDRESS        INTERFACE       EXTERNAL        HAVEROUTE       PERSISTENT
+>     192.168.1.1     $EXT_IF         $INT_IF         yes
+>     206.124.146.177 $DMZ_IF         $EXT_IF         yes
+>     192.168.1.7     $TEST_IF        $INT_IF         yes
+>
+> `/etc/shorewall/tunnels`:
+>
+>     #TYPE                   ZONE    GATEWAY         GATEWAY_ZONE
+>     openvpnserver:udp       net     0.0.0.0/0                 #Routed server for RoadWarrior access
+>     openvpnserver:udp       wifi    192.168.3.0/24            #Home wireless network server
+>
+> `/etc/shorewall/actions`:
+>
+>     #ACTION
+>     Mirrors             # Accept traffic from Shorewall Mirrors
+>
+> `/etc/shorewall/action.Mirrors`:
+>
+>     #TARGET SOURCE          DEST            PROTO   DPORT   SPORT      ORIGDEST     RATE
+>     ACCEPT  $MIRRORS
+>
+> `/etc/shorewall/rules`:
+>
+>     SECTION NEW
+>     ###############################################################################################################################################################################
+>     #ACTION         SOURCE                          DEST                    PROTO   DPORT                                   SPORT           ORIGDEST        RATE    USER
+>     ###############################################################################################################################################################################
+>     REJECT:$LOG     loc                             net                     tcp     25
+>     REJECT:$LOG     loc                             net                     udp     1025:1031
+>     #
+>     # Stop NETBIOS crap
+>     #
+>     REJECT          loc                             net                     tcp     137,445
+>     REJECT          loc                             net                     udp     137:139
+>     #
+>     # Stop my idiotic work laptop from sending to the net with an HP source/dest IP address
+>     #
+>     DROP            loc:!192.168.0.0/22             net
+>     ###############################################################################################################################################################################
+>     # Local Network to Firewall
+>     #
+>     REDIRECT-       loc                             3128                    tcp     80                                      -               !192.168.1.1,192.168.0.7,206.124.146.177,155.98.64.80
+>     ###############################################################################################################################################################################
+>     # Road Warriors to Firewall
+>     #
+>     ACCEPT            vpn                             fw                      tcp     ssh,time,631,8080
+>     ACCEPT            vpn                             fw                      udp     161,ntp,631
+>     Ping(ACCEPT)      vpn                             fw
+>     ###############################################################################################################################################################################
+>     # Road Warriors to DMZ
+>     #
+>     ACCEPT            vpn                             dmz                     udp     domain
+>     ACCEPT            vpn                             dmz                     tcp     www,smtp,smtps,domain,ssh,imap,https,imaps,ftp,10023,pop3       -
+>     Ping(ACCEPT)      vpn                             dmz
+>     ###############################################################################################################################################################################
+>     # Local network to DMZ
+>     #
+>     ACCEPT          loc                             dmz                     udp     domain
+>     ACCEPT          loc                             dmz                     tcp     ssh,smtps,www,ftp,imaps,domain,https    -
+>     ACCEPT          loc                             dmz                     tcp     smtp
+>     Trcrt(ACCEPT)   loc                             dmz
+>     ###############################################################################################################################################################################
+>     # Internet to ALL -- drop NewNotSyn packets
+>     #
+>     dropNotSyn      net             fw              tcp
+>     #dropNotSyn     net             loc             tcp
+>     dropNotSyn      net             dmz             tcp
+>     ###############################################################################################################################################################################
+>     # Internet to DMZ
+>     #
+>     ACCEPT          net                             dmz                     udp     domain
+>     LOG:$LOG        net:64.126.128.0/18             dmz                     tcp     smtp
+>     ACCEPT          net                             dmz                     tcp     smtps,www,ftp,imaps,domain,https        -
+>     ACCEPT          net                             dmz                     tcp     smtp                                    -               206.124.146.177,206.124.146.178
+>     ACCEPT          net                             dmz                     udp     33434:33454
+>     Mirrors         net                             dmz                     tcp     rsync
+>     Limit:$LOG:SSHA,3,60\
+>                     net                             dmz                     tcp     22
+>     Trcrt(ACCEPT)   net                             dmz
+>     ##############################################################################################################################################################################
+>     #
+>     # Net to Local
+>     #
+>     # When I'm "on the road", the following two rules allow me VPN access back home using PPTP.
+>     #
+>     DNAT            net                             loc:192.168.1.4         tcp     1729
+>     DNAT            net                             loc:192.168.1.4         gre
+>     #
+>     # Roadwarrior access to Ursa
+>     #
+>     ACCEPT          net:$OMAK                       loc                     tcp     22
+>     Limit:$LOG:SSHA,3,60\
+>                     net                             loc                     tcp     22
+>
+>     #
+>     # ICQ
+>     #
+>     ACCEPT          net                             loc:192.168.1.3         tcp     113,4000:4100
+>     #
+>     # Bittorrent
+>     #
+>     ACCEPT          net                             loc:192.168.1.3         tcp     6881:6889,6969
+>     ACCEPT          net                             loc:192.168.1.3         udp     6881:6889,6969
+>     #
+>     # Real Audio
+>     #
+>     ACCEPT          net                             loc:192.168.1.3         udp     6970:7170
+>     #
+>     # Overnet
+>     #
+>     #ACCEPT         net                             loc:192.168.1.3         tcp     4662
+>     #ACCEPT         net                             loc:192.168.1.3         udp     12112
+>     #
+>     # OpenVPN
+>     #
+>     ACCEPT          net                             loc:192.168.1.3         udp     1194
+>     ACCEPT          net                             loc:192.168.1.6         udp     1194
+>     # Skype
+>     #
+>     ACCEPT          net                             loc:192.168.1.6         tcp     1194
+>     #
+>     # Traceroute
+>     #
+>     Trcrt(ACCEPT)   net                             loc:192.168.1.3
+>     #
+>     # Silently Handle common probes
+>     #
+>     REJECT          net                             loc                     tcp     www,ftp,https
+>     DROP            net                             loc                     icmp    8
+>     ###############################################################################################################################################################################
+>     # DMZ to Internet
+>     #
+>     ACCEPT          dmz                             net                     udp     domain,ntp
+>     ACCEPT          dmz                             net                     tcp     echo,ftp,ssh,smtp,whois,domain,www,81,https,cvspserver,2702,2703,8080
+>     ACCEPT          dmz                             net:$POPSERVERS         tcp     pop3
+>     Ping(ACCEPT)    dmz                             net
+>     #
+>     # Some FTP clients seem prone to sending the PORT command split over two packets. This prevents the FTP connection tracking
+>     # code from processing the command  and setting up the proper expectation. The following rule allows active FTP to work in these cases
+>     # but logs the connection so I can keep an eye on this potential security hole.
+>     #
+>     ACCEPT:$LOG     dmz                             net                     tcp     1024:                                   20
+>     ###############################################################################################################################################################################
+>     # Local to DMZ
+>     #
+>     ACCEPT          loc                             dmz                     udp     domain,xdmcp
+>     ACCEPT          loc                             dmz                     tcp     www,smtp,smtps,domain,ssh,imap,rsync,https,imaps,ftp,10023,pop3,3128
+>     Trcrt(ACCEPT)   loc                             dmz
+>     ###############################################################################################################################################################################
+>     # DMZ to Local
+>     #
+>     ACCEPT          dmz                             loc:192.168.1.5         udp     123
+>     ACCEPT          dmz                             loc:192.168.1.5         tcp     21
+>     Ping(ACCEPT)    dmz                             loc
+>
+>     ###############################################################################################################################################################################
+>     # DMZ to Firewall -- ntp & snmp, Silently reject Auth
+>     #
+>     #ACCEPT         net                             loc:192.168.1.3         udp     12112
+>     #
+>     # OpenVPN
+>     #
+>     ACCEPT          net                             loc:192.168.1.3         udp     1194
+>     ACCEPT          net                             loc:192.168.1.6         udp     1194
+>     # Skype
+>     #
+>     ACCEPT          net                             loc:192.168.1.6         tcp     1194
+>     #
+>     # Traceroute
+>     #
+>     Trcrt(ACCEPT)   net                             loc:192.168.1.3
+>     #
+>     # Silently Handle common probes
+>     #
+>     REJECT          net                             loc                     tcp     www,ftp,https
+>     DROP            net                             loc                     icmp    8
+>     ###############################################################################################################################################################################
+>     # DMZ to Internet
+>     #
+>     ACCEPT          dmz                             net                     udp     domain,ntp
+>     ACCEPT          dmz                             net                     tcp     echo,ftp,ssh,smtp,whois,domain,www,81,https,cvspserver,2702,2703,8080
+>     ACCEPT          dmz                             net:$POPSERVERS         tcp     pop3
+>     Ping(ACCEPT)    dmz                             net
+>     #
+>     # Some FTP clients seem prone to sending the PORT command split over two packets. This prevents the FTP connection tracking
+>     # code from processing the command  and setting up the proper expectation. The following rule allows active FTP to work in these cases
+>     # but logs the connection so I can keep an eye on this potential security hole.
+>     #
+>     ACCEPT:$LOG     dmz                             net                     tcp     1024:                                   20
+>     ###############################################################################################################################################################################
+>     # Local to DMZ
+>     #
+>     ACCEPT          loc                             dmz                     udp     domain,xdmcp
+>     ACCEPT          loc                             dmz                     tcp     www,smtp,smtps,domain,ssh,imap,rsync,https,imaps,ftp,10023,pop3,3128
+>     Trcrt(ACCEPT)   loc                             dmz
+>     ###############################################################################################################################################################################
+>     # DMZ to Local
+>     #
+>     ACCEPT          dmz                             loc:192.168.1.5         udp     123
+>     ACCEPT          dmz                             loc:192.168.1.5         tcp     21
+>     Ping(ACCEPT)    dmz                             loc
+>
+>     ###############################################################################################################################################################################
+>     # DMZ to Firewall -- ntp & snmp, Silently reject Auth
+>     #
+>     ACCEPT          loc                             dmz                     udp     domain,xdmcp
+>     ACCEPT          loc                             dmz                     tcp     www,smtp,smtps,domain,ssh,imap,rsync,https,imaps,ftp,10023,pop3,3128
+>     Trcrt(ACCEPT)   loc                             dmz
+>     ###############################################################################################################################################################################
+>     # DMZ to Local
+>     #
+>     ACCEPT          dmz                             loc:192.168.1.5         udp     123
+>     ACCEPT          dmz                             loc:192.168.1.5         tcp     21
+>     Ping(ACCEPT)    dmz                             loc
+>
+>     ###############################################################################################################################################################################
+>     # DMZ to Firewall -- ntp & snmp, Silently reject Auth
+>     #
+>     ACCEPT          dmz                             fw                      tcp     161,ssh
+>     ACCEPT          dmz                             fw                      udp     161,ntp
+>     REJECT          dmz                             fw                      tcp     auth
+>     Ping(ACCEPT)    dmz                             fw
+>     ###############################################################################################################################################################################
+>     # Internet to Firewall
+>     #
+>     REJECT          net                             fw                      tcp     www,ftp,https
+>     DROP            net                             fw                      icmp    8
+>     ACCEPT          net                             fw                      udp     33434:33454
+>     ACCEPT          net:$OMAK                       fw                      udp     ntp
+>     ACCEPT          net                             fw                      tcp     auth
+>     ACCEPT          net:$OMAK                       fw                      tcp     22
+>     Limit:$LOG:SSHA,3,60\
+>                     net                             fw                      tcp     22
+>     Trcrt(ACCEPT)   net                             fw
+>     #
+>     # Bittorrent
+>     #
+>     ACCEPT          net                             fw                      tcp     6881:6889,6969
+>     ACCEPT          net                             fw                      udp     6881:6889,6969
+>     ###############################################################################################################################################################################
+>     # Firewall to DMZ
+>     #
+>     ACCEPT          fw                              dmz                     tcp     domain,www,ftp,ssh,smtp,https,993,465
+>     ACCEPT          fw                              dmz                     udp     domain
+>     REJECT          fw                              dmz                     udp     137:139
+>     Ping(ACCEPT)    fw                              dmz
+>     ##############################################################################################################################################################################
+>     # Avoid logging Freenode.net probes
+>     #
+>     DROP            net:82.96.96.3                          all
+>
+> `etc/shorewall/tcdevices`
+>
+>     #INTERFACE      IN_BANDWITH     OUT_BANDWIDTH
+>     $EXT_IF         1300kbit        384kbit
+>
+> `/etc/shorewall/tcclasses`
+>
+>     #INTERFACE      MARK    RATE            CEIL            PRIORITY        OPTIONS
+>     $EXT_IF         10      5*full/10       full            1               tcp-ack,tos-minimize-delay
+>     $EXT_IF         20      3*full/10       9*full/10       2               default
+>     $EXT_IF         30      2*full/10       6*full/10       3
+>
+> `/etc/shorewall/mangle`
+>
+>     #ACTION           SOURCE          DEST            PROTO   DPORT   SPORT   USER    TEST
+>     CLASSIFY(1:110)   192.168.0.0/22  $EXT_IF                                         #Our internal nets get priority
+>                                                                                       #over the server
+>     CLASSIFY(1:130)   206.124.146.177 $EXT_IF         tcp     -       873             #Throttle rsync traffic to the
+>                                                                                       #Shorewall Mirrors.
+
+The `tap0` device used by the bridged OpenVPN server is created and bridged to `eth1` using a SUSE-specific SysV init script:
+
+>     #!/bin/sh
+>     #
+>     #     The Shoreline Firewall (Shorewall) Packet Filtering Firewall - V3.0
+>     #
+>     #     This program is under GPL [http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt]
+>     #
+>     #     (c) 1999,2000,2001,2002,2003,2004,2005 - Tom Eastep (teastep@shorewall.net)
+>     #
+>     #       On most distributions, this file should be called /etc/init.d/shorewall.
+>     #
+>     #       Complete documentation is available at https://shorewall.org
+>     #
+>     #       This program is free software; you can redistribute it and/or modify
+>     #       it under the terms of Version 2 of the GNU General Public License
+>     #       as published by the Free Software Foundation.
+>     #
+>     #       This program is distributed in the hope that it will be useful,
+>     #       but WITHOUT ANY WARRANTY; without even the implied warranty of
+>     #       MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+>     #       GNU General Public License for more details.
+>     #
+>     #       You should have received a copy of the GNU General Public License
+>     #       along with this program; if not, write to the Free Software
+>     #       Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+>     #
+>     #       If an error occurs while starting or restarting the firewall, the
+>     #       firewall is automatically stopped.
+>     #
+>     #       Commands are:
+>     #
+>     #          bridge start                   Starts the bridge
+>     #          bridge restart                 Restarts the bridge
+>     #          bridge reload                  Restarts the bridge
+>     #          bridge stop                    Stops the bridge
+>     #          bridge status                  Displays bridge status
+>     #
+>
+>     # chkconfig: 2345 4 99
+>     # description: Packet filtering firewall
+>
+>     ### BEGIN INIT INFO
+>     # Provides:       bridge
+>     # Required-Start: boot.udev
+>     # Required-Stop:
+>     # Default-Start:  2 3 5
+>     # Default-Stop:   0 1 6
+>     # Description:    starts and stops the bridge
+>     ### END INIT INFO
+>
+>     ################################################################################
+>     # Interfaces to be bridged -- may be listed by device name or by MAC
+>     #
+>     INTERFACES="eth1"
+>
+>     #
+>     # Tap Devices
+>     #
+>     TAPS="tap0"
+>
+>     ################################################################################
+>     # Give Usage Information                                                       #
+>     ################################################################################
+>     usage() {
+>         echo "Usage: $0 start|stop|reload|restart|status"
+>         exit 1
+>     }
+>     #################################################################################
+>     # Find the interface with the passed MAC address
+>     #################################################################################
+>     find_interface_by_mac() {
+>         local mac
+>         mac=$1
+>         local first
+>         local second
+>         local rest
+>         local dev
+>
+>         /sbin/ip link ls | while read first second rest; do
+>             case $first in
+>                 *:)
+>                     dev=$second
+>                     ;;
+>                 *)
+>                     if [ "$second" = $mac ]; then
+>                         echo ${dev%:}
+>                         return
+>                     fi
+>             esac
+>         done
+>     }
+>     ################################################################################
+>     # Convert MAC addresses to interface names
+>     ################################################################################
+>     get_interfaces() {
+>         local interfaces
+>         interfaces=
+>         local interface
+>
+>         for interface in $INTERFACES; do
+>             case $interface in
+>                 *:*:*)
+>                     interface=$(find_interface_by_mac $interface)
+>                     [ -n "$interface" ] || echo "WARNING: Can't find an interface with MAC address $mac"
+>                     ;;
+>             esac
+>             interfaces="$interfaces $interface"
+>         done
+>
+>         INTERFACES="$interfaces"
+>     }
+>     ################################################################################
+>     # Start the Bridge
+>     ################################################################################
+>     do_start()
+>     {
+>         local interface
+>
+>         get_interfaces
+>
+>         for interface in $TAPS; do
+>             /usr/sbin/openvpn --mktun --dev $interface
+>         done
+>
+>        /sbin/brctl addbr br0
+>
+>        for interface in $INTERFACES $TAPS; do
+>             /sbin/ip link set $interface up
+>             /sbin/brctl addif br0 $interface
+>        done
+>     }
+>     ################################################################################
+>     # Stop the Bridge
+>     ################################################################################
+>     do_stop()
+>     {
+>         local interface
+>
+>         get_interfaces
+>
+>         for interface in $INTERFACES $TAPS; do
+>             /sbin/brctl delif br0 $interface
+>             /sbin/ip link set $interface down
+>         done
+>
+>         /sbin/ip link set br0 down
+>
+>         /sbin/brctl delbr br0
+>
+>         for interface in $TAPS; do
+>             /usr/sbin/openvpn --rmtun --dev $interface
+>         done
+>     }
+>     ################################################################################
+>     # E X E C U T I O N    B E G I N S   H E R E                                   #
+>     ################################################################################
+>     command="$1"
+>
+>     case "$command" in
+>         start)
+>             do_start
+>             ;;
+>         stop)
+>             do_stop
+>             ;;
+>         restart|reload)
+>             do_stop
+>             do_start
+>             ;;
+>         status)
+>             /sbin/brctl show
+>             ;;
+>         *)
+>             usage
+>             ;;
+>     esac

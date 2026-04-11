@@ -1,7 +1,0 @@
-#
-# Shorewall6 -- /etc/shorewall6/secmarks
-#
-# For information about entries in this file, type "man shorewall-secmarks"
-#
-####################################################################################################
-#SECMARK		CHAIN	SOURCE		DEST		PROTO	DPORT	SPORT	USER	MARK

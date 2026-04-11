@@ -1,7 +1,0 @@
-#
-# Shorewall6 Lite version 5 - Default Config Path
-#
-# /usr/share/shorewall-lite/configpath
-#
-
-CONFIG_PATH=${CONFDIR}/shorewall-lite:${SHAREDIR}/shorewall6-lite:${SHAREDIR}/shorewall

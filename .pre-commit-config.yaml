@@ -1,0 +1,61 @@
+# Pre-commit hooks for shorewall-nft
+#
+# Install:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Run on all files:
+#   pre-commit run --all-files
+
+repos:
+  # Standard hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.(diff|patch|md|nft)$'
+      - id: end-of-file-fixer
+        exclude: '\.(diff|patch|nft)$'
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+        exclude: '^docs/reference/commands\.json$'  # may have trailing newline
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Python linting + formatting (ruff handles both)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.10
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # Shell script checking
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        files: '^tools/.*\.sh$|^tools/run-netns$'
+
+  # Markdown linting (relaxed — we have lots of existing prose)
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.41.0
+    hooks:
+      - id: markdownlint
+        args:
+          - --disable=MD013  # line length
+          - --disable=MD033  # inline HTML (used for admonitions)
+          - --disable=MD041  # first line must be H1 (frontmatter)
+
+  # Spellcheck: only on the top-level README + CHANGELOG to catch typos
+  # in the most-read docs. (Full docs have too many technical terms.)
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        files: '^(README\.md|CHANGELOG\.md|CONTRIBUTING\.md|SECURITY\.md)$'
+        args: [--ignore-words-list=assertIn,nd]

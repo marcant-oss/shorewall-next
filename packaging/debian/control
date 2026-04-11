@@ -1,0 +1,48 @@
+Source: shorewall-nft
+Section: net
+Priority: optional
+Maintainer: shorewall-nft maintainers <shorewall-nft@example.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-python,
+ python3-all (>= 3.11),
+ python3-build,
+ python3-installer,
+ python3-setuptools,
+ python3-wheel
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/shorewall-nft/shorewall-nft
+
+Package: shorewall-nft
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${python3:Depends},
+ python3 (>= 3.11),
+ python3-click (>= 8.0),
+ python3-pyroute2 (>= 0.7),
+ nftables,
+ iproute2
+Recommends:
+ python3-nftables,
+ ipset
+Suggests:
+ python3-scapy
+Conflicts:
+ shorewall,
+ shorewall6,
+ shorewall-lite,
+ shorewall6-lite
+Description: nftables-native firewall compiler with Shorewall-compatible config
+ shorewall-nft is a drop-in replacement for the Shorewall firewall that
+ compiles the same configuration files directly to nftables rulesets.
+ Features include:
+ .
+  - Dual-stack IPv4+IPv6 in a single inet table
+  - Smart merge-config for /etc/shorewall + /etc/shorewall6
+  - Plugin system with IP-INFO and Netbox integration
+  - Post-compile optimizer (5 levels, up to 37% rule reduction)
+  - Debug mode with per-rule counters + source-location comments
+  - Config hash drift detection
+  - Native network namespace support

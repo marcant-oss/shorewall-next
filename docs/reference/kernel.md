@@ -1,0 +1,429 @@
+<div class="warning">
+
+**This article is unmaintained.**
+
+</div>
+
+# Network Options Configuration
+
+Here's a screen shot of my Network Options Configuration:
+
+While not all of the options that I've selected are required, they should be sufficient for most applications. Here's an excerpt from the corresponding .config file (Note: If you are running a kernel older than 2.4.17, be sure to select CONFIG_NETLINK and CONFIG_RTNETLINK):
+
+>     #
+>      # Networking options
+>      #
+>      CONFIG_PACKET=y
+>      # CONFIG_PACKET_MMAP is not set
+>      # CONFIG_NETLINK_DEV is not set
+>      CONFIG_NETFILTER=y
+>      # CONFIG_NETFILTER_DEBUG is not set
+>      CONFIG_FILTER=y
+>      CONFIG_UNIX=y
+>      CONFIG_INET=y
+>      CONFIG_IP_MULTICAST=y
+>      CONFIG_IP_ADVANCED_ROUTER=y
+>      CONFIG_IP_MULTIPLE_TABLES=y
+>      CONFIG_IP_ROUTE_FWMARK=y
+>      CONFIG_IP_ROUTE_NAT=y
+>      CONFIG_IP_ROUTE_MULTIPATH=y
+>      CONFIG_IP_ROUTE_TOS=y
+>      CONFIG_IP_ROUTE_VERBOSE=y
+>      # CONFIG_IP_ROUTE_LARGE_TABLES is not set
+>      # CONFIG_IP_PNP is not set
+>      CONFIG_NET_IPIP=y
+>      CONFIG_NET_IPGRE=y
+>      # CONFIG_NET_IPGRE_BROADCAST is not set
+>      # CONFIG_IP_MROUTE is not set
+>      # CONFIG_ARPD is not set
+>      CONFIG_INET_ECN=y
+>      CONFIG_SYN_COOKIES=y
+
+# Netfilter Configuration
+
+Here's a screen shot of my Netfilter configuration:
+
+Note that I have built everything I need as modules. You can also build everything into your kernel but if you want to be able to deal with FTP running on a non-standard port then you **must** modularize FTP Protocol support.
+
+Here's the corresponding part of my .config file:
+
+>     #
+>     # IP: Netfilter Configuration
+>     #
+>     CONFIG_IP_NF_CONNTRACK=m
+>     CONFIG_IP_NF_FTP=m
+>     CONFIG_IP_NF_AMANDA=m
+>     CONFIG_IP_NF_TFTP=m
+>     # CONFIG_IP_NF_IRC is not set
+>     # CONFIG_IP_NF_QUEUE is not set
+>     CONFIG_IP_NF_IPTABLES=m
+>     CONFIG_IP_NF_MATCH_LIMIT=m
+>     CONFIG_IP_NF_MATCH_MAC=m
+>     CONFIG_IP_NF_MATCH_PKTTYPE=m
+>     CONFIG_IP_NF_MATCH_MARK=m
+>     CONFIG_IP_NF_MATCH_MULTIPORT=m
+>     CONFIG_IP_NF_MATCH_TOS=m
+>     CONFIG_IP_NF_MATCH_ECN=m
+>     CONFIG_IP_NF_MATCH_DSCP=m
+>     CONFIG_IP_NF_MATCH_AH_ESP=m
+>     CONFIG_IP_NF_MATCH_LENGTH=m
+>     # CONFIG_IP_NF_MATCH_TTL is not set
+>     CONFIG_IP_NF_MATCH_TCPMSS=m
+>     CONFIG_IP_NF_MATCH_HELPER=m
+>     CONFIG_IP_NF_MATCH_STATE=m
+>     CONFIG_IP_NF_MATCH_CONNTRACK=m
+>     CONFIG_IP_NF_MATCH_UNCLEAN=m
+>     # CONFIG_IP_NF_MATCH_OWNER is not set
+>     CONFIG_IP_NF_FILTER=m
+>     CONFIG_IP_NF_TARGET_REJECT=m
+>     # CONFIG_IP_NF_TARGET_MIRROR is not set
+>     CONFIG_IP_NF_NAT=m
+>     CONFIG_IP_NF_NAT_NEEDED=y
+>     CONFIG_IP_NF_TARGET_MASQUERADE=m
+>     CONFIG_IP_NF_TARGET_REDIRECT=m
+>     CONFIG_IP_NF_NAT_AMANDA=m
+>     CONFIG_IP_NF_NAT_LOCAL=y
+>     # CONFIG_IP_NF_NAT_SNMP_BASIC is not set
+>     CONFIG_IP_NF_NAT_FTP=m
+>     CONFIG_IP_NF_NAT_TFTP=m
+>     CONFIG_IP_NF_MANGLE=m
+>     CONFIG_IP_NF_TARGET_TOS=m
+>     CONFIG_IP_NF_TARGET_ECN=m
+>     CONFIG_IP_NF_TARGET_DSCP=m
+>     CONFIG_IP_NF_TARGET_MARK=m
+>     CONFIG_IP_NF_TARGET_LOG=m
+>     CONFIG_IP_NF_TARGET_ULOG=m
+>     CONFIG_IP_NF_TARGET_TCPMSS=m
+>     CONFIG_IP_NF_ARPTABLES=m
+>     CONFIG_IP_NF_ARPFILTER=m
+>     # CONFIG_IP_NF_COMPAT_IPCHAINS is not set
+>     # CONFIG_IP_NF_COMPAT_IPFWADM is not set
+
+# Kernel 2.6 Netfilter Options
+
+Here's a screenshot of my modularized 2.6 Kernel config (Navigation: Device Drivers → Networking Support → Networking Options → Network Packet Filtering (replaces ipchains) → IP: Netfilter configuration):
+
+Here is the corresponding part of the .config file:
+
+>     CONFIG_IP_NF_CONNTRACK=m
+>     CONFIG_IP_NF_FTP=m
+>     CONFIG_IP_NF_IRC=m
+>     CONFIG_IP_NF_TFTP=m
+>     CONFIG_IP_NF_AMANDA=m
+>     CONFIG_IP_NF_QUEUE=m
+>     CONFIG_IP_NF_IPTABLES=m
+>     CONFIG_IP_NF_MATCH_LIMIT=m
+>     CONFIG_IP_NF_MATCH_IPRANGE=m
+>     CONFIG_IP_NF_MATCH_MAC=m
+>     CONFIG_IP_NF_MATCH_PKTTYPE=m
+>     CONFIG_IP_NF_MATCH_MARK=m
+>     CONFIG_IP_NF_MATCH_MULTIPORT=m
+>     CONFIG_IP_NF_MATCH_TOS=m
+>     CONFIG_IP_NF_MATCH_RECENT=m
+>     CONFIG_IP_NF_MATCH_ECN=m
+>     CONFIG_IP_NF_MATCH_DSCP=m
+>     CONFIG_IP_NF_MATCH_AH_ESP=m
+>     CONFIG_IP_NF_MATCH_LENGTH=m
+>     CONFIG_IP_NF_MATCH_TTL=m
+>     CONFIG_IP_NF_MATCH_TCPMSS=m
+>     CONFIG_IP_NF_MATCH_HELPER=m
+>     CONFIG_IP_NF_MATCH_STATE=m
+>     CONFIG_IP_NF_MATCH_CONNTRACK=m
+>     CONFIG_IP_NF_MATCH_OWNER=m
+>     CONFIG_IP_NF_MATCH_PHYSDEV=m
+>     CONFIG_IP_NF_FILTER=m
+>     CONFIG_IP_NF_TARGET_REJECT=m
+>     CONFIG_IP_NF_NAT=m
+>     CONFIG_IP_NF_NAT_NEEDED=y
+>     CONFIG_IP_NF_TARGET_MASQUERADE=m
+>     CONFIG_IP_NF_TARGET_REDIRECT=m
+>     CONFIG_IP_NF_TARGET_NETMAP=m
+>     CONFIG_IP_NF_TARGET_SAME=m
+>     CONFIG_IP_NF_NAT_LOCAL=y
+>     CONFIG_IP_NF_NAT_SNMP_BASIC=m
+>     CONFIG_IP_NF_NAT_IRC=m
+>     CONFIG_IP_NF_NAT_FTP=m
+>     CONFIG_IP_NF_NAT_TFTP=m
+>     CONFIG_IP_NF_NAT_AMANDA=m
+>     CONFIG_IP_NF_MANGLE=m
+>     CONFIG_IP_NF_TARGET_TOS=m
+>     CONFIG_IP_NF_TARGET_ECN=m
+>     CONFIG_IP_NF_TARGET_DSCP=m
+>     CONFIG_IP_NF_TARGET_MARK=m
+>     CONFIG_IP_NF_TARGET_CLASSIFY=m
+>     CONFIG_IP_NF_TARGET_LOG=m
+>     CONFIG_IP_NF_TARGET_ULOG=m
+>     CONFIG_IP_NF_TARGET_TCPMSS=m
+>     # CONFIG_IP_NF_ARPTABLES is not set
+>     # CONFIG_IP_NF_COMPAT_IPCHAINS is not set
+>     # CONFIG_IP_NF_COMPAT_IPFWADM is not set
+>     # CONFIG_IP_NF_RAW is not set
+>     CONFIG_IP_NF_MATCH_ADDRTYPE=m
+>     # CONFIG_IP_NF_MATCH_REALM is not set
+>     CONFIG_IP6_NF_QUEUE=m
+>     CONFIG_IP6_NF_IPTABLES=m
+>     CONFIG_IP6_NF_MATCH_LIMIT=m
+>     CONFIG_IP6_NF_MATCH_MAC=m
+>     CONFIG_IP6_NF_MATCH_RT=m
+>     CONFIG_IP6_NF_MATCH_OPTS=m
+>     CONFIG_IP6_NF_MATCH_FRAG=m
+>     CONFIG_IP6_NF_MATCH_HL=m
+>     CONFIG_IP6_NF_MATCH_MULTIPORT=m
+>     CONFIG_IP6_NF_MATCH_OWNER=m
+>     CONFIG_IP6_NF_MATCH_MARK=m
+>     CONFIG_IP6_NF_MATCH_IPV6HEADER=m
+>     CONFIG_IP6_NF_MATCH_AHESP=m
+>     CONFIG_IP6_NF_MATCH_LENGTH=m
+>     CONFIG_IP6_NF_MATCH_EUI64=m
+>     CONFIG_IP6_NF_FILTER=m
+>     CONFIG_IP6_NF_TARGET_LOG=m
+>     CONFIG_IP6_NF_MANGLE=m
+>     CONFIG_IP6_NF_TARGET_MARK=m
+>     # CONFIG_IP6_NF_RAW is not set
+>     CONFIG_DECNET_NF_GRABULATOR=m
+>     CONFIG_BRIDGE_NF_EBTABLES=m
+
+# Kernel 2.6.16 and Later Netfilter Options
+
+Here's a screenshot of my modularized 2.6.16 Kernel config (Navigation: Networking → Networking Options → Network Packet Filtering (replaces ipchains) → Core Netfilter configuration):
+
+Note that is is particularly important to select "Netfilter Xtables support (required for ip_tables).
+
+Here's a screenshot of the IP Netfilter config (Navigation: Networking → Networking Options → Network Packet Filtering (replaces ipchains) → IP: Netfilter configuration):
+
+Here is the corresponding part of the .config file:
+
+>     #
+>     # Core Netfilter Configuration
+>     #
+>     CONFIG_NETFILTER_NETLINK=m
+>     CONFIG_NETFILTER_NETLINK_QUEUE=m
+>     CONFIG_NETFILTER_NETLINK_LOG=m
+>     CONFIG_NETFILTER_XTABLES=m
+>     CONFIG_NETFILTER_XT_TARGET_CLASSIFY=m
+>     CONFIG_NETFILTER_XT_TARGET_CONNMARK=m
+>     CONFIG_NETFILTER_XT_TARGET_MARK=m
+>     CONFIG_NETFILTER_XT_TARGET_NFQUEUE=m
+>     CONFIG_NETFILTER_XT_TARGET_NOTRACK=m
+>     CONFIG_NETFILTER_XT_MATCH_COMMENT=m
+>     CONFIG_NETFILTER_XT_MATCH_CONNBYTES=m
+>     CONFIG_NETFILTER_XT_MATCH_CONNMARK=m
+>     CONFIG_NETFILTER_XT_MATCH_CONNTRACK=m
+>     CONFIG_NETFILTER_XT_MATCH_DCCP=m
+>     CONFIG_NETFILTER_XT_MATCH_HELPER=m
+>     CONFIG_NETFILTER_XT_MATCH_LENGTH=m
+>     CONFIG_NETFILTER_XT_MATCH_LIMIT=m
+>     CONFIG_NETFILTER_XT_MATCH_MAC=m
+>     CONFIG_NETFILTER_XT_MATCH_MARK=m
+>     CONFIG_NETFILTER_XT_MATCH_PHYSDEV=m
+>     CONFIG_NETFILTER_XT_MATCH_PKTTYPE=m
+>     CONFIG_NETFILTER_XT_MATCH_REALM=m
+>     CONFIG_NETFILTER_XT_MATCH_SCTP=m
+>     CONFIG_NETFILTER_XT_MATCH_STATE=m
+>     CONFIG_NETFILTER_XT_MATCH_STRING=m
+>     CONFIG_NETFILTER_XT_MATCH_TCPMSS=m
+>
+>     #
+>     # IP: Netfilter Configuration
+>     #
+>     CONFIG_IP_NF_CONNTRACK=m
+>     CONFIG_IP_NF_CT_ACCT=y
+>     CONFIG_IP_NF_CONNTRACK_MARK=y
+>     CONFIG_IP_NF_FTP=m
+>     CONFIG_IP_NF_IRC=m
+>     CONFIG_IP_NF_TFTP=m
+>     CONFIG_IP_NF_AMANDA=m
+>     CONFIG_IP_NF_PPTP=m
+>     CONFIG_IP_NF_QUEUE=m
+>     CONFIG_IP_NF_IPTABLES=m
+>     CONFIG_IP_NF_MATCH_IPRANGE=m
+>     CONFIG_IP_NF_MATCH_MULTIPORT=m
+>     CONFIG_IP_NF_MATCH_TOS=m
+>     CONFIG_IP_NF_MATCH_RECENT=m
+>     CONFIG_IP_NF_MATCH_ECN=m
+>     CONFIG_IP_NF_MATCH_DSCP=m
+>     CONFIG_IP_NF_MATCH_AH_ESP=m
+>     CONFIG_IP_NF_MATCH_TTL=m
+>     CONFIG_IP_NF_MATCH_OWNER=m
+>     CONFIG_IP_NF_MATCH_ADDRTYPE=m
+>     CONFIG_IP_NF_MATCH_HASHLIMIT=m
+>     CONFIG_IP_NF_MATCH_POLICY=m
+>     CONFIG_IP_NF_FILTER=m
+>     CONFIG_IP_NF_TARGET_REJECT=m
+>     CONFIG_IP_NF_TARGET_LOG=m
+>     CONFIG_IP_NF_TARGET_ULOG=m
+>     CONFIG_IP_NF_TARGET_TCPMSS=m
+>     CONFIG_IP_NF_NAT=m
+>     CONFIG_IP_NF_NAT_NEEDED=y
+>     CONFIG_IP_NF_TARGET_MASQUERADE=m
+>     CONFIG_IP_NF_TARGET_REDIRECT=m
+>     CONFIG_IP_NF_TARGET_NETMAP=m
+>     CONFIG_IP_NF_TARGET_SAME=m
+>     CONFIG_IP_NF_NAT_IRC=m
+>     CONFIG_IP_NF_NAT_FTP=m
+>     CONFIG_IP_NF_NAT_TFTP=m
+>     CONFIG_IP_NF_NAT_AMANDA=m
+>     CONFIG_IP_NF_NAT_PPTP=m
+>     CONFIG_IP_NF_MANGLE=m
+>     CONFIG_IP_NF_TARGET_TOS=m
+>     CONFIG_IP_NF_TARGET_ECN=m
+>     CONFIG_IP_NF_TARGET_DSCP=m
+>     CONFIG_IP_NF_TARGET_TTL=m
+>     CONFIG_IP_NF_RAW=m
+>     CONFIG_IP_NF_ARPTABLES=m
+>     CONFIG_IP_NF_ARPFILTER=m
+>     CONFIG_IP_NF_ARP_MANGLE=m
+
+# Kernel 2.6.20 and Later Netfilter Options
+
+Beginning with kernel 2.6.20, the Netfilter kernel configuration was completely changed. It is split into "Core Netfilter Configuration" and "IP Netfilter Configuration". The first graphic shows the link to the Netfilter configuration from the "Networking Options" menu:
+
+The next graphic show the Core Configuration settings - these are the standard Ubuntu setting with the exception of CONNMARK Target support (Ubuntu inexplicably includes connmark match support but not CONNTRACK target support).The next graphic shows the IP Netfilter Configuration -- these are the standard Ubuntu settings.Here is the corresponding CONFIG file excerpt.
+
+    CONFIG_NETFILTER_XT_TARGET_CLASSIFY=m
+    CONFIG_NETFILTER_XT_TARGET_CONNMARK=m
+    CONFIG_NETFILTER_XT_TARGET_DSCP=m
+    CONFIG_NETFILTER_XT_TARGET_MARK=m
+    CONFIG_NETFILTER_XT_TARGET_NFQUEUE=m
+    CONFIG_NETFILTER_XT_TARGET_NFLOG=m
+    # CONFIG_NETFILTER_XT_TARGET_NOTRACK is not set
+    CONFIG_NETFILTER_XT_TARGET_SECMARK=m
+    CONFIG_NETFILTER_XT_TARGET_CONNSECMARK=m
+    CONFIG_NETFILTER_XT_MATCH_COMMENT=m
+    CONFIG_NETFILTER_XT_MATCH_CONNBYTES=m
+    CONFIG_NETFILTER_XT_MATCH_CONNMARK=m
+    CONFIG_NETFILTER_XT_MATCH_CONNTRACK=m
+    CONFIG_NETFILTER_XT_MATCH_DCCP=m
+    CONFIG_NETFILTER_XT_MATCH_DSCP=m
+    CONFIG_NETFILTER_XT_MATCH_ESP=m
+    CONFIG_NETFILTER_XT_MATCH_HELPER=m
+    CONFIG_NETFILTER_XT_MATCH_LENGTH=m
+    CONFIG_NETFILTER_XT_MATCH_LIMIT=m
+    CONFIG_NETFILTER_XT_MATCH_MAC=m
+    CONFIG_NETFILTER_XT_MATCH_MARK=m
+    CONFIG_NETFILTER_XT_MATCH_POLICY=m
+    CONFIG_NETFILTER_XT_MATCH_MULTIPORT=m
+    CONFIG_NETFILTER_XT_MATCH_PHYSDEV=m
+    CONFIG_NETFILTER_XT_MATCH_PKTTYPE=m
+    CONFIG_NETFILTER_XT_MATCH_QUOTA=m
+    CONFIG_NETFILTER_XT_MATCH_REALM=m
+    CONFIG_NETFILTER_XT_MATCH_SCTP=m
+    CONFIG_NETFILTER_XT_MATCH_STATE=m
+    CONFIG_NETFILTER_XT_MATCH_STATISTIC=m
+    CONFIG_NETFILTER_XT_MATCH_STRING=m
+    CONFIG_NETFILTER_XT_MATCH_TCPMSS=m
+    CONFIG_NETFILTER_XT_MATCH_HASHLIMIT=m
+    CONFIG_NF_CONNTRACK_SUPPORT=y
+    CONFIG_NF_CONNTRACK_ENABLED=m
+    # CONFIG_IP_NF_CONNTRACK_SUPPORT is not set
+    CONFIG_NF_CONNTRACK=m
+    CONFIG_NF_CT_ACCT=y
+    CONFIG_NF_CONNTRACK_MARK=y
+    CONFIG_NF_CONNTRACK_SECMARK=y
+    CONFIG_NF_CONNTRACK_EVENTS=y
+    CONFIG_NF_CT_PROTO_GRE=m
+    CONFIG_NF_CT_PROTO_SCTP=m
+    CONFIG_NF_CONNTRACK_AMANDA=m
+    CONFIG_NF_CONNTRACK_FTP=m
+    CONFIG_NF_CONNTRACK_H323=m
+    CONFIG_NF_CONNTRACK_IRC=m
+    CONFIG_NF_CONNTRACK_NETBIOS_NS=m
+    CONFIG_NF_CONNTRACK_PPTP=m
+    CONFIG_NF_CONNTRACK_SIP=m
+    CONFIG_NF_CONNTRACK_TFTP=m
+    CONFIG_NF_CT_NETLINK=m
+    CONFIG_NF_CONNTRACK_IPV4=m
+    CONFIG_NF_CONNTRACK_PROC_COMPAT=y
+    CONFIG_IP_NF_QUEUE=m
+    CONFIG_IP_NF_IPTABLES=m
+    CONFIG_IP_NF_MATCH_IPRANGE=m
+    CONFIG_IP_NF_MATCH_TOS=m
+    CONFIG_IP_NF_MATCH_RECENT=m
+    CONFIG_IP_NF_MATCH_ECN=m
+    CONFIG_IP_NF_MATCH_AH=m
+    CONFIG_IP_NF_MATCH_TTL=m
+    CONFIG_IP_NF_MATCH_OWNER=m
+    CONFIG_IP_NF_MATCH_ADDRTYPE=m
+    CONFIG_IP_NF_FILTER=m
+    CONFIG_IP_NF_TARGET_REJECT=m
+    CONFIG_IP_NF_TARGET_LOG=m
+    CONFIG_IP_NF_TARGET_ULOG=m
+    CONFIG_IP_NF_TARGET_TCPMSS=m
+    CONFIG_NF_NAT=m
+    CONFIG_NF_NAT_NEEDED=y
+    CONFIG_IP_NF_TARGET_MASQUERADE=m
+    CONFIG_IP_NF_TARGET_REDIRECT=m
+    CONFIG_IP_NF_TARGET_NETMAP=m
+    CONFIG_IP_NF_TARGET_SAME=m
+    CONFIG_NF_NAT_SNMP_BASIC=m
+    CONFIG_NF_NAT_PROTO_GRE=m
+    CONFIG_NF_NAT_FTP=m
+    CONFIG_NF_NAT_IRC=m
+    CONFIG_NF_NAT_TFTP=m
+    CONFIG_NF_NAT_AMANDA=m
+    CONFIG_NF_NAT_PPTP=m
+    CONFIG_NF_NAT_H323=m
+    CONFIG_NF_NAT_SIP=m
+    CONFIG_IP_NF_MANGLE=m
+    CONFIG_IP_NF_TARGET_TOS=m
+    CONFIG_IP_NF_TARGET_ECN=m
+    CONFIG_IP_NF_TARGET_TTL=m
+    CONFIG_IP_NF_TARGET_CLUSTERIP=m
+    CONFIG_IP_NF_RAW=m
+    CONFIG_IP_NF_ARPTABLES=m
+    CONFIG_IP_NF_ARPFILTER=m
+    CONFIG_IP_NF_ARP_MANGLE=m
+
+# Minimal Configuration using Kernel 2.6.20 and later
+
+Massimo Burcheri has contributed this minimal configuration which is suitable for securing a laptop or desktop. It is strictly a "no-frills" configuration and represents the minimum that will work with Shorewall when using only the very basic Shorewall features described in the [one-interface quickstart guide](standalone.md).Here are the corresponding entries from the .config file:
+
+    # Networking
+    #
+    CONFIG_NET=y
+
+    #
+    # Networking options
+    #
+    # CONFIG_NETDEBUG is not set
+    CONFIG_PACKET=y
+    CONFIG_UNIX=y
+    CONFIG_INET=y
+    CONFIG_IP_FIB_HASH=y
+    CONFIG_TCP_CONG_CUBIC=y
+    CONFIG_DEFAULT_TCP_CONG="cubic"
+
+    #
+    # IP: Virtual Server Configuration
+    #
+    CONFIG_NETFILTER=y
+
+    #
+    # Core Netfilter Configuration
+    #
+    CONFIG_NETFILTER_NETLINK=m
+    CONFIG_NETFILTER_NETLINK_QUEUE=m
+    CONFIG_NETFILTER_NETLINK_LOG=m
+    CONFIG_NF_CONNTRACK_ENABLED=m
+    CONFIG_NF_CONNTRACK_SUPPORT=y
+    CONFIG_NF_CONNTRACK=m
+    CONFIG_NETFILTER_XTABLES=m
+    CONFIG_NETFILTER_XT_TARGET_MARK=m
+    CONFIG_NETFILTER_XT_MATCH_MAC=m
+    CONFIG_NETFILTER_XT_MATCH_MULTIPORT=m
+    CONFIG_NETFILTER_XT_MATCH_PKTTYPE=m
+    CONFIG_NETFILTER_XT_MATCH_STATE=m
+
+    #
+    # IP: Netfilter Configuration
+    #
+    CONFIG_NF_CONNTRACK_IPV4=m
+    CONFIG_NF_CONNTRACK_PROC_COMPAT=y
+    CONFIG_IP_NF_IPTABLES=m
+    CONFIG_IP_NF_MATCH_ADDRTYPE=m
+    CONFIG_IP_NF_FILTER=m
+    CONFIG_IP_NF_TARGET_REJECT=m
+    CONFIG_IP_NF_TARGET_LOG=m
+    CONFIG_IP_NF_MANGLE=m
+    CONFIG_IP_NF_ARPTABLES=m
+    CONFIG_IP_NF_ARPFILTER=m

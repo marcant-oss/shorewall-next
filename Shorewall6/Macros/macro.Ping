@@ -1,9 +1,0 @@
-#
-# Shorewall6 -- /usr/share/shorewall6/macro.Ping
-#
-# This macro handles 'ping' requests.
-#
-###############################################################################
-#ACTION	SOURCE	DEST	PROTO		DPORT	SPORT	ORIGDEST	RATE
-
-PARAM	-	-	ipv6-icmp	128

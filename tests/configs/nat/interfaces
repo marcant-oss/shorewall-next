@@ -1,0 +1,2 @@
+net	eth0	detect	tcpflags
+loc	eth1	detect	tcpflags

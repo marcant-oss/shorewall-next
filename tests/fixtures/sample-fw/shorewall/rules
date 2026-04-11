@@ -1,0 +1,38 @@
+#
+# Generic sample firewall rules — production-shaped but fully synthetic.
+# Uses RFC 5737 / RFC 3849 documentation addresses only.
+#
+
+?SECTION NEW
+
+#ACTION		SOURCE	DEST		PROTO	DPORT		SPORT	ORIGDEST	RATE
+# Administrative access from the management range
+SSH(ACCEPT)	net:$ORG_ADM	$FW
+ACCEPT		net:$ORG_ADM	$FW	tcp	5666	# nrpe
+
+# DNS from LAN and DMZ
+DNS(ACCEPT)	loc	$FW:$DNS1,$DNS2
+DNS(ACCEPT)	dmz	$FW:$DNS1,$DNS2
+
+# NTP to local time source
+NTP(ACCEPT)	all:$ORG_PFX	$FW:$TIME
+
+?COMMENT mandant-b
+ACCEPT		net		dmz:$WEB1	tcp	80,443
+ACCEPT		net		dmz:$WEB2	tcp	80,443
+ACCEPT		dmz:$WEB1	net
+ACCEPT		dmz:$WEB2	net
+?COMMENT
+
+?COMMENT customer-a
+# HTTP ingress with rate limit
+ACCEPT		net		dmz:$MAIL1	tcp	25,587,993,465
+ACCEPT		dmz:$MAIL1	net		tcp	25
+?COMMENT
+
+# Ping everywhere
+Ping(ACCEPT)	all	$FW
+Ping(ACCEPT)	$FW	all
+
+# Block RFC1918 sources on the net interface
+Rfc1918/DROP:$LOG	net	all

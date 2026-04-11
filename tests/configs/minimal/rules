@@ -1,0 +1,19 @@
+#ACTION		SOURCE		DEST		PROTO	DEST PORT
+?SECTION NEW
+
+# Allow SSH from local network
+SSH(ACCEPT)	loc		$FW
+
+# Allow DNS from local network
+DNS(ACCEPT)	loc		net
+
+# Allow ping from anywhere to firewall
+Ping/ACCEPT	net		$FW
+
+# Allow HTTP/HTTPS from net to local
+ACCEPT		net		loc		tcp	80,443
+
+# Specific admin access
+?COMMENT Admin SSH
+SSH(ACCEPT)	net:$ADMIN	$FW
+?COMMENT

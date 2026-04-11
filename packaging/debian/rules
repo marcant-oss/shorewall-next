@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+# debian/rules for shorewall-nft — pyproject build via dh-python.
+export PYBUILD_NAME = shorewall_nft
+export PYBUILD_SYSTEM = pyproject
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_auto_install:
+	dh_auto_install
+	# Single-binary package — install extras directly into the package dir.
+	install -D -m 0644 tools/completions/shorewall-nft.bash \
+	    debian/shorewall-nft/usr/share/bash-completion/completions/shorewall-nft
+	install -D -m 0644 tools/completions/shorewall-nft.zsh \
+	    debian/shorewall-nft/usr/share/zsh/vendor-completions/_shorewall-nft
+	install -D -m 0644 tools/completions/shorewall-nft.fish \
+	    debian/shorewall-nft/usr/share/fish/vendor_completions.d/shorewall-nft.fish
+	install -D -m 0644 tools/man/shorewall-nft.8 \
+	    debian/shorewall-nft/usr/share/man/man8/shorewall-nft.8
+	install -D -m 0644 packaging/systemd/shorewall-nft.service \
+	    debian/shorewall-nft/lib/systemd/system/shorewall-nft.service
+	install -D -m 0644 packaging/systemd/shorewall-nft@.service \
+	    debian/shorewall-nft/lib/systemd/system/shorewall-nft@.service
+
+override_dh_auto_test:
+	# Tests run in the CI unit-tests job; skip during deb build.
+	@echo "Skipping tests at deb-build time (covered by CI unit-tests)"

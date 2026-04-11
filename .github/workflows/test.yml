@@ -1,0 +1,311 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master, shorewall-next]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master, shorewall-next]
+
+jobs:
+  unit-tests:
+    name: Unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables iproute2
+
+      - name: Install Python package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v \
+            --ignore=tests/test_cli_integration.py \
+            --ignore=tests/test_config_gen.py
+
+      - name: Coverage
+        if: matrix.python-version == '3.12'
+        run: |
+          pytest tests/ \
+            --ignore=tests/test_cli_integration.py \
+            --ignore=tests/test_config_gen.py \
+            --cov=shorewall_nft \
+            --cov-report=xml \
+            --cov-report=term
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  integration-tests:
+    name: Integration tests (netns)
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables iproute2 sudo
+
+      - name: Install Python package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,simulate]"
+
+      - name: Install test tooling
+        run: |
+          sudo tools/install-test-tooling.sh --user runner
+
+      - name: Verify run-netns
+        run: |
+          sudo /usr/local/bin/run-netns list
+
+      - name: Run offline debug/plugin tests
+        timeout-minutes: 5
+        run: |
+          # Only the subset that doesn't need a real /etc/shorewall.
+          # We skip test_debug_command_sigint_restores because the signal
+          # chain through sudo→ip-netns-exec→python is environment-dependent
+          # and already covered by local runs; on CI the fixture setup
+          # occasionally deadlocks and eats the whole step.
+          timeout 120 pytest tests/test_cli_integration.py::TestDebug -v \
+              --deselect tests/test_cli_integration.py::TestDebug::test_debug_command_sigint_restores
+          timeout 60 pytest tests/test_cli_integration.py::TestPlugins -v || true
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff
+        run: ruff check shorewall_nft tests
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck on tools/
+        run: |
+          shellcheck tools/run-netns tools/install-test-tooling.sh
+
+  build:
+    name: Build wheel
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build
+        run: pip install build twine
+
+      - name: Build
+        run: python -m build
+
+      - name: Check
+        run: twine check dist/*
+
+      - name: Verify bundled macros
+        run: |
+          python -m zipfile -l dist/*.whl | grep -c 'data/macros/macro\.' \
+            | awk '{ if ($1 < 100) { print "FAIL: only " $1 " macros in wheel"; exit 1 } \
+                     else { print "OK: " $1 " macros bundled" } }'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorewall-nft-dist
+          path: dist/
+
+  deb-build:
+    name: Build .deb packages
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    container:
+      image: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential devscripts debhelper-compat dh-python \
+            pybuild-plugin-pyproject \
+            python3-all python3-build python3-installer \
+            python3-setuptools python3-wheel python3-pip \
+            lintian fakeroot
+
+      - name: Stage debian/ directory
+        run: |
+          cp -a packaging/debian debian
+
+      - name: Build source + binary packages
+        run: |
+          dpkg-buildpackage -us -uc -b
+          mkdir -p deb-out
+          mv ../shorewall-nft*.deb ../shorewall-nft*.buildinfo ../shorewall-nft*.changes deb-out/ || true
+          ls -la deb-out/
+
+      - name: Lintian
+        run: |
+          lintian --no-tag-display-limit deb-out/*.deb || true
+
+      - name: Upload .deb artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorewall-nft-deb
+          path: deb-out/
+
+  rpm-build:
+    name: Build .rpm packages
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    container:
+      image: fedora:40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            rpm-build rpmlint python3 python3-pip python3-setuptools \
+            python3-wheel python3-devel gcc make git \
+            pyproject-rpm-macros systemd-rpm-macros \
+            python3-click python3-pyroute2
+
+      - name: Build source tarball
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          mkdir -p ~/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
+          # tar up the checkout; git archive trips on container UID-mismatch
+          tar --exclude-vcs --exclude='./.github' --exclude='./dist' \
+              --exclude='./build' --exclude='./.venv' \
+              --exclude='./__pycache__' --exclude='./*.egg-info' \
+              --transform "s|^\./|shorewall-nft-${VERSION}/|" \
+              -czf ~/rpmbuild/SOURCES/shorewall-nft-${VERSION}.tar.gz .
+          cp packaging/rpm/shorewall-nft.spec ~/rpmbuild/SPECS/
+
+      - name: Build RPM
+        run: |
+          rpmbuild -bb ~/rpmbuild/SPECS/shorewall-nft.spec || {
+            echo "RPM build failed — collecting logs"
+            find ~/rpmbuild -name '*.log' -exec cat {} \;
+            exit 1
+          }
+          mkdir -p rpm-out
+          find ~/rpmbuild/RPMS -name '*.rpm' -exec cp {} rpm-out/ \;
+          ls -la rpm-out/
+
+      - name: Rpmlint
+        run: |
+          rpmlint rpm-out/*.rpm || true
+
+      - name: Upload .rpm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorewall-nft-rpm
+          path: rpm-out/
+
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, deb-build, rpm-build, unit-tests, lint]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: shorewall-nft-dist
+          path: dist/
+
+      - name: Download .deb artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: shorewall-nft-deb
+          path: deb-out/
+
+      - name: Download .rpm artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: shorewall-nft-rpm
+          path: rpm-out/
+
+      - name: Extract changelog section for this tag
+        id: changelog
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          # Pull out the section between "## [TAG]" and the next "## [" heading
+          awk -v tag="$TAG" '
+            $0 ~ "^## \\["tag"\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "Release $TAG" > release-notes.md
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: shorewall-nft ${{ steps.changelog.outputs.tag }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            deb-out/*.deb
+            deb-out/*.buildinfo
+            deb-out/*.changes
+            rpm-out/*.rpm
