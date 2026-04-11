@@ -46,6 +46,10 @@ class Daemon:
         reprobe_interval: float,
         allowlist_file: Path | None = None,
         pbdns_socket: str | None = None,
+        pbdns_tcp: str | None = None,
+        socket_mode: int | None = None,
+        socket_owner: str | int | None = None,
+        socket_group: str | int | None = None,
         peer_bind_host: str | None = None,
         peer_bind_port: int | None = None,
         peer_host: str | None = None,
@@ -68,6 +72,10 @@ class Daemon:
         # DNS-set pipeline opt-in config.
         self.allowlist_file = allowlist_file
         self.pbdns_socket = pbdns_socket
+        self.pbdns_tcp = pbdns_tcp
+        self.socket_mode = socket_mode
+        self.socket_owner = socket_owner
+        self.socket_group = socket_group
         self.peer_bind_host = peer_bind_host
         self.peer_bind_port = peer_bind_port
         self.peer_host = peer_host
@@ -249,18 +257,43 @@ class Daemon:
             log.exception("reload monitor start failed")
 
         # PBDNSMessage (PowerDNS recursor protobuf logger) ingress.
-        if self.pbdns_socket:
-            from .pbdns import PbdnsServer
-            self._pbdns_server = PbdnsServer(
-                socket_path=self.pbdns_socket,
-                bridge=self._tracker_bridge,
-            )
+        # Accepts unix socket (for out-of-tree producers) and/or TCP
+        # (required for pdns-recursor's Lua protobufServer() which
+        # speaks TCP only). Both can be enabled simultaneously.
+        if self.pbdns_socket or self.pbdns_tcp:
+            from .pbdns import PbdnsMetricsCollector, PbdnsServer
+            tcp_host, tcp_port = None, None
+            if self.pbdns_tcp:
+                host, _, port_s = self.pbdns_tcp.rpartition(":")
+                tcp_host = host or "0.0.0.0"
+                try:
+                    tcp_port = int(port_s)
+                except ValueError:
+                    log.error(
+                        "pbdns tcp spec %r: bad port", self.pbdns_tcp)
+                    tcp_port = None
+            pbdns_kwargs: dict = {
+                "socket_path": self.pbdns_socket,
+                "bridge": self._tracker_bridge,
+                "tcp_host": tcp_host,
+                "tcp_port": tcp_port,
+                "socket_owner": self.socket_owner,
+                "socket_group": self.socket_group,
+            }
+            if self.socket_mode is not None:
+                pbdns_kwargs["socket_mode"] = self.socket_mode
+            self._pbdns_server = PbdnsServer(**pbdns_kwargs)
             try:
                 await self._pbdns_server.start()
             except Exception:
                 log.exception(
-                    "pbdns server failed to bind %s", self.pbdns_socket)
+                    "pbdns server failed to bind "
+                    "(socket=%s tcp=%s)",
+                    self.pbdns_socket, self.pbdns_tcp)
                 self._pbdns_server = None
+            else:
+                assert self._registry is not None
+                self._registry.add(PbdnsMetricsCollector(self._pbdns_server))
 
         # HA peer link.
         if (self.peer_host and self.peer_port
@@ -343,13 +376,20 @@ class Daemon:
         """Bind the dnstap unix socket and start the decode worker pool."""
         assert self._nft is not None and self.api_socket is not None
         assert self._registry is not None
-        self._dnstap_server = DnstapServer(
-            self.api_socket, self._nft, netns_list,
+        dnstap_kwargs: dict = {
             # If the DNS pipeline was initialised first, route every
             # decoded DnsUpdate through the tracker-aware bridge
             # (dedup + batch + persistent worker) instead of the
             # legacy direct-nft SetWriter.
-            bridge=self._tracker_bridge,
+            "bridge": self._tracker_bridge,
+            "socket_owner": self.socket_owner,
+            "socket_group": self.socket_group,
+        }
+        if self.socket_mode is not None:
+            dnstap_kwargs["socket_mode"] = self.socket_mode
+        self._dnstap_server = DnstapServer(
+            self.api_socket, self._nft, netns_list,
+            **dnstap_kwargs,
         )
         try:
             await self._dnstap_server.start()

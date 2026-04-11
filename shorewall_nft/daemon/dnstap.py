@@ -154,8 +154,28 @@ DNSTAP_MESSAGE_FIELD = 14  # inside Dnstap
 MESSAGE_TYPE_FIELD = 1     # inside Dnstap.Message
 MESSAGE_RESPONSE_FIELD = 14  # bytes response_message (raw DNS wire)
 
-# Message.Type values we care about.
-CLIENT_RESPONSE = 6  # dnstap.Message.Type.CLIENT_RESPONSE
+# Message.Type values we care about. pdns_recursor emits
+# RESOLVER_RESPONSE frames when ``logResponses=true`` — the
+# responses from upstream authoritatives, which carry the A/AAAA
+# RRs we want to populate into the nft set. CLIENT_RESPONSE is
+# what other dnstap producers (e.g. dnsdist, unbound) emit to log
+# the final answer they send back to their own clients. Accept
+# both so the consumer is producer-agnostic.
+AUTH_RESPONSE = 2       # dnstap.Message.Type.AUTH_RESPONSE
+RESOLVER_RESPONSE = 4   # dnstap.Message.Type.RESOLVER_RESPONSE
+CLIENT_RESPONSE = 6     # dnstap.Message.Type.CLIENT_RESPONSE
+FORWARDER_RESPONSE = 8  # dnstap.Message.Type.FORWARDER_RESPONSE
+STUB_RESPONSE = 10      # dnstap.Message.Type.STUB_RESPONSE
+# Every even-numbered dnstap Message.Type is a *_RESPONSE; odd
+# numbers are *_QUERY. We accept all responses — the parse layer
+# further filters by rcode and answer presence.
+RESPONSE_MESSAGE_TYPES = frozenset({
+    AUTH_RESPONSE,
+    RESOLVER_RESPONSE,
+    CLIENT_RESPONSE,
+    FORWARDER_RESPONSE,
+    STUB_RESPONSE,
+})
 
 
 def decode_dnstap_frame(buf: bytes) -> tuple[int, bytes] | None:
@@ -432,7 +452,7 @@ class DecodeWorkerPool:
         if decoded is None:
             return
         msg_type, wire = decoded
-        if msg_type != CLIENT_RESPONSE:
+        if msg_type not in RESPONSE_MESSAGE_TYPES:
             self._metrics.inc("frames_dropped_not_client_response")
             return
         upd = parse_dns_response(wire)
@@ -467,6 +487,8 @@ class DnstapServer:
         n_workers: int | None = None,
         qname_allowlist: set[str] | None = None,
         socket_mode: int = 0o660,
+        socket_owner: str | int | None = None,
+        socket_group: str | int | None = None,
         tcp_host: str | None = None,
         tcp_port: int | None = None,
         bridge: Any | None = None,
@@ -487,6 +509,8 @@ class DnstapServer:
         self.queue_size = queue_size
         self.n_workers = n_workers
         self.socket_mode = socket_mode
+        self.socket_owner = socket_owner
+        self.socket_group = socket_group
 
         self.metrics = DnstapMetrics()
         self._frame_q: queue.Queue[bytes] = queue.Queue(maxsize=queue_size)
@@ -532,11 +556,13 @@ class DnstapServer:
                     pass
             self._server = await asyncio.start_unix_server(
                 self._handle_client, path=self.socket_path)
-            try:
-                os.chmod(self.socket_path, self.socket_mode)
-            except OSError:
-                log.warning("could not chmod %s to %o",
-                            self.socket_path, self.socket_mode)
+            from .sockperms import apply_socket_perms
+            apply_socket_perms(
+                self.socket_path,
+                mode=self.socket_mode,
+                owner=self.socket_owner,
+                group=self.socket_group,
+            )
             log.info(
                 "dnstap unix endpoint live on %s "
                 "(queue=%d, workers=%d)",
