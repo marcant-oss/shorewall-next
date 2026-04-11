@@ -172,10 +172,21 @@ Already committed on this branch since 1.0.0:
     it for the next round of optimisation. Post-flamegraph
     artifact under ``docs/testing/simlab-reports/<ts>/
     flamegraph.svg`` alongside ``report.json``.
-11. **Prometheus exporter (port from foomuuri)** — take the
-    prometheus exporter shape from the
-    ``../shorewall2foomuuri`` sister repo and port it to
-    shorewall-nft. **Hard requirements:**
+11. ~~**Prometheus exporter (port from foomuuri)**~~ ✅ — shipped
+    as ``shorewalld`` (``shorewall_nft/daemon/`` subpackage with CLI
+    entry ``shorewalld = "shorewall_nft.daemon.cli:main"``). Design
+    memory: ``docs/roadmap/shorewalld.md``. Multi-netns aware
+    (``--netns auto`` walks ``/run/netns/``), libnftables single
+    round-trip per scrape via ``list_rule_counters``, scrape cache
+    (``NftScraper`` with ``--scrape-interval`` TTL), reprobe loop
+    picks up tables that appear/disappear without a daemon
+    restart. Phase 4 adds the dnstap consumer on a unix socket
+    (off by default, ``--listen-api /run/shorewalld/dnstap.sock``)
+    with FrameStream handshake, hand-rolled protobuf decoder,
+    ``os.cpu_count()`` decode threads, bounded queue with drop
+    counters, and per-netns nft set population for DNS-based
+    filtering (TODO #4 wire-up). Original requirements preserved
+    below for audit:
     - **Multi-netns aware.** One exporter instance serves N
       namespaces at once (one scrape endpoint, per-netns
       label on every metric, or one port per netns —

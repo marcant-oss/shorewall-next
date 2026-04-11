@@ -78,6 +78,13 @@ shorewalld = "shorewall_nft.daemon.cli:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+filterwarnings = [
+    # pyroute2 0.9.5 creates an async endpoint under the sync API; if
+    # a sync IPRoute call happens while an asyncio loop is live, the
+    # internal setup coroutine triggers this warning. Harmless for our
+    # path (we only scrape from a worker thread) — silence it in tests.
+    "ignore:coroutine 'AsyncNetlinkSocket.setup_endpoint' was never awaited:RuntimeWarning",
+]
 
 [tool.setuptools.packages.find]
 include = ["shorewall_nft*"]
