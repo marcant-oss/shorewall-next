@@ -21,6 +21,10 @@ override_dh_auto_install:
 	    debian/shorewall-nft/lib/systemd/system/shorewall-nft.service
 	install -D -m 0644 packaging/systemd/shorewall-nft@.service \
 	    debian/shorewall-nft/lib/systemd/system/shorewall-nft@.service
+	install -D -m 0644 packaging/systemd/shorewalld.service \
+	    debian/shorewall-nft/lib/systemd/system/shorewalld.service
+	install -D -m 0644 packaging/systemd/shorewalld@.service \
+	    debian/shorewall-nft/lib/systemd/system/shorewalld@.service
 
 override_dh_auto_test:
 	# Tests run in the CI unit-tests job; skip during deb build.
