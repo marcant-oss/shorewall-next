@@ -23,7 +23,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-
 # nft binary path — search common locations (for fallback path only)
 _NFT_PATHS = ["/usr/sbin/nft", "/sbin/nft", "/usr/bin/nft"]
 

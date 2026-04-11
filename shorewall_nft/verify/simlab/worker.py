@@ -322,8 +322,8 @@ class InterfaceWorker:
         # IPv6 NDP Neighbor Solicitation → reply with NA (TAP only)
         if pkt.proto == "ndp" and pkt.ndp_type == 135 and pkt.src and pkt.dst:
             try:
-                from scapy.layers.inet6 import ICMPv6ND_NS
                 import scapy.all as s
+                from scapy.layers.inet6 import ICMPv6ND_NS
                 layer = s.Ether(raw)
                 if layer.haslayer(ICMPv6ND_NS):
                     target = layer[ICMPv6ND_NS].tgt

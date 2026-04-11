@@ -22,10 +22,13 @@ from pathlib import Path
 import pytest
 
 from shorewall_nft.verify.simlab.dumps import (
-    Address, FwState, Interface, Route,
+    Address,
+    FwState,
+    Interface,
+    Route,
 )
-from shorewall_nft.verify.simlab.smoketest import _build_zone_to_concrete_src
 from shorewall_nft.verify.simlab.oracle import RandomProbeGenerator
+from shorewall_nft.verify.simlab.smoketest import _build_zone_to_concrete_src
 
 
 def _mk_iface(name: str, addr: str, prefixlen: int) -> Interface:

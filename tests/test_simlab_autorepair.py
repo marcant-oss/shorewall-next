@@ -17,13 +17,13 @@ Covered:
 
 from __future__ import annotations
 
-import pytest
-
 
 def _make_state(iface_addrs: dict[str, tuple[str, int]]):
     """Build a minimal FwState with one /N address per interface."""
     from shorewall_nft.verify.simlab.dumps import (
-        Address, FwState, Interface,
+        Address,
+        FwState,
+        Interface,
     )
 
     state = FwState()
@@ -126,36 +126,41 @@ def test_zone_to_src_handles_small_subnets():
 
 
 def test_expand_port_spec_single():
-    from shorewall_nft.verify.simulate import _expand_port_spec
     import random
+
+    from shorewall_nft.verify.simulate import _expand_port_spec
     rng = random.Random(42)
     assert _expand_port_spec("22", rng) == [22]
 
 
 def test_expand_port_spec_none():
-    from shorewall_nft.verify.simulate import _expand_port_spec
     import random
+
+    from shorewall_nft.verify.simulate import _expand_port_spec
     assert _expand_port_spec(None, random.Random(42)) == [None]
 
 
 def test_expand_port_spec_list():
-    from shorewall_nft.verify.simulate import _expand_port_spec
     import random
+
+    from shorewall_nft.verify.simulate import _expand_port_spec
     out = _expand_port_spec("22,80,443", random.Random(42))
     assert set(out) == {22, 80, 443}
 
 
 def test_expand_port_spec_range_small():
-    from shorewall_nft.verify.simulate import _expand_port_spec
     import random
+
+    from shorewall_nft.verify.simulate import _expand_port_spec
     out = _expand_port_spec("1000:1005", random.Random(42), cap=64)
     # Small range fully expanded
     assert set(out) == {1000, 1001, 1002, 1003, 1004, 1005}
 
 
 def test_expand_port_spec_range_sampled():
-    from shorewall_nft.verify.simulate import _expand_port_spec
     import random
+
+    from shorewall_nft.verify.simulate import _expand_port_spec
     out = _expand_port_spec("1:65535", random.Random(42), cap=64)
     # Sampled down to cap
     assert len(out) == 64
@@ -164,15 +169,17 @@ def test_expand_port_spec_range_sampled():
 
 
 def test_expand_port_spec_combination():
-    from shorewall_nft.verify.simulate import _expand_port_spec
     import random
+
+    from shorewall_nft.verify.simulate import _expand_port_spec
     out = _expand_port_spec("22,1000:1005,80", random.Random(42))
     assert {22, 80, 1000, 1001, 1002, 1003, 1004, 1005}.issubset(set(out))
 
 
 def test_expand_port_spec_malformed():
-    from shorewall_nft.verify.simulate import _expand_port_spec
     import random
+
+    from shorewall_nft.verify.simulate import _expand_port_spec
     # Empty list on any parse failure
     assert _expand_port_spec("abc:def", random.Random(42)) == []
 

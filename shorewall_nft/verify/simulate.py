@@ -438,8 +438,9 @@ class SimTopology:
         # the worker children don't inherit live netlink sockets that
         # both parent and child would try to use.
         self._net.refresh_handles()
-        from shorewall_nft.verify.slave_worker import spawn_worker
         import threading
+
+        from shorewall_nft.verify.slave_worker import spawn_worker
         self._slave_worker_lock = threading.Lock()
         for zone_name in self.zones:
             slave = slave_ns(zone_name)

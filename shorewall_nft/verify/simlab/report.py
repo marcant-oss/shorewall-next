@@ -23,15 +23,12 @@ Absence of a writable report dir → log a warning and continue.
 from __future__ import annotations
 
 import json
-import os
 import platform
 import subprocess
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
 
 # Default archive location: ``docs/testing/simlab-reports`` under the
 # repository root. A simlab run on the test VM mounts the repo at

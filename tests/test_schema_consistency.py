@@ -28,7 +28,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO = Path(__file__).resolve().parents[1]
 JSON_SCHEMA_PATH = REPO / "docs" / "cli" / "override-json.schema.json"
 
