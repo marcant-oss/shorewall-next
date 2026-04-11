@@ -1835,3 +1835,115 @@ def config_import(source: Path, fmt: str, target: Path | None,
             click.echo(f"write failed: {e}", err=True)
             sys.exit(2)
         click.echo(f"wrote {len(written)} files to {target}")
+
+
+@config.command("merge")
+@click.argument("sources", nargs=-1, required=True,
+                type=click.Path(exists=True, file_okay=False,
+                                path_type=Path))
+@click.option("--to", "target", required=True,
+              type=click.Path(path_type=Path),
+              help="Target directory for the merged output. "
+                   "Pretty-printed (aligned columns + zone-pair "
+                   "grouping + tail-sorted catch-all DROPs).")
+@click.option("--force", is_flag=True,
+              help="Overwrite --to even if it exists and is "
+                   "non-empty.")
+@click.option("--provenance", is_flag=True,
+              help="Interleave `# from <file>:<lineno>` shell "
+                   "comments before each rule so a future bisect "
+                   "can blame the origin file/line.")
+@click.option("--config6-dir", "config6_dir",
+              type=click.Path(exists=True, file_okay=False,
+                              path_type=Path),
+              default=None,
+              help="Optional v6 sibling for the FIRST source dir. "
+                   "When given, the parser merges shorewall + "
+                   "shorewall6 into a unified inet config.")
+def config_merge(sources: tuple[Path, ...], target: Path, force: bool,
+                 provenance: bool, config6_dir: Path | None) -> None:
+    """Merge one or more Shorewall config directories into a pretty
+    unified output (TODO #13: 3-firewall config-merge replay).
+
+    Reads each SOURCE directory in turn, parses it through the
+    standard ``load_config`` (with ``shorewall6`` sibling
+    auto-detection), and unions the resulting in-memory configs
+    into a single ``ShorewalConfig``. The merged result is
+    written via ``write_config_dir`` with ``pretty=True``, so
+    the on-disk output gets:
+
+      * column alignment per block
+      * zone-pair grouping (all ``foo→bar`` rules adjacent)
+      * catch-all ``DROP`` / ``REJECT`` rules tail-sorted within
+        each zone-pair group
+      * optional provenance markers when ``--provenance`` is set
+
+    Multi-source merge semantics: later sources extend earlier
+    ones — duplicate rules are appended verbatim (the
+    ``_reorder_rules_block`` pass de-dups by sort key only when
+    the columns are byte-equal). Settings (``shorewall.conf`` /
+    ``params``) follow last-wins on key collisions.
+
+    Use this when re-doing the unified ``/etc/shorewall46``
+    layout from a hand-pruned host snapshot — the output is the
+    canonical form going forward.
+    """
+    from shorewall_nft.config.importer import (
+        ImportError as CfgImportError,
+        write_config_dir,
+    )
+    from shorewall_nft.config.parser import load_config
+
+    if not sources:
+        raise click.UsageError("at least one SOURCE directory required")
+
+    merged = None
+    total_rules = 0
+    for i, src in enumerate(sources):
+        c6 = config6_dir if i == 0 else None
+        cfg = load_config(src, config6_dir=c6)
+        n = len(cfg.rules)
+        click.echo(f"loaded {src} → {n} rules, "
+                   f"{len(cfg.policy)} policies, "
+                   f"{len(cfg.zones)} zones")
+        total_rules += n
+        if merged is None:
+            merged = cfg
+            continue
+        # Concatenate the columnar lists. The pretty exporter's
+        # zone-pair sort takes care of grouping; duplicates that
+        # come from overlapping snapshots stay in until a future
+        # dedup pass detects them by columns equality.
+        for attr in ("zones", "interfaces", "hosts", "policy",
+                     "rules", "blrules", "masq", "conntrack",
+                     "notrack", "rawnat", "stoppedrules",
+                     "routestopped", "providers", "tunnels",
+                     "maclist", "accounting", "tcrules", "mangle",
+                     "netmap", "blacklist", "arprules", "proxyarp",
+                     "proxyndp", "ecn", "nfacct", "scfilter"):
+            existing = getattr(merged, attr, None)
+            new = getattr(cfg, attr, None)
+            if existing is None:
+                setattr(merged, attr, new)
+            elif new:
+                existing.extend(new)
+        # last-wins for KEY=VALUE settings
+        for k, v in cfg.settings.items():
+            merged.settings[k] = v
+        for k, v in cfg.params.items():
+            if not k.startswith("__"):
+                merged.params[k] = v
+
+    assert merged is not None
+    try:
+        written = write_config_dir(
+            merged, target, force=force, pretty=True,
+            provenance=provenance,
+        )
+    except CfgImportError as e:
+        click.echo(f"merge write failed: {e}", err=True)
+        sys.exit(2)
+    click.echo(
+        f"merged {len(sources)} sources → {target} "
+        f"({len(written)} files, {total_rules} rules total"
+        + (", with provenance" if provenance else "") + ")")
