@@ -29,9 +29,9 @@ fixes this by **reproducing the real interface topology**.
 
 ### Namespaces
 
-- **host namespace** — where the controller + workers live.
-  Owns all the TUN/TAP file descriptors.
-- **NS_FW** — named netns (default `simlab-fw`). Holds all the
+- **host namespace** — where the controller lives. Owns every
+  TUN/TAP file descriptor directly.
+- **NS_FW** — named netns (default `simlab-fw`). Holds the
   emulated interfaces and the loaded shorewall nft ruleset.
   Kept alive via a stub process (see below) so the kernel
   reclaims it automatically if the controller crashes.
@@ -41,19 +41,24 @@ fixes this by **reproducing the real interface topology**.
 ```
          ┌───────────────── host NS ─────────────────────┐
          │                                               │
-┌──────────────┐    mp.Pipe    ┌──────────────────┐      │
-│  Controller  │ ─────────────▶│  Worker(bond1)   │──fd─┐│
-│ (asyncio)    │◀──────────────│  (asyncio)       │     ││
-└──────────────┘    mp.Pipe    └──────────────────┘     ││
-     │  │                      ┌──────────────────┐     ││
-     │  └──────────────────────│  Worker(bond0.20)│──fd─┤│
-     │                         └──────────────────┘     ││
-     │                         ┌──────────────────┐     ││
-     │                         │  Worker(...)     │──fd─┤│
-     │                         └──────────────────┘     ││
-     │                                                  ││
-     ▼                                                  ▼▼
- ┌───────────────── NS_FW (netns pinned by nsstub) ───────┐
+         │   ┌──────────────────────────────────────┐    │
+         │   │  SimController (asyncio)             │    │
+         │   │                                      │    │
+         │   │   ┌─ _iface_fds ─────────────────┐   │    │
+         │   │   │  bond1    → fd1 ────────────┼───┼──┐ │
+         │   │   │  bond0.20 → fd2 ────────────┼───┼──┤ │
+         │   │   │  bond0.18 → fd3 ────────────┼───┼──┤ │
+         │   │   │  …                          │   │  │ │
+         │   │   └─────────────────────────────┘   │  │ │
+         │   │                                      │  │ │
+         │   │   add_reader(fdN, _on_tap_read)      │  │ │
+         │   │   → inline ARP reply / NDP NA /      │  │ │
+         │   │     observed-packet dispatch         │  │ │
+         │   └──────────────────────────────────────┘  │ │
+         │                                              │ │
+         └──────────────────────────────────────────────┘ │
+                                                          │
+ ┌───────────────── NS_FW (netns pinned by nsstub) ───────┘
  │                                                        │
  │     bond1 (TAP)    bond0.20 (TAP)   bond0.18 (TAP) ... │
  │        │                │                │             │
@@ -63,17 +68,37 @@ fixes this by **reproducing the real interface topology**.
  └────────────────────────────────────────────────────────┘
 ```
 
-- One **forked worker process per interface**, each holding
-  exactly one TUN/TAP fd. Workers stay in the host NS; the fd
-  is a process-local resource so the interface can live in
-  NS_FW while the worker itself doesn't need to `setns()`.
-- Each worker runs an `asyncio` event loop with two registered
-  readers: the TUN/TAP fd (incoming packets from NS_FW) and
-  the controller's end of the pipe (commands + results).
-- Workers answer **ARP who-has** and **IPv6 NDP Neighbor
-  Solicitation** in-place — the TAP pretends to own every IP
-  routable through its wire so the FW kernel's neighbour
-  resolution always succeeds.
+- **Single-process design.** The controller owns every TUN/TAP
+  fd directly in its own address space. No worker subprocesses,
+  no multiprocessing pipes, no fork. One Python interpreter,
+  one asyncio event loop, one ~200 MB RSS footprint regardless
+  of how many interfaces the target firewall has.
+- **Asyncio reader per fd.** On `run_probes`, the controller
+  registers one `add_reader(fd, _on_tap_read, iface_name)` per
+  TUN/TAP. Inject is `os.write(fd, payload)` directly — one
+  syscall, no pipe roundtrip.
+- **Inline ARP / NDP handling.** `_on_tap_read` parses every
+  incoming frame via scapy. ARP who-has gets an immediate
+  reply from `_WORKER_MAC = 02:00:00:5e:00:01` pretending to
+  own the requested IP. IPv6 NDP Neighbor Solicitation gets a
+  Neighbor Advertisement from a synthetic link-local. All of
+  this runs inside the controller's event loop — no IPC.
+- **Probe correlation in-process.** Observed IP packets go
+  straight into `self._probes` / `self._probe_futures`. The
+  primary match key is the probe id stashed in the IPv4 `id`
+  field / IPv6 flow label; fallback is the per-probe
+  `match()` closure for NAT-rewritten packets.
+
+> **Why single-process?** Earlier versions spun up one worker
+> subprocess per interface (24 workers on the reference VM).
+> Each worker shipped ~80 MB of Python interpreter / stdlib /
+> scapy — ~2 GB of RAM purely for interpreter overhead.
+> Consolidating to N workers helped; removing workers entirely
+> helped more. Single-process is simpler, smaller, and faster:
+> on the reference VM the final run fires at **~125 probes/s
+> with 215 MB RSS total**, vs ~20 probes/s and ~2 GB RSS under
+> the subprocess model — a 6× throughput win and an 8× memory
+> win from one architectural change.
 
 ### Kernel-level NS lifecycle
 
@@ -190,21 +215,37 @@ ssh root@192.0.2.83 "
 Reports land under `/root/shorewall-nft/docs/testing/simlab-reports/<UTC>/`
 on the VM. `rsync` them back to the host for git commit.
 
-## Performance baseline (marcant-fw VM)
+## Performance baseline (reference VM, 2 cores, 4.9 GB RAM)
 
-From the stress-20 run on the test box:
+Measured on the final run with the single-process asyncio
+architecture (no worker subprocesses):
 
-| metric            | value         |
-|-------------------|---------------|
-| build time        | ~1.1 s per cycle |
-| nft ruleset load  | ~7–9 s (24 ifaces, shorewall46) |
-| full build+destroy cycle | ~4.5 s |
-| peak fd usage     | ~83 during build, ~105 peak ever |
-| peak procs        | 24 workers + 1 stub + controller |
-| fd leak           | 0 linear (stable ~+4 offset from one-shot init) |
-| netns leak        | 0 |
-| worker proc leak  | 0 |
-| interface leak    | 0 |
+| metric            | value                                          |
+|-------------------|------------------------------------------------|
+| build time        | ~1.1 s per cycle                               |
+| nft ruleset load  | ~3.0 s (24 ifaces, libnftables path)           |
+| probe throughput  | **~125 probes/s** (batch-size 256, 2 s timeout)|
+| RSS, total        | **~215 MB** (controller) + ~30 MB (nsstub)     |
+| peak fd usage     | ~50 during run (24 TUN/TAP + pipes)            |
+| peak procs        | 1 controller + 1 stub = **2 processes**        |
+| fd leak           | 0                                              |
+| netns leak        | 0                                              |
+| interface leak    | 0                                              |
+
+For reference, the pre-refactor subprocess-based architecture
+measured:
+
+| metric            | subprocess model | single-process model | Δ     |
+|-------------------|-----------------:|---------------------:|-------|
+| RSS (total)       | ~2 GB            | ~245 MB              | **8×** better |
+| probe throughput  | ~20 probes/s     | ~125 probes/s        | **6×** better |
+| peak procs        | 24 workers + stub + controller | 1 + 1 | **-24** |
+| nft ruleset load  | ~7–9 s           | ~3.0 s               | ~2.5× |
+
+The gains are from removing per-interface Python interpreter
+overhead (~80 MB × 24 = ~2 GB) and replacing the
+worker/pipe/asyncio indirection with a single event loop + a
+direct `os.write(fd, payload)` inject path.
 
 ## sysctl health check
 
