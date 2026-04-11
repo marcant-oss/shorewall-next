@@ -388,6 +388,34 @@ def start(directory, netns, config_dir, config_dir4, config6_dir,
     from shorewall_nft.netns.apply import apply_nft
     apply_nft(script, netns=netns)
 
+    # Apply proxyarp / proxyndp via pyroute2 — best effort, errors
+    # are surfaced as warnings but never block start. Loaded only
+    # when the config actually defines entries.
+    try:
+        from shorewall_nft.config.parser import load_config
+        from shorewall_nft.compiler.proxyarp import (
+            apply_proxyarp, parse_proxyarp,
+        )
+        primary, secondary, skip = _resolve_config_paths(
+            directory, config_dir, config_dir4, config6_dir,
+            no_auto_v4, no_auto_v6)
+        cfg = load_config(primary, config6_dir=secondary,
+                          skip_sibling_merge=skip)
+        proxy_entries = (
+            parse_proxyarp(getattr(cfg, "proxyarp", []) or []) +
+            parse_proxyarp(getattr(cfg, "proxyndp", []) or []))
+        if proxy_entries:
+            applied, skipped, errors = apply_proxyarp(
+                proxy_entries, netns=netns)
+            if applied:
+                click.echo(
+                    f"proxy-arp/ndp: {applied} entries applied"
+                    + (f", {skipped} skipped" if skipped else ""))
+            for err in errors:
+                click.echo(f"proxy-arp/ndp warning: {err}", err=True)
+    except Exception as e:
+        click.echo(f"proxy-arp/ndp: skipped ({e})", err=True)
+
     # Tear down any leftover shorewall_stopped table so the two
     # rulesets never run side by side. Best-effort: missing is fine.
     from shorewall_nft.nft.netlink import NftError, NftInterface
@@ -474,12 +502,33 @@ def stop(directory, netns, config_dir, config_dir4, config6_dir,
         try:
             apply_nft(stopped_script, netns=netns)
             click.echo("Shorewall-nft stopped (routestopped table loaded).")
-            return
         except Exception as e:
             click.echo(f"Note: failed to load shorewall_stopped: {e}",
                        err=True)
 
-    click.echo("Shorewall-nft stopped.")
+    # Remove non-persistent proxy ARP/NDP entries via pyroute2.
+    try:
+        from shorewall_nft.compiler.proxyarp import (
+            parse_proxyarp, remove_proxyarp,
+        )
+        from shorewall_nft.config.parser import load_config
+        primary, secondary, skip = _resolve_config_paths(
+            directory, config_dir, config_dir4, config6_dir,
+            no_auto_v4, no_auto_v6)
+        cfg = load_config(primary, config6_dir=secondary,
+                          skip_sibling_merge=skip)
+        proxy_entries = (
+            parse_proxyarp(getattr(cfg, "proxyarp", []) or []) +
+            parse_proxyarp(getattr(cfg, "proxyndp", []) or []))
+        if proxy_entries:
+            n = remove_proxyarp(proxy_entries, netns=netns)
+            if n:
+                click.echo(f"proxy-arp/ndp: {n} entries removed")
+    except Exception as e:
+        click.echo(f"proxy-arp/ndp removal: skipped ({e})", err=True)
+
+    if stopped_script is None:
+        click.echo("Shorewall-nft stopped.")
 
 
 @cli.command()
