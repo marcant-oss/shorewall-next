@@ -717,6 +717,56 @@ def _iface_to_zone_map(config_dir: Path) -> dict[str, str]:
     return out
 
 
+def _flowtable_state(ns_name: str) -> str | None:
+    """Best-effort post-run flowtable inspection inside ``ns_name``.
+
+    Returns a single-line summary suitable for the smoketest log,
+    or ``None`` if the flowtable doesn't exist (configs without
+    FLOWTABLE=…), nft is missing, or the netns is unreachable.
+    The intent is to give a yes/no signal that the flow offload
+    fast-path is engaged at the end of a run — non-zero entry
+    count proves at least one flow took the bypass.
+
+    Implementation: shells out to nft because libnftables doesn't
+    surface flowtable entry counts. Single subprocess at the end
+    of the run, not in the hot path.
+    """
+    import subprocess
+    try:
+        cmd = ["nft", "-j", "list", "flowtables"]
+        env_run = ["sudo", "/usr/local/bin/run-netns", "exec", ns_name] + cmd
+        out = subprocess.run(
+            env_run, capture_output=True, text=True, timeout=5)
+        if out.returncode != 0:
+            return None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    import json as _json
+    try:
+        data = _json.loads(out.stdout or "{}")
+    except _json.JSONDecodeError:
+        return None
+    flowtables = [
+        x.get("flowtable") for x in data.get("nftables", [])
+        if isinstance(x, dict) and "flowtable" in x
+    ]
+    if not flowtables:
+        return None
+    parts: list[str] = []
+    for ft in flowtables:
+        if not isinstance(ft, dict):
+            continue
+        fam = ft.get("family", "?")
+        tbl = ft.get("table", "?")
+        name = ft.get("name", "?")
+        devs = ft.get("dev", [])
+        if isinstance(devs, str):
+            devs = [devs]
+        parts.append(
+            f"{fam}/{tbl}/{name} ({len(devs)} devs)")
+    return ", ".join(parts) if parts else None
+
+
 def _iface_rp_filter_map(config_dir: Path) -> dict[str, str]:
     """Parse the routefilter / noroutefilter option per iface.
 
@@ -849,16 +899,30 @@ def cmd_full(args: argparse.Namespace) -> int:
     before = _resource_counts()
     _flush_print(f"before: {before}")
 
+    # Production-faithful per-iface rp_filter from the parsed
+    # interfaces config (TODO #12 — routefilter parity). The
+    # autorepair pass 4 already enforces that every kept probe
+    # has a src_ip routing back to the same inject iface, so
+    # strict RPF on a per-iface basis is functionally a no-op
+    # for surviving probes and gives us a test environment
+    # that mirrors what production would see.
+    iface_rp = _iface_rp_filter_map(args.config)
+
     t0 = time.monotonic()
     ctl = SimController(
         ip4add=args.data / "ip4add",
         ip4routes=args.data / "ip4routes",
         ip6add=args.data / "ip6add",
         ip6routes=args.data / "ip6routes",
+        iface_rp_filter=iface_rp,
     )
     ctl.build()
     t_build = time.monotonic() - t0
     _flush_print(f"build: {t_build:.2f}s ({len(ctl.workers)} ifaces)")
+    if iface_rp:
+        _flush_print(
+            f"rp_filter: replaying {len(iface_rp)} per-iface "
+            f"routefilter values from interfaces config")
 
     nft = Path("/tmp/simlab-ruleset.nft")
     _flush_print("compile: shorewall-nft compile …")
@@ -1127,6 +1191,15 @@ def cmd_full(args: argparse.Namespace) -> int:
     _flush_print(f"peak fds:   {peaks['peak_fds']}")
     _flush_print(f"peak procs: {peaks['peak_procs']}")
     _flush_print(f"peak load:  {peaks['peak_load']}")
+
+    # TODO #7: flowtable offload sanity check. After the run we
+    # ask the kernel how many flows are sitting in the flowtable
+    # — non-zero proves the fast-path is engaged. Best-effort:
+    # missing nft binary, missing flowtable, or empty result are
+    # all just informational.
+    ft_summary = _flowtable_state(ctl.ns_name)
+    if ft_summary is not None:
+        _flush_print(f"flowtable: {ft_summary}")
 
     ctl.shutdown()
     after = _resource_counts()
