@@ -511,7 +511,7 @@ def _build_per_rule_probes(
             repaired_rpf += 1
     if repaired_rpf:
         print(f"autorepair: rewrote {repaired_rpf} placeholder-src "
-              f"probes to zone-local IPs")
+              f"probes to zone-local IPs", flush=True)
 
     # Autorepair pass 2: re-classify every TestCase via the oracle
     # (full chain walk of iptables.txt = Point of Truth). A random
@@ -546,7 +546,8 @@ def _build_per_rule_probes(
     cases = kept
     if reclassified or dropped_unverifiable:
         print(f"autorepair: oracle reclassified {reclassified} "
-              f"TestCases, dropped {dropped_unverifiable} unverifiable")
+              f"TestCases, dropped {dropped_unverifiable} unverifiable",
+              flush=True)
 
     zone_to_iface = {z: ifc for ifc, z in iface_to_zone.items()}
 
@@ -664,13 +665,29 @@ def _print_category(
         f"fail_drop={fail_drop:4d}  fail_accept={fail_accept:4d}  "
         f"(pass_acc={pass_accept} pass_drp={pass_drop})  "
         f"unknown={unknown_exp:3d}  err={errored:3d}   "
-        f"lat avg={avg}ms p50={pct['p50']}ms p99={pct['p99']}ms"
+        f"lat avg={avg}ms p50={pct['p50']}ms p99={pct['p99']}ms",
+        flush=True,
     )
     if failed:
         print(
             f"           ↳ fail_drop  = should have had access but was DROPPED\n"
-            f"           ↳ fail_accept = should have been blocked but was ACCEPTED"
+            f"           ↳ fail_accept = should have been blocked but was ACCEPTED",
+            flush=True,
         )
+
+
+def _flush_print(*a: object, **kw: object) -> None:
+    """print() with an unconditional stdout flush.
+
+    systemd-run captures stdout to a file, which Python defaults to
+    block-buffered (4 KB). Runs can then go minutes without writing
+    anything visible even though work is progressing. Every
+    operator-visible line in cmd_full goes through this helper so
+    the log file stays current and an operator ``tail -f`` sees
+    the real current state.
+    """
+    kw["flush"] = True
+    print(*a, **kw)  # type: ignore[misc]
 
 
 def cmd_full(args: argparse.Namespace) -> int:
@@ -678,18 +695,18 @@ def cmd_full(args: argparse.Namespace) -> int:
     from .controller import SimController
     from .oracle import RulesetOracle
     _set_low_priority()
-    print("=== simlab FULL ===")
+    _flush_print("=== simlab FULL ===")
 
     warns = _check_sysctls(verbose=args.verbose)
     if warns:
-        print("sysctl health WARNINGS:")
+        _flush_print("sysctl health WARNINGS:")
         for w in warns:
-            print(f"  ! {w}")
+            _flush_print(f"  ! {w}")
     else:
-        print("sysctl health: ok")
+        _flush_print("sysctl health: ok")
 
     before = _resource_counts()
-    print(f"before: {before}")
+    _flush_print(f"before: {before}")
 
     t0 = time.monotonic()
     ctl = SimController(
@@ -700,34 +717,46 @@ def cmd_full(args: argparse.Namespace) -> int:
     )
     ctl.build()
     t_build = time.monotonic() - t0
+    _flush_print(f"build: {t_build:.2f}s ({len(ctl.workers)} ifaces)")
 
     nft = Path("/tmp/simlab-ruleset.nft")
+    _flush_print("compile: shorewall-nft compile …")
     _compile_ruleset(args.config, nft)
+    _flush_print("compile: ok")
     try:
+        _flush_print("nft load: …")
         ctl.load_nft(str(nft))
     except RuntimeError as e:
-        print(f"nft LOAD FAILED: {e}")
+        _flush_print(f"nft LOAD FAILED: {e}")
         ctl.shutdown()
         return 2
     t_load = time.monotonic() - t0 - t_build
+    _flush_print(f"nft load: {t_load:.2f}s")
     time.sleep(0.2)
 
     iface_to_zone = _iface_to_zone_map(args.config)
+    _flush_print("oracle: parsing iptables.txt for point-of-truth …")
     oracle = RulesetOracle(args.data / "iptables.txt")
+    _flush_print("oracle: ready")
 
     # Build probes across categories
     t_build_p0 = time.monotonic()
+    _flush_print(f"probes: generating per-rule (random_per_rule="
+                 f"{args.random_per_rule}) …")
     rules_probes = _build_per_rule_probes(
         args.data / "iptables.txt", ctl.state, iface_to_zone,
         ctl.topo.tun_mac if ctl.topo else {},
         max_per_pair=args.max_per_pair,
         random_per_rule=args.random_per_rule,
     )
+    _flush_print(f"probes: per-rule built, {len(rules_probes)} cases")
+    _flush_print(f"probes: generating {args.random} random …")
     random_probes = _build_random_probes(
         args.random, ctl.topo.tun_mac if ctl.topo else {},
         iface_to_zone, ctl.state, oracle, seed=args.seed,
     )
     t_build_probes = time.monotonic() - t_build_p0
+    _flush_print(f"probes: ready in {t_build_probes:.2f}s")
 
     all_probes = rules_probes + random_probes
     # Split by category for reporting (we'll also run them together)
@@ -739,7 +768,7 @@ def cmd_full(args: argparse.Namespace) -> int:
     for p in all_probes:
         by_cat[p[0]].append(p)
 
-    print(
+    _flush_print(
         f"build={t_build:.2f}s load={t_load:.2f}s "
         f"probes={len(all_probes)} "
         f"(pos={len(by_cat[TestCategory.POSITIVE])} "
@@ -759,13 +788,33 @@ def cmd_full(args: argparse.Namespace) -> int:
     batch_size = max(1, args.batch_size)
     total_throttle = 0.0
     n_batches = (len(specs) + batch_size - 1) // batch_size
+    # Print a progress line every ``report_every`` batches so an
+    # operator tailing the log can see the run advancing. Cap at 200
+    # lines total so the log stays scannable.
+    report_every = max(1, n_batches // 200)
+    _flush_print(f"run: {n_batches} batches × {batch_size} probes, "
+                 f"progress every {report_every} batches")
+    last_log = time.monotonic()
     for bi in range(n_batches):
         chunk = specs[bi * batch_size : (bi + 1) * batch_size]
         waited, why = _wait_until_idle(args.load_limit, max_wait_s=120.0)
         if waited > 0:
             total_throttle += waited
-            print(f"  [batch {bi+1}/{n_batches}] throttled {waited:.1f}s ({why})")
+            _flush_print(
+                f"  [batch {bi+1}/{n_batches}] throttled "
+                f"{waited:.1f}s ({why})")
         asyncio.run(_smoke_one(ctl, chunk))
+        now = time.monotonic()
+        if (bi + 1) % report_every == 0 or (now - last_log) > 30:
+            elapsed = now - t_run0
+            rate = ((bi + 1) * batch_size) / max(0.001, elapsed)
+            eta = (n_batches - bi - 1) * batch_size / max(0.001, rate)
+            _flush_print(
+                f"  progress: batch {bi+1}/{n_batches} "
+                f"({(bi+1)*100//n_batches}%)  "
+                f"{rate:.0f} probes/s  "
+                f"elapsed={elapsed:.0f}s  eta={eta:.0f}s")
+            last_log = now
     t_run = time.monotonic() - t_run0
     peaks_summary = peak.stop()
     peaks_summary["throttle_s"] = round(total_throttle, 1)
@@ -783,22 +832,22 @@ def cmd_full(args: argparse.Namespace) -> int:
     for cat, expect, spec, meta in all_probes:
         by_cat_res[cat].append((cat, expect, spec, meta, spec))
 
-    print()
-    print(f"=== results (run {t_run:.2f}s) ===")
+    _flush_print()
+    _flush_print(f"=== results (run {t_run:.2f}s) ===")
     _print_category("POSITIVE", by_cat_res[TestCategory.POSITIVE])
     _print_category("NEGATIVE", by_cat_res[TestCategory.NEGATIVE])
     _print_category("RANDOM  ", by_cat_res[TestCategory.RANDOM])
 
-    print()
-    print(f"peak fds:   {peaks['peak_fds']}")
-    print(f"peak procs: {peaks['peak_procs']}")
-    print(f"peak load:  {peaks['peak_load']}")
+    _flush_print()
+    _flush_print(f"peak fds:   {peaks['peak_fds']}")
+    _flush_print(f"peak procs: {peaks['peak_procs']}")
+    _flush_print(f"peak load:  {peaks['peak_load']}")
 
     ctl.shutdown()
     after = _resource_counts()
-    print(f"after: {after}")
+    _flush_print(f"after: {after}")
     delta = {k: after.get(k, 0) - before.get(k, 0) for k in after}
-    print(f"delta: {delta}")
+    _flush_print(f"delta: {delta}")
 
     # Persist a full archive report for later regression hunts.
     try:
