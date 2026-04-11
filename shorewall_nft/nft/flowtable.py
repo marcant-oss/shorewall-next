@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-
 # nft hook-priority keywords for the ingress hook. These are the
 # standard aliases shipped in the kernel; numeric priorities are also
 # accepted via int(). Keep in sync with:

@@ -43,7 +43,6 @@ from .packets import (
 )
 from .topology import NS_FW_DEFAULT, SimFwTopology
 
-
 # Synthetic MAC for every TAP the controller services. Same MAC on
 # every TAP is fine: each TAP is its own L2 segment.
 _WORKER_MAC = "02:00:00:5e:00:01"
@@ -450,8 +449,8 @@ class SimController:
                     if (pkt.proto == "ndp" and pkt.ndp_type == 135
                             and pkt.src and pkt.dst):
                         try:
-                            from scapy.layers.inet6 import ICMPv6ND_NS
                             import scapy.all as s
+                            from scapy.layers.inet6 import ICMPv6ND_NS
                             layer = s.Ether(buf)
                             if layer.haslayer(ICMPv6ND_NS):
                                 target = layer[ICMPv6ND_NS].tgt
@@ -577,8 +576,8 @@ class SimController:
         if (pkt.proto == "ndp" and pkt.ndp_type == 135
                 and pkt.src and pkt.dst):
             try:
-                from scapy.layers.inet6 import ICMPv6ND_NS
                 import scapy.all as s
+                from scapy.layers.inet6 import ICMPv6ND_NS
                 layer = s.Ether(raw)
                 if layer.haslayer(ICMPv6ND_NS):
                     target = layer[ICMPv6ND_NS].tgt

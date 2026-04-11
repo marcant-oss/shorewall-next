@@ -21,13 +21,12 @@ with its BGP VTEP addresses, ``lo``) are silently dropped. The
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pyroute2 import NetNS, netns
 from pyroute2.netlink.exceptions import NetlinkError
 
-from .dumps import FwState, Interface, Route, iface_needs_tap
+from .dumps import FwState, Route, iface_needs_tap
 from .nsstub import spawn_nsstub, stop_nsstub
 from .tundev import close_tuntap, create_tuntap
 

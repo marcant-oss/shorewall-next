@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 SWNFT = str(Path(__file__).parent.parent / ".venv" / "bin" / "shorewall-nft")
 
 
