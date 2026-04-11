@@ -399,7 +399,7 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
         _prepend_ct_state_to_zone_pair_chains(ir)
 
     # Optimize: run all applicable optimizations
-    optimize_level = int(config.settings.get("OPTIMIZE", "0"))
+    optimize_level = int(config.settings.get("OPTIMIZE", "8"))
     if optimize_level >= 1:
         from shorewall_nft.compiler.optimize import run_optimizations
         run_optimizations(ir, optimize_level)
