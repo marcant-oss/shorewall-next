@@ -59,10 +59,11 @@ rsync -a --delete \
     "$REPO_DIR/" "$REMOTE:/root/shorewall-nft/"
 
 info "install apt deps (idempotent)"
-ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip \
+ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    python3 python3-venv python3-pip python3.12-venv \
     python3-pytest python3-pytest-xdist python3-click python3-pyroute2 \
-    iproute2 sudo nftables conntrack ipset >/dev/null 2>&1 || true'
+    iproute2 sudo nftables conntrack ipset 2>&1 | tail -5 || true'
 
 info "create venv + editable install"
 ssh "$REMOTE" 'cd /root/shorewall-nft && \
