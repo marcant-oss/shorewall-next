@@ -28,6 +28,7 @@ from pyroute2 import NetNS, netns
 from pyroute2.netlink.exceptions import NetlinkError
 
 from .dumps import FwState, Interface, Route, iface_needs_tap
+from .nsstub import spawn_nsstub, stop_nsstub
 from .tundev import close_tuntap, create_tuntap
 
 if TYPE_CHECKING:
@@ -55,7 +56,12 @@ class SimFwTopology:
         self.tun_kind: dict[str, str] = {}
         # iface name → MTU copied from the dump
         self.tun_mtu: dict[str, int] = {}
+        # iface name → MAC address string (only for TAP devices).
+        # Captured after the interface lands in NS_FW so probes sent
+        # from a worker can set the correct destination MAC.
+        self.tun_mac: dict[str, str] = {}
         self._ns_fd: int | None = None
+        self._stub_pid: int | None = None
         self._built = False
 
     # ── lifecycle ─────────────────────────────────────────────────
@@ -70,7 +76,7 @@ class SimFwTopology:
         self._built = True
 
     def destroy(self) -> None:
-        """Tear down — close fds (iface disappears) then delete NS."""
+        """Tear down — close fds, tell the nsstub to clean up, reap it."""
         for fd in self.tun_fds.values():
             close_tuntap(fd)
         self.tun_fds.clear()
@@ -80,6 +86,14 @@ class SimFwTopology:
             except OSError:
                 pass
             self._ns_fd = None
+        if self._stub_pid is not None:
+            try:
+                stop_nsstub(self.ns_name, self._stub_pid)
+            except Exception:
+                pass
+            self._stub_pid = None
+        # Fallback: if the stub-path didn't clean up the bind mount,
+        # try the classic removal too.
         try:
             netns.remove(self.ns_name)
         except Exception:
@@ -88,8 +102,16 @@ class SimFwTopology:
     # ── internals ─────────────────────────────────────────────────
 
     def _ensure_ns(self) -> None:
-        if self.ns_name not in netns.listnetns():
-            netns.create(self.ns_name)
+        # The nsstub holds the netns alive via a bind-mount that will
+        # be cleaned up automatically when this controller process
+        # dies — much more robust than plain netns.create().
+        if self.ns_name in netns.listnetns():
+            # Stale leftover from a crashed previous run. Remove.
+            try:
+                netns.remove(self.ns_name)
+            except Exception:
+                pass
+        self._stub_pid = spawn_nsstub(self.ns_name)
         self._ns_fd = os.open(f"/run/netns/{self.ns_name}", os.O_RDONLY)
         # Bring lo up + enable forwarding + kill rp_filter inside NS_FW
         with NetNS(self.ns_name) as ipr:
@@ -179,7 +201,7 @@ class SimFwTopology:
                     raise
 
     def _configure_all_interfaces(self) -> None:
-        """Step 3: inside NS_FW, apply MTU, addresses, link up."""
+        """Step 3: inside NS_FW, apply MTU, addresses, link up, capture MAC."""
         with NetNS(self.ns_name) as ipr:
             for name, iface in self.state.interfaces.items():
                 if iface.kind == "loopback":
@@ -190,6 +212,15 @@ class SimFwTopology:
                 if not links:
                     continue
                 idx = links[0]
+                # Capture MAC for TAP — workers need dst_mac when injecting
+                if self.tun_kind[name] == "tap":
+                    try:
+                        link_info = ipr.get_links(idx)[0]
+                        mac = link_info.get_attr("IFLA_ADDRESS")
+                        if mac:
+                            self.tun_mac[name] = mac
+                    except NetlinkError:
+                        pass
                 try:
                     ipr.link("set", index=idx, mtu=iface.mtu)
                 except NetlinkError:
