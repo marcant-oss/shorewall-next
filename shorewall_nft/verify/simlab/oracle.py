@@ -65,6 +65,16 @@ class RulesetOracle:
                                   f"no {chain_name} chain")
 
         for rule in rules:
+            # Skip pure conntrack-state rules (``ct state
+            # established,related accept`` etc.). They have no
+            # address/proto/port fields, so _rule_matches() would
+            # return True for every tuple and classify would
+            # short-circuit on the very first such rule in the
+            # chain — wiping out every DROP expectation. Matches
+            # the same filter that derive_tests_all_zones applies
+            # on the generator side.
+            if "--ctstate" in rule.raw or "--ctstatus" in rule.raw:
+                continue
             if not self._rule_matches(rule, src_ip, dst_ip, proto, port):
                 continue
             target = rule.target
