@@ -596,4 +596,81 @@ class TestRoutestopped:
         ])
         out = emit_stopped_nft(ir)
         assert "iifname eth0 ip saddr 10.0.0.1" in out
+
+
+# ──────────────────────────────────────────────────────────────────────
+# stoppedrules — modern routestopped successor
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestStoppedrules:
+    def _build_ir_with_stoppedrules(self, columns_list):
+        from shorewall_nft.config.parser import ConfigLine, load_config
+        config = load_config(MINIMAL_DIR)
+        config.stoppedrules = [
+            ConfigLine(columns=cols, file="stoppedrules", lineno=i)
+            for i, cols in enumerate(columns_list)
+        ]
+        return build_ir(config)
+
+    def test_accept_to_fw_lands_in_input(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_stoppedrules([
+            ["ACCEPT", "net:10.0.0.5", "$FW", "tcp", "22"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "chain stopped-input {" in out
+        assert "ip saddr 10.0.0.5" in out
+        assert "tcp dport 22 accept" in out
+
+    def test_accept_from_fw_lands_in_output(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_stoppedrules([
+            ["ACCEPT", "$FW", "net:10.0.0.5", "udp", "53"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "chain stopped-output {" in out
+        assert "ip daddr 10.0.0.5" in out
+        assert "udp dport 53 accept" in out
+
+    def test_accept_transit_lands_in_forward(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_stoppedrules([
+            ["ACCEPT", "net", "loc:10.1.1.10", "tcp", "443"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "chain stopped-forward {" in out
+        assert "ip daddr 10.1.1.10" in out
+
+    def test_notrack_target_routes_to_raw_chain(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_stoppedrules([
+            ["NOTRACK", "net:10.0.0.5", "$FW", "udp", "500"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "chain stopped-raw-prerouting {" in out
+        assert " notrack" in out
+
+    def test_drop_explicit(self):
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        ir = self._build_ir_with_stoppedrules([
+            ["DROP", "net:1.2.3.4", "$FW", "tcp", "23"],
+        ])
+        out = emit_stopped_nft(ir)
+        assert "ip saddr 1.2.3.4" in out
+        assert "tcp dport 23 drop" in out
+
+    def test_unknown_target_warns_and_skips(self):
+        import warnings
+        from shorewall_nft.nft.emitter import emit_stopped_nft
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            ir = self._build_ir_with_stoppedrules([
+                ["DNAT", "net", "loc:10.0.0.5", "tcp", "80"],
+            ])
+            assert any("unsupported target" in str(x.message) for x in w)
+        # The DNAT line is skipped — but loopback/established setup
+        # rules from the lazy chain bootstrap may still appear.
+        out = emit_stopped_nft(ir)
+        assert "ip daddr 10.0.0.5" not in out
         assert "dnat ip to" not in out

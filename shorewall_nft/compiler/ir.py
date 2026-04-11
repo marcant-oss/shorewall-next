@@ -253,9 +253,13 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     if config.blrules:
         _process_blrules(ir, config.blrules, zones)
 
-    # Process routestopped
+    # Process routestopped (legacy)
     if config.routestopped:
         _process_routestopped(ir, config.routestopped, config.settings)
+
+    # Process stoppedrules (modern routestopped successor)
+    if getattr(config, "stoppedrules", None):
+        _process_stoppedrules(ir, config.stoppedrules, zones)
 
     # Set self-zone ACCEPT for multi-interface zones and routeback zones
     _set_self_zone_policies(ir, zones)
@@ -1740,6 +1744,193 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
                     r.matches.append(Match(field=_saddr_field(h), value=h))
                 _add_proto(r, proto, dport, sport)
                 stopped_raw.rules.append(r)
+
+
+def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
+                          zones: ZoneModel) -> None:
+    """Process the modern ``stoppedrules`` file (Shorewall ≥ 5.x).
+
+    The legacy ``routestopped`` file (handled by
+    :func:`_process_routestopped`) only knew interface + host
+    tuples. ``stoppedrules`` is a full rule format::
+
+        ACTION  SOURCE  DEST  PROTO  DPORT  SPORT  ORIGDEST
+
+    where ACTION is one of ``ACCEPT``, ``DROP``, ``NOTRACK``,
+    ``ACCEPT+`` (an alias). SOURCE / DEST are zone:host specs
+    just like the regular ``rules`` file. The rules are emitted
+    into the same standalone ``inet shorewall_stopped`` table that
+    routestopped uses, so a config can mix both files.
+
+    Routing rules into base chains:
+
+    * SOURCE = ``$FW`` → output (the firewall sending traffic)
+    * DEST   = ``$FW`` → input (traffic destined for the firewall)
+    * neither $FW       → forward (transit traffic)
+
+    NOTRACK lands in ``stopped-raw-prerouting`` regardless of the
+    src/dst direction (it's a raw-table affair).
+
+    The base chains are created lazily — if neither routestopped
+    nor stoppedrules is configured, no stopped table is emitted.
+    """
+    # Make sure the standard input/output/forward base chains
+    # exist (routestopped may not have run).
+    def _ensure(name: str, hook: Hook) -> Chain:
+        ch = ir.stopped_chains.get(name)
+        if ch is None:
+            ch = Chain(
+                name=name,
+                chain_type=ChainType.FILTER,
+                hook=hook,
+                priority=0,
+                policy=Verdict.DROP,
+            )
+            ir.stopped_chains[name] = ch
+            # Loopback + ct established/related survive — same
+            # baseline as routestopped.
+            if name == "stopped-input":
+                lo = Rule(verdict=Verdict.ACCEPT)
+                lo.matches.append(Match(field="iifname", value="lo"))
+                ch.rules.append(lo)
+                est = Rule(verdict=Verdict.ACCEPT)
+                est.matches.append(
+                    Match(field="ct state", value="established,related"))
+                ch.rules.append(est)
+            elif name == "stopped-output":
+                lo = Rule(verdict=Verdict.ACCEPT)
+                lo.matches.append(Match(field="oifname", value="lo"))
+                ch.rules.append(lo)
+                est = Rule(verdict=Verdict.ACCEPT)
+                est.matches.append(
+                    Match(field="ct state", value="established,related"))
+                ch.rules.append(est)
+        return ch
+
+    stopped_raw: Chain | None = ir.stopped_chains.get("stopped-raw-prerouting")
+
+    fw = zones.firewall_zone
+
+    for line in stoppedrules:
+        cols = line.columns
+        if not cols:
+            continue
+        target_raw = cols[0]
+        source_spec = cols[1] if len(cols) > 1 and cols[1] != "-" else "all"
+        dest_spec = cols[2] if len(cols) > 2 and cols[2] != "-" else "all"
+        proto = cols[3] if len(cols) > 3 and cols[3] != "-" else None
+        dport = cols[4] if len(cols) > 4 and cols[4] != "-" else None
+        sport = cols[5] if len(cols) > 5 and cols[5] != "-" else None
+
+        target = target_raw.upper().split("(")[0].rstrip("+")
+        if target == "ACCEPT":
+            verdict = Verdict.ACCEPT
+            verdict_args: str | None = None
+        elif target == "DROP":
+            verdict = Verdict.DROP
+            verdict_args = None
+        elif target == "REJECT":
+            verdict = Verdict.REJECT
+            verdict_args = None
+        elif target == "NOTRACK":
+            verdict = Verdict.ACCEPT
+            verdict_args = "notrack:"
+        else:
+            import warnings
+            warnings.warn(
+                f"stoppedrules {line.file}:{line.lineno}: unsupported "
+                f"target {target_raw!r} — skipped", stacklevel=2)
+            continue
+
+        src_zone, src_addr = _parse_zone_spec(source_spec, zones)
+        dst_zone, dst_addr = _parse_zone_spec(dest_spec, zones)
+
+        is_v6_src = src_addr is not None and _is_ipv6(src_addr)
+        is_v6_dst = dst_addr is not None and _is_ipv6(dst_addr)
+
+        def _make_match(field: str, val: str) -> Match:
+            return Match(field=field, value=val)
+
+        def _add_proto_to(rule: Rule) -> None:
+            if proto:
+                rule.matches.append(Match(field="meta l4proto", value=proto))
+                if dport:
+                    rule.matches.append(
+                        Match(field=f"{proto} dport", value=dport))
+                if sport:
+                    rule.matches.append(
+                        Match(field=f"{proto} sport", value=sport))
+
+        # NOTRACK always lands in the raw-prerouting chain
+        if verdict_args == "notrack:":
+            if stopped_raw is None:
+                stopped_raw = Chain(
+                    name="stopped-raw-prerouting",
+                    chain_type=ChainType.FILTER,
+                    hook=Hook.PREROUTING,
+                    priority=-300,
+                    policy=None,
+                )
+                ir.stopped_chains[stopped_raw.name] = stopped_raw
+            r = Rule(verdict=Verdict.ACCEPT, verdict_args="notrack:")
+            if src_addr:
+                r.matches.append(_make_match(
+                    "ip6 saddr" if is_v6_src else "ip saddr", src_addr))
+            if dst_addr:
+                r.matches.append(_make_match(
+                    "ip6 daddr" if is_v6_dst else "ip daddr", dst_addr))
+            _add_proto_to(r)
+            stopped_raw.rules.append(r)
+            continue
+
+        # Pick base chain by direction
+        if src_zone == fw and dst_zone == fw:
+            chains = [_ensure("stopped-output", Hook.OUTPUT)]
+        elif src_zone == fw:
+            chains = [_ensure("stopped-output", Hook.OUTPUT)]
+        elif dst_zone == fw:
+            chains = [_ensure("stopped-input", Hook.INPUT)]
+        else:
+            chains = [_ensure("stopped-forward", Hook.FORWARD)]
+
+        for ch in chains:
+            r = Rule(verdict=verdict, verdict_args=verdict_args)
+            # Translate zone → iifname/oifname when the zone has
+            # interfaces. Skip the firewall zone (no iface match).
+            if src_zone and src_zone != fw and src_zone in zones.zones:
+                z = zones.zones[src_zone]
+                iface_names = [i.name for i in z.interfaces]
+                if iface_names:
+                    if len(iface_names) == 1:
+                        r.matches.append(Match(
+                            field="iifname", value=iface_names[0]))
+                    else:
+                        r.matches.append(Match(
+                            field="iifname",
+                            value="{ " + ", ".join(
+                                f'"{i}"' for i in sorted(iface_names))
+                            + " }"))
+            if dst_zone and dst_zone != fw and dst_zone in zones.zones:
+                z = zones.zones[dst_zone]
+                iface_names = [i.name for i in z.interfaces]
+                if iface_names:
+                    if len(iface_names) == 1:
+                        r.matches.append(Match(
+                            field="oifname", value=iface_names[0]))
+                    else:
+                        r.matches.append(Match(
+                            field="oifname",
+                            value="{ " + ", ".join(
+                                f'"{i}"' for i in sorted(iface_names))
+                            + " }"))
+            if src_addr:
+                r.matches.append(_make_match(
+                    "ip6 saddr" if is_v6_src else "ip saddr", src_addr))
+            if dst_addr:
+                r.matches.append(_make_match(
+                    "ip6 daddr" if is_v6_dst else "ip daddr", dst_addr))
+            _add_proto_to(r)
+            ch.rules.append(r)
 
 
 def _set_self_zone_policies(ir: FirewallIR, zones: ZoneModel) -> None:
