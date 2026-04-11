@@ -256,17 +256,19 @@ def test_oracle_ctstate_not_short_circuiting_diff_proto(tmp_path):
     dump = _mock_parsed_ipt_with_ctstate(tmp_path)
     oracle = RulesetOracle(dump)
 
-    # UDP traffic doesn't match any real rule in our mock chain,
-    # so the expected verdict is UNKNOWN. A buggy oracle would
-    # instead short-circuit on the ct-state ACCEPT rule and
-    # return ACCEPT.
+    # UDP traffic doesn't match any real rule in our mock chain.
+    # The oracle now classifies fall-through as DROP (matching
+    # Shorewall's default cross-zone REJECT policy at the chain
+    # tail). A buggy oracle would short-circuit on the ct-state
+    # ACCEPT rule and return ACCEPT — that's what we're guarding
+    # against here.
     v = oracle.classify(
         src_zone="net", dst_zone="adm",
         src_ip="10.0.0.5", dst_ip="10.0.1.10",
         proto="udp", port=53,
     )
-    assert v.verdict == "UNKNOWN", (
-        f"expected UNKNOWN (no rule matches this UDP tuple), "
+    assert v.verdict == "DROP", (
+        f"expected DROP (fall-through to chain policy), "
         f"got {v.verdict} ({v.reason}). The ct-state rule must "
-        f"not be treated as a catch-all."
+        f"not be treated as a catch-all ACCEPT."
     )
