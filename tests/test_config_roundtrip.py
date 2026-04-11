@@ -150,3 +150,62 @@ def test_overlay_shorewall_conf_merges():
     })
     assert cfg.settings["OPTIMIZE"] == "8"
     assert cfg.settings["FASTACCEPT"] == "Yes"
+
+
+def test_roundtrip_through_disk_minimal(tmp_path):
+    """parse → export → import → write_config_dir → parse → export.
+
+    The full filesystem round-trip. Regression gate for
+    ``write_config_dir``: whatever the writer emits must be parseable
+    back into a ShorewalConfig that re-exports to the same blob.
+    """
+    fixture = Path(__file__).resolve().parent / "configs" / "minimal"
+    if not fixture.is_dir():
+        pytest.skip(f"no minimal fixture at {fixture}")
+
+    from shorewall_nft.config.importer import write_config_dir
+
+    cfg_a = load_config(fixture)
+    blob_a = export_config(cfg_a)
+
+    cfg_b = blob_to_config(blob_a)
+    target = tmp_path / "written"
+    written = write_config_dir(cfg_b, target)
+    assert len(written) > 0
+
+    cfg_c = load_config(target)
+    blob_c = export_config(cfg_c)
+
+    s_a = json.dumps(blob_a, sort_keys=True, default=str)
+    s_c = json.dumps(blob_c, sort_keys=True, default=str)
+    # The config_dir key will legitimately differ (different paths).
+    # Strip both before comparing content.
+    blob_a_cmp = dict(blob_a); blob_a_cmp.pop("config_dir", None)
+    blob_c_cmp = dict(blob_c); blob_c_cmp.pop("config_dir", None)
+    s_a = json.dumps(blob_a_cmp, sort_keys=True, default=str)
+    s_c = json.dumps(blob_c_cmp, sort_keys=True, default=str)
+    assert s_a == s_c, (
+        f"disk round-trip diverged: {len(s_a)} vs {len(s_c)} bytes")
+
+
+def test_write_refuses_non_empty_target_without_force(tmp_path):
+    """write_config_dir refuses to overwrite a non-empty dir unless forced."""
+    from shorewall_nft.config.importer import (
+        ImportError as CfgImportError,
+        write_config_dir,
+    )
+
+    cfg = blob_to_config({
+        "schema_version": 1,
+        "zones": [{"zone": "fw", "type": "firewall"}],
+    })
+    target = tmp_path / "taken"
+    target.mkdir()
+    (target / "junk").write_text("hands off")
+
+    with pytest.raises(CfgImportError, match="force=True"):
+        write_config_dir(cfg, target)
+
+    # With force=True it proceeds
+    written = write_config_dir(cfg, target, force=True)
+    assert any(p.name == "zones" for p in written)

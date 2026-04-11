@@ -290,8 +290,118 @@ def apply_overlay(
                 ]
 
 
+def _columns_to_line(cols: list[str]) -> str:
+    """Render one ConfigLine back to a Shorewall column-format line."""
+    # Shorewall uses whitespace separation. A single tab between each
+    # column gives predictable output that editors align nicely and
+    # the parser round-trips byte-identical through strip/split.
+    return "\t".join(cols)
+
+
+def write_config_dir(
+    config: ShorewalConfig, target_dir: Path, *,
+    force: bool = False,
+    write_scripts: bool = True,
+) -> list[Path]:
+    """Serialise a :class:`ShorewalConfig` back to on-disk Shorewall files.
+
+    Writes one file per populated section into ``target_dir``:
+
+    - ``shorewall.conf`` / ``params`` as ``KEY=VALUE`` lines
+    - columnar files as tab-separated rows
+    - extension scripts as raw line lists (one file per name)
+    - macros as ``macros/macro.NAME`` files
+
+    Sectioned files (``rules``, ``blrules``) emit ``?SECTION NAME``
+    headers before each section's rows, preserving the grouping.
+
+    ``force=False`` refuses to write into a target that already
+    exists and is non-empty; pass ``force=True`` to overwrite.
+
+    Returns a list of the paths actually written.
+    """
+    target_dir = Path(target_dir)
+    if target_dir.exists():
+        if any(target_dir.iterdir()) and not force:
+            raise ImportError(
+                f"{target_dir} exists and is not empty — pass force=True "
+                f"to overwrite")
+    else:
+        target_dir.mkdir(parents=True)
+
+    written: list[Path] = []
+
+    def _write(name: str, text: str) -> None:
+        p = target_dir / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+        written.append(p)
+
+    # KEY=VALUE files
+    if config.settings:
+        lines = [f"{k}={v}" for k, v in config.settings.items()]
+        _write("shorewall.conf", "\n".join(lines) + "\n")
+    if config.params:
+        # Skip the parser builtins (__-prefixed)
+        user_params = [
+            (k, v) for k, v in config.params.items()
+            if not k.startswith("__")
+        ]
+        if user_params:
+            lines = [f"{k}={v}" for k, v in user_params]
+            _write("params", "\n".join(lines) + "\n")
+
+    # Columnar files
+    for name in all_columnar_files():
+        rows: list[ConfigLine] = getattr(config, name, None) or []
+        if not rows:
+            continue
+        schema = columns_for(name) or []
+        lines_out: list[str] = []
+
+        if schema:
+            header = "#" + "\t".join(c.upper() for c in schema)
+            lines_out.append(header)
+
+        if is_sectioned(name):
+            # Group by section so we can re-emit ?SECTION headers
+            by_section: dict[str, list[ConfigLine]] = {}
+            for ln in rows:
+                by_section.setdefault(ln.section or "NEW", []).append(ln)
+            first = True
+            for section, rows_in_section in by_section.items():
+                if not first or section != "NEW":
+                    lines_out.append(f"?SECTION {section}")
+                first = False
+                for ln in rows_in_section:
+                    lines_out.append(_columns_to_line(ln.columns))
+        else:
+            for ln in rows:
+                lines_out.append(_columns_to_line(ln.columns))
+
+        _write(name, "\n".join(lines_out) + "\n")
+
+    # Macros
+    if config.macros:
+        for macro_name, body in config.macros.items():
+            lines_out = [
+                _columns_to_line(ln.columns)
+                for ln in body
+            ]
+            _write(f"macros/macro.{macro_name}",
+                   "\n".join(lines_out) + "\n")
+
+    # Extension scripts
+    if write_scripts and config.scripts:
+        for script_name, script_lines in config.scripts.items():
+            _write(script_name, "\n".join(script_lines) + "\n")
+
+    return written
+
+
 __all__ = [
     "ImportError",
     "apply_overlay",
     "blob_to_config",
+    "write_config_dir",
 ]
