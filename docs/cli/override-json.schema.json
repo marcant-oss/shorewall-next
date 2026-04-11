@@ -177,6 +177,10 @@
       "$ref": "#/$defs/rowsOrReplace",
       "description": "Source CIDR sanity filter. Columns: interface, hosts, options."
     },
+    "blacklist": {
+      "$ref": "#/$defs/rowsOrReplace",
+      "description": "Static blacklist (legacy). Columns: address, proto, port. Distinct from blrules which has the full rule grammar."
+    },
 
     "macros": {
       "type": "object",
@@ -189,7 +193,7 @@
 
     "scripts": {
       "type": "object",
-      "description": "Extension script bodies (start / started / stop / stopped / init / initdone / refresh / refreshed / restored / findgw / ifup / isusable / savesets). Value is a dict with lang + lines, or a plain list of lines, or a single string split on newlines.",
+      "description": "Extension script bodies (start / started / stop / stopped / init / initdone / refresh / refreshed / restored / findgw / ifup / isusable / savesets / helpers). Value is a dict with lang + lines, or a plain list of lines, or a single string split on newlines.",
       "additionalProperties": {
         "oneOf": [
           {
