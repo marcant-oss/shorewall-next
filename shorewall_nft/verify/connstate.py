@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from shorewall_nft.verify.simulate import (
     DEFAULT_SRC,
+    NS_FW,
     NS_SRC,
     _ns,
 )
@@ -330,6 +331,84 @@ else:
             detail=f"scapy test failed: {e}",
             ms=ms,
         )
+
+
+def run_small_conntrack_probe(dst_ip: str = "203.0.113.5",
+                               port: int = 80) -> list[ConnStateResult]:
+    """Small-scale conntrack verification.
+
+    Drives a handful of real flows and verifies the kernel conntrack
+    table in the FW netns actually tracks them. Deliberately small
+    (3-4 probes) — not a load test, just a signal that ct is working.
+    """
+    results: list[ConnStateResult] = []
+
+    def _ct_count(proto: str) -> int:
+        r = _ns(NS_FW, f"conntrack -L -p {proto} 2>/dev/null | wc -l",
+                timeout=5)
+        try:
+            return int((r.stdout or "0").strip())
+        except ValueError:
+            return 0
+
+    def _ct_flush() -> None:
+        _ns(NS_FW, "conntrack -F 2>/dev/null || true", timeout=5)
+
+    # 1. TCP flow should create a tcp conntrack entry
+    _ct_flush()
+    start = time.monotonic_ns()
+    _ns(NS_SRC,
+        f"echo CT_TEST | timeout 2 nc -w 1 -s {DEFAULT_SRC} {dst_ip} {port} "
+        f">/dev/null 2>&1 || true", timeout=5)
+    tcp_n = _ct_count("tcp")
+    ms = (time.monotonic_ns() - start) // 1_000_000
+    results.append(ConnStateResult(
+        name="ct:tcp_flow_tracked",
+        passed=tcp_n >= 1,
+        detail=f"tcp conntrack entries after probe: {tcp_n}",
+        ms=ms,
+    ))
+
+    # 2. UDP flow should create a udp conntrack entry
+    _ct_flush()
+    start = time.monotonic_ns()
+    _ns(NS_SRC,
+        f"echo PING | timeout 2 nc -u -w 1 -s {DEFAULT_SRC} {dst_ip} 65001 "
+        f">/dev/null 2>&1 || true", timeout=5)
+    udp_n = _ct_count("udp")
+    ms = (time.monotonic_ns() - start) // 1_000_000
+    results.append(ConnStateResult(
+        name="ct:udp_flow_tracked",
+        passed=udp_n >= 1,
+        detail=f"udp conntrack entries after probe: {udp_n}",
+        ms=ms,
+    ))
+
+    # 3. ICMP echo should create an icmp conntrack entry
+    _ct_flush()
+    start = time.monotonic_ns()
+    _ns(NS_SRC,
+        f"ping -c 1 -W 2 -I {DEFAULT_SRC} {dst_ip} >/dev/null 2>&1 || true",
+        timeout=5)
+    icmp_n = _ct_count("icmp")
+    ms = (time.monotonic_ns() - start) // 1_000_000
+    results.append(ConnStateResult(
+        name="ct:icmp_flow_tracked",
+        passed=icmp_n >= 1,
+        detail=f"icmp conntrack entries after probe: {icmp_n}",
+        ms=ms,
+    ))
+
+    # 4. ct is non-empty in normal operation (sanity)
+    total_n = _ct_count("tcp") + _ct_count("udp") + _ct_count("icmp")
+    results.append(ConnStateResult(
+        name="ct:table_nonempty",
+        passed=total_n >= 1,
+        detail=f"total ct entries visible: {total_n}",
+        ms=0,
+    ))
+
+    return results
 
 
 def run_connstate_tests(dst_ip: str = "203.0.113.5",
