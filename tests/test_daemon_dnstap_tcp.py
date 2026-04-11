@@ -146,8 +146,13 @@ class TestDnstapTcpListener:
                     # Send STOP.
                     writer.write(encode_control(CONTROL_STOP))
                     await writer.drain()
-                    # Let the server drain the queue.
-                    await asyncio.sleep(0.1)
+                    # Let the server drain the queue. Poll instead
+                    # of a fixed sleep so this isn't flaky on slow
+                    # CI hosts where the worker thread takes longer
+                    # to wake up and decode the frame.
+                    deadline = asyncio.get_event_loop().time() + 3.0
+                    while not updates and asyncio.get_event_loop().time() < deadline:
+                        await asyncio.sleep(0.02)
                 finally:
                     writer.close()
                     try:
