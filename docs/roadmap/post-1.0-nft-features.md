@@ -283,6 +283,43 @@ C++ core.
 Not targeted for 1.1 — ships after the core nft features below
 have a full release behind them.
 
+## simlab — scapy features to exploit later
+
+The simlab verifier (``shorewall_nft/verify/simlab``) already uses
+scapy for TUN/TAP packet build/parse. A few more scapy capabilities
+would meaningfully extend its reach without much code:
+
+- **pcap export on failure** — on a failed probe, the controller
+  writes the worker trace buffers to a ``.pcap`` via
+  ``scapy.utils.wrpcap()``. Users open it in Wireshark and see
+  exactly what the FW did. One ``wrpcap`` call per failed probe.
+- **VRRP frame injection** — `scapy.layers.vrrp.VRRPv2` /
+  `VRRPv3`. Lets us test keepalived-authored rules between the HA
+  firewall peers (proto 112, mcast 224.0.0.18) without a real
+  second node.
+- **BGP frame injection** — `scapy.contrib.bgp.BGPHeader` +
+  `BGPOpen/BGPUpdate/BGPKeepAlive`. Tests whether the FW lets
+  bird peers exchange keepalives with upstream routers.
+- **OSPF / IKEv2 injection** — `scapy.contrib.ospf`,
+  `scapy.contrib.ikev2`. Covers L3 routing and IPsec SA setup.
+- **fuzz mode** — `scapy.volatile.fuzz(pkt)` randomises
+  unspecified fields. A controller mode that injects random SYN
+  / UDP / ICMP permutations against a zone boundary and verifies
+  the FW doesn't crash or accidentally accept.
+- **RADIUS probe builder** (`scapy.layers.radius`) — marcant
+  has explicit 1812/1813 rules. Would let us test them.
+- **DHCP(v6) probe builder** — verifies DHCP-option interfaces
+  accept UDP 67/68 / 546/547 as advertised.
+- **DNS probe builder** — relevant once DNS-based filtering
+  (roadmap Tier 2+) lands; we'd inject queries to ensure the
+  rpz-tagged answers come back.
+- **traceroute() / tree visualisation** — walks the FW's hop
+  count for diagnostic reports.
+
+None of these change the core simlab design. Each is a new
+`build_*` helper in `simlab/packets.py` plus a controller command.
+Tackled lazily as real test needs come up.
+
 ## Tier 3 — Nice-to-have polish
 
 - **Stateful counter/limit objects** for shared accounting pools
