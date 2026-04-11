@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shorewall-nft"
-version = "1.0.0"
+version = "1.1.0"
 description = "nftables-native firewall compiler with Shorewall-compatible configuration"
 readme = "README.md"
 requires-python = ">=3.11"

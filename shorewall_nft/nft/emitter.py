@@ -107,6 +107,51 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
     # Emit CT helper objects (must be before chains that reference them)
     _emit_ct_helper_objects(lines, ir)
 
+    # Emit ct mark zone-tagging prerouting chain if CT_ZONE_TAG=Yes.
+    # On the first packet of each connection, tag ct mark with a
+    # deterministic per-zone value based on iifname. conntrackd then
+    # replicates that mark to the passive HA node so zone identity
+    # survives failover. See docs/roadmap/post-1.0-nft-features.md.
+    ct_zone_tag = (ir.settings.get("CT_ZONE_TAG", "No").lower()
+                   in ("yes", "1", "true"))
+    zone_marks: dict[str, int] = {}
+    if ct_zone_tag:
+        zone_marks = _compute_zone_marks(ir)
+
+    # Emit flowtable declaration if FLOWTABLE setting is non-empty.
+    # Configured via shorewall.conf: FLOWTABLE=bond1,bond0.20
+    # The corresponding `flow add @ft` rule is injected into the
+    # forward base chain below.
+    # CT zone-tag prerouting chain (emitted at table level, before other chains)
+    if ct_zone_tag and zone_marks:
+        lines.append("")
+        lines.append("\t# CT zone tagging — tag new flows with per-zone ct mark.")
+        lines.append("\t# Replicated by conntrackd across the HA pair so zone")
+        lines.append("\t# identity survives failover. Mask 0xff is reserved for zones.")
+        lines.append("\tchain sw_zone_tag {")
+        lines.append("\t\ttype filter hook prerouting priority mangle;")
+        lines.append("\t\tct state new ct mark set iifname map {")
+        entries = []
+        for iface, mark in sorted(zone_marks.items()):
+            entries.append(f'\t\t\t"{iface}" : {mark:#x}')
+        lines.append(",\n".join(entries))
+        lines.append("\t\t}")
+        lines.append("\t}")
+
+    flowtable_devices = _parse_flowtable_devices(ir)
+    if flowtable_devices:
+        from shorewall_nft.nft.flowtable import Flowtable, emit_flowtable
+        ft = Flowtable(
+            name="ft",
+            hook="ingress",
+            priority=0,
+            devices=flowtable_devices,
+            offload=(ir.settings.get("FLOWTABLE_OFFLOAD", "No").lower()
+                     in ("yes", "1", "true")),
+        )
+        lines.append("")
+        lines.extend(emit_flowtable(ft).splitlines())
+
     # Emit base chains first, then zone-pair chains
     base_chains = [c for c in ir.chains.values() if c.is_base_chain]
     other_chains = [c for c in ir.chains.values() if not c.is_base_chain]
@@ -261,6 +306,15 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
         lines.append(f"{indent}\ttype {chain_type} hook {hook} priority {chain.priority};{policy_str}")
         lines.append("")
 
+        # Flowtable fastpath: for the forward chain, emit the `flow add`
+        # rule at the very top so established tcp/udp flows bypass the
+        # full chain walk. Gated on FLOWTABLE setting being non-empty.
+        if (chain.hook == Hook.FORWARD and chain.chain_type == ChainType.FILTER
+                and _parse_flowtable_devices(ir)):
+            lines.append(f"{indent}\t# Flowtable fastpath — offload established flows")
+            lines.append(f"{indent}\tmeta l4proto {{ tcp, udp }} flow add @ft")
+            lines.append("")
+
         # Emit ct state rules first (before dispatch)
         for idx, rule in enumerate(chain.rules):
             rule_str = _emit_rule(rule, debug_ctx=debug_ctx,
@@ -296,10 +350,72 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
     return lines
 
 
+def _compute_zone_marks(ir: FirewallIR) -> dict[str, int]:
+    """Assign a deterministic ct mark per interface, derived from zone order.
+
+    Walks the zone model in sorted zone-name order, assigning marks 1..255
+    (0 is reserved for "untagged"). Returns a mapping of iifname → mark.
+    The firewall zone itself contributes no entries since it has no
+    incoming interface.
+    """
+    marks: dict[str, int] = {}
+    fw = ir.zones.firewall_zone
+    next_mark = 1
+    per_zone: dict[str, int] = {}
+    for zone_name in sorted(ir.zones.zones.keys()):
+        if zone_name == fw:
+            continue
+        if next_mark > 255:
+            break  # out of mark space — leave remaining zones untagged
+        per_zone[zone_name] = next_mark
+        zone = ir.zones.zones[zone_name]
+        for iface in zone.interfaces:
+            if iface.name and iface.name not in marks:
+                marks[iface.name] = next_mark
+        next_mark += 1
+    return marks
+
+
+def _parse_flowtable_devices(ir: FirewallIR) -> list[str]:
+    """Parse the FLOWTABLE setting from shorewall.conf into a device list.
+
+    Accepts:
+      FLOWTABLE=bond1,bond0.20
+      FLOWTABLE="bond1 bond0.20"
+      FLOWTABLE=auto     → every interface declared in interfaces file
+      FLOWTABLE=          → disabled (empty string / unset)
+    """
+    raw = (ir.settings.get("FLOWTABLE", "") or "").strip().strip('"').strip("'")
+    if not raw or raw.lower() in ("no", "false", "0"):
+        return []
+    if raw.lower() == "auto":
+        # Use every interface that the config declares — walk zone model
+        ifaces: set[str] = set()
+        for zone in ir.zones.zones.values():
+            for iface in zone.interfaces:
+                if iface.name:
+                    ifaces.add(iface.name)
+        return sorted(ifaces)
+    # Split on whitespace or commas
+    parts: list[str] = []
+    for tok in raw.replace(",", " ").split():
+        tok = tok.strip()
+        if tok:
+            parts.append(tok)
+    return parts
+
+
 def _emit_dispatch_rules(lines: list[str], base_chain: Chain,
                          ir: FirewallIR, indent: str) -> None:
     """Emit jump rules from base chains to zone-pair chains."""
     fw_zone = ir.zones.firewall_zone
+
+    # Opt-in: replace the per-pair cascade with a single vmap lookup.
+    # Enable via OPTIMIZE_VMAP=Yes in shorewall.conf.
+    use_vmap = (ir.settings.get("OPTIMIZE_VMAP", "No").lower()
+                in ("yes", "1", "true"))
+    if use_vmap and _emit_vmap_dispatch(lines, base_chain, ir, fw_zone, indent):
+        return
 
     for chain_name, chain in sorted(ir.chains.items()):
         if chain.is_base_chain:
@@ -319,6 +435,104 @@ def _emit_dispatch_rules(lines: list[str], base_chain: Chain,
             _emit_zone_jump(lines, chain_name, None, dst_zone, ir, indent)
         elif src_zone != fw_zone and dst_zone != fw_zone and base_chain.hook == Hook.FORWARD:
             _emit_zone_jump(lines, chain_name, src_zone, dst_zone, ir, indent)
+
+
+def _emit_vmap_dispatch(lines: list[str], base_chain: Chain,
+                        ir: FirewallIR, fw_zone: str, indent: str) -> bool:
+    """Emit a single vmap-based dispatch for the base chain.
+
+    Replaces N cascaded `iifname "X" oifname "Y" jump chain-X-Y` rules
+    with a single hash-lookup expression. Returns True if it emitted
+    anything, False if the chain isn't suitable (e.g. some zone has
+    no interfaces).
+
+    Zones that provide hosts-based membership (no iifname) are left
+    to the legacy cascade — we fall through for those.
+    """
+    # Collect candidates by pair kind matching the base chain hook
+    pairs: list[tuple[str, list[str], list[str], str]] = []
+    # (chain_name, src_ifaces, dst_ifaces, chain_name)
+    has_hosts_only = False
+
+    for chain_name, chain in sorted(ir.chains.items()):
+        if chain.is_base_chain:
+            continue
+        parts = chain_name.split("-", 1)
+        if len(parts) != 2:
+            continue
+        src_zone, dst_zone = parts
+
+        # Filter by hook
+        if base_chain.hook == Hook.INPUT:
+            if dst_zone != fw_zone:
+                continue
+        elif base_chain.hook == Hook.OUTPUT:
+            if src_zone != fw_zone:
+                continue
+        elif base_chain.hook == Hook.FORWARD:
+            if src_zone == fw_zone or dst_zone == fw_zone:
+                continue
+        else:
+            return False
+
+        def _ifaces_for(zone_name: str) -> list[str]:
+            nonlocal has_hosts_only
+            if zone_name == fw_zone or zone_name not in ir.zones.zones:
+                return []
+            zone = ir.zones.zones[zone_name]
+            names = [i.name for i in zone.interfaces if i.name]
+            if not names and zone.hosts:
+                has_hosts_only = True
+            return names
+
+        src_ifaces = _ifaces_for(src_zone) if src_zone != fw_zone else []
+        dst_ifaces = _ifaces_for(dst_zone) if dst_zone != fw_zone else []
+        pairs.append((chain_name, src_ifaces, dst_ifaces, chain_name))
+
+    if not pairs or has_hosts_only:
+        return False  # fall back to cascade for safety
+
+    entries: list[str] = []
+
+    if base_chain.hook == Hook.INPUT:
+        # iifname vmap { "X" : jump chain-X-fw, ... }
+        for name, sifaces, _, _ in pairs:
+            for sif in sifaces:
+                entries.append(f'"{sif}" : jump {name}')
+        if entries:
+            lines.append(f"{indent}iifname vmap {{")
+            for e in entries:
+                lines.append(f"{indent}\t{e},")
+            lines.append(f"{indent}}}")
+            return True
+
+    elif base_chain.hook == Hook.OUTPUT:
+        for name, _, difaces, _ in pairs:
+            for dif in difaces:
+                entries.append(f'"{dif}" : jump {name}')
+        if entries:
+            lines.append(f"{indent}oifname vmap {{")
+            for e in entries:
+                lines.append(f"{indent}\t{e},")
+            lines.append(f"{indent}}}")
+            return True
+
+    elif base_chain.hook == Hook.FORWARD:
+        # iifname . oifname vmap { "X" . "Y" : jump chain-X-Y, ... }
+        for name, sifaces, difaces, _ in pairs:
+            if not sifaces or not difaces:
+                return False  # can't build concat key — fall back
+            for sif in sifaces:
+                for dif in difaces:
+                    entries.append(f'"{sif}" . "{dif}" : jump {name}')
+        if entries:
+            lines.append(f"{indent}iifname . oifname vmap {{")
+            for e in entries:
+                lines.append(f"{indent}\t{e},")
+            lines.append(f"{indent}}}")
+            return True
+
+    return False
 
 
 def _emit_zone_jump(lines: list[str], chain_name: str,
