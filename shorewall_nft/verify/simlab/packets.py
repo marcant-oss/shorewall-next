@@ -475,12 +475,24 @@ def _finalize(layer: Any, src_mac: str | None, dst_mac: str | None,
     """Wrap an IP/IPv6 scapy layer in Ethernet and return raw bytes.
 
     If ``wrap_ether=False`` (TUN mode) return the bare IP packet.
+
+    ``src_mac`` defaults to the controller's synthetic worker MAC
+    (``02:00:00:5e:00:01``). The simlab controller answers every
+    ARP who-has on every TAP with that MAC, so using the same
+    address on the inject side keeps the kernel's neighbour table
+    consistent: when the kernel receives our injected frame it
+    registers ``src_ip → src_mac`` in its neighbour cache, and the
+    later ARP reply for that IP returns the same MAC. A mismatch
+    between the injected Ethernet src and the controller's ARP
+    reply causes Linux to silently drop the forwarded packet as a
+    stale/ambiguous neighbour-table update, which used to produce
+    thousands of spurious ``fail_drop`` in the simlab report.
     """
     s = _sc()
     if not wrap_ether:
         return bytes(layer)
     if not src_mac:
-        src_mac = "02:00:00:00:00:01"
+        src_mac = "02:00:00:5e:00:01"  # same as controller._WORKER_MAC
     if not dst_mac:
         dst_mac = "ff:ff:ff:ff:ff:ff"
     etype = 0x86dd if layer.__class__.__name__ == "IPv6" else 0x0800
