@@ -234,6 +234,10 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     if config.notrack:
         _process_notrack(ir, config.notrack, zones)
 
+    # Process rawnat rules (raw-table actions, runs pre-conntrack)
+    if getattr(config, "rawnat", None):
+        _process_rawnat(ir, config.rawnat, zones)
+
     # Process conntrack helpers
     if config.conntrack:
         _process_conntrack(ir, config.conntrack)
@@ -1744,6 +1748,136 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
                     r.matches.append(Match(field=_saddr_field(h), value=h))
                 _add_proto(r, proto, dport, sport)
                 stopped_raw.rules.append(r)
+
+
+def _process_rawnat(ir: FirewallIR, rawnat_lines: list[ConfigLine],
+                    zones: ZoneModel) -> None:
+    """Process the ``rawnat`` config file.
+
+    Shorewall's ``rawnat`` lets you put rules in the iptables raw
+    PREROUTING chain — i.e. they fire **before** conntrack and any
+    DNAT/SNAT in the regular nat table. The supported actions are
+    things like ``NOTRACK`` and ``ACCEPT`` plus the rare early-DNAT
+    ``DNAT`` form (only useful with conntrack zones / notrack
+    follow-up rules).
+
+    For us this slots cleanly onto the existing
+    ``raw-prerouting`` / ``raw-output`` chains created by the
+    ``notrack`` processor — we re-create them lazily here so a
+    config that uses ONLY ``rawnat`` (no notrack file) still gets
+    the chains.
+
+    Format::
+
+        ACTION  SOURCE  DEST  PROTO  DPORT  SPORT  USER
+
+    SOURCE / DEST are zone:host specs. ``$FW`` source routes the
+    rule into ``raw-output``; everything else into
+    ``raw-prerouting``.
+    """
+    if "raw-prerouting" not in ir.chains:
+        ir.add_chain(Chain(
+            name="raw-prerouting",
+            chain_type=ChainType.FILTER,
+            hook=Hook.PREROUTING,
+            priority=-300,
+        ))
+    if "raw-output" not in ir.chains:
+        ir.add_chain(Chain(
+            name="raw-output",
+            chain_type=ChainType.FILTER,
+            hook=Hook.OUTPUT,
+            priority=-300,
+        ))
+
+    fw = zones.firewall_zone
+
+    for line in rawnat_lines:
+        cols = line.columns
+        if not cols:
+            continue
+        action_raw = cols[0]
+        source_spec = cols[1] if len(cols) > 1 and cols[1] != "-" else "all"
+        dest_spec = cols[2] if len(cols) > 2 and cols[2] != "-" else "all"
+        proto = cols[3] if len(cols) > 3 and cols[3] != "-" else None
+        dport = cols[4] if len(cols) > 4 and cols[4] != "-" else None
+        sport = cols[5] if len(cols) > 5 and cols[5] != "-" else None
+
+        action = action_raw.upper().split("(")[0].rstrip("+")
+
+        # Map the action onto a (verdict, verdict_args) pair. We
+        # support NOTRACK, ACCEPT, DROP — the only ones that make
+        # any sense in the raw table. Everything else gets a
+        # warning and is skipped.
+        if action == "NOTRACK":
+            verdict = Verdict.ACCEPT
+            verdict_args: str | None = "notrack:"
+        elif action == "ACCEPT":
+            verdict = Verdict.ACCEPT
+            verdict_args = None
+        elif action == "DROP":
+            verdict = Verdict.DROP
+            verdict_args = None
+        else:
+            import warnings
+            warnings.warn(
+                f"rawnat {line.file}:{line.lineno}: unsupported "
+                f"action {action_raw!r} — skipped", stacklevel=2)
+            continue
+
+        src_zone, src_addr = _parse_zone_spec(source_spec, zones)
+        dst_zone, dst_addr = _parse_zone_spec(dest_spec, zones)
+
+        chain = (ir.chains["raw-output"] if src_zone == fw
+                 else ir.chains["raw-prerouting"])
+
+        rule = Rule(
+            verdict=verdict,
+            verdict_args=verdict_args,
+            source_file=line.file,
+            source_line=line.lineno,
+            source_raw=line.raw,
+        )
+
+        # iif/oif from zone interfaces (skip $FW + the all/any
+        # catchalls — those leave the chain unrestricted).
+        def _zone_iface_match(zone_name: str | None, field: str) -> None:
+            if not zone_name or zone_name == fw:
+                return
+            if zone_name in ("all", "any"):
+                return
+            z = zones.zones.get(zone_name)
+            if not z:
+                return
+            iface_names = [i.name for i in z.interfaces]
+            if not iface_names:
+                return
+            if len(iface_names) == 1:
+                rule.matches.append(Match(
+                    field=field, value=iface_names[0]))
+            else:
+                rule.matches.append(Match(
+                    field=field,
+                    value="{ " + ", ".join(
+                        f'"{i}"' for i in sorted(iface_names)) + " }"))
+
+        _zone_iface_match(src_zone, "iifname")
+        _zone_iface_match(dst_zone, "oifname")
+
+        if src_addr:
+            field = "ip6 saddr" if _is_ipv6(src_addr) else "ip saddr"
+            rule.matches.append(Match(field=field, value=src_addr))
+        if dst_addr:
+            field = "ip6 daddr" if _is_ipv6(dst_addr) else "ip daddr"
+            rule.matches.append(Match(field=field, value=dst_addr))
+        if proto:
+            rule.matches.append(Match(field="meta l4proto", value=proto))
+            if dport:
+                rule.matches.append(Match(field=f"{proto} dport", value=dport))
+            if sport:
+                rule.matches.append(Match(field=f"{proto} sport", value=sport))
+
+        chain.rules.append(rule)
 
 
 def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
