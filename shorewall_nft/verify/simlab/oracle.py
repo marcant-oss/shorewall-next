@@ -130,7 +130,17 @@ class RulesetOracle:
             return False
         if spec.startswith(("+", "@")):
             return False  # ipset reference — we don't expand
-        spec = spec.rstrip("/32").rstrip("/128")
+        # ``ip_network(..., strict=False)`` already accepts both
+        # bare addresses and CIDRs. No pre-stripping needed.
+        #
+        # The old code did ``spec.rstrip("/32").rstrip("/128")`` —
+        # that's subtly wrong because ``rstrip`` strips a **set**
+        # of characters, not a suffix: ``"198.51.100.0/21".rstrip
+        # ("/128")`` peels ``/`` + ``2`` + ``1`` from the right and
+        # yields ``"198.51.100.0"``, turning the /21 into a /32.
+        # Every rule with a /21 / /20 / /24 / … source or dest in
+        # iptables.txt silently stopped matching. Use
+        # ``removesuffix`` if a cleanup is ever needed again.
         try:
             net = _ipaddr.ip_network(spec, strict=False)
         except ValueError:
