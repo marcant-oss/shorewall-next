@@ -1643,12 +1643,16 @@ def config_export(directory: Path | None, fmt: str, output: Path | None,
               show_default=True,
               help="Input format. 'auto' selects by file extension.")
 @click.option("--to", "target", type=click.Path(path_type=Path), default=None,
-              help="Target directory (not yet implemented — this "
-                   "command currently validates and prints a summary).")
+              help="Target directory. When given, the parsed blob is "
+                   "written back as on-disk Shorewall files. Otherwise "
+                   "the command only validates the blob.")
+@click.option("--force", is_flag=True,
+              help="Overwrite --to target even if it is not empty.")
 @click.option("--dry-run", is_flag=True,
-              help="Parse + validate only, print a summary.")
+              help="Parse + validate only, print a summary. Implied "
+                   "when --to is absent.")
 def config_import(source: Path, fmt: str, target: Path | None,
-                  dry_run: bool) -> None:
+                  force: bool, dry_run: bool) -> None:
     """Import a structured JSON/YAML config blob into a ShorewalConfig.
 
     Currently the CLI validates the blob and prints a summary
@@ -1660,6 +1664,7 @@ def config_import(source: Path, fmt: str, target: Path | None,
     from shorewall_nft.config.importer import (
         ImportError as CfgImportError,
         blob_to_config,
+        write_config_dir,
     )
 
     if source.name == "-":
@@ -1707,7 +1712,9 @@ def config_import(source: Path, fmt: str, target: Path | None,
     click.echo(f"  scripts:        {len(config.scripts)} files")
 
     if target is not None and not dry_run:
-        click.echo(
-            "on-disk writer not yet implemented — use --dry-run for "
-            "validation only.", err=True)
-        sys.exit(2)
+        try:
+            written = write_config_dir(config, target, force=force)
+        except CfgImportError as e:
+            click.echo(f"write failed: {e}", err=True)
+            sys.exit(2)
+        click.echo(f"wrote {len(written)} files to {target}")
