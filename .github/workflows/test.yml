@@ -237,9 +237,10 @@ jobs:
       - name: Install build deps
         run: |
           dnf install -y --setopt=install_weak_deps=False \
+            --exclude=pyproject-rpm-macros \
             rpm-build rpmlint python3 python3-pip python3-setuptools \
-            python3-wheel python3-devel gcc make git \
-            pyproject-rpm-macros systemd-rpm-macros \
+            python3-wheel gcc make git \
+            systemd-rpm-macros \
             python3-click python3-pyroute2
 
       - name: Build source tarball
