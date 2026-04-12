@@ -5,6 +5,16 @@ All notable changes to shorewall-nft are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] — 2026-04-12 — fix CI test dependency
+
+### Fixed
+
+- Add `dnspython>=2.4` and `prometheus_client>=0.20` to the `dev` extra
+  so `pip install -e ".[dev]"` (the CI unit-test install) has the daemon
+  dependencies available. Without `dnspython`, `parse_dns_response`
+  silently returned `None` for every frame, causing the
+  `test_tcp_handshake_and_frame_delivery` test to always time out on CI.
+
 ## [1.2.2] — 2026-04-12 — version bump
 
 No functional changes.
