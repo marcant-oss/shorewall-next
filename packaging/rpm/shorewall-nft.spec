@@ -72,6 +72,10 @@ machine-readable JSON catalogs of commands and features.
 
 %prep
 %autosetup -n %{pypi_name}-%{version}
+# The repo root pyproject.toml contains only ruff config (no [build-system] or
+# [project]).  Remove it so Fedora's python3-rpm-macros auto-detection does not
+# inject %pyproject_wheel against the monorepo root during %install.
+rm -f pyproject.toml
 
 %build
 # Pure-Python packages — nothing to compile.
