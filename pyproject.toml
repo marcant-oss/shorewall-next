@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shorewall-nft"
-version = "1.2.2"
+version = "1.2.3"
 description = "nftables-native firewall compiler with Shorewall-compatible configuration"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -52,6 +52,8 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-cov",
+    "dnspython>=2.4",
+    "prometheus_client>=0.20",
 ]
 simulate = [
     "scapy>=2.5",
