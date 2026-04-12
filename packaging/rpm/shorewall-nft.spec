@@ -16,7 +16,6 @@ BuildRequires:  python3-setuptools
 BuildRequires:  python3-pip
 BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-devel
-BuildRequires:  python3-protobuf >= 3.19
 Requires:       python3 >= 3.11
 Requires:       python3-click >= 8.0
 Requires:       python3-pyroute2 >= 0.9
@@ -72,9 +71,10 @@ machine-readable JSON catalogs of commands and features.
 %autosetup -n %{pypi_name}-%{version}
 
 %generate_buildrequires
-# Relax protobuf lower bound to what Fedora ships (3.20+); the generated
-# _pb2 files are proto3 and work fine with any protobuf >= 3.20.
-sed -i 's/"protobuf>=4\.[0-9]*"/"protobuf>=3.19"/' pyproject.toml
+# protobuf is a runtime-only dep (shorewalld dnstap/pbdns); the wheel
+# build does not need it installed.  Strip it here so %pyproject_buildrequires
+# does not emit a BuildRequires that Fedora repos may not satisfy.
+sed -i '/"protobuf/d' pyproject.toml
 %pyproject_buildrequires
 
 %build
