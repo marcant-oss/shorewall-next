@@ -19,7 +19,7 @@ BuildRequires:  python3-devel
 Requires:       python3 >= 3.11
 Requires:       python3-click >= 8.0
 Requires:       python3-pyroute2 >= 0.9
-Requires:       python3dist(protobuf) >= 4.21
+Requires:       python3-probuf >= 3.19
 Requires:       nftables
 Requires:       iproute
 Recommends:     python3-nftables
@@ -69,10 +69,11 @@ machine-readable JSON catalogs of commands and features.
 
 %prep
 %autosetup -n %{pypi_name}-%{version}
-# Relax protobuf lower bound to match Fedora 40's python3-protobuf (4.21.x)
-sed -i 's/"protobuf>=4\.25"/"protobuf>=4.21"/' pyproject.toml
 
 %generate_buildrequires
+# Relax protobuf lower bound to what Fedora ships (3.20+); the generated
+# _pb2 files are proto3 and work fine with any protobuf >= 3.20.
+sed -i 's/"protobuf>=4\.[0-9]*"/"protobuf>=3.19"/' pyproject.toml
 %pyproject_buildrequires
 
 %build
