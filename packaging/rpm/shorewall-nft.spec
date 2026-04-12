@@ -2,7 +2,7 @@
 %global srcname shorewall_nft
 
 Name:           shorewall-nft
-Version:        1.2.0
+Version:        1.2.3
 Release:        1%{?dist}
 Summary:        nftables-native firewall compiler with Shorewall-compatible config
 
