@@ -5,46 +5,108 @@ description: nftables-native firewall compiler with Shorewall-compatible configu
 
 # shorewall-nft
 
-A Python implementation of the Shorewall firewall compiler that emits
-native **nftables** rulesets instead of iptables. Drop-in compatible
-with existing Shorewall configurations, with additional dual-stack,
-plugin, optimizer, and debug features.
+nftables-native firewall compiler with Shorewall-compatible configuration.
+Three installable packages — pick what you need:
 
-## Quick links
+| Package | What it does |
+|---------|-------------|
+| **shorewall-nft** | Compiler + CLI: turns Shorewall config into nft rulesets |
+| **shorewalld** | Prometheus exporter + DNS-driven nft set daemon |
+| **shorewall-nft-simlab** | Packet-level firewall validation lab (netns + scapy) |
 
-- [Getting started](reference/shorewall_quickstart_guide.md)
-- [Configuration basics](reference/configuration_file_basics.md)
-- [CLI reference](cli/commands.md)
-- [Feature index (machine-readable)](reference/features.json)
+→ **[Quick Start](quick-start.md)** — get running in minutes, beginner and pro paths
 
-## What's different from upstream Shorewall
+---
 
-shorewall-nft reimplements the Shorewall configuration language in
-Python and compiles it directly to nftables. The configuration format
-is identical — existing `/etc/shorewall` and `/etc/shorewall6` trees
-load unchanged — but the backend is modern nft instead of iptables.
+## shorewall-nft
 
-Additions on top of Shorewall:
+The compiler reads `/etc/shorewall` (and `/etc/shorewall6` / `/etc/shorewall46`)
+and emits an atomic nftables script. Config format is identical to upstream
+Shorewall — existing configs load unchanged.
 
-| Feature | Page |
-|---------|------|
-| Unified `inet` table for dual-stack IPv4+IPv6 | [merge-config](shorewall-nft/merge-config.md) |
-| Plugin system with IP-INFO and Netbox plugins | [plugins](shorewall-nft/plugins.md) |
-| Post-compile optimizer (OPTIMIZE levels 1-8) | [optimizer](shorewall-nft/optimizer.md) |
-| Debug mode with named counters + source refs | [debug mode](shorewall-nft/debug.md) |
+**Extensions beyond Shorewall:**
+
+| Feature | Doc |
+|---------|-----|
+| Unified `inet` dual-stack table from Shorewall + Shorewall6 | [merge-config](shorewall-nft/merge-config.md) |
+| Plugin system — Netbox, IP-INFO, custom | [plugins](shorewall-nft/plugins.md) — [write a plugin](shorewall-nft/plugin-development.md) |
+| Post-compile optimizer (OPTIMIZE 1–8, 30–37% rule reduction) | [optimizer](shorewall-nft/optimizer.md) |
+| Debug mode: per-rule named counters + source refs in traces | [debug mode](shorewall-nft/debug.md) |
 | Config hash drift detection | [config-hash](shorewall-nft/config-hash.md) |
-| Native netns support | [CLI reference — netns flags](cli/commands.md) |
-| Verification against iptables baseline | [verify tools](testing/verification.md) |
-| DNS-driven nft-set population (`dns:` rules) | [shorewalld](reference/shorewalld.md) |
-| Prometheus metrics exporter (beta) | [shorewalld — metrics](reference/shorewalld.md#metrics) |
+| Six config-dir modes (merged, dual, v4-only, v6-only, …) | [config-dirs](shorewall-nft/config-dirs.md) |
+| Native network-namespace support | [CLI reference](cli/commands.md) |
+| DNS-driven nft set population (`dns:` rule syntax) | [shorewalld](shorewalld/index.md) |
 
-## Documentation structure
+**Config concepts** (shared with upstream Shorewall):
 
-- **`concepts/`** — Shorewall core concepts: anatomy, zones, macros, actions, rules, events. Applies to both upstream Shorewall and shorewall-nft.
-- **`features/`** — Feature-level docs: NAT, traffic shaping, logging, VPN, accounting, IPv6, blacklisting, etc.
-- **`shorewall-nft/`** — Extensions unique to shorewall-nft (plugins, optimizer, debug mode, merge-config, config hash, netns).
-- **`cli/`** — Command reference for the `shorewall-nft` binary.
-- **`reference/`** — Installation, quickstart guides, sample setups (2-interface, 3-interface, standalone), FAQ, troubleshooting, internals, licenses.
-- **`legacy/`** — Upstream-only docs: old version-specific notes, Shorewall-Perl era, hypervisor-specific setups, language variants. Kept for historical reference.
+- [Introduction](concepts/Introduction.md) — zones, interfaces, policies, rules
+- [Macros](concepts/Macros.md) — macro expansion and reversal
+- [Marks and connmarks](concepts/marks-and-connmark.md) — traffic control
+- [Dynamic routing / multi-ISP](concepts/dynamic-routing.md)
+- [NAT](features/NAT.md) · [IPv6](features/IPv6Support.md) · [Logging](features/shorewall_logging.md)
+- [All concepts →](concepts/Introduction.md) · [All features →](features/NAT.md)
 
-Most concept and feature pages were imported from the original Shorewall documentation by Tom Eastep and converted from DocBook to Markdown. They describe the configuration semantics that shorewall-nft preserves. Pages specific to the Perl compiler, iptables output, sysvinit scripts, or platform-specific installers are in `legacy/` and do not apply to shorewall-nft.
+**Setup guides:**
+
+- [Standalone (single interface)](reference/standalone.md)
+- [Two-interface (LAN + internet)](reference/two-interface.md)
+- [Three-interface (LAN + DMZ + internet)](reference/three-interface.md)
+- [Starting and stopping](reference/starting_and_stopping_shorewall.md)
+- [Configuration file format](reference/configuration_file_basics.md)
+- [CLI reference](cli/commands.md) · [Dependencies](reference/dependencies.md)
+
+---
+
+## shorewalld
+
+Long-running companion daemon with two jobs:
+
+1. **Prometheus exporter** — per-rule packet/byte counters from every
+   `inet shorewall` table across all network namespaces
+2. **DNS-set API** — feeds nft sets named `dns_<qname>_v4/v6` from
+   `pdns_recursor` so rules can match on hostname
+
+→ [shorewalld reference](shorewalld/index.md)
+
+---
+
+## shorewall-nft-simlab
+
+Packet-level validation lab: builds a multi-namespace topology, injects
+real packets via TUN/TAP, and compares firewall verdicts against an
+iptables baseline.
+
+→ [Testing overview](testing/index.md) · [Simlab reference](testing/simlab.md)
+
+---
+
+## Reference
+
+- [CLI commands](cli/commands.md)
+- [CLI override schema](cli/override-json.md)
+- [Dependencies by distro](reference/dependencies.md)
+- [Machine-readable: commands.json](reference/commands.json)
+- [Machine-readable: features.json](reference/features.json)
+- [Troubleshooting](reference/troubleshoot.md)
+- [FAQ](reference/FAQ.md)
+- [License (GPL-2.0)](reference/GnuCopyright.md)
+
+---
+
+## Testing
+
+- [Testing overview](testing/index.md) — test pyramid, levels, tools
+- [Test environment setup](testing/setup.md)
+- [Test suite reference](testing/test-suite.md)
+- [Debugging a packet](testing/debugging.md)
+- [Verification tools](testing/verification.md)
+- [Simlab](testing/simlab.md)
+- [Point of truth](testing/point-of-truth.md)
+
+---
+
+> The `concepts/` and `features/` sections document the Shorewall configuration
+> language that shorewall-nft compiles. They were adapted from the original
+> Shorewall documentation by Tom Eastep (GPL-2.0). Pages describing the Perl
+> compiler, iptables internals, or platform-specific installers have been
+> removed — they do not apply to shorewall-nft.

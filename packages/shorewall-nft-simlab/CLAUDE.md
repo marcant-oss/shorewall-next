@@ -25,13 +25,54 @@ Depends on `shorewall-nft` (core) for `verify.simulate`, `verify.iptables_parser
 ## Test host
 
 - **192.168.203.83** — grml trixie/sid live, RAM-only, passwordless
-  ssh as root.
+  ssh as root. Reboots wipe everything.
 - Bootstrap: `tools/setup-remote-test-host.sh root@192.168.203.83`
-  rsyncs the repo, creates venv, runs `install-test-tooling.sh`,
-  stages ground-truth data at `/root/simulate-data`.
-- Long-running tests via `systemd-run --unit=NAME --collect`.
-  **`kill -9 -1` inside `ip netns exec` reaches host processes** (no
-  PID isolation) — the fix in `aa45f78ca` is load-bearing.
+  rsyncs the repo to `/root/shorewall-nft`, creates venv, runs
+  `install-test-tooling.sh`, stages ground-truth data at
+  `/root/simulate-data/`. Merged config lives at `/etc/shorewall46`.
+- **Long-running tests: always use `systemd-run`**, never plain `ssh &`
+  or `nohup`:
+
+  ```bash
+  systemd-run --unit=NAME --collect \
+    --working-directory=/root/shorewall-nft \
+    --property=StandardOutput=file:/tmp/NAME.log \
+    --property=StandardError=file:/tmp/NAME.log \
+    CMD
+  # Status: systemctl is-active NAME
+  # Stop:   systemctl stop NAME && systemctl reset-failed NAME
+  ```
+
+- **`kill -9 -1` inside `ip netns exec` reaches host processes** (no
+  PID isolation) — the fix in `aa45f78ca` is load-bearing. Never issue
+  `kill -9 -1` in test code; use `nsstub`'s `PR_SET_PDEATHSIG` cleanup.
+- **`PrivateMounts=false`** required if wrapping the simlab controller
+  in a systemd unit — otherwise the `/run/netns/<name>` bind-mount
+  installed by nsstub is invisible to `ip netns exec` outside the unit.
+- **Simulate coverage** on this box defaults to `net → host` IPv4.
+  Full-rule coverage comes from `verify --iptables /root/simulate-data/iptables.txt`.
+
+## run-netns tool
+
+`sudo /usr/local/bin/run-netns` is a wrapper around `sudo ip netns`.
+Installed by `tools/install-test-tooling.sh` on the test host and by
+the `shorewall-nft-tests` package on distros.
+
+```bash
+sudo /usr/local/bin/run-netns add <name>
+sudo /usr/local/bin/run-netns delete <name>
+sudo /usr/local/bin/run-netns exec <name> <cmd>
+sudo /usr/local/bin/run-netns list
+```
+
+**Monorepo note:** `install-test-tooling.sh` installiert nur run-netns + sudoers.
+Die Python-Pakete müssen separat über die Sub-Package-Verzeichnisse installiert werden:
+```bash
+pip install -e packages/shorewall-nft[dev] \
+            -e packages/shorewalld[dev] \
+            -e packages/shorewall-nft-simlab[dev]
+```
+`pip install -e .` im Repo-Root installiert nur den leeren Monorepo-Stub.
 
 ## Running simlab
 
@@ -43,14 +84,14 @@ ssh root@192.168.203.83 \
          -m shorewall_nft_simlab.smoketest full \
          --random 50 --max-per-pair 30 --seed 42"
 
-# Results land under docs/testing/simlab-reports/<UTC>/
+# Results land under docs/testing/simlab-reports/<UTC>/ (local, not committed to git)
 ```
 
 ## Open items (simlab)
 
-1. **Full simlab run → archive** — smoketest `full` on the VM, wait
-   for results in `docs/testing/simlab-reports/`. Start of reliable
-   regression history.
+1. **Full simlab run → baseline** — smoketest `full` on the VM, save
+   the JSON report locally under `docs/testing/simlab-reports/` (not
+   committed). Start of reliable regression history once noise is cleared.
 2. **simlab → pytest integration gate** — once `full` is reproducibly
    green, build a pytest wrapper that runs a minimal simlab scenario
    (single probe) in CI. Gate for future emitter changes.
@@ -71,8 +112,8 @@ ssh root@192.168.203.83 \
    forces `rp_filter=0` globally. Should replay per-iface values from
    the parsed `interfaces` file instead (coordinate with core TODO).
 8. **Flame graph** — `py-spy record --format flamegraph` during `full`
-   scan, covering every interface carrying probe traffic. Artifact:
-   `docs/testing/simlab-reports/<ts>/flamegraph.svg`.
+   scan, covering every interface carrying probe traffic. Save artifact
+   locally alongside the run's JSON report (not committed to git).
 
 ## Debug lessons (do not re-learn these)
 

@@ -54,18 +54,43 @@ Deeper open items (not release-blockers):
 
 ## Packaging deps
 
+Source of truth: `docs/reference/dependencies.md`.
+
 **Required runtime:**
-- Python ≥ 3.11, click ≥ 8.0, pyroute2 ≥ 0.7
+- python3 ≥ 3.11 (stdlib `tomllib`, PEP 604 unions)
+- python3-click ≥ 8.0 (modern group handling, `show_default` semantics)
+- python3-pyroute2 ≥ 0.9 (stable nft state reading API)
 - `nft`, `ip` binaries (nftables, iproute2)
 
 **Recommended:**
-- python3-nftables (libnftables bindings; subprocess fallback exists)
-- ipset (legacy init-script ipset loading)
+- python3-nftables — libnftables bindings; subprocess fallback exists but slower
+- ipset — legacy init-script ipset loading
 
-**Kernel floor:** Linux ≥ 5.8. Needs nf_tables, nf_tables_inet,
-nft_counter/ct/limit/log/nat/reject_inet, nft_set_hash/rbtree.
-Soft: nft_objref, nft_connlimit, nft_numgen, nft_flow_offload,
-nft_synproxy.
+**Optional (Suggests):**
+- python3-scapy — only for `simulate` and `connstate` verification tools
+- sudo — only if shipping test tooling (`run-netns` + sudoers)
+
+**Kernel floor:** Linux ≥ 5.8.
+Required (usually auto-loaded): nf_tables, nf_tables_inet,
+nft_counter, nft_ct, nft_limit, nft_log, nft_nat, nft_reject_inet,
+nft_set_hash, nft_set_rbtree.
+Soft: nft_objref, nft_connlimit, nft_numgen, nft_flow_offload, nft_synproxy.
+
+**Distro package name conventions:**
+
+| Distro | Base     | Test subpkg           | Doc subpkg          |
+|--------|----------|-----------------------|---------------------|
+| Debian | shorewall-nft | shorewall-nft-tests | shorewall-nft-doc |
+| Fedora | shorewall-nft | shorewall-nft-tests | shorewall-nft-doc |
+| Arch   | shorewall-nft (all-in-one) | — | — |
+| Alpine | shorewall-nft | shorewall-nft-tests | shorewall-nft-doc |
+
+The `shorewall-nft-tests` package should install `run-netns` +
+`sudoers.d/shorewall-nft-tests` + create group `netns-test`. Do NOT
+call `tools/install-test-tooling.sh` from packaging scripts — call
+the underlying install steps directly.
+
+pytest ≥ 8.0 (modern fixture scoping used in `test_cli_integration.py`).
 
 ## Open items (compiler/emitter)
 

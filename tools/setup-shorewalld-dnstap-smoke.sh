@@ -98,12 +98,14 @@ ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
         pdns-recursor dnsutils \
         2>&1 | tail -10 || true'
 
-info "create venv + editable install"
+info "create venv + editable install (compiler + daemon sub-packages)"
 ssh "$REMOTE" 'cd /root/shorewall-nft && \
     python3 -m venv --system-site-packages .venv && \
-    .venv/bin/pip install -q -e ".[daemon]" 2>&1 | tail -5 && \
+    .venv/bin/pip install -q \
+        -e "packages/shorewall-nft" \
+        -e "packages/shorewalld[daemon]" 2>&1 | tail -5 && \
     .venv/bin/shorewall-nft --version && \
-    .venv/bin/shorewalld --help >/dev/null'
+    .venv/bin/shorewalld --version'
 
 # ──────────────────────────────────────────────────────────────────
 # 2. Stub shorewall-nft config with three dns:<name> rules so the

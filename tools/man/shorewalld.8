@@ -1,0 +1,313 @@
+.TH SHOREWALLD 8 "2026-04-12" "shorewall-nft 1.4.0" "System Administration"
+.SH NAME
+shorewalld \- Prometheus exporter and DNS-driven nft-set daemon for shorewall-nft
+.SH SYNOPSIS
+.B shorewalld
+.RI [ OPTIONS ]
+.PP
+.B shorewalld tap
+.B \-\-socket
+.I PATH
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B shorewalld
+is the companion daemon for
+.BR shorewall-nft (8).
+It serves two independent jobs, both off by default:
+
+.TP
+.B Prometheus exporter
+Scrapes per-rule packet/byte counters, per-interface stats, and
+conntrack fill level from every
+.I inet shorewall
+table on the system, across all network namespaces, via a single
+libnftables round-trip per scrape cycle. Exposes them at a
+Prometheus text endpoint (default \fB:9748\fR).
+
+.TP
+.B DNS-set API
+Accepts a dnstap FrameStream (or PBDNSMessage protobuf stream) from
+.BR pdns-recursor (8)
+and keeps nft sets named \fIdns_<qname>_v4\fR / \fIdns_<qname>_v6\fR
+populated with the resolved A/AAAA records. This allows
+.B shorewall-nft
+rules to match on hostnames rather than literal IP addresses:
+.RS
+.nf
+ACCEPT  fw  net:dns:github.com  tcp  443
+.fi
+.RE
+The compiler declares the sets; shorewalld populates them.
+
+Running
+.B shorewalld
+with no options starts it in Prometheus-only mode.
+
+.SH OPTIONS
+.TP
+.BI \-\-listen\-prom " HOST:PORT"
+Prometheus scrape endpoint (default: \fB:9748\fR).
+.TP
+.BI \-\-listen\-api " PATH"
+Unix socket for the dnstap FrameStream consumer. Off by default.
+Set to e.g. \fB/run/shorewalld/dnstap.sock\fR to enable the DNS-set API.
+.TP
+.BI \-\-dnstap\-tcp " HOST:PORT"
+Accept dnstap FrameStream over TCP in addition to the unix socket.
+Used when the recursor is in a different mount namespace or on a
+remote host.
+.TP
+.BI \-\-pbdns\-tcp " HOST:PORT"
+Accept PBDNSMessage (pdns_recursor protobuf) over TCP.
+pdns_recursor refuses unix sockets for \fBprotobufServer()\fR.
+.TP
+.BI \-\-netns " SPEC"
+Namespace selection. \fB(empty)\fR = daemon's own netns only.
+\fBauto\fR = walk \fI/run/netns/\fR. Comma-separated list =
+explicit namespaces (e.g. \fBfw,rns1,rns2\fR).
+.TP
+.BI \-\-scrape\-interval " SECS"
+Per-netns ruleset cache TTL in seconds (default: 30).
+.TP
+.BI \-\-reprobe\-interval " SECS"
+How often to re-check which namespaces have a loaded
+.I inet shorewall
+table (default: 300).
+.TP
+.BI \-\-log\-level " LEVEL"
+Log level: \fBdebug\fR, \fBinfo\fR, \fBwarning\fR, \fBerror\fR.
+.TP
+.BI \-\-config\-file " PATH"
+Path to configuration file (default: \fI/etc/shorewall/shorewalld.conf\fR
+then \fI/etc/shorewalld.conf\fR).
+.TP
+.BI \-\-state\-dir " DIR"
+Directory for DNS set state persistence (default: \fI/var/lib/shorewalld\fR).
+.TP
+.B \-\-state\-flush
+Ignore and delete any saved DNS set state on startup.
+.TP
+.B \-\-no\-state\-load
+Ignore saved state but do not delete it.
+
+.SH tap SUBCOMMAND
+.B shorewalld tap
+is an inspection tool that binds a dnstap unix socket and
+pretty-prints every DNS answer frame it receives. Useful for
+verifying that
+.B pdns-recursor
+is sending frames and tuning the DNS allowlist.
+
+.PP
+.RS
+.nf
+shorewalld tap \-\-socket /run/shorewalld/dnstap.sock \e
+               \-\-format pretty \e
+               \-\-allowlist /etc/shorewall/dnsnames.compiled
+.fi
+.RE
+
+.TP
+.BI \-\-socket " PATH"
+Unix socket path to listen on (required).
+.TP
+.BI \-\-format " FORMAT"
+Output format: \fBpretty\fR (default on TTY), \fBstructured\fR
+(key=value for grep), \fBjson\fR (for jq).
+.TP
+.BI \-\-filter\-qname " REGEX"
+Show only frames with qnames matching this regex.
+.TP
+.BI \-\-filter\-rcode " NAME"
+Filter by DNS rcode: \fBNOERROR\fR, \fBNXDOMAIN\fR, etc.
+.TP
+.BI \-\-allowlist " PATH"
+Path to \fIdnsnames.compiled\fR — frames are tagged with
+\fB[allowlist ✓]\fR or \fB[unknown]\fR.
+.TP
+.BI \-\-count " N"
+Exit after N matching frames (also prints a summary).
+.TP
+.B \-\-show\-queries
+Include CLIENT_QUERY frames (default: responses only).
+.TP
+.B \-\-no\-color
+Force plain output even on a TTY.
+
+.SH CONFIGURATION FILE
+Settings in \fBshorewalld.conf\fR (shell key=value, # comments, optional quoting).
+CLI flags always override file values. Unknown keys are silently ignored;
+malformed values raise an error at startup.
+.PP
+Example:
+.RS
+.nf
+LISTEN_PROM=:9748
+NETNS=fw,rns1,rns2
+SCRAPE_INTERVAL=30
+REPROBE_INTERVAL=300
+
+LISTEN_API=/run/shorewalld/dnstap.sock
+SOCKET_MODE=0660
+SOCKET_GROUP=pdns
+
+PEER_LISTEN=0.0.0.0:9749
+PEER_ADDRESS=10.0.0.2:9749
+PEER_SECRET_FILE=/etc/shorewall/peer.key
+PEER_HEARTBEAT_INTERVAL=5
+
+STATE_DIR=/var/lib/shorewalld
+LOG_LEVEL=info
+LOG_TARGET=syslog
+LOG_FORMAT=structured
+.fi
+.RE
+
+.SH PROMETHEUS METRICS
+Scrape endpoint: \fBhttp://HOST:PORT/metrics\fR (plain text).
+All metrics carry a \fBnetns\fR label (empty = daemon's own namespace).
+
+.B Rule metrics
+(only when inet shorewall table is loaded in that netns):
+.RS
+.nf
+shorewall_nft_packets_total        counter  netns,chain,rule_handle,comment
+shorewall_nft_bytes_total          counter  netns,chain,rule_handle,comment
+shorewall_nft_named_counter_packets_total  counter  netns,name
+shorewall_nft_named_counter_bytes_total   counter  netns,name
+shorewall_nft_set_elements         gauge    netns,set
+.fi
+.RE
+
+.B Interface metrics
+(always, one per netns):
+.RS
+.nf
+shorewall_nft_iface_rx_packets_total   counter  netns,iface
+shorewall_nft_iface_rx_bytes_total     counter  netns,iface
+shorewall_nft_iface_tx_packets_total   counter  netns,iface
+shorewall_nft_iface_tx_bytes_total     counter  netns,iface
+shorewall_nft_iface_oper_state         gauge    netns,iface  (1=UP, 0=DOWN)
+.fi
+.RE
+
+.B Conntrack metrics:
+.RS
+.nf
+shorewall_nft_ct_count   gauge  netns
+shorewall_nft_ct_max     gauge  netns
+.fi
+.RE
+
+.B dnstap pipeline metrics
+(only when \fB\-\-listen\-api\fR is set):
+.RS
+.nf
+shorewalld_dnstap_frames_accepted_total
+shorewalld_dnstap_frames_decode_error_total
+shorewalld_dnstap_frames_dropped_queue_full_total
+shorewalld_dnstap_connections         gauge
+shorewalld_dnstap_workers_busy        gauge
+shorewalld_dnstap_queue_depth         gauge
+.fi
+.RE
+
+.SH FILES
+.TP
+.I /etc/shorewall/shorewalld.conf
+Primary configuration file location.
+.TP
+.I /etc/shorewalld.conf
+Fallback configuration file location.
+.TP
+.I /etc/shorewall/dnsnames.compiled
+Written by \fBshorewall\-nft start\fR. Contains the set of hostnames
+registered via \fBdns:\fR rule syntax and any per-host overrides.
+shorewalld reads this as its DNS-set allowlist.
+.TP
+.I /var/lib/shorewalld/
+Default state directory. The daemon persists DNS set contents here
+so sets survive daemon restarts without waiting for the recursor to
+re-answer every name.
+.TP
+.I /run/shorewalld/
+Runtime directory (created by the systemd unit via RuntimeDirectory=).
+Unix sockets live here.
+.TP
+.I packaging/systemd/shorewalld.service
+Recommended systemd unit (single process, --netns auto).
+.TP
+.I packaging/systemd/shorewalld@.service
+Templated unit for per-netns process isolation.
+.TP
+.I packaging/pdns-recursor/shorewalld.lua.template
+Lua config template for pdns_recursor to enable the dnstap stream.
+
+.SH EXIT STATUS
+.TP
+.B 0
+Clean shutdown (SIGTERM or SIGINT).
+.TP
+.B 1
+Fatal startup or runtime error.
+.TP
+.B 2
+Argument or configuration error.
+
+.SH EXAMPLES
+.PP
+Start with Prometheus metrics only (all namespaces):
+.RS
+.nf
+shorewalld \-\-listen\-prom :9748 \-\-netns auto
+.fi
+.RE
+.PP
+Enable the DNS-set API alongside metrics:
+.RS
+.nf
+shorewalld \-\-listen\-prom :9748 \e
+           \-\-listen\-api /run/shorewalld/dnstap.sock \e
+           \-\-netns auto
+.fi
+.RE
+.PP
+Inspect the live dnstap stream with allowlist tagging:
+.RS
+.nf
+shorewalld tap \-\-socket /run/shorewalld/dnstap.sock \e
+               \-\-allowlist /etc/shorewall/dnsnames.compiled \e
+               \-\-count 100
+.fi
+.RE
+.PP
+Override the systemd unit without editing it:
+.RS
+.nf
+mkdir \-p /etc/systemd/system/shorewalld.service.d
+cat > /etc/systemd/system/shorewalld.service.d/override.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/shorewalld \e
+    \-\-listen\-prom 0.0.0.0:9748 \e
+    \-\-listen\-api /run/shorewalld/dnstap.sock \e
+    \-\-netns auto
+EOF
+systemctl daemon\-reload && systemctl restart shorewalld
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall-nft (8),
+.BR nft (8),
+.BR pdns-recursor (1)
+
+Full documentation: \fIdocs/shorewalld/index.md\fR in the project repository.
+
+.SH AUTHORS
+.B shorewalld
+is part of the shorewall\-nft project.
+
+.SH BUGS
+Report bugs to the project issue tracker.
+For security issues see \fISECURITY.md\fR.
