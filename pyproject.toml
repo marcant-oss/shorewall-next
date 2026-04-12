@@ -18,3 +18,11 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501", "E701", "E731", "E741", "F601", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests have unconventional import patterns (late imports, semicolons for
+# module-level constants, mixed stdlib+local ordering) — mirror the ignores
+# that each per-package pyproject.toml already applies to its own tests/.
+"*/tests/*" = ["E402", "E702", "I001"]
+# Generated protobuf stubs — not human-authored, ignore all style rules.
+"packages/shorewalld/shorewalld/proto/*_pb2.py" = ["E", "F", "I"]
