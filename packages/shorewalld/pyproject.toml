@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shorewalld"
+version = "1.2.3"
+description = "Prometheus exporter and DNS-based dynamic set daemon for shorewall-nft"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "GPL-2.0-only"}
+authors = [
+    {name = "André Valentin", email = "avalentin@marcant.net"},
+]
+keywords = [
+    "shorewall", "nftables", "prometheus", "dnstap", "firewall", "monitoring",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: No Input/Output (Daemon)",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Networking :: Firewalls",
+]
+dependencies = [
+    "click>=8.0",
+    "pyroute2>=0.7",
+    "protobuf>=4.25",
+    "prometheus_client>=0.20",
+    "dnspython>=2.4",
+    "shorewall-nft>=1.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+shorewalld = "shorewalld.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = [
+    "ignore:coroutine 'AsyncNetlinkSocket.setup_endpoint' was never awaited:RuntimeWarning",
+]
+
+[tool.setuptools.packages.find]
+include = ["shorewalld*"]
+
+[tool.setuptools.package-data]
+shorewalld = [
+    "proto/*.proto",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501", "E701", "E731", "E741", "F601", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+# Generated protobuf files
+"shorewalld/proto/*_pb2.py" = ["E", "F", "I"]

@@ -18,12 +18,16 @@ BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-devel
 Requires:       python3 >= 3.11
 Requires:       python3-click >= 8.0
-Requires:       python3-pyroute2 >= 0.9
-Requires:       python3-protobuf >= 3.19
+Requires:       python3-pyroute2 >= 0.7
 Requires:       nftables
 Requires:       iproute
 Recommends:     python3-nftables
 Recommends:     ipset
+# shorewalld sub-package deps
+Requires:       python3-protobuf >= 4.25
+Requires:       python3-prometheus_client >= 0.20
+Requires:       python3-dns >= 2.4
+# simlab optional
 Suggests:       python3-scapy
 Conflicts:      shorewall
 Conflicts:      shorewall6
@@ -70,13 +74,30 @@ machine-readable JSON catalogs of commands and features.
 %prep
 %autosetup -n %{pypi_name}-%{version}
 
-
 %build
+# Build all three sub-package wheels.
+pushd packages/shorewall-nft
 %pyproject_wheel
+popd
+pushd packages/shorewalld
+%pyproject_wheel
+popd
+pushd packages/shorewall-nft-simlab
+%pyproject_wheel
+popd
 
 %install
+# Install all three wheels.
+pushd packages/shorewall-nft
 %pyproject_install
-%pyproject_save_files shorewall_nft
+popd
+pushd packages/shorewalld
+%pyproject_install
+popd
+pushd packages/shorewall-nft-simlab
+%pyproject_install
+popd
+%pyproject_save_files shorewall_nft shorewalld shorewall_nft_simlab
 
 # systemd unit
 install -Dm644 packaging/systemd/shorewall-nft.service \

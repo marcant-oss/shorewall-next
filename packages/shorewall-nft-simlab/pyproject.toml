@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shorewall-nft-simlab"
+version = "1.2.3"
+description = "Packet-level simulation lab for shorewall-nft firewall validation"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "GPL-2.0-only"}
+authors = [
+    {name = "André Valentin", email = "avalentin@marcant.net"},
+]
+keywords = [
+    "shorewall", "nftables", "firewall", "testing", "simulation", "netns",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Networking :: Firewalls",
+]
+dependencies = [
+    "click>=8.0",
+    "scapy>=2.5",
+    "shorewall-nft>=1.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+shorewall-nft-simlab = "shorewall_nft_simlab.smoketest:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["shorewall_nft_simlab*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501", "E701", "E731", "E741", "F601", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]

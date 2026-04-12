@@ -1,14 +1,24 @@
 #!/usr/bin/make -f
-# debian/rules for shorewall-nft — pyproject build via dh-python.
+# debian/rules for shorewall-nft — monorepo, three sub-packages.
+#
+# Primary wheel (shorewall-nft core) is built by pybuild from
+# packages/shorewall-nft/.  The shorewalld and shorewall-nft-simlab
+# wheels are installed afterwards via pip --no-deps so they land in
+# the same binary package without a separate pybuild invocation.
 export PYBUILD_NAME = shorewall_nft
 export PYBUILD_SYSTEM = pyproject
+export PYBUILD_DIR = packages/shorewall-nft
 
 %:
 	dh $@ --with python3 --buildsystem=pybuild
 
 override_dh_auto_install:
 	dh_auto_install
-	# Single-binary package — install extras directly into the package dir.
+	# Install shorewalld and simlab into the same staging tree.
+	python3 -m pip install --no-deps --no-build-isolation \
+	    --prefix=debian/shorewall-nft/usr \
+	    packages/shorewalld packages/shorewall-nft-simlab
+	# Shell completions, man pages, systemd units.
 	install -D -m 0644 tools/completions/shorewall-nft.bash \
 	    debian/shorewall-nft/usr/share/bash-completion/completions/shorewall-nft
 	install -D -m 0644 tools/completions/shorewall-nft.zsh \
