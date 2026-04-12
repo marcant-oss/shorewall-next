@@ -15,8 +15,10 @@ export PYBUILD_DIR = packages/shorewall-nft
 override_dh_auto_install:
 	dh_auto_install
 	# Install shorewalld and simlab into the same staging tree.
+	# Use --root + --prefix so pip respects the destdir convention and
+	# places scripts under usr/bin/ instead of usr/local/bin/.
 	python3 -m pip install --no-deps --no-build-isolation \
-	    --prefix=debian/shorewall-nft/usr \
+	    --root=debian/shorewall-nft --prefix=/usr \
 	    packages/shorewalld packages/shorewall-nft-simlab
 	# Shell completions, man pages, systemd units.
 	install -D -m 0644 tools/completions/shorewall-nft.bash \

@@ -87,17 +87,19 @@ pushd packages/shorewall-nft-simlab
 popd
 
 %install
-# Install all three wheels.
+# Install the core package via pyproject macros so that %pyproject_save_files
+# can generate a RECORD-based file list.  %pyproject_save_files cannot handle
+# more than one RECORD file, so shorewalld and shorewall-nft-simlab are
+# installed separately via pip (--root/--prefix, no build isolation).
 pushd packages/shorewall-nft
 %pyproject_install
 popd
-pushd packages/shorewalld
-%pyproject_install
-popd
-pushd packages/shorewall-nft-simlab
-%pyproject_install
-popd
-%pyproject_save_files shorewall_nft shorewalld shorewall_nft_simlab
+%pyproject_save_files shorewall_nft
+
+# Secondary packages — plain pip install avoids the multi-RECORD limitation.
+pip3 install --no-deps --no-build-isolation \
+    --root=%{buildroot} --prefix=/usr \
+    packages/shorewalld packages/shorewall-nft-simlab
 
 # systemd unit
 install -Dm644 packaging/systemd/shorewall-nft.service \
@@ -150,7 +152,14 @@ fi
 %doc README.md CHANGELOG.md
 %{_bindir}/shorewall-nft
 %{_bindir}/shorewall-nft-migrate
+# shorewalld and shorewall-nft-simlab are installed via pip (not pyproject macros)
+# so their Python files must be listed explicitly here.
 %{_bindir}/shorewalld
+%{_bindir}/shorewall-nft-simlab
+%{python3_sitelib}/shorewalld/
+%{python3_sitelib}/shorewalld-*.dist-info/
+%{python3_sitelib}/shorewall_nft_simlab/
+%{python3_sitelib}/shorewall_nft_simlab-*.dist-info/
 %{_unitdir}/shorewall-nft.service
 %{_unitdir}/shorewall-nft@.service
 %{_unitdir}/shorewalld.service
