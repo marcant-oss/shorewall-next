@@ -19,9 +19,9 @@ override_dh_auto_install:
 	# them under usr/local/bin/ — use python3 -m build + python3 -m installer
 	# instead, which honours the system sysconfig and writes to usr/bin/.
 	cd packages/shorewalld && python3 -m build --wheel --no-isolation --outdir /tmp/shorewalld-wheel
-	python3 -m installer --destdir=debian/shorewall-nft /tmp/shorewalld-wheel/*.whl
+	python3 -m installer --destdir=debian/shorewall-nft --prefix=/usr /tmp/shorewalld-wheel/*.whl
 	cd packages/shorewall-nft-simlab && python3 -m build --wheel --no-isolation --outdir /tmp/simlab-wheel
-	python3 -m installer --destdir=debian/shorewall-nft /tmp/simlab-wheel/*.whl
+	python3 -m installer --destdir=debian/shorewall-nft --prefix=/usr /tmp/simlab-wheel/*.whl
 	# Shell completions, man pages, systemd units.
 	install -D -m 0644 tools/completions/shorewall-nft.bash \
 	    debian/shorewall-nft/usr/share/bash-completion/completions/shorewall-nft
