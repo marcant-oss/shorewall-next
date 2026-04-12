@@ -107,7 +107,13 @@ class TestDnstapTcpListener:
             )
             # Patch the update sink so we can observe frames
             # arriving without touching libnftables.
-            server._on_update = lambda upd: updates.append(upd)
+            got_update = asyncio.Event()
+
+            def _capture(upd):
+                updates.append(upd)
+                got_update.set()
+
+            server._on_update = _capture
             await server.start()
             try:
                 # Pick up the ephemeral port we just bound.
@@ -146,13 +152,11 @@ class TestDnstapTcpListener:
                     # Send STOP.
                     writer.write(encode_control(CONTROL_STOP))
                     await writer.drain()
-                    # Let the server drain the queue. Poll instead
-                    # of a fixed sleep so this isn't flaky on slow
-                    # CI hosts where the worker thread takes longer
-                    # to wake up and decode the frame.
-                    deadline = asyncio.get_event_loop().time() + 3.0
-                    while not updates and asyncio.get_event_loop().time() < deadline:
-                        await asyncio.sleep(0.02)
+                    # Wait for the decoder worker to call _on_update.
+                    # Using an Event means we return the instant the
+                    # update lands — no polling, no fixed sleep, no
+                    # sensitivity to CI host speed.
+                    await asyncio.wait_for(got_update.wait(), timeout=8.0)
                 finally:
                     writer.close()
                     try:
@@ -163,7 +167,7 @@ class TestDnstapTcpListener:
                 server.close()
 
         try:
-            loop.run_until_complete(asyncio.wait_for(run(), timeout=5.0))
+            loop.run_until_complete(asyncio.wait_for(run(), timeout=12.0))
         finally:
             loop.close()
 
