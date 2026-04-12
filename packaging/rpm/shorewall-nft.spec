@@ -1,11 +1,11 @@
 %global pypi_name shorewall-nft
 %global srcname shorewall_nft
 
-# Suppress pyproject-rpm-macros auto-wheel-build hook.  That hook normally
-# fires before our install section and calls pyproject_wheel against the
-# source root, which fails on this monorepo layout.  We install manually
-# via plain pip3 commands below.
-%global __pyproject_install_pre %{nil}
+# pyproject-rpm-macros 1.14+ auto-injects a wheel-build+install section unless
+# it sees these sentinels.  Signal that we handle installation ourselves via
+# plain pip3 so the automatic section is not generated.
+%global pyproject_wheel_done 1
+%global pyproject_install_done 1
 
 Name:           shorewall-nft
 Version:        1.2.3
