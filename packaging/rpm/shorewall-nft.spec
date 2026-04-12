@@ -1,12 +1,6 @@
 %global pypi_name shorewall-nft
 %global srcname shorewall_nft
 
-# pyproject-rpm-macros 1.14+ auto-injects a wheel-build+install section unless
-# it sees these sentinels.  Signal that we handle installation ourselves via
-# plain pip3 so the automatic section is not generated.
-%global pyproject_wheel_done 1
-%global pyproject_install_done 1
-
 Name:           shorewall-nft
 Version:        1.2.3
 Release:        1%{?dist}
@@ -77,10 +71,6 @@ machine-readable JSON catalogs of commands and features.
 
 %prep
 %autosetup -n %{pypi_name}-%{version}
-# The repo root pyproject.toml contains only ruff config (no [build-system] or
-# [project]).  Remove it so Fedora's python3-rpm-macros auto-detection does not
-# inject %pyproject_wheel against the monorepo root during %install.
-rm -f pyproject.toml
 
 %build
 # Pure-Python packages — nothing to compile.
