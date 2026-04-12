@@ -1,12 +1,10 @@
 %global pypi_name shorewall-nft
 %global srcname shorewall_nft
 
-# pyproject-rpm-macros auto-injects three steps against the source root:
-# (1) build a stub wheel, (2) install it, (3) save file lists.
-# Steps (2) and (3) produce malformed shell commands; suppress both with
-# bash no-ops.  Non-nil values avoid the second-section fallback that nil
-# triggers.  Our pip3 commands in the install section handle actual package
-# installation.
+# The root pyproject.toml is excluded from the source tarball so that
+# pyproject-rpm-macros does not auto-inject wheel/install/save-files hooks
+# against the monorepo root.  These two overrides are a belt-and-suspenders
+# guard in case any other code path tries to call those helpers.
 %global pyproject_install :
 %global pyproject_save_files :
 
