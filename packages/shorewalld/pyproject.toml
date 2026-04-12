@@ -71,6 +71,6 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501", "E701", "E731", "E741", "F601", "F841"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["E402"]
+"tests/*" = ["E402", "I001"]
 # Generated protobuf files
 "shorewalld/proto/*_pb2.py" = ["E", "F", "I"]
