@@ -1,11 +1,11 @@
 %global pypi_name shorewall-nft
 %global srcname shorewall_nft
 
-# pyproject-rpm-macros augments the install pre-section via a named hook
-# macro. Undefining it prevents the package from injecting its wheel, install,
-# and save-files steps against the monorepo root. Our pip3 commands in the
-# install section handle actual package installation instead.
-%undefine __pyproject_wheel_pre
+# pyproject-rpm-macros augments the install pre-section by overriding
+# __spec_install_pre. Reset it to the base build pre-hook so that none of
+# the wheel/install/save-files injection steps run against the monorepo root.
+# Our pip3 commands in the install section handle actual package installation.
+%global __spec_install_pre %{__build_pre}
 
 Name:           shorewall-nft
 Version:        1.2.3
