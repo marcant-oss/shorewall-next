@@ -16,7 +16,6 @@ BuildRequires:  python3-setuptools >= 68.0
 BuildRequires:  python3-pip
 BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-devel
-BuildRequires:  python3-protobuf >= 3.19
 Requires:       python3 >= 3.11
 Requires:       python3-click >= 8.0
 Requires:       python3-pyroute2 >= 0.9
