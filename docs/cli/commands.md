@@ -5,7 +5,7 @@ description: All `shorewall-nft` subcommands with their options and arguments.
 
 # CLI command reference
 
-`shorewall-nft` v0.11.0 has 36 top-level subcommands.
+`shorewall-nft` v1.4.0 has 36 top-level subcommands.
 Auto-generated from the CLI definition — a machine-readable
 version is in [`reference/commands.json`](../reference/commands.json).
 

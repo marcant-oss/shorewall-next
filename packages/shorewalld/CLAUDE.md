@@ -68,17 +68,35 @@ Every code path here is hot. Target: 20 000 DNS answers/s across dnstap
 If you're touching daemon code and can't explain which principle your
 change respects, you're probably making it slower.
 
+## DNS architecture (shipped v1.4.0)
+
+Full pipeline shipped: compiler declares `dns_<qname>_v4/v6` sets,
+daemon populates them from dnstap/PBDNSMessage. Operator reference:
+`docs/shorewalld/index.md`.
+
+Key decisions recorded here to avoid re-debating them:
+
+- **dnstap over unix socket is the preferred default**, not RPZ+protobuf.
+  dnstap is multi-vendor (unbound, knot-resolver, dnsdist), unix socket
+  crosses mount namespaces cleanly, no port management.
+- **PBDNSMessage over TCP** is the opt-in alternative for operators with
+  existing protobuf pipelines. pdns refuses unix sockets for
+  `protobufServer()`.
+- **Do NOT poll `rec_control`** — `dump-cache` stalls the recursor;
+  no `get-rrset` API exists; HTTP endpoint is flush-only.
+- **`flags timeout` on every dns set** — stale entries auto-expire if
+  shorewalld dies. TTL = `max(dns_ttl, 300s)`.
+- **Both HA nodes run their own daemon** — conntrackd does not replicate
+  nft set contents; each node maintains its own sets independently.
+- **`CLIENT_RESPONSE` frames only**, not `RESOLVER_RESPONSE` — cache hits
+  are included, TTL is already clamped to remaining cache lifetime.
+
 ## Open items
 
-1. **DNS-based filtering wire-up** — `shorewalld` has the full
-   dnstap→tracker→SetWriter pipeline; the missing piece is wiring
-   per-netns nft sets from the compiler output. Design:
-   `docs/roadmap/shorewalld.md`.
-2. **dnstap smoke harness on the test VM** — script modelled on
+1. **dnstap smoke harness on the test VM** — script modelled on
    `tools/setup-remote-test-host.sh` that installs `pdns-recursor`,
    drops in `packaging/pdns-recursor/shorewalld.lua.template`,
    starts `shorewalld` + recursor, drives with `dig`, asserts nft sets
    populate within one TTL. Target host: `192.0.2.83`.
-3. **Flame graph for scrape hot path** — `py-spy record --format
-   flamegraph` during a load test; artifact under
-   `docs/testing/simlab-reports/<ts>/flamegraph.svg`.
+2. **Flame graph for scrape hot path** — `py-spy record --format
+   flamegraph` during a load test; save artifact locally (not committed).

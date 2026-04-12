@@ -38,6 +38,8 @@ override_dh_auto_install:
 	    debian/shorewall-nft/usr/share/fish/vendor_completions.d/shorewall-nft.fish
 	install -D -m 0644 tools/man/shorewall-nft.8 \
 	    debian/shorewall-nft/usr/share/man/man8/shorewall-nft.8
+	install -D -m 0644 tools/man/shorewalld.8 \
+	    debian/shorewall-nft/usr/share/man/man8/shorewalld.8
 	install -D -m 0644 packaging/systemd/shorewall-nft.service \
 	    debian/shorewall-nft/lib/systemd/system/shorewall-nft.service
 	install -D -m 0644 packaging/systemd/shorewall-nft@.service \

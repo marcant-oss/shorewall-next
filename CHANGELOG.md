@@ -5,7 +5,50 @@ All notable changes to shorewall-nft are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.0] — 2026-04-12 — DNS nft-set population + Prometheus metrics (beta)
+## [1.4.1] — 2026-04-12 — Monorepo tooling fix + docs restructure + man pages
+
+### Fixed
+
+- **`tools/setup-remote-test-host.sh`**: `pip install -e .` now correctly
+  installs all three sub-packages (`packages/shorewall-nft[dev]`,
+  `packages/shorewalld[dev]`, `packages/shorewall-nft-simlab[dev]`)
+  instead of the empty monorepo root stub. The previous command silently
+  produced a broken venv where `shorewall-nft` was not installed.
+- **`tools/setup-remote-test-host.sh`**: `pytest tests/` hint in the
+  completion message now points to the correct per-package paths
+  (`packages/*/tests/`). The root has no `tests/` directory.
+- **`tools/setup-shorewalld-dnstap-smoke.sh`**: same pip fix; installs
+  `packages/shorewall-nft` and `packages/shorewalld[daemon]`.
+
+### Added
+
+- **`tools/man/shorewalld.8`** — new man page for the `shorewalld` daemon
+  covering all options, the `tap` subcommand, configuration file format,
+  Prometheus metrics tables, FILES section, and examples.
+- **`tools/man/shorewall-nft.8`** — updated to v1.4.1; added 14 previously
+  undocumented commands: `show`, `counters`, `reset`, `drop`, `blacklist`,
+  `reject`, `allow`, `capabilities`, `explain-nft-features`, `migrate`,
+  `generate-sysctl`, `generate-tc`, `generate-set-loader`, `load-sets`.
+- **`HOWTO-CLAUDE.md`** — monorepo navigation guide: entry point by problem
+  type (compiler, CLI, metrics, DNS sets, simlab, packaging, CI, release).
+- **`docs/quick-start.md`** — new beginner and experienced-admin paths.
+- **`docs/shorewalld/index.md`** — dedicated docs section for shorewalld.
+
+### Changed
+
+- **Docs restructure**: removed `docs/legacy/` (39 files of upstream
+  Shorewall history), `docs/concepts/Anatomy.md`, `docs/concepts/Manpages.md`,
+  `docs/features/IPSEC-2.6.md`, `docs/features/Shorewall-init.md`,
+  `docs/features/6to4.md`, `docs/features/LennyToSqueeze.md`,
+  `docs/features/PPTP.md`, `docs/reference/Build.md`. Reduced from ~152
+  to 99 Markdown files.
+- **`docs/index.md`** — rewritten around the three-package monorepo structure.
+- **`README.md`** — updated from v1.0 single-package presentation to v1.4.1
+  monorepo overview with all three packages.
+- **`packaging/rpm/shorewall-nft.spec`** and **`packaging/debian/rules`**
+  — both now install `shorewalld.8`.
+
+## [1.4.0] — 2026-04-12 — DNS nft-set population + Prometheus metrics
 
 ### Added — shorewalld: DNS-driven nft-set population
 

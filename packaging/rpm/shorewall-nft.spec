@@ -2,7 +2,7 @@
 %global srcname shorewall_nft
 
 Name:           shorewall-nft
-Version:        1.4.0
+Version:        1.4.1
 Release:        1%{?dist}
 Summary:        nftables-native firewall compiler with Shorewall-compatible config
 
@@ -100,9 +100,11 @@ install -Dm644 packaging/systemd/shorewalld.service \
 install -Dm644 packaging/systemd/shorewalld@.service \
     %{buildroot}%{_unitdir}/shorewalld@.service
 
-# man page
+# man pages
 install -Dm644 tools/man/shorewall-nft.8 \
     %{buildroot}%{_mandir}/man8/shorewall-nft.8
+install -Dm644 tools/man/shorewalld.8 \
+    %{buildroot}%{_mandir}/man8/shorewalld.8
 
 # shell completions
 install -Dm644 tools/completions/shorewall-nft.bash \
@@ -154,6 +156,7 @@ fi
 %{_unitdir}/shorewalld.service
 %{_unitdir}/shorewalld@.service
 %{_mandir}/man8/shorewall-nft.8*
+%{_mandir}/man8/shorewalld.8*
 %{_datadir}/bash-completion/completions/shorewall-nft
 %{_datadir}/zsh/site-functions/_shorewall-nft
 %{_datadir}/fish/vendor_completions.d/shorewall-nft.fish
@@ -167,6 +170,13 @@ fi
 %{_docdir}/%{name}/
 
 %changelog
+* Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.1-1
+- Release 1.4.1: fix monorepo install in setup scripts (pip install -e packages/*
+  instead of root stub), add shorewalld.8 man page, restructure docs (remove legacy/,
+  add docs/shorewalld/, docs/quick-start.md, HOWTO-CLAUDE.md), update man pages to
+  v1.4.1 with all 36 commands.
+- See CHANGELOG.md for full details.
+
 * Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.0-1
 - Release 1.4.0: DNS-driven nft-set population (dnstap + PBDNSMessage
   pipelines, DnsSetTracker, SetWriter, StateStore, ReloadMonitor,

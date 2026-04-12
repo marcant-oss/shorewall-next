@@ -3,7 +3,7 @@
 #
 # Bootstraps a disposable test host over SSH:
 #   1. rsyncs the working copy to /root/shorewall-nft (excluding .venv, caches)
-#   2. creates a venv and `pip install -e .`
+#   2. creates a venv and installs all three sub-packages (packages/*)
 #   3. runs tools/install-test-tooling.sh for the run-netns wrapper + sudoers
 #   4. copies the marcant-fw iptables-save dump + matching shorewall config
 #      to /root/simulate-data, so `shorewall-nft simulate` has ground truth
@@ -69,11 +69,15 @@ ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
     python3-pytest python3-pytest-xdist python3-click python3-pyroute2 \
     iproute2 sudo nftables conntrack ipset 2>&1 | tail -5 || true'
 
-info "create venv + editable install"
+info "create venv + editable install (all three sub-packages)"
 ssh "$REMOTE" 'cd /root/shorewall-nft && \
     python3 -m venv --system-site-packages .venv && \
-    .venv/bin/pip install -q -e . && \
-    .venv/bin/shorewall-nft --version'
+    .venv/bin/pip install -q \
+        -e "packages/shorewall-nft[dev]" \
+        -e "packages/shorewalld[dev]" \
+        -e "packages/shorewall-nft-simlab[dev]" && \
+    .venv/bin/shorewall-nft --version && \
+    .venv/bin/shorewalld --version'
 
 info "run install-test-tooling.sh on remote"
 ssh "$REMOTE" 'sh /root/shorewall-nft/tools/install-test-tooling.sh'
@@ -172,6 +176,9 @@ info "done. next steps on the remote:"
 info "  systemd-run --unit=shorewall-pytest --collect --working-directory=/root/shorewall-nft \\"
 info "    --property=StandardOutput=file:/tmp/pytest.log \\"
 info "    --property=StandardError=file:/tmp/pytest.log \\"
-info "    /root/shorewall-nft/.venv/bin/python -m pytest tests/ -v"
+info "    /root/shorewall-nft/.venv/bin/python -m pytest \\"
+info "        packages/shorewall-nft/tests/ \\"
+info "        packages/shorewalld/tests/ \\"
+info "        packages/shorewall-nft-simlab/tests/ -v"
 info "  /root/shorewall-nft/.venv/bin/shorewall-nft simulate /root/simulate-data/etc/shorewall \\"
 info "    --iptables /root/simulate-data/iptables.txt -n 60"
