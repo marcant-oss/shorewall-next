@@ -30,24 +30,40 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nftables iproute2
 
-      - name: Install Python package
+      - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install \
+            -e "packages/shorewall-nft[dev]" \
+            -e "packages/shorewalld[dev]" \
+            -e "packages/shorewall-nft-simlab[dev]"
 
-      - name: Run unit tests
+      - name: Run unit tests — core
         run: |
-          pytest tests/ -v \
-            --ignore=tests/test_cli_integration.py \
-            --ignore=tests/test_config_gen.py
+          pytest packages/shorewall-nft/tests/ -v \
+            --ignore=packages/shorewall-nft/tests/test_cli_integration.py \
+            --ignore=packages/shorewall-nft/tests/test_config_gen.py \
+            --ignore=packages/shorewall-nft/tests/test_netns_routing.py
 
-      - name: Coverage
+      - name: Run unit tests — shorewalld
+        run: |
+          pytest packages/shorewalld/tests/ -v
+
+      - name: Run unit tests — simlab
+        run: |
+          pytest packages/shorewall-nft-simlab/tests/ -v
+
+      - name: Coverage (core + shorewalld)
         if: matrix.python-version == '3.12'
         run: |
-          pytest tests/ \
-            --ignore=tests/test_cli_integration.py \
-            --ignore=tests/test_config_gen.py \
+          pytest \
+            packages/shorewall-nft/tests/ \
+            packages/shorewalld/tests/ \
+            --ignore=packages/shorewall-nft/tests/test_cli_integration.py \
+            --ignore=packages/shorewall-nft/tests/test_config_gen.py \
+            --ignore=packages/shorewall-nft/tests/test_netns_routing.py \
             --cov=shorewall_nft \
+            --cov=shorewalld \
             --cov-report=xml \
             --cov-report=term
 
@@ -77,10 +93,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nftables iproute2 sudo
 
-      - name: Install Python package
+      - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,simulate]"
+          pip install \
+            -e "packages/shorewall-nft[dev]" \
+            -e "packages/shorewall-nft-simlab[dev]"
 
       - name: Install test tooling
         run: |
@@ -93,14 +111,9 @@ jobs:
       - name: Run offline debug/plugin tests
         timeout-minutes: 5
         run: |
-          # Only the subset that doesn't need a real /etc/shorewall.
-          # We skip test_debug_command_sigint_restores because the signal
-          # chain through sudo→ip-netns-exec→python is environment-dependent
-          # and already covered by local runs; on CI the fixture setup
-          # occasionally deadlocks and eats the whole step.
-          timeout 120 pytest tests/test_cli_integration.py::TestDebug -v \
-              --deselect tests/test_cli_integration.py::TestDebug::test_debug_command_sigint_restores
-          timeout 60 pytest tests/test_cli_integration.py::TestPlugins -v || true
+          timeout 120 pytest packages/shorewall-nft/tests/test_cli_integration.py::TestDebug -v \
+              --deselect packages/shorewall-nft/tests/test_cli_integration.py::TestDebug::test_debug_command_sigint_restores
+          timeout 60 pytest packages/shorewall-nft/tests/test_cli_integration.py::TestPlugins -v || true
 
   lint:
     name: Lint
@@ -119,7 +132,14 @@ jobs:
         run: pip install ruff
 
       - name: Run ruff
-        run: ruff check shorewall_nft tests
+        run: |
+          ruff check \
+            packages/shorewall-nft/shorewall_nft \
+            packages/shorewall-nft/tests \
+            packages/shorewalld/shorewalld \
+            packages/shorewalld/tests \
+            packages/shorewall-nft-simlab/shorewall_nft_simlab \
+            packages/shorewall-nft-simlab/tests
 
       - name: Install shellcheck
         run: sudo apt-get install -y shellcheck
@@ -129,7 +149,7 @@ jobs:
           shellcheck tools/run-netns tools/install-test-tooling.sh
 
   build:
-    name: Build wheel
+    name: Build wheels
     runs-on: ubuntu-latest
     needs: unit-tests
 
@@ -144,15 +164,18 @@ jobs:
       - name: Install build
         run: pip install build twine
 
-      - name: Build
-        run: python -m build
+      - name: Build wheels
+        run: |
+          python -m build packages/shorewall-nft    --outdir dist/
+          python -m build packages/shorewalld       --outdir dist/
+          python -m build packages/shorewall-nft-simlab --outdir dist/
 
       - name: Check
         run: twine check dist/*
 
-      - name: Verify bundled macros
+      - name: Verify bundled macros (shorewall-nft wheel)
         run: |
-          python -m zipfile -l dist/*.whl | grep -c 'data/macros/macro\.' \
+          python -m zipfile -l dist/shorewall_nft-*.whl | grep -c 'data/macros/macro\.' \
             | awk '{ if ($1 < 100) { print "FAIL: only " $1 " macros in wheel"; exit 1 } \
                      else { print "OK: " $1 " macros bundled" } }'
 
@@ -221,9 +244,11 @@ jobs:
 
       - name: Build source tarball
         run: |
-          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          VERSION=$(python3 -c "
+          import tomllib
+          print(tomllib.load(open('packages/shorewall-nft/pyproject.toml','rb'))['project']['version'])
+          ")
           mkdir -p ~/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
-          # tar up the checkout; git archive trips on container UID-mismatch
           tar --exclude-vcs --exclude='./.github' --exclude='./dist' \
               --exclude='./build' --exclude='./.venv' \
               --exclude='./__pycache__' --exclude='./*.egg-info' \
@@ -284,7 +309,6 @@ jobs:
         id: changelog
         run: |
           TAG="${GITHUB_REF#refs/tags/v}"
-          # Pull out the section between "## [TAG]" and the next "## [" heading
           awk -v tag="$TAG" '
             $0 ~ "^## \\["tag"\\]" { found=1; next }
             found && /^## \[/ { exit }
