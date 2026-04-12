@@ -1,4 +1,4 @@
-# Monorepo root — not an installable package.
+# Monorepo root — not a real installable package.
 # Each sub-package lives under packages/ and has its own pyproject.toml.
 #
 # Quick bootstrap:
@@ -10,6 +10,23 @@
 #   pip install -e 'packages/shorewall-nft[dev]' \
 #               -e 'packages/shorewalld[dev]' \
 #               -e 'packages/shorewall-nft-simlab[dev]'
+#
+# [build-system] and [project] exist solely so that pyproject-rpm-macros'
+# auto-wheel hook (which always fires for any source tree with a
+# pyproject.toml) can build a harmless empty wheel from the monorepo root
+# without hitting setuptools' flat-layout guard.
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shorewall-nft-monorepo"
+version = "0.0.0"
+description = "Monorepo root stub — not published"
+
+[tool.setuptools]
+packages = []
 
 [tool.ruff]
 line-length = 100
