@@ -75,31 +75,16 @@ machine-readable JSON catalogs of commands and features.
 %autosetup -n %{pypi_name}-%{version}
 
 %build
-# Build all three sub-package wheels.
-pushd packages/shorewall-nft
-%pyproject_wheel
-popd
-pushd packages/shorewalld
-%pyproject_wheel
-popd
-pushd packages/shorewall-nft-simlab
-%pyproject_wheel
-popd
+# Pure-Python packages — nothing to compile.
 
 %install
-# Install the core package via pyproject macros so that %pyproject_save_files
-# can generate a RECORD-based file list.  %pyproject_save_files cannot handle
-# more than one RECORD file, so shorewalld and shorewall-nft-simlab are
-# installed separately via pip (--root/--prefix, no build isolation).
-pushd packages/shorewall-nft
-%pyproject_install
-popd
-%pyproject_save_files shorewall_nft
-
-# Secondary packages — plain pip install avoids the multi-RECORD limitation.
+# %pyproject_wheel/%pyproject_install/%pyproject_save_files do not support
+# more than one source tree (multiple RECORD files cause them to abort).
+# Use pip3 directly for all three packages; list site-packages paths
+# explicitly in %files below.
 pip3 install --no-deps --no-build-isolation \
     --root=%{buildroot} --prefix=/usr \
-    packages/shorewalld packages/shorewall-nft-simlab
+    packages/shorewall-nft packages/shorewalld packages/shorewall-nft-simlab
 
 # systemd unit
 install -Dm644 packaging/systemd/shorewall-nft.service \
@@ -147,15 +132,15 @@ if [ $1 -eq 0 ] ; then
     /usr/bin/systemctl stop shorewall-nft.service >/dev/null 2>&1 || :
 fi
 
-%files -f %{pyproject_files}
+%files
 %license LICENSE
 %doc README.md CHANGELOG.md
 %{_bindir}/shorewall-nft
 %{_bindir}/shorewall-nft-migrate
-# shorewalld and shorewall-nft-simlab are installed via pip (not pyproject macros)
-# so their Python files must be listed explicitly here.
 %{_bindir}/shorewalld
 %{_bindir}/shorewall-nft-simlab
+%{python3_sitelib}/shorewall_nft/
+%{python3_sitelib}/shorewall_nft-*.dist-info/
 %{python3_sitelib}/shorewalld/
 %{python3_sitelib}/shorewalld-*.dist-info/
 %{python3_sitelib}/shorewall_nft_simlab/
