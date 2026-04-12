@@ -16,12 +16,12 @@ BuildRequires:  python3-setuptools
 BuildRequires:  python3-pip
 BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-devel
-Requires:       python3-protobuf >= 4.25
+Requires:       python3dist(protobuf) >= 4.25
 
 Requires:       python3 >= 3.11
 Requires:       python3-click >= 8.0
 Requires:       python3-pyroute2 >= 0.9
-Requires:       python3-protobuf >= 4.25
+Requires:       python3dist(protobuf) >= 4.25
 Requires:       nftables
 Requires:       iproute
 Recommends:     python3-nftables
