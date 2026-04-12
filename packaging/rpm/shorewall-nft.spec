@@ -82,9 +82,15 @@ machine-readable JSON catalogs of commands and features.
 # more than one source tree (multiple RECORD files cause them to abort).
 # Use pip3 directly for all three packages; list site-packages paths
 # explicitly in %files below.
-pip3 install --no-deps --no-build-isolation \
-    --root=%{buildroot} --prefix=/usr \
-    packages/shorewall-nft packages/shorewalld packages/shorewall-nft-simlab
+# Install each package from its own directory so that setuptools
+# (with --no-build-isolation) scans from the correct root and does
+# not discover unrelated 'packages/' or 'packaging/' top-level dirs.
+(cd packages/shorewall-nft && pip3 install --no-deps --no-build-isolation \
+    --root=%{buildroot} --prefix=/usr .)
+(cd packages/shorewalld && pip3 install --no-deps --no-build-isolation \
+    --root=%{buildroot} --prefix=/usr .)
+(cd packages/shorewall-nft-simlab && pip3 install --no-deps --no-build-isolation \
+    --root=%{buildroot} --prefix=/usr .)
 
 # systemd unit
 install -Dm644 packaging/systemd/shorewall-nft.service \
