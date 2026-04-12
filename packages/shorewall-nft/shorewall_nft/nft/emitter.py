@@ -17,6 +17,7 @@ from shorewall_nft.compiler.ir import (
     Rule,
     Verdict,
 )
+from shorewall_nft.nft.flowtable import emit_flow_offload_rule
 
 if TYPE_CHECKING:
     from shorewall_nft.nft.capabilities import NftCapabilities  # noqa: F401
@@ -232,6 +233,12 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
                      in ("yes", "1", "true")),
         )
         lines.append("")
+        if "offload" in flags:
+            devlist = ", ".join(flowtable_devices)
+            lines.append(f"\t# HW offload active — enable on each device: "
+                         f"ethtool -K <dev> hw-tc-offload on  (devices: {devlist})")
+            lines.append("\t# Kernel silently falls back to SW flowtable "
+                         "if the driver does not support it.")
         lines.extend(emit_flowtable(ft).splitlines())
 
     # Emit base chains first, then zone-pair chains
@@ -490,7 +497,7 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
         if (chain.hook == Hook.FORWARD and chain.chain_type == ChainType.FILTER
                 and _parse_flowtable_devices(ir)):
             lines.append(f"{indent}\t# Flowtable fastpath — offload established flows")
-            lines.append(f"{indent}\tmeta l4proto {{ tcp, udp }} flow add @ft")
+            lines.append(f"{indent}\t{emit_flow_offload_rule('ft')}")
             lines.append("")
 
         # DNAT concat-map: collapse groups of `ip daddr X tcp/udp dport Y

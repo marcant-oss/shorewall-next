@@ -75,10 +75,12 @@ class TestFlowtable:
     def test_flags_offload(self):
         out = _emit(FLOWTABLE="eth0", FLOWTABLE_FLAGS="offload")
         assert "flags offload;" in out
+        assert "hw-tc-offload" in out
 
     def test_legacy_offload_boolean(self):
         out = _emit(FLOWTABLE="eth0", FLOWTABLE_OFFLOAD="Yes")
         assert "flags offload;" in out
+        assert "hw-tc-offload" in out
 
     def test_counter_stanza(self):
         out = _emit(FLOWTABLE="eth0", FLOWTABLE_COUNTER="Yes")
@@ -96,6 +98,7 @@ class TestFlowtable:
         ir = build_ir(config)
         out = emit_nft(ir, capabilities=caps)
         assert "flags offload" not in out
+        assert "hw-tc-offload" not in out
         assert "FLOWTABLE_FLAGS=offload dropped" in out
 
 
