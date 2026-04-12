@@ -12,10 +12,11 @@ Source0:        %{pypi_name}-%{version}.tar.gz
 
 BuildArch:      noarch
 BuildRequires:  python3 >= 3.11
-BuildRequires:  python3-setuptools
+BuildRequires:  python3-setuptools >= 68.0
 BuildRequires:  python3-pip
 BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-devel
+BuildRequires:  python3-protobuf >= 3.19
 Requires:       python3 >= 3.11
 Requires:       python3-click >= 8.0
 Requires:       python3-pyroute2 >= 0.9
@@ -70,12 +71,6 @@ machine-readable JSON catalogs of commands and features.
 %prep
 %autosetup -n %{pypi_name}-%{version}
 
-%generate_buildrequires
-# protobuf is a runtime-only dep (shorewalld dnstap/pbdns); the wheel
-# build does not need it installed.  Strip it here so %pyproject_buildrequires
-# does not emit a BuildRequires that Fedora repos may not satisfy.
-sed -i '/"protobuf/d' pyproject.toml
-%pyproject_buildrequires
 
 %build
 %pyproject_wheel
