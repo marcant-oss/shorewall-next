@@ -1,12 +1,11 @@
 %global pypi_name shorewall-nft
 %global srcname shorewall_nft
 
-# The root pyproject.toml is excluded from the source tarball so that
-# pyproject-rpm-macros does not auto-inject wheel/install/save-files hooks
-# against the monorepo root.  These two overrides are a belt-and-suspenders
-# guard in case any other code path tries to call those helpers.
-%global pyproject_install :
-%global pyproject_save_files :
+# pyproject-rpm-macros augments the install pre-section via a named hook
+# macro. Undefining it prevents the package from injecting its wheel, install,
+# and save-files steps against the monorepo root. Our pip3 commands in the
+# install section handle actual package installation instead.
+%undefine __pyproject_wheel_pre
 
 Name:           shorewall-nft
 Version:        1.2.3
