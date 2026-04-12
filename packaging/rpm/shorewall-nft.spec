@@ -1,11 +1,11 @@
 %global pypi_name shorewall-nft
 %global srcname shorewall_nft
 
-# pyproject-rpm-macros auto-builds a stub wheel from the root pyproject.toml,
-# then calls %pyproject_install which generates a malformed shell command
-# (/specifier=name==ver) and fails.  Override %pyproject_install with a
-# bash no-op (non-nil prevents the second-%%install-section fallback that
-# %{nil} triggers).  Our pip3 commands below handle actual installation.
+# pyproject-rpm-macros auto-builds a stub wheel from the root pyproject.toml
+# then auto-installs it via an internal script that generates a malformed
+# shell command (/specifier=name==ver).  Override the install macro with a
+# bash no-op — non-nil avoids the second-section fallback that nil triggers.
+# Our pip3 commands in the install section handle actual package installation.
 %global pyproject_install :
 
 Name:           shorewall-nft
