@@ -5,6 +5,16 @@ All notable changes to shorewall-nft are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] — 2026-04-12 — test robustness
+
+### Fixed
+
+- dnstap TCP test: replace busy polling loop with `asyncio.Event` so the
+  assertion no longer races on slow CI hosts.
+- dnstap TCP test: tighten shutdown sequencing and extend startup grace
+  period to prevent spurious failures on heavily loaded runners.
+- Ignore generated protobuf files in ruff lint pass.
+
 ## [1.2.0] — 2026-04-12 — shorewalld DNS-set pipeline
 
 Major refactor + expansion of ``shorewalld`` into a full
