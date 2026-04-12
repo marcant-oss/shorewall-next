@@ -252,6 +252,7 @@ jobs:
           tar --exclude-vcs --exclude='./.github' --exclude='./dist' \
               --exclude='./build' --exclude='./.venv' \
               --exclude='./__pycache__' --exclude='./*.egg-info' \
+              --exclude='./pyproject.toml' \
               --transform "s|^\./|shorewall-nft-${VERSION}/|" \
               -czf ~/rpmbuild/SOURCES/shorewall-nft-${VERSION}.tar.gz .
           cp packaging/rpm/shorewall-nft.spec ~/rpmbuild/SPECS/
