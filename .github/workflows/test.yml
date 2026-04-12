@@ -2,10 +2,10 @@ name: tests
 
 on:
   push:
-    branches: [main, master, shorewall-next]
+    branches: [main, master, shorewall-next, shorewall-nft-release]
     tags: ['v*']
   pull_request:
-    branches: [main, master, shorewall-next]
+    branches: [main, master, shorewall-next, shorewall-nft-release]
 
 jobs:
   unit-tests:
