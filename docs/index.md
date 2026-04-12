@@ -35,6 +35,8 @@ Additions on top of Shorewall:
 | Config hash drift detection | [config-hash](shorewall-nft/config-hash.md) |
 | Native netns support | [CLI reference — netns flags](cli/commands.md) |
 | Verification against iptables baseline | [verify tools](testing/verification.md) |
+| DNS-driven nft-set population (`dns:` rules) | [shorewalld](reference/shorewalld.md) |
+| Prometheus metrics exporter (beta) | [shorewalld — metrics](reference/shorewalld.md#metrics) |
 
 ## Documentation structure
 
