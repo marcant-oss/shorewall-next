@@ -1,3 +1,13 @@
+shorewall-nft (1.4.0-1) unstable; urgency=medium
+
+  * Release 1.4.0: DNS-driven nft-set population (dnstap + PBDNSMessage
+    pipelines, DnsSetTracker, SetWriter, StateStore, ReloadMonitor,
+    WorkerRouter, HA peer-link replication) and Prometheus metrics
+    exporter beta (NftCollector, LinkCollector, CtCollector; :9748).
+  * See CHANGELOG.md for full details.
+
+ -- shorewall-nft maintainers <shorewall-nft@example.com>  Sun, 12 Apr 2026 12:00:00 +0000
+
 shorewall-nft (1.2.0-1) unstable; urgency=medium
 
   * Release 1.2.0: shorewalld DNS-set pipeline — full DNS-driven nft-set

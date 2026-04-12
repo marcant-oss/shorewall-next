@@ -2,7 +2,7 @@
 %global srcname shorewall_nft
 
 Name:           shorewall-nft
-Version:        1.2.3
+Version:        1.4.0
 Release:        1%{?dist}
 Summary:        nftables-native firewall compiler with Shorewall-compatible config
 
@@ -167,6 +167,13 @@ fi
 %{_docdir}/%{name}/
 
 %changelog
+* Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.0-1
+- Release 1.4.0: DNS-driven nft-set population (dnstap + PBDNSMessage
+  pipelines, DnsSetTracker, SetWriter, StateStore, ReloadMonitor,
+  WorkerRouter, HA peer-link replication) and Prometheus metrics exporter
+  beta (NftCollector, LinkCollector, CtCollector; listen on :9748).
+- See CHANGELOG.md for full details.
+
 * Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.2.0-1
 - Release 1.2.0: shorewalld DNS-set pipeline — full DNS-driven nft-set
   populator with HA replication, zero-copy hot paths, persistent state,

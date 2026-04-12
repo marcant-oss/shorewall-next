@@ -5,6 +5,59 @@ All notable changes to shorewall-nft are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-04-12 — DNS nft-set population + Prometheus metrics (beta)
+
+### Added — shorewalld: DNS-driven nft-set population
+
+- **Full DNS-to-nft-set pipeline** via two independent ingestion paths:
+  dnstap (FrameStream unix socket) and PBDNSMessage (PowerDNS protobuf
+  stream, unix or TCP). Both paths share the same `WorkerRouter` →
+  `DnsSetTracker` → `SetWriter` hot path.
+- **`DnsSetTracker`** — `(set_name, ip) → expiry` LRU with
+  proposal/verdict dedup: a write is skipped when the existing element's
+  remaining TTL covers more than 50 % of the incoming TTL.
+- **`SetWriter`** — coalescing writer that batches per `(set, netns)` in
+  a short window before issuing a single `nft add element` netlink call.
+  Avoids per-answer round-trips at high DNS answer rates.
+- **`StateStore`** — persists set contents across daemon restarts so
+  that nft sets are restored before the firewall starts accepting traffic.
+- **`ReloadMonitor`** — watches the shorewall-nft config tree for hash
+  drift; on change, triggers a ruleset reload and reconciles the in-memory
+  set state against the new ruleset.
+- **`WorkerRouter`** — persistent-fork worker pool sized to
+  `os.cpu_count()` for GIL-bound protobuf decode; bounded `queue.Queue`
+  with drop-and-count overflow.
+- **Allowlist filtering** — two-pass decoder walks the varint stream to
+  extract discriminator fields (message type, qname) before full decode;
+  99 % of frames are discarded without a full parse.
+- **HA peer-link replication** — incremental and snapshot sync over
+  authenticated UDP (`IP_PMTUDISC_DO`; payloads capped at 1400 bytes;
+  large snapshots chunked at the application layer).
+
+### Added — shorewalld: Prometheus metrics exporter (beta)
+
+- **`NftCollector`** — scrapes the `inet shorewall` ruleset with a
+  single `list table` netlink round-trip; emits per-rule packet/byte
+  counters, named counter objects, and set-element gauges, all labelled
+  by netns.
+- **`LinkCollector`** — per-interface RX/TX byte/packet counters and
+  operational state via pyroute2.
+- **`CtCollector`** — connection-tracking table fill level from
+  `/proc/sys/net/netfilter/nf_conntrack_count` (setns hop into target
+  netns).
+- All collectors share a per-netns TTL cache (`--scrape-interval`,
+  default 30 s) so Prometheus scrapes faster than the TTL are free.
+- Metrics HTTP endpoint: `--listen-prom HOST:PORT` (default `:9748`).
+- `prometheus_client` is an optional dependency; the module imports are
+  deferred so the package remains importable without it.
+- **Beta status**: collector output format and metric names may change in
+  a future minor release as the schema stabilises against real workloads.
+
+### Changed
+
+- `OPTIMIZE=8` is now the compiler default when `OPTIMIZE` is absent
+  from `shorewall.conf` (previously `OPTIMIZE=0`).
+
 ## [1.2.3] — 2026-04-12 — fix CI test dependency
 
 ### Fixed
