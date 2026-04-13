@@ -633,6 +633,42 @@ def _build_zone_to_concrete_src(
     return out
 
 
+def _ndp_warmup(all_probes: list, topo_tun_mac: dict,
+                ctl, timeout_s: float = 2.0) -> None:
+    """Populate the kernel's IPv6 neighbor cache before real batches.
+
+    Sends one throw-away probe per unique (expect_iface, dst_ip) so
+    every IPv6 destination has a REACHABLE neighbor entry when the
+    first real batch fires.  Probes are sent in small batches (32)
+    to avoid flooding the reader threads with NDP NS/NA exchanges.
+    """
+    seen: set[tuple[str, str]] = set()
+    warmup: list[tuple] = []
+    pid = 0x1ff00
+    for _cat, _exp, plan, _meta in all_probes:
+        if plan.get("family") != 6:
+            continue
+        key = (plan["dst_iface"], plan["dst_ip"])
+        if key in seen:
+            continue
+        seen.add(key)
+        warmup.append(plan | {"probe_id": pid & 0xfffff})
+        pid += 1
+
+    if not warmup:
+        return
+
+    # Fire in small batches so NDP doesn't overwhelm the readers.
+    WARMUP_BATCH = 32
+    for i in range(0, len(warmup), WARMUP_BATCH):
+        chunk = warmup[i:i + WARMUP_BATCH]
+        specs = [s for s in (_plan_to_spec(p, topo_tun_mac, timeout_s=timeout_s)
+                             for p in chunk) if s is not None]
+        if specs:
+            asyncio.run(_smoke_one(ctl, specs))
+    _flush_print(f"ndp warmup: {len(warmup)} dst IPs primed")
+
+
 def _plan_to_spec(plan: dict, topo_tun_mac: dict,
                   timeout_s: float = 2.0):
     """Build a ProbeSpec from a lightweight plan dict on demand."""
@@ -1327,6 +1363,14 @@ def cmd_full(args: argparse.Namespace) -> int:
     topo_mac = ctl.topo.tun_mac if ctl.topo else {}
     results_by_pid: dict[int, tuple[str | None, int]] = {}
 
+    # ── NDP warmup ─────────────────────────────────────────────────
+    # Fire one throw-away probe per unique (inject, expect) interface
+    # pair so the kernel's IPv6 neighbor cache is populated before the
+    # real batches start.  Without this, the first batch floods the
+    # reader threads with NDP NS/NA exchanges and some forwarded
+    # packets time out waiting for neighbor resolution.
+    _ndp_warmup(all_probes, topo_mac, ctl, timeout_s=args.probe_timeout)
+
     batch_size = max(1, args.batch_size)
     total_throttle = 0.0
     n_batches = (len(all_probes) + batch_size - 1) // batch_size
@@ -1685,14 +1729,13 @@ def main() -> int:
     p_full.add_argument("--batch-size", type=int, default=512,
         help="Max probes in flight per batch. Higher = more throughput, "
              "more transient RAM for the ProbeSpec batch (default 512)")
-    p_full.add_argument("--probe-timeout", type=float, default=0.15,
-        help="Per-probe timeout in seconds. TUN/TAP loopback + "
-             "threaded reader + fast-path probe_id extraction brings "
-             "p99 latency to ~200 ms; 0.15 s is just above p99 so "
-             "batches move as fast as the OS can schedule them. "
-             "Raise to 0.35/0.7/2.0 if a run reports false fail_drops "
-             "from a slow TUN backend or pathological forwarding "
-             "(default 0.15)")
+    p_full.add_argument("--probe-timeout", type=float, default=0.25,
+        help="Per-probe timeout in seconds. IPv6 forwarding needs "
+             "NDP neighbor resolution which adds ~100-150 ms on top "
+             "of the base TUN/TAP round-trip; 0.25 s covers p99 for "
+             "dual-stack runs.  Lower to 0.15 for IPv4-only configs "
+             "or raise to 0.5/1.0 if false fail_drops persist "
+             "(default 0.25)")
     p_full.add_argument("-v", "--verbose", action="store_true",
         help="Dump raw sysctl values before the run")
     p_full.add_argument("--no-auto-sysctl", action="store_true",
