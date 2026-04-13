@@ -103,6 +103,173 @@ def fast_is_arp_or_ndp_ns(raw: bytes, is_tap: bool) -> bool:
     return raw[40] == 135
 
 
+# ── Fast (scapy-free) NDP / ARP helpers ─────────────────────────────
+#
+# The reader thread's asyncio event loop must never block on scapy
+# parsing.  These helpers extract fields and build reply frames from
+# raw bytes so ARP and NDP Neighbor Solicitation handling stays on
+# the fast path (~µs instead of ~10 ms per scapy parse).
+
+
+import ipaddress
+import socket
+import struct
+
+
+def _mac_bytes(mac_str: str) -> bytes:
+    """'02:00:00:5e:00:01' → 6 bytes."""
+    return bytes(int(b, 16) for b in mac_str.split(":"))
+
+
+def _mac_str(raw: bytes) -> str:
+    """6 bytes → '02:00:00:5e:00:01'."""
+    return ":".join(f"{b:02x}" for b in raw)
+
+
+def fast_extract_ndp_ns(raw: bytes, is_tap: bool) -> tuple[str, str, str] | None:
+    """Extract (src_mac, src_ip, target_ip) from an NDP NS frame.
+
+    Returns ``None`` if the frame is too short or not a valid NS.
+    Caller must have already verified ``fast_is_arp_or_ndp_ns()``.
+
+    Layout (TAP / Ethernet):
+        [0:6]   dst_mac
+        [6:12]  src_mac
+        [12:14] ethertype 0x86dd
+        --- IPv6 header (40 bytes) at offset 14 ---
+        [14+8 : 14+24]  src IPv6  (16 bytes)
+        --- ICMPv6 NS at offset 14+40 ---
+        [54]    type=135  [55] code=0  [56:58] cksum  [58:62] reserved
+        [62:78] target IPv6 (16 bytes)
+    """
+    if is_tap:
+        # Need at least: 14 (eth) + 40 (ipv6) + 24 (NS hdr+target)
+        if len(raw) < 78:
+            return None
+        src_mac = _mac_str(raw[6:12])
+        src_ip = str(ipaddress.IPv6Address(raw[22:38]))
+        target_ip = str(ipaddress.IPv6Address(raw[62:78]))
+        return src_mac, src_ip, target_ip
+    else:
+        # TUN: no ethernet header
+        if len(raw) < 64:
+            return None
+        src_mac = "00:00:00:00:00:00"  # no L2 in TUN mode
+        src_ip = str(ipaddress.IPv6Address(raw[8:24]))
+        target_ip = str(ipaddress.IPv6Address(raw[48:64]))
+        return src_mac, src_ip, target_ip
+
+
+def fast_extract_arp_request(raw: bytes, is_tap: bool) -> tuple[str, str, str, str] | None:
+    """Extract (src_mac, src_ip, dst_mac_ignored, dst_ip) from an ARP who-has.
+
+    Returns ``None`` if the frame is too short or not op=1 (request).
+
+    Layout (TAP / Ethernet):
+        [14]    hw-type(2) proto-type(2) hw-size(1) proto-size(1) opcode(2)
+        [22:28] sender MAC  [28:32] sender IP
+        [32:38] target MAC  [38:42] target IP
+    """
+    if not is_tap:
+        return None  # ARP is L2-only, no TUN
+    if len(raw) < 42:
+        return None
+    # opcode at offset 20-21 (big-endian), must be 1 (request)
+    op = (raw[20] << 8) | raw[21]
+    if op != 1:
+        return None
+    src_mac = _mac_str(raw[22:28])
+    src_ip = socket.inet_ntoa(raw[28:32])
+    dst_ip = socket.inet_ntoa(raw[38:42])
+    return src_mac, src_ip, "00:00:00:00:00:00", dst_ip
+
+
+def _icmpv6_checksum(src_ip: bytes, dst_ip: bytes, payload: bytes) -> int:
+    """Compute ICMPv6 checksum over the IPv6 pseudo-header + payload."""
+    # Pseudo-header: src(16) + dst(16) + upper-layer-length(4) + zeros(3) + next-header(1)
+    ph = src_ip + dst_ip + struct.pack("!I", len(payload)) + b"\x00\x00\x00\x3a"
+    data = ph + payload
+    # Standard ones-complement checksum
+    if len(data) % 2:
+        data += b"\x00"
+    s = 0
+    for i in range(0, len(data), 2):
+        s += (data[i] << 8) | data[i + 1]
+    while s >> 16:
+        s = (s & 0xffff) + (s >> 16)
+    return ~s & 0xffff
+
+
+def fast_build_ndp_na(
+    src_mac: str, src_ip: str,
+    dst_mac: str, dst_ip: str, target_ip: str,
+) -> bytes:
+    """Build an NDP Neighbor Advertisement without scapy.
+
+    Constructs the full Ethernet + IPv6 + ICMPv6 NA + target-LL-addr
+    option frame and computes the ICMPv6 checksum inline.
+    """
+    src_mac_b = _mac_bytes(src_mac)
+    dst_mac_b = _mac_bytes(dst_mac)
+    src_ip_b = ipaddress.IPv6Address(src_ip).packed
+    dst_ip_b = ipaddress.IPv6Address(dst_ip).packed
+    target_ip_b = ipaddress.IPv6Address(target_ip).packed
+
+    # Flags: R=0, S=solicited(1 for unicast, 0 for multicast), O=1
+    is_multicast = dst_ip.startswith("ff02::")
+    flags = 0x20000000 if is_multicast else 0x60000000  # S=0,O=1 vs S=1,O=1
+
+    # ICMPv6 NA body: type(1) code(1) cksum(2) flags(4) target(16)
+    # + option: type=2(target-LL-addr) len=1(8 bytes) lladdr(6)
+    icmp_payload = struct.pack("!BBH I 16s BB 6s",
+                               136, 0, 0,   # type=NA, code=0, cksum=0 (placeholder)
+                               flags,
+                               target_ip_b,
+                               2, 1,         # opt type=target-LL-addr, opt len=1 (8 bytes)
+                               src_mac_b)
+    # Compute checksum and patch it in
+    cksum = _icmpv6_checksum(src_ip_b, dst_ip_b, icmp_payload)
+    icmp_payload = icmp_payload[:2] + struct.pack("!H", cksum) + icmp_payload[4:]
+
+    # IPv6 header: version=6, traffic-class=0, flow-label=0,
+    # payload-length, next-header=58 (ICMPv6), hop-limit=255
+    ipv6_hdr = struct.pack("!I HBB 16s 16s",
+                           0x60000000,           # ver=6, tc=0, fl=0
+                           len(icmp_payload),    # payload length
+                           58,                   # next header = ICMPv6
+                           255,                  # hop limit
+                           src_ip_b,
+                           dst_ip_b)
+
+    # Ethernet header
+    eth_hdr = dst_mac_b + src_mac_b + b"\x86\xdd"
+
+    return eth_hdr + ipv6_hdr + icmp_payload
+
+
+def fast_build_arp_reply(
+    src_mac: str, src_ip: str,
+    dst_mac: str, dst_ip: str,
+) -> bytes:
+    """Build an ARP reply without scapy.
+
+    Fixed 42-byte Ethernet + ARP frame.
+    """
+    src_mac_b = _mac_bytes(src_mac)
+    dst_mac_b = _mac_bytes(dst_mac)
+    src_ip_b = socket.inet_aton(src_ip)
+    dst_ip_b = socket.inet_aton(dst_ip)
+
+    eth_hdr = dst_mac_b + src_mac_b + b"\x08\x06"
+    # ARP: hw=Ethernet(1), proto=IPv4(0x0800), hw-size=6, proto-size=4,
+    #      op=2(reply), sender-MAC, sender-IP, target-MAC, target-IP
+    arp_body = struct.pack("!HHBBH 6s 4s 6s 4s",
+                           1, 0x0800, 6, 4, 2,
+                           src_mac_b, src_ip_b,
+                           dst_mac_b, dst_ip_b)
+    return eth_hdr + arp_body
+
+
 def _next_sport() -> int:
     global _eph_counter
     _eph_counter = 32768 + ((_eph_counter - 32768 + 1) % 28000)
