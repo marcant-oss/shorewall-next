@@ -48,6 +48,19 @@ from .topology import NS_FW_DEFAULT, SimFwTopology
 _WORKER_MAC = "02:00:00:5e:00:01"
 
 
+def _mac_to_link_local(mac: str) -> str:
+    """Convert a MAC address to an IPv6 link-local address (EUI-64).
+
+    MAC: 02:00:00:5e:00:01 → fe80::200:5eff:fe5e:1
+    """
+    parts = mac.split(":")
+    if len(parts) != 6:
+        # Fallback to hardcoded address if MAC format is unexpected
+        return "fe80::200:5eff:fe00:1"
+    # EUI-64: insert ff:fe in the middle
+    return f"fe80::{parts[0]}{parts[1]}:{parts[2]}ff:fe{parts[3]}:{parts[4]}{parts[5]}"
+
+
 def _extract_src_mac(raw: bytes) -> str:
     """Cheap Ethernet src-MAC extraction — bytes 6..12 of the frame."""
     if len(raw) < 12:
@@ -86,9 +99,13 @@ class SimController:
         trace_depth: int = 128,
         num_threads: int | None = None,
         iface_rp_filter: dict[str, str] | None = None,
+        dump_config: bool = True,  # default to True for debugging
+        pcap_dir: str | None = None,  # write pcap files per interface to this dir
     ):
         self.paths = (ip4add, ip4routes, ip6add, ip6routes)
         self.ns_name = ns_name
+        self._dump_config = dump_config
+        self._pcap_dir = pcap_dir
         # Forward to SimFwTopology so per-iface routefilter values
         # from the parsed shorewall config replace the historical
         # rp_filter=0 forcing.
@@ -107,6 +124,9 @@ class SimController:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
         self._cleanup_registered = False
+        # Pcap writers per interface (if pcap_dir is set)
+        self._iface_pcap: dict[str, Any] = {}
+        self._pcap_lock: threading.Lock | None = None
         # Thread pool — one (reader, writer) pair per CPU core by
         # default. The reader drains a partition of TUN/TAP fds,
         # parses every frame, answers ARP/NDP by pushing replies
@@ -137,6 +157,9 @@ class SimController:
         # No-op back-compat alias used by legacy tests / callers that
         # inspect ``workers`` to see which interfaces exist.
         self.workers: dict[str, tuple[Any, Any]] = {}
+        # Firewall-owned IPv6 addresses — populated in build().
+        # NDP responder skips NS for these to avoid DAD conflicts.
+        self._fw_owned_v6: set[str] = set()
 
     # ── lifecycle ─────────────────────────────────────────────────
 
@@ -160,7 +183,7 @@ class SimController:
             self.state, ns_name=self.ns_name,
             iface_rp_filter=self._iface_rp_filter,
         )
-        self.topo.build()
+        self.topo.build(dump_config=self._dump_config)
 
         # Take ownership of each TUN/TAP fd + per-iface metadata
         for name, fd in list(self.topo.tun_fds.items()):
@@ -179,6 +202,34 @@ class SimController:
         # them a second time — we close them in _shutdown.
         self.topo.tun_fds.clear()
 
+        # Collect firewall-owned IPv6 addresses (global + link-local)
+        # by querying the live namespace. Static computation from the
+        # dump misses the kernel-auto-generated link-local addresses
+        # (derived from the random TAP MAC assigned at creation time).
+        # Answering NS for any of these causes DAD conflicts ("NA: XX
+        # advertised our address") and the kernel discards the NA.
+        self._fw_owned_v6 = set()
+        from pyroute2 import NetNS
+        with NetNS(self.ns_name) as ipr:
+            for addr in ipr.get_addr(family=10):
+                a = addr.get_attr("IFA_ADDRESS")
+                if a:
+                    self._fw_owned_v6.add(a)
+
+        # Initialize pcap writers if requested
+        if self._pcap_dir:
+            import threading
+            self._pcap_lock = threading.Lock()
+            from pathlib import Path
+            pcap_path = Path(self._pcap_dir)
+            pcap_path.mkdir(parents=True, exist_ok=True)
+            import scapy.all as s
+            for iface in self._iface_fds:
+                pcap_file = pcap_path / f"{iface}.pcap"
+                # linktype=1 is DLT_EN10MB (Ethernet)
+                writer = s.PcapWriter(str(pcap_file), sync=True, linktype=1)
+                self._iface_pcap[iface] = writer
+
     def load_nft(self, nft_script_path: str) -> None:
         """Load an nft script into NS_FW via `ip netns exec`."""
         import subprocess
@@ -189,6 +240,19 @@ class SimController:
         if r.returncode != 0:
             raise RuntimeError(
                 f"nft -f failed (rc={r.returncode}):\n{r.stderr[:2000]}")
+        # TODO(shorewall-nft compiler): the compiled nft ruleset has two
+        # IPv6 NDP bugs that block IPv6 forwarding in simlab:
+        #  1. raw-output (prio -300) jumps all IPv6 into fw-rsr which
+        #     has `ct state invalid drop` BEFORE NDP accept → kernel's
+        #     outgoing NS for neighbor resolution is killed → neighbors
+        #     stay INCOMPLETE → no IPv6 forwarding.
+        #  2. forward chain only has `meta nfproto ipv4` zone-pair jump
+        #     rules → all IPv6 forwarded traffic falls through to
+        #     policy accept → no IPv6 deny enforcement.
+        # Until the compiler emits NDP accept before ct state invalid
+        # in raw-output/fw-rsr and adds IPv6 zone-pair rules in
+        # forward, IPv6 simlab probes will show ~810 fail_drops (bug 1)
+        # and ~43 fail_accepts (bug 2).
 
     # ── probe dispatch ────────────────────────────────────────────
 
@@ -236,7 +300,8 @@ class SimController:
             self._reader_stop_events.append(r_stop)
             r = _threading.Thread(
                 target=self._reader_thread_main,
-                args=(pid, group, r_stop),
+                args=(pid, group, r_stop, self._iface_mac, self._iface_kind,
+                      self._fw_owned_v6),
                 name=f"simlab-reader-{pid}",
                 daemon=True,
             )
@@ -350,7 +415,7 @@ class SimController:
     def _writer_thread_main(self, pid: int, wq, stop_ev) -> None:
         """Entry point for one writer thread.
 
-        Tight ``queue.get → os.write`` loop. Consumes ``(fd, bytes)``
+        Tight ``queue.get → os.write`` loop. Consumes ``(fd, iface_name, bytes)``
         tuples from its paired write queue and writes them out.
         All os.write calls in simlab go through a writer thread so
         probe injection and ARP/NDP replies can't stall the main
@@ -367,26 +432,43 @@ class SimController:
                 continue
             if cmd is None:
                 break
-            fd, payload = cmd
+            fd, iface_name, payload = cmd
             try:
                 os.write(fd, payload)
             except OSError:
                 pass
+            # Write to pcap if enabled
+            if self._pcap_dir and self._pcap_lock:
+                with self._pcap_lock:
+                    writer = self._iface_pcap.get(iface_name)
+                    if writer:
+                        try:
+                            writer.write(payload)
+                        except Exception:
+                            pass
         # Drain any remaining queued writes so the last few probes /
         # ARP replies still hit the wire before we tear down.
         try:
             while True:
-                fd, payload = wq.get_nowait()
+                fd, iface_name, payload = wq.get_nowait()
                 try:
                     os.write(fd, payload)
                 except OSError:
                     pass
+                if self._pcap_dir and self._pcap_lock:
+                    with self._pcap_lock:
+                        writer = self._iface_pcap.get(iface_name)
+                        if writer:
+                            try:
+                                writer.write(payload)
+                            except Exception:
+                                pass
         except _queue.Empty:
             pass
         except Exception:
             pass
 
-    def _reader_thread_main(self, tid: int, ifaces: list[str], stop_ev) -> None:
+    def _reader_thread_main(self, tid: int, ifaces: list[str], stop_ev, iface_mac: dict[str, str], iface_kind: dict[str, str], fw_owned_v6: set[str] | None = None) -> None:
         """Entry point for one reader thread.
 
         Runs its own asyncio loop with the assigned subset of TUN/TAP
@@ -415,6 +497,16 @@ class SimController:
                     if not buf:
                         return
 
+                    # Write to pcap if enabled (received packet)
+                    if self._pcap_dir and self._pcap_lock:
+                        with self._pcap_lock:
+                            writer = self._iface_pcap.get(iface_name)
+                            if writer:
+                                try:
+                                    writer.write(buf)
+                                except Exception:
+                                    pass
+
                     # Fast path: observed IP traffic doesn't need
                     # the scapy parse — pull the probe_id straight
                     # out of the IPv4 id / IPv6 flow-label bytes
@@ -437,32 +529,56 @@ class SimController:
 
                     if (pkt.proto == "arp" and pkt.arp_op == 1
                             and pkt.src and pkt.dst):
+                        # Use interface MAC for ARP replies if available
+                        if iface_name in iface_mac:
+                            src_mac_for_reply = iface_mac[iface_name]
+                        else:
+                            src_mac_for_reply = _WORKER_MAC
                         reply = build_arp_reply(
-                            src_mac=_WORKER_MAC,
+                            src_mac=src_mac_for_reply,
                             src_ip=pkt.dst,
                             dst_mac=_extract_src_mac(buf),
                             dst_ip=pkt.src,
                         )
-                        write_q.put((fd, reply))
+                        write_q.put((fd, iface_name, reply))
                         continue
 
-                    if (pkt.proto == "ndp" and pkt.ndp_type == 135
-                            and pkt.src and pkt.dst):
+                    if (pkt.proto == "ndp" and pkt.ndp_type == 135):
                         try:
                             import scapy.all as s
                             from scapy.layers.inet6 import ICMPv6ND_NS
                             layer = s.Ether(buf)
                             if layer.haslayer(ICMPv6ND_NS):
-                                target = layer[ICMPv6ND_NS].tgt
-                                src_ll = "fe80::200:5eff:fe00:1"
+                                target = str(layer[ICMPv6ND_NS].tgt)
+                                # Do NOT answer NS for addresses that the
+                                # firewall itself owns inside NS_FW. Doing
+                                # so causes DAD conflicts ("NA: XX
+                                # advertised our address") and the kernel
+                                # discards the NA entirely.
+                                if fw_owned_v6 and target in fw_owned_v6:
+                                    continue
+                                # Generate correct link-local address from interface MAC
+                                if iface_name in iface_mac:
+                                    src_ll = _mac_to_link_local(iface_mac[iface_name])
+                                    src_mac_for_na = iface_mac[iface_name]
+                                else:
+                                    # Fallback for TUN or if MAC not available
+                                    src_ll = "fe80::200:5eff:fe00:1"
+                                    src_mac_for_na = _WORKER_MAC
+                                # If NS has no source (DAD-style NS with src=::), send NA
+                                # to all-nodes multicast ff02::1. Otherwise unicast to NS source.
+                                if pkt.src and pkt.src != "::":
+                                    dst_ip = pkt.src
+                                else:
+                                    dst_ip = "ff02::1"
                                 na = build_ndp_na(
-                                    src_mac=_WORKER_MAC,
+                                    src_mac=src_mac_for_na,
                                     src_ip=src_ll,
                                     dst_mac=_extract_src_mac(buf),
-                                    dst_ip=pkt.src,
-                                    target_ip=str(target),
+                                    dst_ip=dst_ip,
+                                    target_ip=target,
                                 )
-                                write_q.put((fd, na))
+                                write_q.put((fd, iface_name, na))
                         except Exception:
                             pass
                         continue
@@ -517,7 +633,7 @@ class SimController:
         # write can't stall the main event loop.
         pair_idx = self._iface_to_pair.get(probe.inject_iface, 0)
         try:
-            self._write_queues[pair_idx].put((fd, probe.payload))
+            self._write_queues[pair_idx].put((fd, probe.inject_iface, probe.payload))
         except Exception:
             probe.verdict = "ERROR"
             fut = self._probe_futures.get(probe.probe_id)
@@ -552,6 +668,16 @@ class SimController:
             return
 
     def _handle_packet(self, iface_name: str, raw: bytes) -> None:
+        # Write to pcap if enabled (thread-safe)
+        if self._pcap_dir and self._pcap_lock:
+            with self._pcap_lock:
+                writer = self._iface_pcap.get(iface_name)
+                if writer:
+                    try:
+                        writer.write(raw)
+                    except Exception:
+                        pass
+
         is_tap = self._iface_kind[iface_name] == "tap"
         pkt = parse(raw, is_tap=is_tap)
         self._iface_trace[iface_name].append(pkt)
@@ -560,8 +686,13 @@ class SimController:
         # ARP who-has → reply as if we owned the requested IP
         if (pkt.proto == "arp" and pkt.arp_op == 1
                 and pkt.src and pkt.dst):
+            # Use interface MAC for ARP replies if available
+            if iface_name in self._iface_mac:
+                src_mac_for_reply = self._iface_mac[iface_name]
+            else:
+                src_mac_for_reply = _WORKER_MAC
             reply = build_arp_reply(
-                src_mac=_WORKER_MAC,
+                src_mac=src_mac_for_reply,
                 src_ip=pkt.dst,
                 dst_mac=_extract_src_mac(raw),
                 dst_ip=pkt.src,
@@ -570,26 +701,59 @@ class SimController:
                 os.write(fd, reply)
             except OSError:
                 pass
+            # Write reply to pcap if enabled
+            if self._pcap_dir and self._pcap_lock:
+                with self._pcap_lock:
+                    writer = self._iface_pcap.get(iface_name)
+                    if writer:
+                        try:
+                            writer.write(reply)
+                        except Exception:
+                            pass
             return
 
         # IPv6 NDP Neighbor Solicitation → reply with NA
-        if (pkt.proto == "ndp" and pkt.ndp_type == 135
-                and pkt.src and pkt.dst):
+        if (pkt.proto == "ndp" and pkt.ndp_type == 135):
             try:
                 import scapy.all as s
                 from scapy.layers.inet6 import ICMPv6ND_NS
                 layer = s.Ether(raw)
                 if layer.haslayer(ICMPv6ND_NS):
-                    target = layer[ICMPv6ND_NS].tgt
-                    src_ll = "fe80::200:5eff:fe00:1"
+                    target = str(layer[ICMPv6ND_NS].tgt)
+                    # Skip NS for addresses owned by NS_FW (DAD conflict)
+                    if target in self._fw_owned_v6:
+                        return
+                    # Generate correct link-local address from interface MAC
+                    if iface_name in self._iface_mac:
+                        src_ll = _mac_to_link_local(self._iface_mac[iface_name])
+                        src_mac_for_na = self._iface_mac[iface_name]
+                    else:
+                        # Fallback for TUN or if MAC not available
+                        src_ll = "fe80::200:5eff:fe00:1"
+                        src_mac_for_na = _WORKER_MAC
+                    # If NS has no source (DAD-style NS with src=::), send NA
+                    # to all-nodes multicast ff02::1. Otherwise unicast to NS source.
+                    if pkt.src and pkt.src != "::":
+                        dst_ip = pkt.src
+                    else:
+                        dst_ip = "ff02::1"
                     na = build_ndp_na(
-                        src_mac=_WORKER_MAC,
+                        src_mac=src_mac_for_na,
                         src_ip=src_ll,
                         dst_mac=_extract_src_mac(raw),
-                        dst_ip=pkt.src,
-                        target_ip=str(target),
+                        dst_ip=dst_ip,
+                        target_ip=target,
                     )
                     os.write(fd, na)
+                    # Write NA to pcap if enabled
+                    if self._pcap_dir and self._pcap_lock:
+                        with self._pcap_lock:
+                            writer = self._iface_pcap.get(iface_name)
+                            if writer:
+                                try:
+                                    writer.write(na)
+                                except Exception:
+                                    pass
             except Exception:
                 pass
             return
@@ -673,6 +837,15 @@ class SimController:
         if self._shutdown_done:
             return
         self._shutdown_done = True
+        # Close pcap writers before closing fds
+        if self._pcap_dir and self._pcap_lock:
+            with self._pcap_lock:
+                for writer in self._iface_pcap.values():
+                    try:
+                        writer.close()
+                    except Exception:
+                        pass
+                self._iface_pcap.clear()
         # 0. Signal reader + writer threads to stop and join them.
         for stop_ev in list(self._reader_stop_events):
             try:

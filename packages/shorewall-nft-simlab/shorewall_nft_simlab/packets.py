@@ -376,13 +376,19 @@ def build_ndp_ns(src_mac: str, src_ip: str, target_ip: str) -> bytes:
 
 def build_ndp_na(src_mac: str, src_ip: str,
                  dst_mac: str, dst_ip: str, target_ip: str) -> bytes:
-    """Build an IPv6 Neighbor Advertisement (NA)."""
+    """Build an IPv6 Neighbor Advertisement (NA).
+
+    For unicast NA (dst is specific IPv6 address), S=1 (solicited).
+    For multicast NA (dst=ff02::1), S=0 (unsolicited) per RFC 4861.
+    """
     s = _sc()
     from scapy.layers.inet6 import ICMPv6NDOptDstLLAddr
+    # Multicast NA must have S=0, unicast NA has S=1
+    is_multicast = dst_ip.startswith("ff02::") or dst_ip == "ff02::1"
     frame = (
         s.Ether(src=src_mac, dst=dst_mac) /
         s.IPv6(src=src_ip, dst=dst_ip) /
-        s.ICMPv6ND_NA(tgt=target_ip, R=0, S=1, O=1) /
+        s.ICMPv6ND_NA(tgt=target_ip, R=0, S=0 if is_multicast else 1, O=1) /
         ICMPv6NDOptDstLLAddr(lladdr=src_mac)
     )
     return bytes(frame)
