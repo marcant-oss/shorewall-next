@@ -594,15 +594,33 @@ def _build_zone_to_concrete_src(
             # 256 candidates) to pick a host that is not fw-local.
             # Do NOT use list(net.hosts()) — on a /8 or /16 that
             # materialises 16 M objects and blows the heap.
-            base = int(net.network_address)
-            n_hosts = n_total - 2  # exclude network + broadcast
-            limit = min(256, n_hosts)
+            #
+            # For IPv6 /64+, n_total is 2^64+ which causes integer overflow
+            # in the offset calculation. Use direct host construction instead.
             found: str | None = None
-            for offset in range(n_hosts, n_hosts - limit, -1):
-                candidate = str(_ipaddr.ip_address(base + offset))
+            if family == 6 and addr.prefixlen >= 64:
+                # For large IPv6 subnets, construct a host address directly
+                # by setting the host bits to a high value. Use 0xFF00 as the
+                # host part (avoiding ::1 which might be in use, and avoiding
+                # ffff:ffff:ffff:fffe which is broken).
+                net_addr = int(net.network_address)
+                host_bits = 128 - addr.prefixlen
+                # Set the host bits to 0x00...FF00 (high but not max)
+                host_part = 0xFF00 if host_bits >= 16 else (1 << host_bits) - 2
+                candidate = str(_ipaddr.ip_address(net_addr | host_part))
                 if candidate not in fw_local_ips:
                     found = candidate
-                    break
+            else:
+                # For IPv4 and small IPv6 subnets, use the offset method
+                # with a reasonable upper bound to avoid overflow.
+                base = int(net.network_address)
+                n_hosts = min(n_total - 2, 65536)  # Cap for IPv6 /112 etc.
+                limit = min(256, n_hosts)
+                for offset in range(n_hosts, n_hosts - limit, -1):
+                    candidate = str(_ipaddr.ip_address(base + offset))
+                    if candidate not in fw_local_ips:
+                        found = candidate
+                        break
             if found is None:
                 continue
             out[zone] = found
@@ -1091,6 +1109,8 @@ def cmd_full(args: argparse.Namespace) -> int:
         ip6add=args.data / "ip6add",
         ip6routes=args.data / "ip6routes",
         iface_rp_filter=iface_rp,
+        dump_config=not args.no_dump_config,
+        pcap_dir=args.pcap_dir,
     )
 
     # Pre-load fw state WITHOUT starting the topology (no reader threads yet).
@@ -1472,6 +1492,8 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         ip4routes=args.data / "ip4routes",
         ip6add=args.data / "ip6add",
         ip6routes=args.data / "ip6routes",
+        dump_config=not args.no_dump_config,
+        pcap_dir=args.pcap_dir,
     )
     ctl.build()
     t_build = time.monotonic() - t0
@@ -1541,6 +1563,8 @@ def cmd_stress(args: argparse.Namespace) -> int:
             ip6add=args.data / "ip6add",
             ip6routes=args.data / "ip6routes",
             ns_name=f"simlab-fw-{i}",
+            dump_config=not args.no_dump_config,
+            pcap_dir=args.pcap_dir,
         )
         try:
             ctl.build()
@@ -1594,6 +1618,8 @@ def cmd_limit(args: argparse.Namespace) -> int:
                 ip4add=args.data / "ip4add",
                 ip4routes=args.data / "ip4routes",
                 ns_name=f"simlab-lim-{i}",
+                dump_config=not args.no_dump_config,
+                pcap_dir=args.pcap_dir,
             )
             ctl.build()
             ctl.shutdown()
@@ -1625,6 +1651,12 @@ def main() -> int:
                     help="Pause new work while loadavg1 >= this OR cpu/io PSI avg10 >= 40")
     ap.add_argument("--report-dir", type=Path, default=None,
                     help="Override archive directory for run reports")
+    ap.add_argument("--no-dump-config", action="store_true", default=False,
+                    dest="no_dump_config",
+                    help="Disable ip addr/route dump from NS_FW after build")
+    ap.add_argument("--pcap-dir", type=str, default=None,
+                    metavar="DIR",
+                    help="Write pcap files per interface to DIR for debugging")
     sub = ap.add_subparsers(dest="cmd")
     p_smoke = sub.add_parser("smoke",
         help="one build, one probe per representative pair")

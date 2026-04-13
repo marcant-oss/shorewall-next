@@ -76,13 +76,15 @@ class SimFwTopology:
 
     # ── lifecycle ─────────────────────────────────────────────────
 
-    def build(self) -> None:
+    def build(self, dump_config: bool = True) -> None:
         """Create NS_FW, emit TUN/TAPs, apply addrs + routes."""
         self._ensure_ns()
         self._create_all_tuntaps()
         self._move_all_to_ns()
         self._configure_all_interfaces()
         self._apply_routes()
+        if dump_config:
+            self._dump_config()
         self._built = True
 
     def destroy(self) -> None:
@@ -134,6 +136,20 @@ class SimFwTopology:
         # Sysctls via setns trick
         self._sysctl_write(["net", "ipv4", "ip_forward"], "1")
         self._sysctl_write(["net", "ipv6", "conf", "all", "forwarding"], "1")
+        # IPv6 NDP sysctls: speed up neighbor resolution so the simulator
+        # doesn't wait for default router timeouts. With forwarding=1, Linux
+        # treats interfaces as router ports and may delay NS transmission.
+        self._sysctl_write(["net", "ipv6", "conf", "all", "retrans_time_ms"], "500")
+        self._sysctl_write(["net", "ipv6", "conf", "all", "reachable_time_ms"], "5000")
+        # Accept unsolicited NA so controller replies can populate neighbor cache
+        self._sysctl_write(["net", "ipv6", "conf", "all", "drop_unsolicited_na"], "0")
+        # Disable DAD — in the simlab there are no real neighbors to
+        # conflict with, and DAD delays make interface addresses
+        # "tentative" which blocks forwarding until DAD completes.
+        self._sysctl_write(["net", "ipv6", "conf", "all", "accept_dad"], "0")
+        self._sysctl_write(["net", "ipv6", "conf", "default", "accept_dad"], "0")
+        self._sysctl_write(["net", "ipv6", "conf", "all", "dad_transmits"], "0")
+        self._sysctl_write(["net", "ipv6", "conf", "default", "dad_transmits"], "0")
         # If we don't have per-iface rp_filter overrides we keep
         # the historical behaviour: force rp_filter=0 globally so
         # autorepair-rewritten spoofed-src probes can be injected
@@ -158,8 +174,11 @@ class SimFwTopology:
                 raise OSError(ctypes.get_errno(), "setns failed")
             with open("/proc/sys/" + "/".join(path_parts), "w") as f:
                 f.write(value)
-        except (OSError, FileNotFoundError):
-            pass
+        except (OSError, FileNotFoundError) as e:
+            # Silently ignore non-existent sysctls (e.g. ipv6.accept_local)
+            # but log unexpected errors
+            if not isinstance(e, FileNotFoundError):
+                pass
         finally:
             libc.setns(saved, 0x40000000)
             os.close(saved)
@@ -262,6 +281,15 @@ class SimFwTopology:
                         pass
                 try:
                     ipr.link("set", index=idx, state="up")
+                    # Enable promisc mode so the TAP sees all frames including
+                    # multicast NDP Neighbor Solicitations. pyroute2's
+                    # promisc=True parameter doesn't reliably work, so we
+                    # manipulate IFF_PROMISC (0x100) directly.
+                    from pyroute2.netlink.rtnl.ifinfmsg import IFF_PROMISC, IFF_UP
+                    IFF_MULTICAST = 0x1000
+                    current = ipr.get_links(idx)[0].get_attr("IFLA_FLAGS")
+                    flags = (current or 0) | IFF_PROMISC | IFF_UP | IFF_MULTICAST
+                    ipr.link("set", index=idx, flags=flags)
                 except NetlinkError:
                     pass
 
@@ -320,3 +348,23 @@ class SimFwTopology:
             ipr.route("add", **kwargs)
         except (NetlinkError, OSError, ValueError):
             pass  # best-effort — collisions, bad refs, unknown tables OK
+
+    def _dump_config(self) -> None:
+        """Dump actual addresses and routes from NS_FW for debugging.
+
+        Prints ip addr show and ip route show (v4 + v6) from inside
+        the namespace so we can verify the simulator applied the
+        parsed state correctly.
+        """
+        with NetNS(self.ns_name) as ipr:
+            print(f"=== NS_FW {self.ns_name} ip addr show ===")
+            for addr in ipr.get_addr():
+                print(addr)
+
+            print(f"=== NS_FW {self.ns_name} ip route show ===")
+            for route in ipr.get_routes(family=2):
+                print(route)
+
+            print(f"=== NS_FW {self.ns_name} ip -6 route show ===")
+            for route in ipr.get_routes(family=10):
+                print(route)
