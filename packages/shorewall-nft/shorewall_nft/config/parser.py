@@ -703,6 +703,14 @@ def _merge_configs(config: ShorewalConfig, config6: ShorewalConfig) -> None:
         existing = [z for z in config.zones if z.columns and z.columns[0] == zone_name]
         if not existing:
             config.zones.append(line)
+        else:
+            # Zone exists in both v4 and v6 → dual-stack.  Change its
+            # type from the single-family "ipv4" to generic "ip" so the
+            # emitter does NOT add a meta nfproto qualifier and the
+            # dispatch rules match both address families.
+            v4_line = existing[0]
+            if len(v4_line.columns) > 1 and v4_line.columns[1] in ("ipv4", "ipv6"):
+                v4_line.columns[1] = "ip"
 
     # Merge interfaces (v6 interfaces are typically the same physical interfaces)
     for line in config6.interfaces:

@@ -531,8 +531,15 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
         if chain_rules_to_emit or emitted_dnat_map:
             lines.append("")
 
-        # Add dispatch jumps to zone-pair chains (filter chains only)
-        if chain.chain_type == ChainType.FILTER and chain.hook in (Hook.INPUT, Hook.FORWARD, Hook.OUTPUT):
+        # Add dispatch jumps to zone-pair chains (filter chains only).
+        # Skip raw chains (priority < 0) — they carry NOTRACK rules,
+        # not filter dispatch.  Dispatching from raw-output would
+        # route NDP into zone-pair chains where ct state invalid drop
+        # kills neighbor solicitation before the normal output chain
+        # ever sees it.
+        if (chain.chain_type == ChainType.FILTER
+                and chain.hook in (Hook.INPUT, Hook.FORWARD, Hook.OUTPUT)
+                and chain.priority >= 0):
             _emit_dispatch_rules(lines, chain, ir, indent + "\t")
 
     # Emit rules (for non-base chains only; base chain rules emitted above)
