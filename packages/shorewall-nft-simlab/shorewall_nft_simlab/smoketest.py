@@ -1514,11 +1514,11 @@ def cmd_full(args: argparse.Namespace) -> int:
 
     if getattr(args, "keep_namespace", False):
         _flush_print("")
-        _flush_print(f"=== NAMESPACE PRESERVED ===")
+        _flush_print("=== NAMESPACE PRESERVED ===")
         _flush_print(f"Namespace '{ctl.ns_name}' is kept alive for debugging.")
         _flush_print(f"Inspect with: sudo ip netns exec {ctl.ns_name} bash")
         _flush_print(f"Clean up later: sudo ip netns delete {ctl.ns_name}")
-        _flush_print(f"")
+        _flush_print("")
         after = _resource_counts(ns_name=ctl.ns_name)
     else:
         ctl.shutdown()

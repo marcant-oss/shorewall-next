@@ -17,7 +17,10 @@ from modules that only need type/constant definitions.
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import socket
+import struct
 from dataclasses import dataclass
 from typing import Any
 
@@ -109,11 +112,6 @@ def fast_is_arp_or_ndp_ns(raw: bytes, is_tap: bool) -> bool:
 # parsing.  These helpers extract fields and build reply frames from
 # raw bytes so ARP and NDP Neighbor Solicitation handling stays on
 # the fast path (~µs instead of ~10 ms per scapy parse).
-
-
-import ipaddress
-import socket
-import struct
 
 
 def _mac_bytes(mac_str: str) -> bytes:

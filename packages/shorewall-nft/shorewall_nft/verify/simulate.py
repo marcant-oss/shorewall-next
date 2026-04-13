@@ -13,6 +13,7 @@ Uses sudo /usr/local/bin/run-netns for all namespace operations.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import random
 import signal
