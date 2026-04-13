@@ -1,3 +1,13 @@
+shorewall-nft (1.4.2-1) unstable; urgency=medium
+
+  * Release 1.4.2: IPv6 NDP & baseline security fixes — raw chains
+    excluded from dispatch, base chain policy drop, ct state moved to
+    zone-pair chains, dual-stack zone promotion, dispatch ordering fix,
+    scapy-free NDP/ARP fast path in simlab.
+  * See CHANGELOG.md for full details.
+
+ -- shorewall-nft maintainers <shorewall-nft@example.com>  Sun, 13 Apr 2026 16:00:00 +0000
+
 shorewall-nft (1.4.1-1) unstable; urgency=medium
 
   * Release 1.4.1: fix monorepo install in setup scripts (pip install

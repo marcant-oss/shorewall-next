@@ -44,7 +44,7 @@ cd packages/shorewalld && python -m pytest tests/ -q
 
 Branch `shorewall-nft-release`. Versions in sync across all three
 `pyproject.toml` files and `packages/shorewall-nft/shorewall_nft/__init__.py`.
-Latest released: **v1.4.1** (monorepo tooling fix, docs restructure, shorewalld man page).
+Latest released: **v1.4.2** (IPv6 NDP & baseline security fixes).
 
 When bumping a version, update all of these in one commit:
 - `packages/shorewall-nft/pyproject.toml`
