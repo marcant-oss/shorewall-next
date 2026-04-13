@@ -395,8 +395,9 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     # base-chain pass already handles the FASTACCEPT=Yes case; mirror
     # the classic behaviour here for FASTACCEPT=No so return traffic
     # through zone-pair chains still gets accepted.
-    if not getattr(ir, "_fastaccept", True):
-        _prepend_ct_state_to_zone_pair_chains(ir)
+    fastaccept = getattr(ir, "_fastaccept", True)
+    _prepend_ct_state_to_zone_pair_chains(
+        ir, include_established=not fastaccept)
 
     # Optimize: run all applicable optimizations
     optimize_level = int(config.settings.get("OPTIMIZE", "8"))
@@ -423,36 +424,26 @@ def _create_base_chains(ir: FirewallIR) -> None:
             chain_type=ChainType.FILTER,
             hook=hook,
             priority=0,
+            policy=Verdict.DROP,
         )
-        # FASTACCEPT: if Yes (default), established/related traffic is
-        # accepted in base chains before dispatch. If No, it flows through
-        # zone-pair chains for accounting/logging purposes.
-        # We always add ct state invalid drop and dropNotSyn regardless.
+        # Base chains mirror Shorewall's iptables architecture:
+        # policy DROP, no ct state rules, only dispatch jumps (emitted
+        # later by the emitter).  ct state established/related accept
+        # and invalid drop live in the zone-pair chains (prepended by
+        # _prepend_ct_state_to_zone_pair_chains).
+        #
+        # FASTACCEPT: if Yes (default), established/related accept is
+        # added here so it fires before dispatch — a fast path that
+        # skips the per-chain walk for return traffic.
         fastaccept = getattr(ir, '_fastaccept', True)
         if fastaccept:
             chain.rules.append(Rule(
                 matches=[Match(field="ct state", value="established,related")],
                 verdict=Verdict.ACCEPT,
             ))
-        # Drop invalid packets (always)
-        chain.rules.append(Rule(
-            matches=[Match(field="ct state", value="invalid")],
-            verdict=Verdict.DROP,
-        ))
-        # dropNotSyn: drop new TCP connections without SYN flag
-        # (prevents ACK scans, RST floods, and other TCP anomalies)
-        chain.rules.append(Rule(
-            matches=[
-                Match(field="meta l4proto", value="tcp"),
-                Match(field="ct state", value="new"),
-                Match(field="tcp flags & syn", value="0"),
-            ],
-            verdict=Verdict.DROP,
-            comment="dropNotSyn",
-        ))
-        # ICMPv6 NDP essentials — MUST always be allowed for IPv6 to work
-        # (Neighbor Solicitation, Neighbor Advertisement,
-        #  Router Solicitation, Router Advertisement)
+        # ICMPv6 NDP essentials — MUST be accepted in input/output
+        # base chains before dispatch so the kernel can resolve
+        # neighbors and receive router advertisements.
         if hook in (Hook.INPUT, Hook.OUTPUT):
             for icmpv6_type in [
                 "nd-neighbor-solicit",
@@ -471,21 +462,20 @@ def _create_base_chains(ir: FirewallIR) -> None:
         ir.add_chain(chain)
 
 
-def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR) -> None:
-    """Prepend ct state RELATED,ESTABLISHED accept + invalid drop to every
-    zone-pair chain. Used when FASTACCEPT=No.
+def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
+                                          include_established: bool = True,
+                                          ) -> None:
+    """Prepend ct state rules to every zone-pair chain.
 
-    Classic shorewall iptables with FASTACCEPT=No emits this pattern at
-    the top of every generated zone2zone chain:
+    Always prepends ``ct state invalid drop``.  When
+    *include_established* is True (FASTACCEPT=No), also prepends
+    ``ct state established,related accept`` so return traffic is
+    accepted inside the zone-pair chain instead of in the base chain.
 
-        -A adm2cdn -m conntrack --ctstate INVALID,NEW,UNTRACKED -j dynamic
-        -A adm2cdn -m conntrack --ctstate INVALID,NEW,UNTRACKED -j smurfs
-        -A adm2cdn -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-
-    We match the established/invalid semantics here. Zone-pair chains
-    are identified as non-base chains whose names contain a dash
-    matching a known zone pair (emitter convention: "<src>-<dst>").
-    Chains starting with "sw_" are action chains — skipped.
+    Zone-pair chains are identified as non-base chains whose names
+    contain a dash matching a known zone pair (emitter convention:
+    "<src>-<dst>"). Chains starting with "sw_" are action chains —
+    skipped.
     """
     all_zones = set(ir.zones.all_zone_names())
     for name, chain in ir.chains.items():
@@ -498,18 +488,16 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR) -> None:
         src, _, dst = name.partition("-")
         if src not in all_zones or dst not in all_zones:
             continue
-        # Prepend the established accept + invalid drop so they fire
-        # before any explicit rule in the chain.
-        ct_rules = [
-            Rule(
+        ct_rules: list[Rule] = []
+        if include_established:
+            ct_rules.append(Rule(
                 matches=[Match(field="ct state", value="established,related")],
                 verdict=Verdict.ACCEPT,
-            ),
-            Rule(
-                matches=[Match(field="ct state", value="invalid")],
-                verdict=Verdict.DROP,
-            ),
-        ]
+            ))
+        ct_rules.append(Rule(
+            matches=[Match(field="ct state", value="invalid")],
+            verdict=Verdict.DROP,
+        ))
         chain.rules = ct_rules + list(chain.rules)
 
 

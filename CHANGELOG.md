@@ -30,6 +30,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **simlab: probe-id collisions between IPv4 and IPv6** — both families
   shared a 16-bit counter.  IPv6 probes now use the full 20-bit flow
   label and start at 0x10000, eliminating cross-family collisions.
+- **Base chain policy accept instead of drop** — the filter base chains
+  (input, forward, output) had no explicit policy, defaulting to nft's
+  `accept`.  Traffic not dispatched to any zone-pair chain was silently
+  accepted.  Fix: all three base chains now emit `policy drop`, matching
+  the Shorewall iptables architecture.
+- **ct state invalid drop in base chain killed IPv6 forwarding** —
+  `ct state invalid drop` and `dropNotSyn` were emitted in the base
+  chains before dispatch jumps.  This matches no Shorewall precedent
+  (iptables puts these checks in zone-pair chains, not the base chain)
+  and killed IPv6 forwarded packets before they reached dispatch.
+  Fix: base chains now contain only FASTACCEPT (if enabled), NDP accept
+  (input/output), and dispatch jumps.  ct state rules live exclusively
+  in zone-pair chains.
+- **merge-config: dual-stack zones kept ipv4 type** — `merge-config`
+  kept the v4 zone type for zones present in both configs, causing
+  all dispatch rules to get `meta nfproto ipv4`.  Fix: zones present
+  in both v4 and v6 configs are now promoted to type `ip`.
 
 ## [1.4.1] — 2026-04-12 — Monorepo tooling fix + docs restructure + man pages
 
