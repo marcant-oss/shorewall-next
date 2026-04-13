@@ -1403,8 +1403,40 @@ def cmd_full(args: argparse.Namespace) -> int:
     if ft_summary is not None:
         _flush_print(f"flowtable: {ft_summary}")
 
-    ctl.shutdown()
-    after = _resource_counts()
+    # --sleep-before-shutdown: sleep N seconds before destroying the namespace.
+    # Useful for live debugging (inspect with ip netns exec while process waits).
+    if getattr(args, "sleep_before_shutdown", 0) > 0:
+        import time as _time
+        _flush_print("")
+        _flush_print(f"=== SLEEPING {args.sleep_before_shutdown}s BEFORE SHUTDOWN ===")
+        _flush_print(f"Namespace '{ctl.ns_name}' is alive. Inspect with:")
+        _flush_print(f"  sudo ip netns exec {ctl.ns_name} bash")
+        try:
+            _time.sleep(args.sleep_before_shutdown)
+        except KeyboardInterrupt:
+            _flush_print("Sleep interrupted by user — proceeding with shutdown")
+    if getattr(args, "pause_before_shutdown", False):
+        _flush_print("")
+        _flush_print(f"=== PAUSED BEFORE SHUTDOWN ===")
+        _flush_print(f"Namespace '{ctl.ns_name}' is still alive.")
+        _flush_print(f"Inspect with: sudo ip netns exec {ctl.ns_name} bash")
+        _flush_print(f"Press ENTER to continue with shutdown...")
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+    if getattr(args, "keep_namespace", False):
+        _flush_print("")
+        _flush_print(f"=== NAMESPACE PRESERVED ===")
+        _flush_print(f"Namespace '{ctl.ns_name}' is kept alive for debugging.")
+        _flush_print(f"Inspect with: sudo ip netns exec {ctl.ns_name} bash")
+        _flush_print(f"Clean up later: sudo ip netns delete {ctl.ns_name}")
+        _flush_print(f"")
+        after = _resource_counts(ns_name=ctl.ns_name)
+    else:
+        ctl.shutdown()
+        after = _resource_counts()
     _flush_print(f"after: {after}")
     delta = {k: after.get(k, 0) - before.get(k, 0) for k in after}
     _flush_print(f"delta: {delta}")
@@ -1642,6 +1674,21 @@ def main() -> int:
         help="Skip automatic sysctl tuning (ip_forward, rp_filter, "
              "rmem/wmem_max). Use when running inside a container or "
              "when sysctls are managed externally.")
+    p_full.add_argument("--keep-namespace", action="store_true",
+        dest="keep_namespace", default=False,
+        help="Preserve the simulator namespace after the run for "
+             "debugging. You must manually clean it up later with "
+             "'sudo ip netns delete <name>'.")
+    p_full.add_argument("--pause-before-shutdown", action="store_true",
+        dest="pause_before_shutdown", default=False,
+        help="Pause before shutting down the namespace. "
+             "Prompts for ENTER before cleanup, allowing live debugging. "
+             "Requires a TTY (run from an interactive terminal).")
+    p_full.add_argument("--sleep-before-shutdown", type=int, default=0,
+        metavar="SECONDS",
+        help="Sleep N seconds before shutting down the namespace. "
+             "Useful for live debugging without a TTY. "
+             "Example: --sleep-before-shutdown 300 gives you 5 minutes to inspect.")
 
     args = ap.parse_args()
     if args.cmd == "smoke" or args.cmd is None:
