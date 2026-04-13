@@ -28,8 +28,10 @@ _eph_counter = 32768 + (os.getpid() & 0xffff) % 28000
 def fast_probe_id(raw: bytes, is_tap: bool) -> int | None:
     """Extract the probe_id from an observed frame without scapy.
 
-    simlab stashes every probe's 16-bit id in IPv4 ``id`` or the low
-    20 bits of the IPv6 flow label (see ``_ipv4``/``_ipv6`` above).
+    simlab stashes every probe's id in IPv4 ``id`` (16-bit) or the
+    IPv6 flow label (20-bit). IPv6 probe IDs start at 0x10000 so
+    they never collide with 16-bit IPv4 IDs.
+
     On the hot path (~thousands of probes per second) running scapy
     parse for each observation dominates CPU and — thanks to the
     GIL — prevents the reader threads from scaling across cores.
@@ -40,9 +42,10 @@ def fast_probe_id(raw: bytes, is_tap: bool) -> int | None:
       verified to be 0x0800 v4 or 0x86dd v6).
     - TUN mode: no header, IP version is in the first nibble.
 
-    Returns the 16-bit id (masked by the caller) or ``None`` when
-    the frame is not a recognisable v4/v6 packet (caller should
-    fall back to the slow path, ARP/NDP handling, etc.).
+    Returns the probe id (16-bit for IPv4, 20-bit for IPv6) or
+    ``None`` when the frame is not a recognisable v4/v6 packet
+    (caller should fall back to the slow path, ARP/NDP handling,
+    etc.).
     """
     off = 14 if is_tap else 0
     if is_tap:
@@ -66,7 +69,7 @@ def fast_probe_id(raw: bytes, is_tap: bool) -> int | None:
         if len(raw) < off + 4:
             return None
         return (((raw[off + 1] & 0x0f) << 16)
-                | (raw[off + 2] << 8) | raw[off + 3]) & 0xffff
+                | (raw[off + 2] << 8) | raw[off + 3])
     return None
 
 
@@ -410,7 +413,7 @@ def build_esp(src_ip: str, dst_ip: str, *, spi: int = 0x1000, seq: int = 1,
     if family == 6:
         ip6_kwargs: dict = {"src": src_ip, "dst": dst_ip, "nh": 50}
         if probe_id is not None:
-            ip6_kwargs["fl"] = probe_id & 0xffff
+            ip6_kwargs["fl"] = probe_id & 0xfffff
         layer = s.IPv6(**ip6_kwargs) / ESP(spi=spi, seq=seq, data=payload)
     else:
         ip_kwargs: dict = {"src": src_ip, "dst": dst_ip, "proto": 50}
@@ -442,7 +445,7 @@ def build_ah(src_ip: str, dst_ip: str, *, spi: int = 0x1000, seq: int = 1,
     if family == 6:
         ip6_kwargs: dict = {"src": src_ip, "dst": dst_ip, "nh": 51}
         if probe_id is not None:
-            ip6_kwargs["fl"] = probe_id & 0xffff
+            ip6_kwargs["fl"] = probe_id & 0xfffff
         layer = s.IPv6(**ip6_kwargs) / ah
     else:
         ip_kwargs: dict = {"src": src_ip, "dst": dst_ip, "proto": 51}
@@ -471,7 +474,7 @@ def build_gre(src_ip: str, dst_ip: str, *,
     if family == 6:
         ip6_kwargs: dict = {"src": src_ip, "dst": dst_ip, "nh": 47}
         if probe_id is not None:
-            ip6_kwargs["fl"] = probe_id & 0xffff
+            ip6_kwargs["fl"] = probe_id & 0xfffff
         layer = s.IPv6(**ip6_kwargs) / gre
     else:
         ip_kwargs: dict = {"src": src_ip, "dst": dst_ip, "proto": 47}

@@ -387,7 +387,7 @@ class SimController:
         infrastructure can re-run it at full scapy parse fidelity
         by toggling a debug flag (not wired yet).
         """
-        probe = self._probes.get(probe_id & 0xffff)
+        probe = self._probes.get(probe_id)
         if probe is None:
             return
         if probe.expect_iface != obs_iface:

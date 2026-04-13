@@ -446,14 +446,20 @@ def _build_random_probes(
 
     rgen = RandomProbeGenerator(fw_state, iface_to_zone, seed=seed)
     out: list[tuple] = []
-    pid = 1000
+    pid_v4 = 1000
+    pid_v6 = 0x11000   # above 16-bit range; no collision with IPv4 IDs
     for _ in range(n):
         r = rgen.next()
         if r is None:
             break
         if r.proto not in ("tcp", "udp", "icmp", "icmpv6"):
             continue
-        pid16 = pid & 0xffff
+        if r.family == 6:
+            probe_id = pid_v6 & 0xfffff
+            pid_v6 += 1
+        else:
+            probe_id = pid_v4 & 0xffff
+            pid_v4 += 1
         verdict = oracle.classify(
             src_zone=r.src_zone, dst_zone=r.dst_zone,
             src_ip=r.src_ip, dst_ip=r.dst_ip,
@@ -461,7 +467,7 @@ def _build_random_probes(
             family=r.family,
         )
         plan = {
-            "probe_id": pid16,
+            "probe_id": probe_id,
             "src_iface": r.src_iface,
             "dst_iface": r.dst_iface,
             "src_ip": r.src_ip,
@@ -476,7 +482,6 @@ def _build_random_probes(
             "oracle_reason": verdict.reason,
         }
         out.append((TestCategory.RANDOM, verdict.verdict, plan, meta))
-        pid += 1
     return out
 
 
@@ -637,7 +642,7 @@ def _plan_to_spec(plan: dict, topo_tun_mac: dict,
     src_iface = plan["src_iface"]
     dst_iface = plan["dst_iface"]
     proto = plan["proto"]
-    pid16 = plan["probe_id"]
+    pid = plan["probe_id"]
     src_ip = plan["src_ip"]
     dst_ip = plan["dst_ip"]
     port = plan.get("port")
@@ -646,19 +651,19 @@ def _plan_to_spec(plan: dict, topo_tun_mac: dict,
 
     if proto == "tcp":
         payload = P.build_tcp(src_ip, dst_ip, port, dst_mac=dst_mac,
-                              probe_id=pid16, family=family)
+                              probe_id=pid, family=family)
         match = _match(proto="tcp", dst=dst_ip, dport=port)
     elif proto == "udp":
         payload = P.build_udp(src_ip, dst_ip, port, dst_mac=dst_mac,
-                              probe_id=pid16, family=family)
+                              probe_id=pid, family=family)
         match = _match(proto="udp", dst=dst_ip, dport=port)
     elif proto == "icmp" and family == 4:
         payload = P.build_icmp(src_ip, dst_ip, dst_mac=dst_mac,
-                               probe_id=pid16)
+                               probe_id=pid)
         match = _match(proto="icmp", dst=dst_ip)
     elif proto in ("icmpv6", "ipv6-icmp") or (proto == "icmp" and family == 6):
         payload = P.build_icmpv6(src_ip, dst_ip, dst_mac=dst_mac,
-                                 probe_id=pid16)
+                                 probe_id=pid)
         match = _match(proto="icmpv6", dst=dst_ip)
     else:
         # Generic fallback for any other IP protocol — esp, ah, gre,
@@ -672,14 +677,14 @@ def _plan_to_spec(plan: dict, topo_tun_mac: dict,
         # an inject destination from the per-rule walker which
         # already pre-populates the well-known multicast group.
         payload = P.build_unknown_proto(
-            src_ip, dst_ip, proto, dst_mac=dst_mac, probe_id=pid16,
+            src_ip, dst_ip, proto, dst_mac=dst_mac, probe_id=pid,
             family=family)
         if payload is None:
             return None
         match = _match(proto=proto)
 
     return ProbeSpec(
-        probe_id=pid16, inject_iface=src_iface,
+        probe_id=pid, inject_iface=src_iface,
         expect_iface=dst_iface, payload=payload, match=match,
         timeout_s=timeout_s,
     )
@@ -766,7 +771,8 @@ def _build_per_rule_probes(
                              "esp", "ah", "gre"})
 
     out: list[tuple] = []
-    pid = 10000
+    pid_v4 = 10000
+    pid_v6 = 0x10000   # IPv6 IDs start above 16-bit range (uses 20-bit flow label)
     for tc in cases:
         if tc.src_zone is None or tc.dst_zone is None:
             continue
@@ -776,11 +782,10 @@ def _build_per_rule_probes(
             continue
         if tc.proto not in _V4_PROTOS:
             continue
-        pid16 = pid & 0xffff
         cat = (TestCategory.POSITIVE if tc.expected == "ACCEPT"
                else TestCategory.NEGATIVE)
         plan = {
-            "probe_id": pid16,
+            "probe_id": pid_v4 & 0xffff,
             "src_iface": src_iface,
             "dst_iface": dst_iface,
             "src_ip": tc.src_ip,
@@ -799,7 +804,7 @@ def _build_per_rule_probes(
             "oracle_reason": tc.raw,
         }
         out.append((cat, tc.expected, plan, meta))
-        pid += 1
+        pid_v4 += 1
 
     # ── IPv6 arm ──────────────────────────────────────────────────
     # Mirror the IPv4 arm above against ip6tables.txt when available.
@@ -859,11 +864,10 @@ def _build_per_rule_probes(
                 continue
             if tc.proto not in _V6_PROTOS:
                 continue
-            pid16 = pid & 0xffff
             cat = (TestCategory.POSITIVE if tc.expected == "ACCEPT"
                    else TestCategory.NEGATIVE)
             plan = {
-                "probe_id": pid16,
+                "probe_id": pid_v6 & 0xfffff,
                 "src_iface": src_iface,
                 "dst_iface": dst_iface,
                 "src_ip": tc.src_ip,
@@ -879,7 +883,7 @@ def _build_per_rule_probes(
                 "oracle_reason": tc.raw,
             }
             out.append((cat, tc.expected, plan, meta))
-            pid += 1
+            pid_v6 += 1
 
     return out
 
