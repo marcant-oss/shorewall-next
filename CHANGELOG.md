@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kept the v4 zone type for zones present in both configs, causing
   all dispatch rules to get `meta nfproto ipv4`.  Fix: zones present
   in both v4 and v6 configs are now promoted to type `ip`.
+- **Dispatch rule ordering: catch-all zones swallowed IPv6 traffic** —
+  zones without interface assignments (e.g. `rsr ipv6`) produced
+  dispatch rules without `oifname`.  Alphabetic sorting placed these
+  catch-all rules before specific zone-pair rules, routing all IPv6
+  into the wrong chain where it was rejected.  Fix: dispatch rules
+  with both zones having interfaces are emitted first; catch-all
+  rules last.
 
 ## [1.4.1] — 2026-04-12 — Monorepo tooling fix + docs restructure + man pages
 
