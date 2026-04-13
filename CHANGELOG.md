@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatched to zone-pair chains and fell through to policy accept.
   Fix: merged zones are now typed `ip` (dual-stack) so dispatch rules
   match both address families.
+- **simlab: oracle misclassified ICMPv6 probes** — the iptables parser
+  maps `--icmpv6-type` into `rule.dport`, but ICMP probes carried
+  `port=None`.  Blanket ICMPv6 accept rules were skipped, causing 25
+  false fail_accepts.  Fix: substitute the echo-request type (128/8)
+  as effective port for ICMP probes.
+- **simlab: probe-id collisions between IPv4 and IPv6** — both families
+  shared a 16-bit counter.  IPv6 probes now use the full 20-bit flow
+  label and start at 0x10000, eliminating cross-family collisions.
 
 ## [1.4.1] — 2026-04-12 — Monorepo tooling fix + docs restructure + man pages
 
