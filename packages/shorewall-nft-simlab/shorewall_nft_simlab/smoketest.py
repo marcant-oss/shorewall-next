@@ -1415,16 +1415,6 @@ def cmd_full(args: argparse.Namespace) -> int:
             _time.sleep(args.sleep_before_shutdown)
         except KeyboardInterrupt:
             _flush_print("Sleep interrupted by user — proceeding with shutdown")
-    if getattr(args, "pause_before_shutdown", False):
-        _flush_print("")
-        _flush_print(f"=== PAUSED BEFORE SHUTDOWN ===")
-        _flush_print(f"Namespace '{ctl.ns_name}' is still alive.")
-        _flush_print(f"Inspect with: sudo ip netns exec {ctl.ns_name} bash")
-        _flush_print(f"Press ENTER to continue with shutdown...")
-        try:
-            input()
-        except (EOFError, KeyboardInterrupt):
-            pass
 
     if getattr(args, "keep_namespace", False):
         _flush_print("")
@@ -1679,11 +1669,6 @@ def main() -> int:
         help="Preserve the simulator namespace after the run for "
              "debugging. You must manually clean it up later with "
              "'sudo ip netns delete <name>'.")
-    p_full.add_argument("--pause-before-shutdown", action="store_true",
-        dest="pause_before_shutdown", default=False,
-        help="Pause before shutting down the namespace. "
-             "Prompts for ENTER before cleanup, allowing live debugging. "
-             "Requires a TTY (run from an interactive terminal).")
     p_full.add_argument("--sleep-before-shutdown", type=int, default=0,
         metavar="SECONDS",
         help="Sleep N seconds before shutting down the namespace. "
