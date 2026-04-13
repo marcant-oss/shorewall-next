@@ -546,7 +546,19 @@ def _merge_zones(v4_path: Path, v6_path: Path, out_path: Path,
                     lines = [result if l.strip().split()[0:1] == [name]
                              and not l.strip().startswith("#")
                              else l for l in lines]
-            # Auto mode: silently keep v4 (already in output)
+            else:
+                # Auto mode: zone exists in both v4 and v6 → dual-stack.
+                # Promote "ipv4" type to "ip" so the emitter generates
+                # dispatch rules without a meta nfproto qualifier.
+                def _promote_to_ip(l: str) -> str:
+                    s = l.strip()
+                    if s.startswith("#") or not s:
+                        return l
+                    parts = s.split()
+                    if len(parts) >= 2 and parts[0] == name and parts[1] == "ipv4":
+                        return l.replace("\tipv4", "\tip", 1).replace(" ipv4 ", " ip ", 1)
+                    return l
+                lines = [_promote_to_ip(l) for l in lines]
         else:
             # v6-unique zone
             converted = v6_line.replace("\tipv6\t", "\t-\t").replace(" ipv6 ", " - ")
