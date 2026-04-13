@@ -156,6 +156,28 @@ tiebreaker ranking is:
 - Refresh procedure: on the primary, capture iptables-save, ip6tables-save,
   ip addr, ip route; rsync to `old/`; bump the date in that doc.
 
+## nft emit architecture (match Shorewall iptables layout)
+
+The compiled nft ruleset must mirror the Shorewall iptables chain
+architecture. Deviations cause IPv6 breakage. Key invariants:
+
+- **Base chains** (input/forward/output): `policy drop`. Contain
+  only FASTACCEPT `ct state established,related accept` (if enabled),
+  NDP accept (input/output only), and dispatch jumps. **No** `ct state
+  invalid drop`, **no** `dropNotSyn` — these belong in zone-pair chains.
+- **Zone-pair chains**: Carry `ct state established,related accept`
+  (always) and `ct state invalid drop` (always) at the top, then
+  explicit rules, then `jump sw_Reject` / policy verdict at the end.
+- **Raw chains** (priority < 0): NOTRACK rules only. **Never** dispatch
+  to zone-pair chains — that routes NDP into chains that drop it.
+- **Dispatch ordering**: Rules with `iifname + oifname` (specific)
+  first, catch-all rules (zones without interfaces, e.g. `rsr ipv6`)
+  last. Without this, a catch-all `meta nfproto ipv6 iifname X jump
+  src-rsr` swallows all IPv6 before the specific jump fires.
+- **Dual-stack zone type**: When merging shorewall + shorewall6, zones
+  in both configs must be type `ip` (not `ipv4`). Otherwise dispatch
+  rules get `meta nfproto ipv4` and IPv6 is never dispatched.
+
 ## Key rules (all packages)
 
 - Commit messages / CHANGELOG / release notes **never name the

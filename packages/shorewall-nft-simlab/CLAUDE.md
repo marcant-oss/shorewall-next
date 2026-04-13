@@ -89,12 +89,15 @@ ssh root@192.0.2.83 \
 
 ## Open items (simlab)
 
-1. **Full simlab run → baseline** — smoketest `full` on the VM, save
-   the JSON report locally under `docs/testing/simlab-reports/` (not
-   committed). Start of reliable regression history once noise is cleared.
-2. **simlab → pytest integration gate** — once `full` is reproducibly
-   green, build a pytest wrapper that runs a minimal simlab scenario
-   (single probe) in CI. Gate for future emitter changes.
+1. **Baseline established** — smoketest `full --seed 42` passes at
+   98.9% positive (18 fail_drops are anycast topology), 100% negative,
+   100% random. Reports archived under `docs/testing/simlab-reports/`.
+2. **simlab → pytest integration gate** — `full` is reproducibly green.
+   Build a pytest wrapper that runs a minimal simlab scenario (single
+   probe) in CI. Gate for future emitter changes.
+3. **Anycast topology routes** — `2001:db8::2` and `2001:db8::53:2`
+   are Anycast/Loopback IPs outside the simlab namespace. Adding
+   dummy routes would eliminate the last 18 fail_drops.
 3. **VRRP/BGP/RADIUS probe injection** — builders exist in `packets.py`
    but no controller-side query generates them automatically from the
    ruleset. Essential for HA validation (keepalived + bird).
@@ -139,15 +142,17 @@ ssh root@192.0.2.83 \
   / `fast_build_arp_reply` (pure byte ops, ~µs). Never re-introduce
   `parse()` or `s.Ether()` on the reader hot path.
 
-### Known issues
-
-- **Thread-affinity: inject/expect fds share threads with NDP-heavy
-  interfaces** — round-robin assignment in `_start_thread_pool` does not
-  distinguish inject-side from expect-side interfaces. If an expect-fd
-  (e.g. bond0.15) lands on the same thread as a high-NDP-traffic
-  interface (e.g. bond0.70), kernel-side NDP warmup storms can still
-  cause brief read starvation. The scapy-free fast path (2026-04-13)
-  reduced per-NS cost from ~10 ms to ~µs, making this a theoretical
-  rather than practical concern at current probe rates (~1300/s).
-  Full fix: affinity-aware partitioning that pins expect-fds to
-  dedicated reader threads.
+- **Oracle ICMPv6 type matching** — iptables parser maps
+  `--icmpv6-type` into `rule.dport`. ICMP probes carry `port=None`.
+  Fix: `oracle.py` substitutes echo-request type (128/8) as
+  effective port for ICMP protocols.
+- **Probe IDs per address family** — IPv4 uses 16-bit IP ID, IPv6
+  uses 20-bit flow label.  IDs must not overlap: IPv6 starts at
+  `0x10000`. `fast_probe_id()` returns full 20-bit for IPv6.
+- **NDP warmup before batches** — `_ndp_warmup()` fires one probe
+  per unique (dst_iface, dst_ip) to populate the kernel neighbor
+  cache. Without it, NDP resolution during the first batch causes
+  false fail_drops.
+- **`SIMLAB_NFT_TRACE` env var** — set to an IPv6 address to enable
+  nft trace on forward-chain packets to that address during the run.
+  Output goes to `nft-trace.log` in the working directory.

@@ -121,3 +121,27 @@ pytest ≥ 8.0 (modern fixture scoping used in `test_cli_integration.py`).
 - **Triangle verifier** skips "pure ct state" rules — a missing
   `established accept` shows up as 100 % coverage (misleading). Use
   simlab for packet-level validation of stateful paths.
+- **Base chain architecture** — base chains (input/forward/output)
+  must have `policy drop` and contain **only** FASTACCEPT (if enabled),
+  NDP accept (input/output), and dispatch jumps. `ct state invalid
+  drop` and `dropNotSyn` belong in zone-pair chains, not base chains.
+  Putting ct state checks before dispatch kills IPv6 forwarding
+  because conntrack may not track NDP-dependent flows correctly.
+  Fixed in commit `eaff8dbad`.
+- **Dispatch rule ordering** — zones without interface assignments
+  (e.g. `rsr ipv6`) produce dispatch rules without `oifname`.
+  These catch-all rules must be emitted **after** specific zone-pair
+  rules, otherwise they swallow all IPv6 traffic into the wrong
+  chain. The emitter sorts by interface specificity. Fixed in
+  commit `e16d76031`.
+- **Dual-stack zone merge** — when merging shorewall + shorewall6,
+  zones in both configs must be promoted from `ipv4` to `ip`.
+  Otherwise all dispatch rules get `meta nfproto ipv4` and IPv6
+  traffic is never dispatched. Applies to both `_merge_configs()`
+  in `parser.py` and `_merge_zones()` in `merge_config.py`.
+  Fixed in commits `d5720c4a7` and `eaff8dbad`.
+- **raw chains must not dispatch** — `raw-output` (priority -300) is
+  for NOTRACK rules only. If the emitter adds zone-pair dispatch
+  jumps to raw chains, NDP gets routed into chains with
+  `ct state invalid drop` before the normal output chain can
+  accept it. Fixed in commit `d5720c4a7`.
