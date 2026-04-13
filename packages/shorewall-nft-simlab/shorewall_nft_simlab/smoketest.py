@@ -1374,6 +1374,25 @@ def cmd_full(args: argparse.Namespace) -> int:
     # real batches start.  Without this, the first batch floods the
     # reader threads with NDP NS/NA exchanges and some forwarded
     # packets time out waiting for neighbor resolution.
+    # ── optional nft trace for debugging ────────────────────────
+    # Insert a trace rule + start nft monitor so the kernel logs
+    # which nft rule each IPv6 packet hits.  Writes to nft-trace.log.
+    _nft_trace_proc = None
+    if os.environ.get("SIMLAB_NFT_TRACE"):
+        import subprocess as _sp
+        _trace_target = os.environ["SIMLAB_NFT_TRACE"]  # e.g. ip6 daddr
+        _sp.run(["ip", "netns", "exec", ctl.ns_name, "nft", "insert",
+                 "rule", "inet", "shorewall", "forward",
+                 "meta", "nfproto", "ipv6",
+                 "ip6", "daddr", _trace_target,
+                 "meta", "nftrace", "set", "1"],
+                capture_output=True)
+        _trace_log = open("nft-trace.log", "w")
+        _nft_trace_proc = _sp.Popen(
+            ["ip", "netns", "exec", ctl.ns_name, "nft", "monitor", "trace"],
+            stdout=_trace_log, stderr=_sp.DEVNULL)
+        _flush_print(f"nft trace: enabled for ip6 daddr {_trace_target}")
+
     _ndp_warmup(all_probes, topo_mac, ctl, timeout_s=args.probe_timeout)
 
     batch_size = max(1, args.batch_size)
@@ -1416,6 +1435,10 @@ def cmd_full(args: argparse.Namespace) -> int:
                 f"elapsed={elapsed:.0f}s  eta={eta:.0f}s")
             last_log = now
     t_run = time.monotonic() - t_run0
+    if _nft_trace_proc:
+        _nft_trace_proc.kill()
+        _trace_log.close()
+        _flush_print("nft trace: written to nft-trace.log")
     peaks_summary = peak.stop()
     peaks_summary["throttle_s"] = round(total_throttle, 1)
     peaks = peaks_summary

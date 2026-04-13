@@ -758,23 +758,43 @@ def _emit_dispatch_rules(lines: list[str], base_chain: Chain,
     if use_vmap and _emit_vmap_dispatch(lines, base_chain, ir, fw_zone, indent):
         return
 
+    # Collect dispatch candidates, then sort: rules with both iifname
+    # and oifname first, catch-all rules (zones without interfaces,
+    # e.g. the IPv6-only rsr zone) last.  Without this ordering, a
+    # catch-all like `meta nfproto ipv6 iifname "bond0.18" jump adm-rsr`
+    # swallows all IPv6 traffic before the specific `iifname "bond0.18"
+    # oifname "bond0.15" jump adm-web` can fire.
+    dispatch_candidates: list[tuple[str, str, str]] = []  # (src, dst, chain_name)
     for chain_name, chain in sorted(ir.chains.items()):
         if chain.is_base_chain:
             continue
-
-        # Parse zone pair from chain name
         parts = chain_name.split("-", 1)
         if len(parts) != 2:
             continue
-
         src_zone, dst_zone = parts
-
-        # Determine which base chain this pair belongs to
         if dst_zone == fw_zone and base_chain.hook == Hook.INPUT:
-            _emit_zone_jump(lines, chain_name, src_zone, None, ir, indent)
+            dispatch_candidates.append((src_zone, "", chain_name))
         elif src_zone == fw_zone and base_chain.hook == Hook.OUTPUT:
-            _emit_zone_jump(lines, chain_name, None, dst_zone, ir, indent)
+            dispatch_candidates.append(("", dst_zone, chain_name))
         elif src_zone != fw_zone and dst_zone != fw_zone and base_chain.hook == Hook.FORWARD:
+            dispatch_candidates.append((src_zone, dst_zone, chain_name))
+
+    def _has_ifaces(zone_name: str) -> bool:
+        if not zone_name or zone_name == fw_zone:
+            return True
+        z = ir.zones.zones.get(zone_name)
+        return bool(z and z.interfaces)
+
+    # Specific (both zones have interfaces) before catch-all
+    dispatch_candidates.sort(
+        key=lambda t: (0 if _has_ifaces(t[0]) and _has_ifaces(t[1]) else 1, t[2]))
+
+    for src_zone, dst_zone, chain_name in dispatch_candidates:
+        if base_chain.hook == Hook.INPUT:
+            _emit_zone_jump(lines, chain_name, src_zone, None, ir, indent)
+        elif base_chain.hook == Hook.OUTPUT:
+            _emit_zone_jump(lines, chain_name, None, dst_zone, ir, indent)
+        else:
             _emit_zone_jump(lines, chain_name, src_zone, dst_zone, ir, indent)
 
 
