@@ -240,19 +240,6 @@ class SimController:
         if r.returncode != 0:
             raise RuntimeError(
                 f"nft -f failed (rc={r.returncode}):\n{r.stderr[:2000]}")
-        # TODO(shorewall-nft compiler): the compiled nft ruleset has two
-        # IPv6 NDP bugs that block IPv6 forwarding in simlab:
-        #  1. raw-output (prio -300) jumps all IPv6 into fw-rsr which
-        #     has `ct state invalid drop` BEFORE NDP accept → kernel's
-        #     outgoing NS for neighbor resolution is killed → neighbors
-        #     stay INCOMPLETE → no IPv6 forwarding.
-        #  2. forward chain only has `meta nfproto ipv4` zone-pair jump
-        #     rules → all IPv6 forwarded traffic falls through to
-        #     policy accept → no IPv6 deny enforcement.
-        # Until the compiler emits NDP accept before ct state invalid
-        # in raw-output/fw-rsr and adds IPv6 zone-pair rules in
-        # forward, IPv6 simlab probes will show ~810 fail_drops (bug 1)
-        # and ~43 fail_accepts (bug 2).
 
     # ── probe dispatch ────────────────────────────────────────────
 

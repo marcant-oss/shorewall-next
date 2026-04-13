@@ -5,6 +5,24 @@ All notable changes to shorewall-nft are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **IPv6 NDP broken by raw-output dispatch** — the `raw-output` chain
+  (priority -300) emitted zone-pair dispatch jumps, routing outgoing NDP
+  (Neighbor Solicitation) into chains with `ct state invalid drop`.
+  Kernel neighbor resolution was killed before the normal output chain
+  could accept it → neighbors stayed INCOMPLETE → no IPv6 forwarding.
+  Fix: raw chains (priority < 0) are now excluded from filter dispatch.
+- **IPv6 forward rules missing in dual-stack configs** — when merging
+  `shorewall` + `shorewall6`, zones present in both configs kept their
+  `ipv4` type instead of being promoted to dual-stack `ip`.  All forward
+  dispatch rules got `meta nfproto ipv4`, so IPv6 traffic was never
+  dispatched to zone-pair chains and fell through to policy accept.
+  Fix: merged zones are now typed `ip` (dual-stack) so dispatch rules
+  match both address families.
+
 ## [1.4.1] — 2026-04-12 — Monorepo tooling fix + docs restructure + man pages
 
 ### Fixed
