@@ -26,6 +26,7 @@ import ipaddress as _ipaddr
 import random
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -36,11 +37,17 @@ class OracleVerdict:
 
 
 class RulesetOracle:
-    """Parses an iptables-save dump once and answers tuple queries."""
+    """Parses an iptables-save dump once and answers tuple queries.
 
-    def __init__(self, ipt_dump: Path):
+    Accepts both an iptables-save (IPv4) and an optional ip6tables-save
+    (IPv6) dump. :meth:`classify` dispatches to the right table based
+    on the ``family`` parameter (4 or 6, default 4).
+    """
+
+    def __init__(self, ipt_dump: Path, ip6t_dump: Path | None = None):
         from shorewall_nft.verify.iptables_parser import parse_iptables_save
         self._ipt = parse_iptables_save(ipt_dump)
+        self._ip6t = parse_iptables_save(ip6t_dump) if ip6t_dump else None
 
     # ── oracle ────────────────────────────────────────────────────
 
@@ -53,9 +60,19 @@ class RulesetOracle:
         dst_ip: str,
         proto: str,
         port: int | None = None,
+        family: int = 4,
     ) -> OracleVerdict:
-        """Return the verdict the <src>2<dst> chain would produce."""
-        flt = self._ipt.get("filter")
+        """Return the verdict the <src>2<dst> chain would produce.
+
+        ``family`` selects which parsed dump is consulted:
+        4 → iptables-save, 6 → ip6tables-save. When the requested
+        family's dump was not loaded, returns UNKNOWN.
+        """
+        tables = self._ip6t if family == 6 else self._ipt
+        if tables is None:
+            return OracleVerdict("UNKNOWN", None,
+                                  f"no dump loaded for family {family}")
+        flt = tables.get("filter")
         if flt is None:
             return OracleVerdict("UNKNOWN", None, "no filter table in dump")
         chain_name = f"{src_zone}2{dst_zone}"
@@ -126,8 +143,17 @@ class RulesetOracle:
 
     def _rule_matches(self, rule, src_ip: str, dst_ip: str,
                       proto: str, port: int | None) -> bool:
-        # Protocol check — rules without -p match any protocol
-        if rule.proto and rule.proto != proto:
+        # Protocol check — rules without -p match any protocol.
+        # Normalise ICMPv6 aliases: ip6tables stores it as "ipv6-icmp"
+        # while our probe generators use "icmpv6". Treat as identical.
+        _ICMPV6 = frozenset({"icmpv6", "ipv6-icmp"})
+        rule_proto = rule.proto
+        if rule_proto in _ICMPV6:
+            rule_proto = "icmpv6"
+        probe_proto = proto
+        if probe_proto in _ICMPV6:
+            probe_proto = "icmpv6"
+        if rule_proto and rule_proto != probe_proto:
             return False
 
         # Source address check
@@ -216,6 +242,7 @@ class RandomProbe:
     dst_ip: str
     proto: str
     port: int | None
+    family: int = 4   # IP version: 4 or 6
 
 
 class RandomProbeGenerator:
@@ -246,23 +273,27 @@ class RandomProbeGenerator:
         self.state = fw_state
         self.iface_to_zone = iface_to_zone
         self.rng = random.Random(seed)
-        # Collect every IP the firewall owns so _pick_host can avoid
-        # them — picking a fw-local IP as src/dst means the kernel
-        # treats the packet as a martian source / a packet for itself
-        # and short-circuits the forwarding path before the ruleset
-        # ever evaluates.
+        # Collect every IP the firewall owns (v4 + v6) so _pick_host
+        # can avoid them — picking a fw-local IP as src/dst means the
+        # kernel treats the packet as a martian source / a packet for
+        # itself and short-circuits the forwarding path before the
+        # ruleset ever evaluates.
         self._fw_local_ips: set[str] = set()
         for iface in fw_state.interfaces.values():
             for a in getattr(iface, "addrs4", []) or []:
                 self._fw_local_ips.add(a.addr)
-        # Pre-compute list of (iface, subnet) candidates so we only
-        # walk parsed state once.
-        self._candidates: list[tuple[str, _ipaddr.IPv4Network]] = []
+            for a in getattr(iface, "addrs6", []) or []:
+                self._fw_local_ips.add(a.addr)
+        # Pre-compute list of (iface, subnet, family) candidates so we
+        # only walk parsed state once. Family 4 and 6 candidates are
+        # mixed; next() ensures src and dst are always the same family.
+        self._candidates: list[tuple[str, Any, int]] = []
         for name, iface in fw_state.interfaces.items():
             if iface.kind == "loopback":
                 continue
             if name not in iface_to_zone:
                 continue
+            # IPv4 subnets
             for a in iface.addrs4:
                 if a.scope != "global":
                     continue
@@ -273,25 +304,50 @@ class RandomProbeGenerator:
                     continue
                 if net.num_addresses < 4:
                     continue
-                self._candidates.append((name, net))
+                self._candidates.append((name, net, 4))
+            # IPv6 subnets — global scope only, skip link-local and
+            # /128 host routes (no room to pick neighbours from them).
+            for a in getattr(iface, "addrs6", []) or []:
+                if a.scope != "global":
+                    continue
+                if a.addr.startswith("fe80::"):
+                    continue
+                try:
+                    net6 = _ipaddr.ip_network(
+                        f"{a.addr}/{a.prefixlen}", strict=False)
+                except ValueError:
+                    continue
+                if net6.prefixlen > 120:
+                    continue  # subnet too small to pick hosts from
+                self._candidates.append((name, net6, 6))
 
     def next(self) -> RandomProbe | None:
-        """Return a fresh random probe, or None if we can't pick one."""
+        """Return a fresh random probe, or None if we can't pick one.
+
+        src and dst are always the same IP family so the packet
+        builder (v4 vs v6) stays consistent. Each call may produce
+        either a v4 or v6 probe depending on which candidates happen
+        to be available on the randomly chosen interfaces.
+        """
         if len(self._candidates) < 2:
             return None
         src_pick = self.rng.choice(self._candidates)
-        # Pick a dst from a DIFFERENT interface
-        for _ in range(16):
+        src_iface, src_net, family = src_pick
+        # Pick a dst from a DIFFERENT interface with the SAME family.
+        for _ in range(32):
             dst_pick = self.rng.choice(self._candidates)
-            if dst_pick[0] != src_pick[0]:
+            if dst_pick[0] != src_iface and dst_pick[2] == family:
                 break
         else:
             return None
-        src_iface, src_net = src_pick
-        dst_iface, dst_net = dst_pick
+        dst_iface, dst_net, _ = dst_pick
         src_ip = str(self._pick_host(src_net))
         dst_ip = str(self._pick_host(dst_net))
-        proto = self.rng.choice(["tcp", "udp", "icmp"])
+        # ICMPv6 for IPv6 probes, plain ICMP for IPv4.
+        if family == 6:
+            proto = self.rng.choice(["tcp", "udp", "icmpv6"])
+        else:
+            proto = self.rng.choice(["tcp", "udp", "icmp"])
         port: int | None = None
         if proto == "tcp":
             port = self.rng.choice(self.TCP_PORTS)
@@ -306,16 +362,35 @@ class RandomProbeGenerator:
             dst_ip=dst_ip,
             proto=proto,
             port=port,
+            family=family,
         )
 
-    def _pick_host(self, net: _ipaddr.IPv4Network) -> _ipaddr.IPv4Address:
+    def _pick_host(self, net: _ipaddr.IPv4Network | _ipaddr.IPv6Network
+                   ) -> _ipaddr.IPv4Address | _ipaddr.IPv6Address:
         """Return a usable host IP that is NOT the network / broadcast
-        and NOT one of the firewall's own interface addresses."""
-        hosts = [h for h in net.hosts() if str(h) not in self._fw_local_ips]
-        if not hosts:
-            # Subnet is fully fw-owned (e.g. /31 with both addrs local)
-            # — fall back to the original behaviour rather than crash.
-            hosts = list(net.hosts())
-            if not hosts:
-                return net.network_address
-        return self.rng.choice(hosts)
+        and NOT one of the firewall's own interface addresses.
+
+        Uses random integer sampling instead of ``list(net.hosts())``
+        so that large subnets (IPv4 /8, IPv6 /64) don't materialise
+        millions of objects.
+        """
+        n_total = net.num_addresses
+        if n_total <= 2:
+            # /31 or /32 — no real host range; return network address
+            return net.network_address
+        n_hosts = n_total - 2  # exclude network + broadcast
+        base = int(net.network_address)
+        # Try up to 64 random offsets before falling back to the
+        # first non-fw address in the subnet.
+        for _ in range(64):
+            offset = self.rng.randint(1, int(n_hosts))
+            addr = net.network_address.__class__(base + offset)
+            if str(addr) not in self._fw_local_ips:
+                return addr
+        # All 64 random picks were fw-local — subnet is densely owned.
+        # Walk forward from offset 1 to find the first free address.
+        for offset in range(1, min(int(n_hosts) + 1, 256)):
+            addr = net.network_address.__class__(base + offset)
+            if str(addr) not in self._fw_local_ips:
+                return addr
+        return net.network_address

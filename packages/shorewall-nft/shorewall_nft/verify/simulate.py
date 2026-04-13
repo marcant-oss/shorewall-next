@@ -903,15 +903,13 @@ def derive_tests_all_zones(
                         net = _ipaddr.ip_network(saddr, strict=False)
                         if net.version != family:
                             continue
-                        hosts = list(net.hosts())
-                        if not hosts:
-                            continue
                         # Up to 64 distinct candidates from the subnet.
-                        if len(hosts) <= 64:
-                            src_pool = [str(h) for h in hosts]
-                        else:
-                            src_pool = [str(hosts[i])
-                                        for i in rng.sample(range(len(hosts)), 64)]
+                        # _sample_hosts avoids materialising list(net.hosts())
+                        # which for /8–/16 subnets allocates hundreds of MB.
+                        sampled = _sample_hosts(net, 64, rng)
+                        if not sampled:
+                            continue
+                        src_pool = sampled
                     except ValueError:
                         continue
                 else:
@@ -929,13 +927,9 @@ def derive_tests_all_zones(
                 try:
                     dnet = _ipaddr.ip_network(raw_daddr, strict=False)
                     if dnet.version == family:
-                        dhosts = list(dnet.hosts())
-                        if dhosts:
-                            if len(dhosts) <= 64:
-                                dst_pool = [str(h) for h in dhosts]
-                            else:
-                                dst_pool = [str(dhosts[i])
-                                            for i in rng.sample(range(len(dhosts)), 64)]
+                        dsampled = _sample_hosts(dnet, 64, rng)
+                        if dsampled:
+                            dst_pool = dsampled
                 except ValueError:
                     pass
 
@@ -990,6 +984,49 @@ def derive_tests_all_zones(
         picked = drops[:max_tests]
         picked.extend(accepts[:max(0, max_tests - len(picked))])
         out.extend(picked)
+    return out
+
+
+def _sample_hosts(
+    net: "ipaddress.IPv4Network | ipaddress.IPv6Network",
+    n: int,
+    rng: "random.Random",
+) -> list[str]:
+    """Sample up to ``n`` host addresses from ``net`` without materialising
+    all of them.
+
+    ``list(net.hosts())`` on a /8 allocates 16 M IPv4Address objects (~800 MB
+    just for that list).  Instead we pick random integer offsets within the
+    usable range (1 … num_addresses-2) and convert directly to strings so
+    the full host list is never resident in memory.
+
+    Falls back to full enumeration for tiny subnets (≤ n hosts) where the
+    loop overhead would dominate.
+    """
+    import ipaddress as _ia
+    n_total = net.num_addresses
+    # For /31 and /32 (v4) or /127 and /128 (v6) there are no "hosts()"
+    # in the RFC sense, but the addresses themselves are usable in
+    # point-to-point / loopback roles.  Be permissive: use the whole range.
+    if n_total <= 2:
+        return [str(a) for a in net]
+    n_hosts = n_total - 2          # exclude network + broadcast
+    if n_hosts <= n:
+        return [str(h) for h in net.hosts()]
+    base = int(net.network_address)
+    seen: set[int] = set()
+    out: list[str] = []
+    attempts = 0
+    while len(out) < n and attempts < n * 8:
+        attempts += 1
+        offset = rng.randint(1, n_hosts)
+        if offset in seen:
+            continue
+        seen.add(offset)
+        if net.version == 6:
+            out.append(str(_ia.IPv6Address(base + offset)))
+        else:
+            out.append(str(_ia.IPv4Address(base + offset)))
     return out
 
 
@@ -1114,10 +1151,18 @@ def derive_tests(
                     if net.version != family:
                         continue  # wrong family for this pass
                     # Deterministic pick: second usable host (.1 + 1).
-                    hosts = list(net.hosts())
-                    if not hosts:
+                    # Avoid list(net.hosts()) for large subnets — use
+                    # direct integer arithmetic instead.
+                    n_total = net.num_addresses
+                    if n_total < 2:
                         continue
-                    src = str(hosts[1] if len(hosts) > 1 else hosts[0])
+                    base = int(net.network_address)
+                    import ipaddress as _ia2
+                    offset = 2 if n_total > 3 else 1
+                    if family == 6:
+                        src = str(_ia2.IPv6Address(base + offset))
+                    else:
+                        src = str(_ia2.IPv4Address(base + offset))
                 except ValueError:
                     continue
 

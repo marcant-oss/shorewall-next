@@ -72,7 +72,7 @@ Located at `/home/avalentin/projects/marcant-fw/`:
   nft features in production: named counters, anonymous sets, flow
   offloading, flowtables.
 
-## CI (.github/workflows/test.yml)
+## CI (.github/workflows/build.yaml)
 
 Jobs: Lint (ruff + shellcheck) → Unit tests (3.11/3.12/3.13) →
 Integration tests (netns) + Build wheels + Build .deb + Build .rpm →
