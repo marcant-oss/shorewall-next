@@ -169,7 +169,7 @@ packaging/
 **Symptom:** Lint, Unit-Tests, Integration, deb/rpm-Build schlägt fehl
 
 ```
-.github/workflows/test.yml
+.github/workflows/build.yaml
   # Reihenfolge: Lint → Unit (3.11/3.12/3.13) → Integration+Wheels → .deb → .rpm → Release
   # Release-Job feuert nur auf refs/tags/v*
 ```

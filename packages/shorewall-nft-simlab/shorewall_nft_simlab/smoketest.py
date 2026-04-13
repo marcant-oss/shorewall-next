@@ -245,6 +245,59 @@ _SYSCTL_OFF_OR_ON: list[tuple[str, str, str]] = [
 ]
 
 
+# Sysctls that the simlab controller writes automatically before a run
+# unless --no-auto-sysctl is passed. Entries: (path, value).
+# Only /proc/sys paths (writable with root privileges).
+_SYSCTL_APPLY: list[tuple[str, str]] = [
+    ("/proc/sys/net/ipv4/ip_forward",              "1"),
+    ("/proc/sys/net/ipv6/conf/all/forwarding",     "1"),
+    ("/proc/sys/net/ipv4/conf/all/rp_filter",      "0"),
+    ("/proc/sys/net/ipv4/conf/default/rp_filter",  "0"),
+    ("/proc/sys/net/core/rmem_max",                "4194304"),
+    ("/proc/sys/net/core/wmem_max",                "4194304"),
+]
+
+
+def _apply_sysctls(ns_name: str | None = None) -> list[str]:
+    """Write the required sysctl values in the host namespace (and optionally
+    inside ``ns_name`` for per-netns forwarding flags).
+
+    Returns a list of human-readable messages for each value that was
+    actually changed (already-correct values are silently skipped).
+    """
+    applied: list[str] = []
+    for path, value in _SYSCTL_APPLY:
+        try:
+            current = open(path).read().strip()
+        except OSError:
+            continue
+        if current == value:
+            continue
+        try:
+            with open(path, "w") as f:
+                f.write(value + "\n")
+            applied.append(f"{path}: {current} → {value}")
+        except OSError as e:
+            applied.append(f"{path}: FAILED ({e})")
+    # Also set forwarding inside the FW netns if given, so the netns
+    # kernel sees forwarded packets from its own perspective.
+    if ns_name:
+        _fwd_paths = [
+            ("/proc/sys/net/ipv4/ip_forward",          "1"),
+            ("/proc/sys/net/ipv6/conf/all/forwarding", "1"),
+        ]
+        for rel_path, value in _fwd_paths:
+            cmd = ["sudo", "/usr/local/bin/run-netns", "exec", ns_name,
+                   "sh", "-c", f"echo {value} > {rel_path}"]
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=5)
+                if r.returncode == 0:
+                    applied.append(f"[{ns_name}] {rel_path} → {value}")
+            except Exception:
+                pass
+    return applied
+
+
 def _check_sysctls(verbose: bool = False) -> list[str]:
     """Return a list of human-readable warnings, empty if everything OK."""
     warnings: list[str] = []
@@ -398,13 +451,14 @@ def _build_random_probes(
         r = rgen.next()
         if r is None:
             break
-        if r.proto not in ("tcp", "udp", "icmp"):
+        if r.proto not in ("tcp", "udp", "icmp", "icmpv6"):
             continue
         pid16 = pid & 0xffff
         verdict = oracle.classify(
             src_zone=r.src_zone, dst_zone=r.dst_zone,
             src_ip=r.src_ip, dst_ip=r.dst_ip,
             proto=r.proto, port=r.port,
+            family=r.family,
         )
         plan = {
             "probe_id": pid16,
@@ -414,6 +468,7 @@ def _build_random_probes(
             "dst_ip": r.dst_ip,
             "proto": r.proto,
             "port": r.port,
+            "family": r.family,
         }
         meta = {
             "desc": f"{r.src_zone}→{r.dst_zone} "
@@ -472,6 +527,7 @@ def _routed_iface_for(dst_ip: str, fw_state) -> str | None:
 
 def _build_zone_to_concrete_src(
     fw_state, iface_to_zone: dict[str, str],
+    family: int = 4,
 ) -> dict[str, str]:
     """For each zone, pick a routable host IP from its interface subnet.
 
@@ -506,33 +562,51 @@ def _build_zone_to_concrete_src(
     for iface in fw_state.interfaces.values():
         for addr in getattr(iface, "addrs4", []) or []:
             fw_local_ips.add(addr.addr)
+        for addr in getattr(iface, "addrs6", []) or []:
+            fw_local_ips.add(addr.addr)
+
+    addr_attr = "addrs6" if family == 6 else "addrs4"
 
     out: dict[str, str] = {}
     for iface_name, zone in iface_to_zone.items():
         if zone in out:
             continue
         iface = fw_state.interfaces.get(iface_name)
-        if not iface or not iface.addrs4:
+        if not iface:
             continue
-        for addr in iface.addrs4:
+        addrs = getattr(iface, addr_attr, []) or []
+        if not addrs:
+            continue
+        for addr in addrs:
+            if family == 6 and addr.scope != "global":
+                continue
+            if family == 6 and addr.addr.startswith("fe80::"):
+                continue
             try:
                 net = _ipaddr.ip_network(
                     f"{addr.addr}/{addr.prefixlen}", strict=False)
             except ValueError:
                 continue
-            hosts = [str(h) for h in net.hosts()]
-            if not hosts:
+            n_total = net.num_addresses
+            if n_total < 2:
                 continue
-            # Walk the host list from the high end downwards so we
-            # tend to pick e.g. .254 instead of .2 — gateways and
-            # VRRP/keepalived virtual IPs cluster at the low end.
-            for h in reversed(hosts):
-                if h in fw_local_ips:
-                    continue
-                out[zone] = h
-                break
-            if zone in out:
-                break
+            # Walk from the high end of the subnet downwards (up to
+            # 256 candidates) to pick a host that is not fw-local.
+            # Do NOT use list(net.hosts()) — on a /8 or /16 that
+            # materialises 16 M objects and blows the heap.
+            base = int(net.network_address)
+            n_hosts = n_total - 2  # exclude network + broadcast
+            limit = min(256, n_hosts)
+            found: str | None = None
+            for offset in range(n_hosts, n_hosts - limit, -1):
+                candidate = str(_ipaddr.ip_address(base + offset))
+                if candidate not in fw_local_ips:
+                    found = candidate
+                    break
+            if found is None:
+                continue
+            out[zone] = found
+            break  # got a host for this zone, move to next iface
     return out
 
 
@@ -549,20 +623,25 @@ def _plan_to_spec(plan: dict, topo_tun_mac: dict,
     src_ip = plan["src_ip"]
     dst_ip = plan["dst_ip"]
     port = plan.get("port")
+    family = plan.get("family", 4)
     dst_mac = topo_tun_mac.get(src_iface)
 
     if proto == "tcp":
         payload = P.build_tcp(src_ip, dst_ip, port, dst_mac=dst_mac,
-                              probe_id=pid16)
+                              probe_id=pid16, family=family)
         match = _match(proto="tcp", dst=dst_ip, dport=port)
     elif proto == "udp":
         payload = P.build_udp(src_ip, dst_ip, port, dst_mac=dst_mac,
-                              probe_id=pid16)
+                              probe_id=pid16, family=family)
         match = _match(proto="udp", dst=dst_ip, dport=port)
-    elif proto == "icmp":
+    elif proto == "icmp" and family == 4:
         payload = P.build_icmp(src_ip, dst_ip, dst_mac=dst_mac,
                                probe_id=pid16)
         match = _match(proto="icmp", dst=dst_ip)
+    elif proto in ("icmpv6", "ipv6-icmp") or (proto == "icmp" and family == 6):
+        payload = P.build_icmpv6(src_ip, dst_ip, dst_mac=dst_mac,
+                                 probe_id=pid16)
+        match = _match(proto="icmpv6", dst=dst_ip)
     else:
         # Generic fallback for any other IP protocol — esp, ah, gre,
         # vrrp, ospf, igmp, sctp, pim, …. The auto-generator emits
@@ -575,7 +654,8 @@ def _plan_to_spec(plan: dict, topo_tun_mac: dict,
         # an inject destination from the per-rule walker which
         # already pre-populates the well-known multicast group.
         payload = P.build_unknown_proto(
-            src_ip, dst_ip, proto, dst_mac=dst_mac, probe_id=pid16)
+            src_ip, dst_ip, proto, dst_mac=dst_mac, probe_id=pid16,
+            family=family)
         if payload is None:
             return None
         match = _match(proto=proto)
@@ -591,6 +671,7 @@ def _build_per_rule_probes(
     iptables_dump: Path, fw_state, iface_to_zone: dict,
     topo_tun_mac: dict, *, max_per_pair: int = 10000,
     random_per_rule: int = 64,
+    ip6tables_dump: Path | None = None,
 ) -> list[tuple]:
     """Build lightweight plan dicts for every (src,dst) chain rule we understand.
 
@@ -662,6 +743,10 @@ def _build_per_rule_probes(
 
     zone_to_iface = {z: ifc for ifc, z in iface_to_zone.items()}
 
+    _V4_PROTOS = frozenset({"tcp", "udp", "icmp", "vrrp", "esp", "ah", "gre"})
+    _V6_PROTOS = frozenset({"tcp", "udp", "icmpv6", "ipv6-icmp",
+                             "esp", "ah", "gre"})
+
     out: list[tuple] = []
     pid = 10000
     for tc in cases:
@@ -671,8 +756,7 @@ def _build_per_rule_probes(
         dst_iface = zone_to_iface.get(tc.dst_zone)
         if not src_iface or not dst_iface:
             continue
-        if tc.proto not in ("tcp", "udp", "icmp",
-                            "vrrp", "esp", "ah", "gre"):
+        if tc.proto not in _V4_PROTOS:
             continue
         pid16 = pid & 0xffff
         cat = (TestCategory.POSITIVE if tc.expected == "ACCEPT"
@@ -685,6 +769,7 @@ def _build_per_rule_probes(
             "dst_ip": tc.dst_ip,
             "proto": tc.proto,
             "port": tc.port,
+            "family": 4,
         }
         meta = {
             "desc": f"{tc.src_zone}→{tc.dst_zone} "
@@ -697,6 +782,87 @@ def _build_per_rule_probes(
         }
         out.append((cat, tc.expected, plan, meta))
         pid += 1
+
+    # ── IPv6 arm ──────────────────────────────────────────────────
+    # Mirror the IPv4 arm above against ip6tables.txt when available.
+    if ip6tables_dump and ip6tables_dump.exists():
+        from shorewall_nft.verify.simulate import DEFAULT_SRC6
+
+        cases6 = derive_tests_all_zones(
+            ip6tables_dump, zones=zone_set, max_tests=max_per_pair,
+            family=6, random_per_rule=random_per_rule)
+
+        # Autorepair pass 1 (v6): replace 2001:db8::69 placeholder
+        zone_src_map6 = _build_zone_to_concrete_src(
+            fw_state, iface_to_zone, family=6)
+        repaired6 = 0
+        for tc in cases6:
+            if tc.src_ip == DEFAULT_SRC6 and tc.src_zone in zone_src_map6:
+                tc.src_ip = zone_src_map6[tc.src_zone]
+                repaired6 += 1
+        if repaired6:
+            print(f"autorepair v6: rewrote {repaired6} placeholder-src "
+                  f"probes to zone-local IPv6", flush=True)
+
+        # Autorepair pass 2 (v6): re-classify via ip6tables oracle.
+        # oracle_pot6 is built with ip6tables_dump as its primary (_ipt)
+        # table, so classify() must be called with family=4 to dispatch
+        # to that primary table — the Oracle's "family" param selects
+        # which internal slot to read, not the IP version of the addresses.
+        oracle_pot6 = RulesetOracle(ip6tables_dump)
+        reclassified6 = 0
+        dropped6 = 0
+        kept6: list = []
+        for tc in cases6:
+            v = oracle_pot6.classify(
+                src_zone=tc.src_zone, dst_zone=tc.dst_zone,
+                src_ip=tc.src_ip, dst_ip=tc.dst_ip,
+                proto=tc.proto, port=tc.port, family=4,
+            )
+            if v.verdict == "UNKNOWN":
+                dropped6 += 1
+                continue
+            if v.verdict != tc.expected:
+                reclassified6 += 1
+                tc.expected = v.verdict
+            tc.raw = v.matched_rule_raw or tc.raw
+            kept6.append(tc)
+        cases6 = kept6
+        if reclassified6 or dropped6:
+            print(f"autorepair v6: oracle reclassified {reclassified6} "
+                  f"TestCases, dropped {dropped6} unverifiable", flush=True)
+
+        for tc in cases6:
+            if tc.src_zone is None or tc.dst_zone is None:
+                continue
+            src_iface = zone_to_iface.get(tc.src_zone)
+            dst_iface = zone_to_iface.get(tc.dst_zone)
+            if not src_iface or not dst_iface:
+                continue
+            if tc.proto not in _V6_PROTOS:
+                continue
+            pid16 = pid & 0xffff
+            cat = (TestCategory.POSITIVE if tc.expected == "ACCEPT"
+                   else TestCategory.NEGATIVE)
+            plan = {
+                "probe_id": pid16,
+                "src_iface": src_iface,
+                "dst_iface": dst_iface,
+                "src_ip": tc.src_ip,
+                "dst_ip": tc.dst_ip,
+                "proto": tc.proto,
+                "port": tc.port,
+                "family": 6,
+            }
+            meta = {
+                "desc": f"{tc.src_zone}→{tc.dst_zone} "
+                        f"{tc.src_ip}→{tc.dst_ip} {tc.proto}:{tc.port} [v6]",
+                "raw": tc.raw,
+                "oracle_reason": tc.raw,
+            }
+            out.append((cat, tc.expected, plan, meta))
+            pid += 1
+
     return out
 
 
@@ -889,6 +1055,15 @@ def cmd_full(args: argparse.Namespace) -> int:
     _set_low_priority()
     _flush_print("=== simlab FULL ===")
 
+    if not getattr(args, "no_auto_sysctl", False):
+        applied = _apply_sysctls()   # ns_name not known yet; host-side only
+        if applied:
+            _flush_print("sysctl: auto-applied host settings:")
+            for msg in applied:
+                _flush_print(f"  + {msg}")
+        else:
+            _flush_print("sysctl: host settings already correct")
+
     warns = _check_sysctls(verbose=args.verbose)
     if warns:
         _flush_print("sysctl health WARNINGS:")
@@ -917,48 +1092,46 @@ def cmd_full(args: argparse.Namespace) -> int:
         ip6routes=args.data / "ip6routes",
         iface_rp_filter=iface_rp,
     )
-    ctl.build()
-    t_build = time.monotonic() - t0
-    _flush_print(f"build: {t_build:.2f}s ({len(ctl.workers)} ifaces)")
-    if iface_rp:
-        _flush_print(
-            f"rp_filter: replaying {len(iface_rp)} per-iface "
-            f"routefilter values from interfaces config")
 
-    nft = Path("/tmp/simlab-ruleset.nft")
-    _flush_print("compile: shorewall-nft compile …")
-    _compile_ruleset(args.config, nft)
-    _flush_print("compile: ok")
-    try:
-        _flush_print("nft load: …")
-        ctl.load_nft(str(nft))
-    except RuntimeError as e:
-        _flush_print(f"nft LOAD FAILED: {e}")
-        ctl.shutdown()
-        return 2
-    t_load = time.monotonic() - t0 - t_build
-    _flush_print(f"nft load: {t_load:.2f}s")
-    time.sleep(0.2)
+    # Pre-load fw state WITHOUT starting the topology (no reader threads yet).
+    # All probe generation — including the expensive oracle classify loop —
+    # runs here, before ctl.build() spawns reader threads. That way the
+    # classify loop doesn't race against thread-pool traffic filling the
+    # _iface_trace deques, and peak RSS stays bounded to the probe list alone.
+    ctl.reload_dumps()
 
     iface_to_zone = _iface_to_zone_map(args.config)
     _flush_print("oracle: parsing iptables.txt for point-of-truth …")
-    oracle = RulesetOracle(args.data / "iptables.txt")
+    ip6tables_path = args.data / "ip6tables.txt"
+    oracle = RulesetOracle(
+        args.data / "iptables.txt",
+        ip6t_dump=ip6tables_path if ip6tables_path.exists() else None,
+    )
+    if ip6tables_path.exists():
+        _flush_print("oracle: ip6tables.txt loaded (IPv6 random probes enabled)")
+    else:
+        _flush_print("oracle: ip6tables.txt not found — IPv6 random probes disabled")
     _flush_print("oracle: ready")
 
-    # Build probes across categories
+    # Build probes across categories.
+    # topo_tun_mac is not needed by the probe *planners* (only by
+    # _plan_to_spec when materialising packets in the batch loop later).
+    # Pass {} here; the batch loop reads topo_mac = ctl.topo.tun_mac after
+    # ctl.build() completes.
     t_build_p0 = time.monotonic()
     _flush_print(f"probes: generating per-rule (random_per_rule="
                  f"{args.random_per_rule}) …")
     rules_probes = _build_per_rule_probes(
         args.data / "iptables.txt", ctl.state, iface_to_zone,
-        ctl.topo.tun_mac if ctl.topo else {},
+        {},   # tun_mac not needed at plan-build time
         max_per_pair=args.max_per_pair,
         random_per_rule=args.random_per_rule,
+        ip6tables_dump=ip6tables_path if ip6tables_path.exists() else None,
     )
     _flush_print(f"probes: per-rule built, {len(rules_probes)} cases")
     _flush_print(f"probes: generating {args.random} random …")
     random_probes = _build_random_probes(
-        args.random, ctl.topo.tun_mac if ctl.topo else {},
+        args.random, {},   # tun_mac not needed at plan-build time
         iface_to_zone, ctl.state, oracle, seed=args.seed,
     )
     t_build_probes = time.monotonic() - t_build_p0
@@ -1070,6 +1243,34 @@ def cmd_full(args: argparse.Namespace) -> int:
             f"src_ip is not reachable via the src zone's iface "
             f"(src_routing_incompatible)")
     all_probes = kept2
+
+    # All probe planning is done. NOW compile the ruleset and build the
+    # topology — reader threads start here, AFTER the expensive classify loop.
+    nft = Path("/tmp/simlab-ruleset.nft")
+    _flush_print("compile: shorewall-nft compile …")
+    _compile_ruleset(args.config, nft)
+    _flush_print("compile: ok")
+
+    t_topo0 = time.monotonic()
+    _flush_print("topology: building …")
+    ctl.build()
+    t_build = time.monotonic() - t_topo0
+    _flush_print(f"build: {t_build:.2f}s ({len(ctl.workers)} ifaces)")
+    if iface_rp:
+        _flush_print(
+            f"rp_filter: replaying {len(iface_rp)} per-iface "
+            f"routefilter values from interfaces config")
+
+    try:
+        _flush_print("nft load: …")
+        ctl.load_nft(str(nft))
+    except RuntimeError as e:
+        _flush_print(f"nft LOAD FAILED: {e}")
+        ctl.shutdown()
+        return 2
+    t_load = time.monotonic() - t_topo0 - t_build
+    _flush_print(f"nft load: {t_load:.2f}s")
+    time.sleep(0.2)
 
     # Split by category for reporting (we'll also run them together)
     by_cat: dict[str, list] = {
@@ -1236,6 +1437,10 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     from .controller import SimController
     _set_low_priority()
     print("=== simlab smoke ===")
+    if not getattr(args, "no_auto_sysctl", False):
+        applied = _apply_sysctls()
+        if applied:
+            print("sysctl: auto-applied:", applied)
     before = _resource_counts()
     print(f"before: {before}")
 
@@ -1399,7 +1604,11 @@ def main() -> int:
     ap.add_argument("--report-dir", type=Path, default=None,
                     help="Override archive directory for run reports")
     sub = ap.add_subparsers(dest="cmd")
-    sub.add_parser("smoke", help="one build, one probe per representative pair")
+    p_smoke = sub.add_parser("smoke",
+        help="one build, one probe per representative pair")
+    p_smoke.add_argument("--no-auto-sysctl", action="store_true",
+        dest="no_auto_sysctl", default=False,
+        help="Skip automatic sysctl tuning")
     p_stress = sub.add_parser("stress", help="N build+destroy cycles")
     p_stress.add_argument("iterations", type=int, nargs="?", default=10)
     sub.add_parser("limit", help="push build/destroy until something breaks")
@@ -1428,6 +1637,11 @@ def main() -> int:
              "(default 0.15)")
     p_full.add_argument("-v", "--verbose", action="store_true",
         help="Dump raw sysctl values before the run")
+    p_full.add_argument("--no-auto-sysctl", action="store_true",
+        dest="no_auto_sysctl", default=False,
+        help="Skip automatic sysctl tuning (ip_forward, rp_filter, "
+             "rmem/wmem_max). Use when running inside a container or "
+             "when sysctls are managed externally.")
 
     args = ap.parse_args()
     if args.cmd == "smoke" or args.cmd is None:
