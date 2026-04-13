@@ -2,7 +2,7 @@
 %global srcname shorewall_nft
 
 Name:           shorewall-nft
-Version:        1.4.1
+Version:        1.4.2
 Release:        1%{?dist}
 Summary:        nftables-native firewall compiler with Shorewall-compatible config
 
@@ -170,6 +170,12 @@ fi
 %{_docdir}/%{name}/
 
 %changelog
+* Sun Apr 13 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.2-1
+- Release 1.4.2: IPv6 NDP & baseline security fixes — raw chains excluded
+  from dispatch, base chain policy drop, ct state moved to zone-pair chains,
+  dual-stack zone promotion, dispatch ordering fix, scapy-free NDP/ARP fast path.
+- See CHANGELOG.md for full details.
+
 * Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.1-1
 - Release 1.4.1: fix monorepo install in setup scripts (pip install -e packages/*
   instead of root stub), add shorewalld.8 man page, restructure docs (remove legacy/,
