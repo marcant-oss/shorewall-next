@@ -659,10 +659,15 @@ def _ndp_warmup(all_probes: list, topo_tun_mac: dict,
         return
 
     # Fire in small batches so NDP doesn't overwhelm the readers.
+    # Use a generous timeout — the first probe to each dst_ip triggers
+    # NDP neighbor resolution which can take >1s in a fresh namespace
+    # with many interfaces.
     WARMUP_BATCH = 32
+    WARMUP_TIMEOUT = max(timeout_s, 2.0)
     for i in range(0, len(warmup), WARMUP_BATCH):
         chunk = warmup[i:i + WARMUP_BATCH]
-        specs = [s for s in (_plan_to_spec(p, topo_tun_mac, timeout_s=timeout_s)
+        specs = [s for s in (_plan_to_spec(p, topo_tun_mac,
+                                           timeout_s=WARMUP_TIMEOUT)
                              for p in chunk) if s is not None]
         if specs:
             asyncio.run(_smoke_one(ctl, specs))
