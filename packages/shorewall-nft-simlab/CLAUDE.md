@@ -133,3 +133,21 @@ ssh root@192.168.203.83 \
   for packet-level validation of stateful paths.
 - **Test reports** must split false-drop vs false-accept and explain
   random-probe mismatches with the oracle reason. Don't lump them.
+- **Reader thread NDP/ARP must stay scapy-free** — the reader's asyncio
+  loop multiplexes N fds. A single scapy parse (~10 ms) blocks every
+  other fd on that thread. Use `fast_extract_ndp_ns` / `fast_build_ndp_na`
+  / `fast_build_arp_reply` (pure byte ops, ~µs). Never re-introduce
+  `parse()` or `s.Ether()` on the reader hot path.
+
+### Known issues
+
+- **Thread-affinity: inject/expect fds share threads with NDP-heavy
+  interfaces** — round-robin assignment in `_start_thread_pool` does not
+  distinguish inject-side from expect-side interfaces. If an expect-fd
+  (e.g. bond0.15) lands on the same thread as a high-NDP-traffic
+  interface (e.g. bond0.70), kernel-side NDP warmup storms can still
+  cause brief read starvation. The scapy-free fast path (2026-04-13)
+  reduced per-NS cost from ~10 ms to ~µs, making this a theoretical
+  rather than practical concern at current probe rates (~1300/s).
+  Full fix: affinity-aware partitioning that pins expect-fds to
+  dedicated reader threads.

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **simlab: scapy-free NDP/ARP fast path on reader threads** — the reader
+  thread's asyncio event loop previously called full scapy parse + scapy
+  packet construction for every ARP who-has and NDP Neighbor Solicitation.
+  A single NDP NS on bond0.70 (~10 ms in scapy) blocked all other fds on
+  the same thread, starving bond0.15 and causing spurious probe timeouts.
+  New `fast_extract_ndp_ns()`, `fast_build_ndp_na()`, `fast_extract_arp_request()`,
+  `fast_build_arp_reply()` in `packets.py` handle ARP/NDP entirely from raw
+  bytes with inline ICMPv6 checksum — no scapy import, no GIL contention.
+
 ### Fixed
 
 - **IPv6 NDP broken by raw-output dispatch** — the `raw-output` chain

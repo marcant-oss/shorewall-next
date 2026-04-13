@@ -37,6 +37,10 @@ from .packets import (
     PacketSummary,
     build_arp_reply,
     build_ndp_na,
+    fast_build_arp_reply,
+    fast_build_ndp_na,
+    fast_extract_arp_request,
+    fast_extract_ndp_ns,
     fast_is_arp_or_ndp_ns,
     fast_probe_id,
     parse,
@@ -508,66 +512,60 @@ class SimController:
                             self._obs_queue.put((iface_name, pid_val))
                         continue
 
-                    # Slow path: ARP / NDP. Full scapy parse so we
-                    # can build the reply frame and also push into
-                    # the diagnostic trace ring.
-                    pkt = parse(buf, is_tap=is_tap)
-                    self._iface_trace[iface_name].append(pkt)
+                    # ── Fast path for ARP / NDP ──────────────────
+                    # Pure byte-level extraction + reply build.
+                    # No scapy parse, no GIL-heavy C extensions —
+                    # keeps the reader's asyncio loop responsive so
+                    # fds assigned to the same thread don't starve
+                    # while we handle NDP on another interface.
 
-                    if (pkt.proto == "arp" and pkt.arp_op == 1
-                            and pkt.src and pkt.dst):
-                        # Use interface MAC for ARP replies if available
+                    # ARP who-has → reply
+                    arp = fast_extract_arp_request(buf, is_tap)
+                    if arp is not None:
+                        a_src_mac, a_src_ip, _, a_dst_ip = arp
                         if iface_name in iface_mac:
                             src_mac_for_reply = iface_mac[iface_name]
                         else:
                             src_mac_for_reply = _WORKER_MAC
-                        reply = build_arp_reply(
+                        reply = fast_build_arp_reply(
                             src_mac=src_mac_for_reply,
-                            src_ip=pkt.dst,
-                            dst_mac=_extract_src_mac(buf),
-                            dst_ip=pkt.src,
+                            src_ip=a_dst_ip,
+                            dst_mac=a_src_mac,
+                            dst_ip=a_src_ip,
                         )
                         write_q.put((fd, iface_name, reply))
                         continue
 
-                    if (pkt.proto == "ndp" and pkt.ndp_type == 135):
-                        try:
-                            import scapy.all as s
-                            from scapy.layers.inet6 import ICMPv6ND_NS
-                            layer = s.Ether(buf)
-                            if layer.haslayer(ICMPv6ND_NS):
-                                target = str(layer[ICMPv6ND_NS].tgt)
-                                # Do NOT answer NS for addresses that the
-                                # firewall itself owns inside NS_FW. Doing
-                                # so causes DAD conflicts ("NA: XX
-                                # advertised our address") and the kernel
-                                # discards the NA entirely.
-                                if fw_owned_v6 and target in fw_owned_v6:
-                                    continue
-                                # Generate correct link-local address from interface MAC
-                                if iface_name in iface_mac:
-                                    src_ll = _mac_to_link_local(iface_mac[iface_name])
-                                    src_mac_for_na = iface_mac[iface_name]
-                                else:
-                                    # Fallback for TUN or if MAC not available
-                                    src_ll = "fe80::200:5eff:fe00:1"
-                                    src_mac_for_na = _WORKER_MAC
-                                # If NS has no source (DAD-style NS with src=::), send NA
-                                # to all-nodes multicast ff02::1. Otherwise unicast to NS source.
-                                if pkt.src and pkt.src != "::":
-                                    dst_ip = pkt.src
-                                else:
-                                    dst_ip = "ff02::1"
-                                na = build_ndp_na(
-                                    src_mac=src_mac_for_na,
-                                    src_ip=src_ll,
-                                    dst_mac=_extract_src_mac(buf),
-                                    dst_ip=dst_ip,
-                                    target_ip=target,
-                                )
-                                write_q.put((fd, iface_name, na))
-                        except Exception:
-                            pass
+                    # NDP NS → NA
+                    ndp = fast_extract_ndp_ns(buf, is_tap)
+                    if ndp is not None:
+                        ns_src_mac, ns_src_ip, target = ndp
+                        # Do NOT answer NS for addresses that the
+                        # firewall itself owns inside NS_FW. Doing
+                        # so causes DAD conflicts ("NA: XX
+                        # advertised our address") and the kernel
+                        # discards the NA entirely.
+                        if fw_owned_v6 and target in fw_owned_v6:
+                            continue
+                        if iface_name in iface_mac:
+                            src_ll = _mac_to_link_local(iface_mac[iface_name])
+                            src_mac_for_na = iface_mac[iface_name]
+                        else:
+                            src_ll = "fe80::200:5eff:fe00:1"
+                            src_mac_for_na = _WORKER_MAC
+                        # DAD-style NS (src=::) → multicast NA
+                        if ns_src_ip and ns_src_ip != "::":
+                            dst_ip = ns_src_ip
+                        else:
+                            dst_ip = "ff02::1"
+                        na = fast_build_ndp_na(
+                            src_mac=src_mac_for_na,
+                            src_ip=src_ll,
+                            dst_mac=ns_src_mac,
+                            dst_ip=dst_ip,
+                            target_ip=target,
+                        )
+                        write_q.put((fd, iface_name, na))
                         continue
             except Exception:
                 return
