@@ -166,11 +166,20 @@ class RulesetOracle:
             if not self._ip_in_spec(dst_ip, rule.daddr):
                 return False
 
-        # Destination port check (TCP/UDP)
-        if port is not None and rule.dport:
-            if not self._port_in_spec(port, rule.dport):
+        # Destination port check (TCP/UDP) or ICMP type check.
+        # The iptables parser maps --icmpv6-type / --icmp-type into
+        # rule.dport.  Our probes carry port=None for ICMP traffic,
+        # so we substitute the well-known echo-request type number
+        # (ICMPv4=8, ICMPv6=128) for the comparison.
+        effective_port = port
+        if effective_port is None and probe_proto in ("icmpv6", "ipv6-icmp"):
+            effective_port = 128
+        elif effective_port is None and probe_proto == "icmp":
+            effective_port = 8
+        if effective_port is not None and rule.dport:
+            if not self._port_in_spec(effective_port, rule.dport):
                 return False
-        elif rule.dport and port is None:
+        elif rule.dport and effective_port is None:
             # Rule requires a port, packet has none
             return False
 
