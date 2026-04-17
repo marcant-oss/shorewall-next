@@ -159,6 +159,12 @@ fi
 %changelog
 @@CHANGELOG_ENTRY@@
 
+* Thu Apr 17 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.3-1
+- Release 1.4.3: auto-generated RPM spec + AlmaLinux 10 build target.
+  spec.in template, tools/gen-rpm-spec.sh, matrix CI (fedora40 + almalinux10).
+  AL10 profile: python3-protobuf >= 3.19, python3-pytest >= 7.4, python3 >= 3.12.
+- See CHANGELOG.md for full details.
+
 * Sun Apr 13 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.2-1
 - Release 1.4.2: IPv6 NDP & baseline security fixes — raw chains excluded
   from dispatch, base chain policy drop, ct state moved to zone-pair chains,

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shorewall-nft-simlab"
-version = "1.4.2"
+version = "1.4.3"
 description = "Packet-level simulation lab for shorewall-nft firewall validation"
 readme = "README.md"
 requires-python = ">=3.11"

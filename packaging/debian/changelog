@@ -1,3 +1,14 @@
+shorewall-nft (1.4.3-1) unstable; urgency=medium
+
+  * Release 1.4.3: auto-generated RPM spec + AlmaLinux 10 build target.
+    RPM spec generated from spec.in template at build time (git-ignored).
+    Version/Release derived from git tags. AlmaLinux 10 profile with
+    distro-accurate Requires (python3-protobuf >= 3.19, python3-pytest
+    >= 7.4, python3 >= 3.12, EPEL 10 + CRB for click/pyroute2/prometheus).
+  * See CHANGELOG.md for full details.
+
+ -- shorewall-nft maintainers <shorewall-nft@example.com>  Fri, 17 Apr 2026 22:00:00 +0000
+
 shorewall-nft (1.4.2-1) unstable; urgency=medium
 
   * Release 1.4.2: IPv6 NDP & baseline security fixes — raw chains
