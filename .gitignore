@@ -40,6 +40,8 @@ htmlcov/
 dist/
 build/
 site/             # mkdocs output
+# RPM spec is generated from shorewall-nft.spec.in by tools/gen-rpm-spec.sh.
+packaging/rpm/shorewall-nft.spec
 
 # ─────────────────────────────────────────────────────────────
 # Test / debug temp files

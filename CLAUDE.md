@@ -78,8 +78,22 @@ Jobs: Lint (ruff + shellcheck) → Unit tests (3.11/3.12/3.13) →
 Integration tests (netns) + Build wheels + Build .deb + Build .rpm →
 GitHub Release (tag pushes only).
 
-**RPM build notes** (`rpm-build` job, Fedora 40 container):
+**RPM build notes** (`rpm-build` matrix job — Fedora 40 + AlmaLinux 10):
 
+- The spec file is **generated** from `packaging/rpm/shorewall-nft.spec.in`
+  by `tools/gen-rpm-spec.sh` at build time. The generated `shorewall-nft.spec`
+  is git-ignored. Per distro, Requires/BuildRequires are substituted in from
+  a distro profile inside the generator.
+- Version/Release derivation: on a `v*` tag → `Version=<tag>` + `Release=1`.
+  Otherwise → `Version=<last-tag>` + `Release=0.<commits_since>.g<sha>` (the
+  leading `0.` keeps dev builds sorted below numbered releases in RPM).
+- **AlmaLinux 10 profile** reflects what AL10 actually ships: `python3-protobuf`
+  caps at **3.19.6** in AppStream (no newer version in AL10/EPEL 10), so the
+  AL10 `Requires:` line is `python3-protobuf >= 3.19`, not `>= 4.25` as on
+  Fedora. Similarly `python3-pytest` in AL10 CRB is 7.4.x — Tests subpackage
+  requires `>= 7.4` for AL10. `python3-click`, `python3-pyroute2`,
+  `python3-prometheus_client`, and `python3-pytest` come from EPEL 10 (+ CRB
+  for pytest) — the AL10 build job enables both repos before install.
 - Do **not** install `pyproject-rpm-macros` — it injects `pyproject_wheel.py`
   and malformed install/save-files steps against the monorepo root via
   `%__spec_install_pre` / `%___build_pre`. The injection cannot be suppressed

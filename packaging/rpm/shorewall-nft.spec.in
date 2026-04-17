@@ -2,8 +2,8 @@
 %global srcname shorewall_nft
 
 Name:           shorewall-nft
-Version:        1.4.2
-Release:        1%{?dist}
+Version:        @@VERSION@@
+Release:        @@RELEASE@@%{?dist}
 Summary:        nftables-native firewall compiler with Shorewall-compatible config
 
 License:        GPL-2.0-only
@@ -11,22 +11,9 @@ URL:            https://github.com/shorewall-nft/shorewall-nft
 Source0:        %{pypi_name}-%{version}.tar.gz
 
 BuildArch:      noarch
-BuildRequires:  python3 >= 3.11
-BuildRequires:  python3-setuptools >= 68.0
-BuildRequires:  python3-pip
-Requires:       python3 >= 3.11
-Requires:       python3-click >= 8.0
-Requires:       python3-pyroute2 >= 0.7
-Requires:       nftables
-Requires:       iproute
-Recommends:     python3-nftables
-Recommends:     ipset
-# shorewalld sub-package deps
-Requires:       python3-protobuf >= 4.25
-Requires:       python3-prometheus_client >= 0.20
-Requires:       python3-dns >= 2.4
-# simlab optional
-Suggests:       python3-scapy
+@@BUILD_REQUIRES@@
+
+@@DISTRO_REQUIRES@@
 Conflicts:      shorewall
 Conflicts:      shorewall6
 Conflicts:      shorewall-lite
@@ -48,7 +35,7 @@ Features include:
 %package tests
 Summary:        Test tooling for shorewall-nft
 Requires:       %{name} = %{version}-%{release}
-Requires:       python3-pytest >= 8.0
+@@TESTS_PYTEST_REQ@@
 Requires:       sudo
 Recommends:     python3-scapy
 Recommends:     python3-pytest-cov
@@ -170,6 +157,8 @@ fi
 %{_docdir}/%{name}/
 
 %changelog
+@@CHANGELOG_ENTRY@@
+
 * Sun Apr 13 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.2-1
 - Release 1.4.2: IPv6 NDP & baseline security fixes — raw chains excluded
   from dispatch, base chain policy drop, ct state moved to zone-pair chains,
@@ -177,35 +166,21 @@ fi
 - See CHANGELOG.md for full details.
 
 * Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.1-1
-- Release 1.4.1: fix monorepo install in setup scripts (pip install -e packages/*
-  instead of root stub), add shorewalld.8 man page, restructure docs (remove legacy/,
-  add docs/shorewalld/, docs/quick-start.md, HOWTO-CLAUDE.md), update man pages to
-  v1.4.1 with all 36 commands.
+- Release 1.4.1: fix monorepo install in setup scripts, add shorewalld.8 man
+  page, restructure docs, update man pages to v1.4.1.
 - See CHANGELOG.md for full details.
 
 * Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.0-1
 - Release 1.4.0: DNS-driven nft-set population (dnstap + PBDNSMessage
-  pipelines, DnsSetTracker, SetWriter, StateStore, ReloadMonitor,
-  WorkerRouter, HA peer-link replication) and Prometheus metrics exporter
-  beta (NftCollector, LinkCollector, CtCollector; listen on :9748).
+  pipelines) and Prometheus metrics exporter beta.
 - See CHANGELOG.md for full details.
 
 * Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.2.0-1
-- Release 1.2.0: shorewalld DNS-set pipeline — full DNS-driven nft-set
-  populator with HA replication, zero-copy hot paths, persistent state,
-  ruleset-reload reconciliation, peer-to-peer replication over
-  authenticated UDP. OPTIMIZE=8 is now the compiler default.
+- Release 1.2.0: shorewalld DNS-set pipeline. OPTIMIZE=8 is the new default.
 - See CHANGELOG.md for full history.
 
 * Sat Apr 11 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.1.0-1
-- Release 1.1.0: flowtable + vmap dispatch + ct zone tag, concat-map DNAT,
-  full config-file coverage (stoppedrules, proxyarp/ndp, rawnat, arprules,
-  nfacct, scfilter, ecn), routefilter parity, simlab packet-level test
-  harness with autorepair, pretty structured exporter. See CHANGELOG.md.
+- Release 1.1.0: flowtable + vmap dispatch + ct zone tag, concat-map DNAT.
 
 * Sat Apr 11 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.0.0-1
-- Release 1.0.0: first stable release. Python nftables-native firewall
-  compiler with full Shorewall-compatible configuration, dual-stack
-  inet table, plugin system, optimizer, debug mode, merge-config,
-  verified against three production firewalls at 100% coverage.
-- See CHANGELOG.md for full history.
+- Release 1.0.0: first stable release.

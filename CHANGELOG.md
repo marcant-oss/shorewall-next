@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **RPM packaging: AlmaLinux 10 build target.** The `rpm-build` CI job is
+  now a matrix with two targets: `fedora40` (as before) and `almalinux10`.
+  Both produce installable RPMs; release artifacts upload both sets.
+- **Generated .spec file.** `packaging/rpm/shorewall-nft.spec.in` is the
+  checked-in template; `tools/gen-rpm-spec.sh --distro {fedora|almalinux10}`
+  emits `packaging/rpm/shorewall-nft.spec` at build time. Generated spec
+  is git-ignored to prevent drift.
+  - Version/Release derived from git: on a `v*` tag → `Version=<tag>` +
+    `Release=1%{?dist}`; otherwise → `Version=<last-tag>` +
+    `Release=0.<commits_since>.g<sha>%{?dist}` (the leading `0.` keeps
+    dev builds sorted below numbered releases).
+  - AlmaLinux 10 profile caps `python3-protobuf` at `>= 3.19` (AL10
+    AppStream ships 3.19.6; no newer version available in AL10/EPEL 10)
+    and `python3-pytest` at `>= 7.4` (CRB). Python 3.12 minimum. The
+    AL10 job enables EPEL 10 + CRB for `python3-click`, `python3-pyroute2`,
+    `python3-prometheus_client`, and `python3-pytest`.
+
 ## [1.4.2] — 2026-04-13 — IPv6 NDP & baseline security fixes
 
 ### Changed
