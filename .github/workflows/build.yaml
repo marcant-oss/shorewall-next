@@ -103,7 +103,7 @@ jobs:
       - name: Run integration tests (isolated namespace)
         timeout-minutes: 10
         run: |
-          sudo tools/run-tests.sh \
+          sudo env PATH="$PATH" tools/run-tests.sh \
             packages/shorewall-nft/tests/test_cli_integration.py \
             packages/shorewall-nft/tests/test_netns_routing.py \
             -v
