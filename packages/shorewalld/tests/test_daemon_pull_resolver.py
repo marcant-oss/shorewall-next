@@ -161,7 +161,7 @@ class TestResolveGroup:
         writer = FakeWriter()
         primary = qnames[0]
         reg = _make_dnsr_registry([(primary, list(qnames))])
-        kwargs = {}
+        kwargs = {"jitter": 0.0}
         if max_ttl is not None:
             kwargs["max_ttl"] = max_ttl
         if min_retry is not None:

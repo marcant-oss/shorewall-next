@@ -178,6 +178,26 @@ class TestRewriteDnsrSpec:
         # secondary also in dns_registry so tap pipeline can route it
         assert "mail.github.com" in dns_reg.specs
 
+    def test_primary_declares_set_secondary_does_not(self):
+        dns_reg = DnsSetRegistry()
+        dnsr_reg = DnsrRegistry()
+        _rewrite_dnsr_spec(
+            "dnsr:github.com,mail.github.com", dns_reg, dnsr_reg, "v4")
+        assert dns_reg.specs["github.com"].declare_set is True
+        assert dns_reg.specs["mail.github.com"].declare_set is False
+
+    def test_secondary_promoted_to_primary_by_dns_rule(self):
+        from shorewall_nft.compiler.ir import _rewrite_dns_spec
+        dns_reg = DnsSetRegistry()
+        dnsr_reg = DnsrRegistry()
+        _rewrite_dnsr_spec(
+            "dnsr:github.com,mail.github.com", dns_reg, dnsr_reg, "v4")
+        # mail.github.com starts as secondary (declare_set=False)
+        assert dns_reg.specs["mail.github.com"].declare_set is False
+        # A direct dns: reference should promote it.
+        _rewrite_dns_spec("dns:mail.github.com", dns_reg, "v4")
+        assert dns_reg.specs["mail.github.com"].declare_set is True
+
     def test_registers_group_in_dnsr_registry(self):
         dns_reg = DnsSetRegistry()
         dnsr_reg = DnsrRegistry()
@@ -367,6 +387,55 @@ class TestFullCompileDnsr:
         ir = build_ir(minimal_config)
         script = emit_nft(ir)
         assert "@dns_github_com_v4" in script or "@dns_github_com_v6" in script
+
+    def test_dns_multi_host_primary_declares_only(self, minimal_config):
+        minimal_config.rules = [
+            ConfigLine(
+                columns=["ACCEPT", "fw",
+                         "net:dns:github.com,microsoft.com", "tcp", "443"],
+                file="rules", lineno=1),
+        ]
+        ir = build_ir(minimal_config)
+        script = emit_nft(ir)
+        # Primary declared, secondary absorbed via tap alias only.
+        assert "set dns_github_com_v4" in script
+        assert "set dns_microsoft_com_v4" not in script
+        # Tap alias group recorded but pull_enabled is False.
+        assert "github.com" in ir.dnsr_registry.groups
+        assert ir.dnsr_registry.groups["github.com"].pull_enabled is False
+
+    def test_dns_multi_host_allowlist_roundtrip(self, tmp_path, minimal_config):
+        minimal_config.rules = [
+            ConfigLine(
+                columns=["ACCEPT", "fw",
+                         "net:dns:github.com,microsoft.com", "tcp", "443"],
+                file="rules", lineno=1),
+        ]
+        ir = build_ir(minimal_config)
+        path = tmp_path / "dnsnames.compiled"
+        write_compiled_allowlist(
+            ir.dns_registry, path, dnsr_registry=ir.dnsr_registry)
+
+        dnsr_out = read_compiled_dnsr_allowlist(path)
+        assert "github.com" in dnsr_out.groups
+        group = dnsr_out.groups["github.com"]
+        assert group.pull_enabled is False
+        assert group.qnames == ["github.com", "microsoft.com"]
+
+    def test_dnsr_secondary_does_not_declare_nft_set(self, minimal_config):
+        minimal_config.rules = [
+            ConfigLine(
+                columns=["ACCEPT", "fw",
+                         "net:dnsr:github.com,mail.github.com", "tcp", "443"],
+                file="rules", lineno=1),
+        ]
+        ir = build_ir(minimal_config)
+        script = emit_nft(ir)
+        # Primary's set declared; secondary's set must not be, since
+        # dnsr sends all IPs to the primary's set.
+        assert "set dns_github_com_v4" in script
+        assert "set dns_mail_github_com_v4" not in script
+        assert "set dns_mail_github_com_v6" not in script
 
     def test_dnsr_allowlist_roundtrip_via_write(self, tmp_path, minimal_config):
         minimal_config.rules = [

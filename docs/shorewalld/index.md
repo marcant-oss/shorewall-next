@@ -793,8 +793,9 @@ them, and the result looks like a first-class rule to the user.
 | Token | Set population | When to use |
 |---|---|---|
 | `dns:github.com` | Tap — set is populated passively from dnstap/pbdns answers as clients resolve the name | You have a local resolver sending dnstap; the host is queried frequently enough that its IPs stay fresh |
+| `dns:github.com,microsoft.com` | Tap — both hostnames share the **same** set via tracker alias | Multiple CNAMEs or related hosts that should share one firewall rule, tap-only (no active pull) |
 | `dnsr:github.com` | Pull — shorewalld actively resolves the name on a TTL-driven schedule | No local resolver, outbound-only host, or names that are rarely queried by clients |
-| `dnsr:github.com,mail.github.com` | Pull — both hostnames resolved into the **same** set | Multiple CNAMEs or sub-domains that should share one firewall rule |
+| `dnsr:github.com,mail.github.com` | Pull — both hostnames resolved into the **same** set | Multiple CNAMEs or sub-domains that should share one firewall rule with active pull |
 
 Both modes use **identical nft sets** (`dns_<qname>_v4/v6`) and
 can be combined: if a hostname is referenced by both a `dns:` and
@@ -807,6 +808,10 @@ each mechanism refreshing the other's entries.
 # Tap mode — recursor feeds the set passively
 ACCEPT      fw      net:dns:github.com               tcp     443
 DROP        fw      net:!dns:badhost.example          -       -
+
+# Tap mode, multi-host — both names share dns_github_com_v4/v6 via
+# tracker alias; only the first hostname's set is declared
+ACCEPT      fw      net:dns:github.com,microsoft.com  tcp     443
 
 # Pull mode — shorewalld resolves on a TTL schedule
 ACCEPT      fw      net:dnsr:github.com               tcp     443
@@ -827,12 +832,13 @@ and triggers three things at compile time:
    matching `ip daddr @dns_github_com_v4` /
    `ip6 daddr @dns_github_com_v6`.
 
-For `dnsr:host1,host2`, the set name is derived from the first
-hostname (`dns_host1_v4/v6`). Shorewalld resolves *all* listed
-hostnames and puts their IPs into that single set. The tap
-pipeline also accepts dnstap/pbdns answers for every listed
-hostname and routes them into the same set, so neither path
-blocks the other.
+For `dns:host1,host2,…` and `dnsr:host1,host2,…`, the set name
+is derived from the first hostname (`dns_host1_v4/v6`). All
+secondary hostnames are registered as tracker aliases so the tap
+pipeline routes their dnstap/pbdns answers into the primary's set.
+`dnsr:` additionally schedules active resolution for every listed
+hostname; `dns:` is tap-only. Single-host `dns:host` is a pure set
+reference and declares no alias.
 
 Name sanitisation is deterministic: `qname_to_set_name()` in
 `shorewall_nft/nft/dns_sets.py` is the single source of truth and
@@ -842,18 +848,34 @@ for naming drift between compile-time and runtime.
 ### Pull-resolver scheduling
 
 The pull resolver maintains a min-heap of `(next_resolve_at,
-group)` entries. At startup every group is resolved immediately.
-After each resolve:
+primary_qname)` entries. At startup every group is resolved
+immediately, with up to 8 resolves in flight concurrently
+(bounded by an `asyncio.Semaphore`) so N groups populate in
+O(1) waves rather than N serial stalls. After each resolve:
 
 ```
-next_resolve_at = now + max(min_retry, int(min_ttl * 0.8))
+next_resolve_at = now + max(min_retry, int(min_ttl * 0.8)) * (1 ± 0.1)
 ```
 
 capped at `max_ttl` (default 3600 s). The 0.8 fraction means a
 re-resolve fires before any element actually expires, so there is
-no window where the set is empty due to TTL drift. `min_retry`
-(default 30 s) prevents tight loops after NXDOMAIN or network
-errors.
+no window where the set is empty due to TTL drift. The ±10%
+jitter spreads groups with identical TTLs across the scheduling
+tick. `min_retry` (default 30 s) prevents tight loops after
+NXDOMAIN or network errors.
+
+Each individual DNS query has an explicit 3 s lifetime so a
+slow upstream can't stall a worker indefinitely. NXDOMAIN and
+DNS-exception log lines are rate-limited per `(qname, rdtype)`
+through `shorewalld.logsetup.RateLimiter`, so a permanently
+missing hostname produces at most one line per rate-limit window
+rather than one every `min_retry` seconds.
+
+In-flight groups are tracked so `shorewalld ctl refresh-dns` and
+`update_registry()` (called on instance reload) never drop a
+refresh signal or push duplicate entries for a group that's
+currently being resolved — the resolver re-queues the group as
+soon as its current pass completes.
 
 ### `dnsnames` config file (optional)
 

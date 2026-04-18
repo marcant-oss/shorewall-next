@@ -7,17 +7,23 @@ as tap-acquired entries.
 
 Design constraints (from CLAUDE.md performance doctrine):
 * Pure asyncio — no extra threads; runs on the daemon's event loop.
-* Single min-heap of ``(next_resolve_at, primary_qname, group)`` entries;
-  one coroutine sleeps until the earliest entry is due.
+* Min-heap of ``(next_resolve_at, primary_qname)`` entries, ordered
+  by earliest deadline. ``_primaries`` is the source of truth for
+  which groups are active; heap entries for removed groups are
+  silently dropped when popped.
 * Sleep is interruptible via ``asyncio.Event`` so manual refresh() takes
   effect immediately without waiting for the current sleep to expire.
 * A + AAAA queries for all qnames in a group are issued in parallel
-  (``asyncio.gather``).
+  (``asyncio.gather``). Multiple due groups are resolved concurrently
+  under a semaphore so the startup burst doesn't serialise.
 * SetWriter.submit() handles dedup — no separate pre-check needed here.
 * Error paths: NXDOMAIN → log.info, timeout/SERVFAIL → log.warning,
-  both reschedule at ``min_retry`` so a transient failure doesn't stall
-  the heap entry indefinitely.
-* All logging is per-group-resolve or per-error, never per-IP.
+  both rate-limited per-qname, and reschedule at ``min_retry`` so a
+  transient failure doesn't stall the heap entry indefinitely.
+* All logging is per-group-resolve or per-error, never per-IP, and
+  recurring NXDOMAIN/failure lines go through the shared RateLimiter.
+* In-flight resolves are tracked so refresh()/update_registry() never
+  silently miss or duplicate a group that is currently being resolved.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ import asyncio
 import heapq
 import ipaddress
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 
@@ -36,6 +43,7 @@ import dns.resolver
 from shorewall_nft.nft.dns_sets import DnsrGroup, DnsrRegistry
 
 from .dns_set_tracker import FAMILY_V4, FAMILY_V6, DnsSetTracker, Proposal
+from .logsetup import get_rate_limiter
 from .setwriter import SetWriter
 
 log = logging.getLogger(__name__)
@@ -43,6 +51,9 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_TTL = 3600          # cap: never sleep longer than 1 hour
 DEFAULT_MIN_RETRY = 30          # floor on retry after NXDOMAIN / error
 DEFAULT_RESOLVE_FRACTION = 0.8  # re-resolve at 80% of min-TTL expiry
+DEFAULT_JITTER = 0.1            # ±10% jitter on re-resolve deadline
+DEFAULT_CONCURRENCY = 8         # max in-flight resolves
+DEFAULT_DNS_TIMEOUT = 3.0       # per-query DNS lifetime (seconds)
 
 
 @dataclass(order=True)
@@ -50,7 +61,6 @@ class _Entry:
     """Min-heap entry — ordered by next resolve deadline."""
     next_at: float
     primary_qname: str = field(compare=False)
-    group: DnsrGroup = field(compare=False)
 
 
 class PullResolver:
@@ -71,20 +81,42 @@ class PullResolver:
         max_ttl: int = DEFAULT_MAX_TTL,
         min_retry: int = DEFAULT_MIN_RETRY,
         nameservers: list[str] | None = None,
+        concurrency: int = DEFAULT_CONCURRENCY,
+        dns_timeout: float = DEFAULT_DNS_TIMEOUT,
+        jitter: float = DEFAULT_JITTER,
     ) -> None:
         self._tracker = tracker
         self._writer = writer
         self._netns = default_netns
         self._max_ttl = max_ttl
         self._min_retry = min_retry
+        self._jitter = max(0.0, jitter)
         self._stopping = False
         self._task: asyncio.Task | None = None
+
+        # Source of truth for which groups are active. Heap entries for
+        # primaries not in this dict are dropped on pop. Tap-only groups
+        # (pull_enabled=False, created by multi-host ``dns:`` tokens)
+        # are handled by the tracker alias path alone — we never pull
+        # them.
+        self._primaries: dict[str, DnsrGroup] = {
+            g.primary_qname: g
+            for g in dnsr_registry.iter_sorted()
+            if g.pull_enabled
+        }
+        # Primaries currently mid-resolve. refresh()/update_registry()
+        # coordinate with the run loop via this set and _refresh_pending.
+        self._in_flight: set[str] = set()
+        # Primaries whose resolve was requested while in-flight — the
+        # run loop re-queues them at next_at=now as soon as their
+        # current pass completes.
+        self._refresh_pending: set[str] = set()
 
         # Min-heap: resolve every group immediately on startup.
         now = time.monotonic()
         self._heap: list[_Entry] = [
-            _Entry(next_at=now, primary_qname=g.primary_qname, group=g)
-            for g in dnsr_registry.iter_sorted()
+            _Entry(next_at=now, primary_qname=name)
+            for name in self._primaries
         ]
         heapq.heapify(self._heap)
 
@@ -92,8 +124,13 @@ class PullResolver:
         self._wake = asyncio.Event()
 
         self._resolver = dns.asyncresolver.Resolver()
+        self._resolver.lifetime = dns_timeout
+        self._resolver.timeout = dns_timeout
         if nameservers:
             self._resolver.nameservers = nameservers
+
+        self._sem = asyncio.Semaphore(max(1, concurrency))
+        self._rate_limiter = get_rate_limiter()
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -117,24 +154,40 @@ class PullResolver:
     async def refresh(self, primary_qname: str | None = None) -> int:
         """Reschedule one or all groups for immediate re-resolve.
 
-        Called from the control socket ``REFRESH_DNS`` handler.
-        Returns the number of entries rescheduled.
+        Called from the control socket ``refresh-dns`` handler.
+        Returns the number of entries rescheduled (heap + in-flight).
+        In-flight groups are marked via ``_refresh_pending`` so they
+        are re-queued as soon as their current pass completes, rather
+        than silently missing the refresh.
         """
         now = time.monotonic()
-        new_heap: list[_Entry] = []
+        if primary_qname is not None:
+            targets = {primary_qname} & (
+                set(self._primaries) | self._in_flight
+            )
+        else:
+            targets = set(self._primaries) | self._in_flight
+
         count = 0
+        seen_in_heap: set[str] = set()
+        new_heap: list[_Entry] = []
         for entry in self._heap:
-            if primary_qname is None or entry.primary_qname == primary_qname:
+            if entry.primary_qname in targets:
                 new_heap.append(_Entry(
-                    next_at=now,
-                    primary_qname=entry.primary_qname,
-                    group=entry.group,
+                    next_at=now, primary_qname=entry.primary_qname,
                 ))
+                seen_in_heap.add(entry.primary_qname)
                 count += 1
             else:
                 new_heap.append(entry)
         heapq.heapify(new_heap)
         self._heap = new_heap
+
+        for name in targets - seen_in_heap:
+            if name in self._in_flight:
+                self._refresh_pending.add(name)
+                count += 1
+
         self._wake.set()
         log.info("pull_resolver: refresh triggered (%d group(s))", count)
         return count
@@ -142,37 +195,56 @@ class PullResolver:
     async def update_registry(self, dnsr_registry: DnsrRegistry) -> None:
         """Replace active groups with those from *dnsr_registry*.
 
-        Preserves the scheduled next_at for unchanged groups (avoids a
-        thundering-herd re-resolve on every shorewall-nft reload). New
-        groups are scheduled for immediate resolve. Removed groups are
-        dropped. Asyncio single-threaded — no lock needed.
+        Preserves existing heap entries' ``next_at`` for unchanged
+        primaries (no thundering-herd re-resolve on reload). New
+        primaries are scheduled immediately. Removed primaries are
+        dropped from ``_primaries`` — their heap entry (if any) is
+        silently skipped when popped, and an in-flight resolve for a
+        removed primary is not rescheduled. Asyncio single-threaded —
+        no lock needed.
         """
+        new_primaries = {
+            g.primary_qname: g
+            for g in dnsr_registry.iter_sorted()
+            if g.pull_enabled
+        }
         now = time.monotonic()
-        old_by_name = {e.primary_qname: e for e in self._heap}
-        new_heap: list[_Entry] = []
-        for group in dnsr_registry.iter_sorted():
-            old = old_by_name.get(group.primary_qname)
-            new_heap.append(_Entry(
-                next_at=old.next_at if old else now,
-                primary_qname=group.primary_qname,
-                group=group,
-            ))
-        heapq.heapify(new_heap)
-        self._heap = new_heap
+
+        # Schedule primaries that aren't already in the heap or in-flight.
+        in_heap = {e.primary_qname for e in self._heap}
+        known = in_heap | self._in_flight
+        for name in new_primaries:
+            if name not in known:
+                heapq.heappush(
+                    self._heap, _Entry(next_at=now, primary_qname=name),
+                )
+
+        self._primaries = new_primaries
+        # Drop refresh-pending markers for primaries that no longer
+        # exist so the run loop doesn't re-queue ghost entries.
+        self._refresh_pending &= set(new_primaries)
         self._wake.set()
         log.info(
-            "pull_resolver: registry updated (%d group(s))", len(new_heap))
+            "pull_resolver: registry updated (%d group(s))",
+            len(new_primaries),
+        )
 
     @property
     def group_count(self) -> int:
-        return len(self._heap)
+        return len(self._primaries)
 
     # ── internal loop ────────────────────────────────────────────────────
 
     async def _run(self) -> None:
         while not self._stopping:
             if not self._heap:
-                await asyncio.sleep(60)
+                # No work — wait on _wake so refresh()/update_registry
+                # wakes us immediately when a group appears.
+                self._wake.clear()
+                try:
+                    await asyncio.wait_for(self._wake.wait(), timeout=60.0)
+                except asyncio.TimeoutError:
+                    pass
                 continue
 
             now = time.monotonic()
@@ -191,15 +263,63 @@ class PullResolver:
             now = time.monotonic()
             due: list[_Entry] = []
             while self._heap and self._heap[0].next_at <= now:
-                due.append(heapq.heappop(self._heap))
+                entry = heapq.heappop(self._heap)
+                # Drop entries for primaries that are no longer active
+                # (removed via update_registry since this entry was
+                # scheduled).
+                if entry.primary_qname not in self._primaries:
+                    continue
+                # Skip if already in-flight; a concurrent refresh may
+                # have duplicated the entry.
+                if entry.primary_qname in self._in_flight:
+                    continue
+                self._in_flight.add(entry.primary_qname)
+                due.append(entry)
 
-            for entry in due:
-                next_at = await self._resolve_group(entry.group)
-                heapq.heappush(self._heap, _Entry(
-                    next_at=next_at,
-                    primary_qname=entry.primary_qname,
-                    group=entry.group,
-                ))
+            if not due:
+                continue
+
+            # Resolve due groups concurrently but bounded by the
+            # semaphore so we never hammer the upstream resolver.
+            await asyncio.gather(
+                *(self._resolve_and_requeue(e) for e in due),
+                return_exceptions=True,
+            )
+
+    async def _resolve_and_requeue(self, entry: _Entry) -> None:
+        """Resolve one group and re-push its heap entry.
+
+        The semaphore bounds concurrent in-flight resolves. Always
+        clears ``_in_flight`` and honours ``_refresh_pending`` even on
+        exception so a broken group can't wedge the run loop.
+        """
+        try:
+            async with self._sem:
+                group = self._primaries.get(entry.primary_qname)
+                if group is None:
+                    return
+                next_at = await self._resolve_group(group)
+        except Exception:
+            log.exception(
+                "pull_resolver: group %s resolve crashed",
+                entry.primary_qname,
+            )
+            next_at = time.monotonic() + self._min_retry
+        finally:
+            self._in_flight.discard(entry.primary_qname)
+
+        # Only reschedule if the group is still active. If a refresh
+        # came in while we were resolving, re-queue immediately.
+        if entry.primary_qname not in self._primaries:
+            return
+        if entry.primary_qname in self._refresh_pending:
+            self._refresh_pending.discard(entry.primary_qname)
+            next_at = time.monotonic()
+        heapq.heappush(
+            self._heap,
+            _Entry(next_at=next_at, primary_qname=entry.primary_qname),
+        )
+        self._wake.set()
 
     async def _resolve_group(self, group: DnsrGroup) -> float:
         """Resolve all qnames in group; submit IPs to tracker+writer.
@@ -217,9 +337,11 @@ class PullResolver:
 
         for qname, result in zip(group.qnames, results):
             if isinstance(result, Exception):
-                log.warning(
+                self._rate_limiter.warn(
+                    log, ("resolve_crash", qname),
                     "pull_resolver: %s → %s: %s",
-                    group.primary_qname, qname, result)
+                    group.primary_qname, qname, result,
+                )
                 continue
             for ip_bytes, ttl in result:
                 has_results = True
@@ -241,8 +363,13 @@ class PullResolver:
                 int(min_ttl * DEFAULT_RESOLVE_FRACTION),
             )
         wait = min(wait, self._max_ttl)
+        # ±jitter on the deadline so many groups with the same TTL
+        # don't all fire simultaneously at the recursor.
+        if self._jitter > 0 and wait > 0:
+            wait += random.uniform(-self._jitter * wait, self._jitter * wait)
+            wait = max(1.0, wait)
         log.debug(
-            "pull_resolver: group %s resolved, next in %ds",
+            "pull_resolver: group %s resolved, next in %.1fs",
             group.primary_qname, wait)
         return time.monotonic() + wait
 
@@ -266,10 +393,16 @@ class PullResolver:
                         ip_bytes = ipaddress.IPv6Address(rdata.address).packed
                     results.append((ip_bytes, ttl))
             except dns.resolver.NXDOMAIN:
-                log.info("pull_resolver: %s NXDOMAIN (%s)", qname, rdtype)
+                self._rate_limiter.info(
+                    log, ("nxdomain", qname, rdtype),
+                    "pull_resolver: %s NXDOMAIN (%s)", qname, rdtype,
+                )
             except dns.resolver.NoAnswer:
                 pass
             except dns.exception.DNSException as exc:
-                log.warning(
-                    "pull_resolver: %s %s query failed: %s", qname, rdtype, exc)
+                self._rate_limiter.warn(
+                    log, ("dns_exception", qname, rdtype),
+                    "pull_resolver: %s %s query failed: %s",
+                    qname, rdtype, exc,
+                )
         return results
