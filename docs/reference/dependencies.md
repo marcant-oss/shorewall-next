@@ -36,14 +36,14 @@ future Debian/RPM/Arch packaging.
 |------|---------|--------|--------|------|--------|
 | `nft` | nftables userspace | `nftables` | `nftables` | `nftables` | `nftables` |
 | `ip` | iproute2 — needed for netns, interfaces | `iproute2` | `iproute` | `iproute2` | `iproute2` |
+| libnftables Python bindings | In-process `setns(2)` + libnftables path for all namespace-entering operations (`start`, `stop`, `status`, `debug`, `capabilities`, `--netns`). Without it every netns call forks `sudo run-netns exec` as a subprocess. | `python3-nftables` | `python3-nftables` | `nftables` (includes bindings) | `py3-nftables` |
 
 ## System binaries (optional at runtime)
 
 | Tool | Purpose | Debian | Fedora | Arch | Alpine |
 |------|---------|--------|--------|------|--------|
-| libnftables Python bindings | Faster nft state reading (subprocess fallback available) | `python3-nftables` | `python3-nftables` | `nftables` (includes bindings) | `py3-nftables` |
 | `ipset` | Legacy ipset loading from `init` scripts | `ipset` | `ipset` | `ipset` | `ipset` |
-| `sudo` | For `run-netns` wrapper in tests | `sudo` | `sudo` | `sudo` | `sudo` |
+| `sudo` | For `run-netns` subprocess fallback when libnftables is absent | `sudo` | `sudo` | `sudo` | `sudo` |
 
 ## System binaries (test only)
 
@@ -97,10 +97,10 @@ Depends:
   python3 (>= 3.11),
   python3-click (>= 8.0),
   python3-pyroute2 (>= 0.9),
+  python3-nftables,
   nftables,
   iproute2
 Recommends:
-  python3-nftables,
   ipset
 Suggests:
   python3-scapy,
@@ -137,9 +137,9 @@ Version:  0.11.0
 Requires: python3 >= 3.11
 Requires: python3-click >= 8.0
 Requires: python3-pyroute2 >= 0.9
+Requires: python3-nftables
 Requires: nftables
 Requires: iproute
-Recommends: python3-nftables
 Recommends: ipset
 Suggests: python3-scapy
 ```
@@ -151,7 +151,7 @@ depends=(
     'python>=3.11'
     'python-click>=8.0'
     'python-pyroute2>=0.9'
-    'nftables'
+    'nftables'     # includes python-nftables libnftables bindings on Arch
     'iproute2'
 )
 optdepends=(

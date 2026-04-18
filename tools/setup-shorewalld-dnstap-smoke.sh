@@ -94,6 +94,7 @@ ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3 python3-venv python3-pip \
         python3-click python3-pyroute2 \
+        python3-nftables \
         iproute2 nftables conntrack \
         pdns-recursor dnsutils \
         2>&1 | tail -10 || true'

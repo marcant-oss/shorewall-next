@@ -67,6 +67,7 @@ ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip python3.12-venv \
     python3-pytest python3-pytest-xdist python3-click python3-pyroute2 \
+    python3-nftables \
     iproute2 sudo nftables conntrack ipset 2>&1 | tail -5 || true'
 
 info "create venv + editable install (all three sub-packages)"
@@ -78,6 +79,20 @@ ssh "$REMOTE" 'cd /root/shorewall-nft && \
         -e "packages/shorewall-nft-simlab[dev]" && \
     .venv/bin/shorewall-nft --version && \
     .venv/bin/shorewalld --version'
+
+info "verify libnftables Python bindings (required for production setns path)"
+ssh "$REMOTE" 'python3 -c "
+import sys
+try:
+    import nftables
+    n = nftables.Nftables()
+    print(\"libnft OK — production setns path available\")
+except Exception as e:
+    print(\"WARNING: python3-nftables not importable:\", e, file=sys.stderr)
+    print(\"  CLI will fall back to sudo run-netns for all namespace operations\", file=sys.stderr)
+    print(\"  Install python3-nftables for the full production code path\", file=sys.stderr)
+    sys.exit(1)
+" || true'
 
 info "run install-test-tooling.sh on remote"
 ssh "$REMOTE" 'sh /root/shorewall-nft/tools/install-test-tooling.sh'
@@ -173,6 +188,7 @@ echo "merged: $(find /etc/shorewall46 -maxdepth 1 -type f | wc -l) files"
 '
 
 info "done. next steps on the remote:"
+info "  # run full test suite (requires python3-nftables for production setns path):"
 info "  systemd-run --unit=shorewall-pytest --collect --working-directory=/root/shorewall-nft \\"
 info "    --property=StandardOutput=file:/tmp/pytest.log \\"
 info "    --property=StandardError=file:/tmp/pytest.log \\"
@@ -180,5 +196,12 @@ info "    /root/shorewall-nft/.venv/bin/python -m pytest \\"
 info "        packages/shorewall-nft/tests/ \\"
 info "        packages/shorewalld/tests/ \\"
 info "        packages/shorewall-nft-simlab/tests/ -v"
+info ""
+info "  # smoke the production path (setns, no subprocess run-netns needed):"
+info "  /root/shorewall-nft/.venv/bin/shorewall-nft start /etc/shorewall46"
+info "  /root/shorewall-nft/.venv/bin/shorewall-nft status"
+info "  /root/shorewall-nft/.venv/bin/shorewall-nft stop"
+info ""
+info "  # simulate against ground truth:"
 info "  /root/shorewall-nft/.venv/bin/shorewall-nft simulate /root/simulate-data/etc/shorewall \\"
 info "    --iptables /root/simulate-data/iptables.txt -n 60"

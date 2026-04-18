@@ -541,6 +541,14 @@ Deadlines are stored as wall-clock absolute timestamps in the
 file so a monotonic clock reset (which happens on every reboot)
 doesn't throw off the TTL remaining.
 
+### Directory management
+
+`/var/lib/shorewalld` is created and owned by the systemd units via
+`StateDirectory=shorewalld` (mode `0750`). No manual `mkdir` is needed;
+the directory appears before the first `ExecStart`. Distro packages
+declare it as `%dir %{_sharedstatedir}/shorewalld` (RPM) or
+`install -d debian/shorewall-nft/var/lib/shorewalld` (Debian).
+
 ### Config (shorewalld.conf)
 
 ```

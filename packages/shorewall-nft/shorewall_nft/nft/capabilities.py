@@ -19,29 +19,36 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_RUN_NETNS = ["sudo", "/usr/local/bin/run-netns"]
 _PROBE_TABLE = "__swnft_probe"
 
 
-def _nft(cmd: str, netns: str | None = None, timeout: int = 5) -> tuple[int, str, str]:
-    """Run an nft command, return (rc, stdout, stderr)."""
-    if netns:
-        full_cmd = [*_RUN_NETNS, "exec", netns, "nft", *cmd.split()]
-    else:
-        full_cmd = ["nft", *cmd.split()]
-    try:
-        r = subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
-        return r.returncode, r.stdout, r.stderr
-    except Exception as e:
-        return 1, "", str(e)
+def _make_runner(nft: "NftInterface", netns: str | None):
+    """Return (cmd_fn, probe_rule_fn) bound to *nft* and *netns*.
 
+    ``cmd_fn(text) -> bool`` — True on success, False on any error.
+    ``probe_rule_fn(rule) -> bool`` — add a rule to the test chain and
+    flush it; True if the kernel accepted the syntax.
 
-def _probe_rule(rule: str, netns: str | None = None) -> bool:
-    """Test if a rule can be added successfully."""
-    rc, _, _ = _nft(f"add rule inet {_PROBE_TABLE} __test {rule}", netns)
-    if rc == 0:
-        _nft(f"flush chain inet {_PROBE_TABLE} __test", netns)
-    return rc == 0
+    All nft operations go through :class:`NftInterface` which prefers
+    in-process ``setns()`` + libnftables and falls back to the
+    ``sudo run-netns`` subprocess path only when ``setns()`` is denied.
+    """
+    from shorewall_nft.nft.netlink import NftError
+
+    def _cmd(text: str) -> bool:
+        try:
+            nft._run_text(text, netns=netns)
+            return True
+        except (NftError, Exception):
+            return False
+
+    def _probe_rule(rule: str) -> bool:
+        ok = _cmd(f"add rule inet {_PROBE_TABLE} __test {rule}")
+        if ok:
+            _cmd(f"flush chain inet {_PROBE_TABLE} __test")
+        return ok
+
+    return _cmd, _probe_rule
 
 
 @dataclass
@@ -106,113 +113,132 @@ class NftCapabilities:
     kernel_modules: list[str] = field(default_factory=list)
 
     @classmethod
-    def probe(cls, netns: str | None = None) -> "NftCapabilities":
-        """Probe the system for nft capabilities.
+    def probe(cls, netns: str | None = None,
+              nft: "NftInterface | None" = None) -> "NftCapabilities":
+        """Probe the running kernel for nft capabilities.
 
-        Creates a temporary namespace (or uses provided one)
-        and tests each feature by trying to create rules.
+        All nft operations go through *nft* (:class:`NftInterface`).
+        When *nft* is ``None`` a fresh instance is created.  The
+        interface prefers in-process ``setns()`` + libnftables and
+        falls back to ``sudo run-netns`` only when ``setns()`` is
+        denied — so production systems (root + python3-nftables)
+        never spawn a subprocess for namespace entry.
         """
+        from shorewall_nft.nft.netlink import NftInterface as _NftInterface
+        if nft is None:
+            nft = _NftInterface()
+
+        _cmd, _probe_rule = _make_runner(nft, netns)
         caps = cls()
 
-        # Version
-        rc, out, _ = _nft("-v", netns)
-        if rc == 0:
-            caps.version = out.strip().split()[-1].strip("()")
-            caps.nft_path = "nft"
+        # nft binary version — plain subprocess, no netns needed.
+        try:
+            r = subprocess.run(
+                [nft._nft_bin, "-v"],
+                capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                parts = r.stdout.strip().split()
+                if parts:
+                    caps.version = parts[-1].strip("()")
+                caps.nft_path = nft._nft_bin
+        except Exception:
+            pass
 
-        # Create probe table
-        _nft(f"add table inet {_PROBE_TABLE}", netns)
-        _nft(f"add chain inet {_PROBE_TABLE} __test {{ type filter hook input priority 0; }}", netns)
+        # Create probe table + filter chain.
+        _cmd(f"add table inet {_PROBE_TABLE}")
+        _cmd(f"add chain inet {_PROBE_TABLE} __test "
+             f"{{ type filter hook input priority 0; }}")
 
         # Families
         for fam in ("ip", "ip6", "inet", "arp", "bridge", "netdev"):
-            rc, _, _ = _nft(f"add table {fam} {_PROBE_TABLE}_fam", netns)
-            if rc == 0:
+            if _cmd(f"add table {fam} {_PROBE_TABLE}_fam"):
                 caps.families.append(fam)
-                _nft(f"delete table {fam} {_PROBE_TABLE}_fam", netns)
+                _cmd(f"delete table {fam} {_PROBE_TABLE}_fam")
 
-        # Chain type/hook combinations
+        # Chain type / hook combinations
         for chain_type in ("filter", "nat", "route"):
             hooks = []
-            for hook in ("prerouting", "input", "forward", "output", "postrouting", "ingress"):
-                rc, _, _ = _nft(
-                    f"add chain inet {_PROBE_TABLE} __hook "
-                    f"{{ type {chain_type} hook {hook} priority 0; }}", netns)
-                if rc == 0:
+            for hook in ("prerouting", "input", "forward", "output",
+                         "postrouting", "ingress"):
+                if _cmd(f"add chain inet {_PROBE_TABLE} __hook "
+                        f"{{ type {chain_type} hook {hook} priority 0; }}"):
                     hooks.append(hook)
-                    _nft(f"delete chain inet {_PROBE_TABLE} __hook", netns)
+                    _cmd(f"delete chain inet {_PROBE_TABLE} __hook")
             caps.chain_hooks[chain_type] = hooks
 
         # Match expressions
-        caps.has_ct_state = _probe_rule("ct state established accept", netns)
-        caps.has_ct_helper = _probe_rule('ct helper "ftp" accept', netns)
-        caps.has_ct_count = _probe_rule("ct count 10 accept", netns)
-        caps.has_fib = _probe_rule("fib daddr type local accept", netns)
-        caps.has_meta_nfproto = _probe_rule("meta nfproto ipv4 accept", netns)
-        caps.has_socket = _probe_rule("socket transparent 1 accept", netns)
-        caps.has_osf = _probe_rule('osf name "Linux" accept', netns)
+        caps.has_ct_state      = _probe_rule("ct state established accept")
+        caps.has_ct_helper     = _probe_rule('ct helper "ftp" accept')
+        caps.has_ct_count      = _probe_rule("ct count 10 accept")
+        caps.has_fib           = _probe_rule("fib daddr type local accept")
+        caps.has_meta_nfproto  = _probe_rule("meta nfproto ipv4 accept")
+        caps.has_socket        = _probe_rule("socket transparent 1 accept")
+        caps.has_osf           = _probe_rule('osf name "Linux" accept')
 
         # Statements
-        caps.has_limit = _probe_rule("limit rate 10/second accept", netns)
-        caps.has_quota = _probe_rule("quota over 1 mbytes drop", netns)
-        caps.has_counter = _probe_rule("counter accept", netns)
-        caps.has_log = _probe_rule('log prefix "test" accept', netns)
-        caps.has_notrack = _probe_rule("notrack", netns)
-        # NAT probe: masquerade only works in a nat-type chain, not filter.
-        _nft(f"add chain inet {_PROBE_TABLE} __nat_test {{ type nat hook postrouting priority 100; }}", netns)
-        rc_nat, _, _ = _nft(f"add rule inet {_PROBE_TABLE} __nat_test masquerade", netns)
-        caps.has_nat = rc_nat == 0
-        _nft(f"flush chain inet {_PROBE_TABLE} __nat_test", netns)
-        _nft(f"delete chain inet {_PROBE_TABLE} __nat_test", netns)
-        caps.has_flow_offload = _probe_rule("flow offload @__nonexistent", netns) is False  # Will fail but module presence detectable
+        caps.has_limit   = _probe_rule("limit rate 10/second accept")
+        caps.has_quota   = _probe_rule("quota over 1 mbytes drop")
+        caps.has_counter = _probe_rule("counter accept")
+        caps.has_log     = _probe_rule('log prefix "test" accept')
+        caps.has_notrack = _probe_rule("notrack")
+
+        # NAT: masquerade only valid in a nat-type chain.
+        _cmd(f"add chain inet {_PROBE_TABLE} __nat_test "
+             f"{{ type nat hook postrouting priority 100; }}")
+        caps.has_nat = _cmd(
+            f"add rule inet {_PROBE_TABLE} __nat_test masquerade")
+        _cmd(f"flush chain inet {_PROBE_TABLE} __nat_test")
+        _cmd(f"delete chain inet {_PROBE_TABLE} __nat_test")
 
         # Set features
-        rc, _, _ = _nft(f"add set inet {_PROBE_TABLE} __s1 {{ type ipv4_addr; flags interval; }}", netns)
-        caps.has_interval_sets = rc == 0
-        _nft(f"delete set inet {_PROBE_TABLE} __s1", netns)
+        caps.has_interval_sets = _cmd(
+            f"add set inet {_PROBE_TABLE} __s1 "
+            f"{{ type ipv4_addr; flags interval; }}")
+        _cmd(f"delete set inet {_PROBE_TABLE} __s1")
 
-        rc, _, _ = _nft(f"add set inet {_PROBE_TABLE} __s2 {{ type ipv4_addr; flags timeout; }}", netns)
-        caps.has_timeout_sets = rc == 0
-        _nft(f"delete set inet {_PROBE_TABLE} __s2", netns)
+        caps.has_timeout_sets = _cmd(
+            f"add set inet {_PROBE_TABLE} __s2 "
+            f"{{ type ipv4_addr; flags timeout; }}")
+        _cmd(f"delete set inet {_PROBE_TABLE} __s2")
 
-        rc, _, _ = _nft(f'add set inet {_PROBE_TABLE} __s3 {{ type ipv4_addr . inet_service; }}', netns)
-        caps.has_concat_sets = rc == 0
-        _nft(f"delete set inet {_PROBE_TABLE} __s3", netns)
+        caps.has_concat_sets = _cmd(
+            f"add set inet {_PROBE_TABLE} __s3 "
+            f"{{ type ipv4_addr . inet_service; }}")
+        _cmd(f"delete set inet {_PROBE_TABLE} __s3")
 
         # Objects
-        rc, _, _ = _nft(f'add ct helper inet {_PROBE_TABLE} __h {{ type "ftp" protocol tcp; l3proto inet; }}', netns)
-        caps.has_ct_helper_obj = rc == 0
-        if rc == 0:
-            _nft(f"delete ct helper inet {_PROBE_TABLE} __h", netns)
+        caps.has_ct_helper_obj = _cmd(
+            f'add ct helper inet {_PROBE_TABLE} __h '
+            f'{{ type "ftp" protocol tcp; l3proto inet; }}')
+        if caps.has_ct_helper_obj:
+            _cmd(f"delete ct helper inet {_PROBE_TABLE} __h")
 
-        rc, _, _ = _nft(f"add counter inet {_PROBE_TABLE} __c", netns)
-        caps.has_counter_obj = rc == 0
-        if rc == 0:
-            _nft(f"delete counter inet {_PROBE_TABLE} __c", netns)
+        caps.has_counter_obj = _cmd(
+            f"add counter inet {_PROBE_TABLE} __c")
+        if caps.has_counter_obj:
+            _cmd(f"delete counter inet {_PROBE_TABLE} __c")
 
-        rc, _, _ = _nft(f"add quota inet {_PROBE_TABLE} __q {{ over 1 mbytes }}", netns)
-        caps.has_quota_obj = rc == 0
-        if rc == 0:
-            _nft(f"delete quota inet {_PROBE_TABLE} __q", netns)
+        caps.has_quota_obj = _cmd(
+            f"add quota inet {_PROBE_TABLE} __q {{ over 1 mbytes }}")
+        if caps.has_quota_obj:
+            _cmd(f"delete quota inet {_PROBE_TABLE} __q")
 
         # Flowtable
-        rc, _, _ = _nft(f'add flowtable inet {_PROBE_TABLE} __ft {{ hook ingress priority 0; devices = {{}}; }}', netns)
-        caps.has_flowtable = rc == 0
+        caps.has_flowtable = _cmd(
+            f"add flowtable inet {_PROBE_TABLE} __ft "
+            f"{{ hook ingress priority 0; devices = {{}}; }}")
         if caps.has_flowtable:
-            _nft(f"delete flowtable inet {_PROBE_TABLE} __ft", netns)
-        # Flowtable hardware/software offload flag. Kernel may accept
-        # `flags offload` even without NIC support — the actual hardware
-        # offload is validated at packet time. Probing the flag at
-        # config-load time is the best we can do from userspace.
-        rc, _, _ = _nft(
-            f'add flowtable inet {_PROBE_TABLE} __ft2 '
-            f'{{ hook ingress priority 0; devices = {{}}; flags offload; }}',
-            netns)
-        caps.has_flowtable_offload = rc == 0
-        if caps.has_flowtable_offload:
-            _nft(f"delete flowtable inet {_PROBE_TABLE} __ft2", netns)
+            _cmd(f"delete flowtable inet {_PROBE_TABLE} __ft")
 
-        # Kernel modules — always check on the HOST (modules are global, not per-netns)
+        # Flowtable offload flag (kernel accepts the flag even without HW
+        # support; actual HW offload is validated at packet time).
+        caps.has_flowtable_offload = _cmd(
+            f"add flowtable inet {_PROBE_TABLE} __ft2 "
+            f"{{ hook ingress priority 0; devices = {{}}; flags offload; }}")
+        if caps.has_flowtable_offload:
+            _cmd(f"delete flowtable inet {_PROBE_TABLE} __ft2")
+
+        # Kernel modules — host-global, no netns involved.
         import os
         uname = os.uname().release
         mod_dir = Path(f"/lib/modules/{uname}/kernel/net/netfilter")
@@ -222,7 +248,7 @@ class NftCapabilities:
                 for f in mod_dir.glob("nft_*.ko*")
             )
 
-        # Try to load missing modules (requires root — may fail in netns)
+        # Best-effort modprobe for essential modules (requires root).
         _essential_modules = [
             "nft_ct", "nft_log", "nft_limit", "nft_nat",
             "nft_masq", "nft_redir", "nft_quota", "nft_hash",
@@ -230,19 +256,15 @@ class NftCapabilities:
             "nft_connlimit", "nft_flow_offload", "nft_osf",
         ]
         for mod in _essential_modules:
-            if mod.replace("nft_", "") not in caps.kernel_modules:
-                # Module not available as file — might be built-in
-                pass
-            else:
-                # Try to modprobe (host-level, not netns)
+            if mod.replace("nft_", "") in caps.kernel_modules:
                 try:
                     subprocess.run(
                         ["modprobe", mod], capture_output=True, timeout=5)
                 except Exception:
-                    pass  # May not have permissions
+                    pass
 
-        # Cleanup
-        _nft(f"delete table inet {_PROBE_TABLE}", netns)
+        # Cleanup probe table.
+        _cmd(f"delete table inet {_PROBE_TABLE}")
 
         return caps
 
@@ -261,10 +283,17 @@ class NftCapabilities:
         lines.append(f"Kernel modules ({len(self.kernel_modules)}): {', '.join(self.kernel_modules[:10])}...")
         return "\n".join(lines)
 
-    def check_rule_support(self, rule_str: str, netns: str | None = None) -> bool:
-        """Check if a specific nft rule syntax is supported."""
-        _nft(f"add table inet {_PROBE_TABLE}", netns)
-        _nft(f"add chain inet {_PROBE_TABLE} __test {{ type filter hook input priority 0; }}", netns)
-        result = _probe_rule(rule_str, netns)
-        _nft(f"delete table inet {_PROBE_TABLE}", netns)
+    def check_rule_support(self, rule_str: str,
+                           netns: str | None = None,
+                           nft: "NftInterface | None" = None) -> bool:
+        """Check whether a specific nft rule syntax is accepted by the kernel."""
+        from shorewall_nft.nft.netlink import NftInterface as _NftInterface
+        if nft is None:
+            nft = _NftInterface()
+        _cmd, _probe_rule = _make_runner(nft, netns)
+        _cmd(f"add table inet {_PROBE_TABLE}")
+        _cmd(f"add chain inet {_PROBE_TABLE} __test "
+             f"{{ type filter hook input priority 0; }}")
+        result = _probe_rule(rule_str)
+        _cmd(f"delete table inet {_PROBE_TABLE}")
         return result
