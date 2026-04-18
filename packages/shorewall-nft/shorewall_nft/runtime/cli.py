@@ -502,13 +502,14 @@ def _notify_shorewalld(
     config_dir: Path,
     netns: str | None,
     socket_path: str,
+    dns_reg=None,
+    dnsr_reg=None,
 ) -> dict:
     """Send register-instance or deregister-instance to shorewalld.
 
     The *register* payload carries the full :class:`InstanceConfig`
-    equivalent (name, netns, config_dir, allowlist_path) as JSON so the
-    daemon can construct state without any derivation — keeping naming
-    rules authoritative on the shorewall-nft side.
+    equivalent (name, netns, config_dir) plus the DNS/DNSR registries
+    serialised inline — no on-disk allowlist file is written or read.
 
     Returns the response dict. Raises OSError subtypes on transport
     failure (FileNotFoundError, PermissionError, ConnectionRefusedError,
@@ -519,13 +520,15 @@ def _notify_shorewalld(
     import socket as _sock
 
     if action == "register":
-        req = {
+        req: dict = {
             "cmd": "register-instance",
             "name": instance_name,
             "netns": netns or "",
             "config_dir": str(config_dir),
-            "allowlist_path": str(config_dir / "dnsnames.compiled"),
         }
+        if dns_reg is not None or dnsr_reg is not None:
+            from shorewall_nft.nft.dns_sets import registry_to_payload
+            req.update(registry_to_payload(dns_reg, dnsr_reg))
     elif action == "deregister":
         req = {"cmd": "deregister-instance", "name": instance_name}
     else:
@@ -616,11 +619,14 @@ def _try_notify_shorewalld(
     netns: str | None,
     socket_path: str,
     has_dns_sets: bool,
+    dns_reg=None,
+    dnsr_reg=None,
 ) -> None:
     """Send notify + classify the outcome in one call."""
     try:
         resp = _notify_shorewalld(
-            action, instance_name, config_dir, netns, socket_path)
+            action, instance_name, config_dir, netns, socket_path,
+            dns_reg=dns_reg, dnsr_reg=dnsr_reg)
         if not resp.get("ok", False):
             raise RuntimeError(resp.get("error", "unknown daemon error"))
         _report_shorewalld_result(
@@ -703,31 +709,12 @@ def start(directory, netns, shorewalld_socket, instance_name,
         apply_nft(script, netns=netns)
         s.info(f"{len(ir.chains)} chains")
 
-    # ── Step 3b: write DNS name allowlist for shorewalld ─────────────
+    # ── Step 3b: register instance with shorewalld ───────────────────
     _dns_reg = getattr(ir, "dns_registry", None)
     _dnsr_reg = getattr(ir, "dnsr_registry", None)
     _has_dns = bool(
         (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups)
     )
-    if _has_dns:
-        with prog.step("Writing DNS name allowlist") as s:
-            try:
-                from shorewall_nft.nft.dns_sets import write_compiled_allowlist
-                allowlist_path = cfg_primary / "dnsnames.compiled"
-                write_compiled_allowlist(
-                    _dns_reg or type(_dns_reg)(),
-                    allowlist_path,
-                    dnsr_registry=_dnsr_reg,
-                )
-                n_tap = len(_dns_reg.specs) if _dns_reg else 0
-                n_pull = len(_dnsr_reg.groups) if _dnsr_reg else 0
-                s.info(
-                    f"{n_tap} tap name(s)"
-                    + (f", {n_pull} pull-resolver group(s)" if n_pull else ""))
-            except Exception as exc:
-                s.warn(f"allowlist write failed: {exc}")
-
-    # ── Step 3c: register instance with shorewalld ───────────────────
     _instance = _resolve_instance_name(
         instance_name, getattr(ir, "settings", None), netns, cfg_primary)
     with prog.step(
@@ -735,7 +722,8 @@ def start(directory, netns, shorewalld_socket, instance_name,
     ) as s:
         _try_notify_shorewalld(
             s, "register", _instance, cfg_primary, netns,
-            shorewalld_socket, _has_dns)
+            shorewalld_socket, _has_dns,
+            dns_reg=_dns_reg, dnsr_reg=_dnsr_reg)
 
     # ── Step 4: proxy-ARP / NDP ───────────────────────────────────────
     with prog.step("Proxy-ARP / NDP") as s:
@@ -923,29 +911,13 @@ def _apply_and_register(
         (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups)
     )
 
-    # Keep dnsnames.compiled in sync so shorewalld reloads the current
-    # ruleset's hostnames (not the stale version from the previous
-    # start). If no DNS/DNSR sets are used, don't touch the file.
-    if _has_dns:
-        try:
-            from shorewall_nft.nft.dns_sets import (
-                DnsSetRegistry,
-                write_compiled_allowlist,
-            )
-            write_compiled_allowlist(
-                _dns_reg or DnsSetRegistry(),
-                cfg_primary / "dnsnames.compiled",
-                dnsr_registry=_dnsr_reg,
-            )
-        except Exception as exc:
-            click.echo(f"Note: allowlist write failed: {exc}", err=True)
-
     click.echo(f"Shorewall-nft {verb} ({len(ir.chains)} chains).")
     _instance = _resolve_instance_name(
         instance_name, getattr(ir, "settings", None), netns, cfg_primary)
     _try_notify_shorewalld(
         None, "register", _instance, cfg_primary, netns,
-        shorewalld_socket, _has_dns)
+        shorewalld_socket, _has_dns,
+        dns_reg=_dns_reg, dnsr_reg=_dnsr_reg)
 
 
 @cli.command()

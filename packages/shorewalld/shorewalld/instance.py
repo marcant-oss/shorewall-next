@@ -187,13 +187,20 @@ class InstanceManager:
                 return
             await self._load_instance(state)
 
-    async def register(self, config: InstanceConfig) -> int:
+    async def register(
+        self,
+        config: InstanceConfig,
+        dns_payload: dict | None = None,
+    ) -> int:
         """Dynamically add or refresh an instance.
 
         If the instance name is unknown, it is added to the managed set.
-        If it already exists, its config is updated in place. In both
-        cases the allowlist is re-read from disk and the merged state is
-        applied to the tracker and pull resolver.
+        If it already exists, its config is updated in place.
+
+        When *dns_payload* is provided (the inline ``"dns"``/``"dnsr"``
+        dict from the control-socket message) the registries are parsed
+        directly from it — no file I/O.  Without it the legacy file-based
+        path is used as a fallback.
 
         Returns the number of DNS qnames loaded for this instance.
         """
@@ -206,8 +213,12 @@ class InstanceManager:
         else:
             self._states[config.name].cfg = config
             log.info("instance: re-registering instance %r", config.name)
-        await self._load_instance(self._states[config.name])
-        return self._states[config.name].last_n_qnames
+        state = self._states[config.name]
+        if dns_payload is not None:
+            await self._load_instance_from_payload(state, dns_payload)
+        else:
+            await self._load_instance(state)
+        return state.last_n_qnames
 
     async def deregister(self, name: str) -> None:
         """Remove an instance and recompute the merged tracker/pull_resolver.
@@ -239,6 +250,47 @@ class InstanceManager:
         return result
 
     # ── Internal ───────────────────────────────────────────────────────
+
+    async def _load_instance_from_payload(
+        self, state: _InstanceState, payload: dict,
+    ) -> None:
+        """Parse inline DNS registries from a control-socket payload dict."""
+        try:
+            from shorewall_nft.nft.dns_sets import payload_to_registries
+        except ImportError:
+            log.error(
+                "instance %s: shorewall_nft not installed — "
+                "cannot parse inline allowlist",
+                state.cfg.name,
+            )
+            state.error = "shorewall_nft not installed"
+            return
+
+        try:
+            state.last_dns_registry, state.last_dnsr_registry = (
+                payload_to_registries(payload)
+            )
+        except Exception as e:
+            log.error(
+                "instance %s: failed to parse inline allowlist: %s",
+                state.cfg.name, e,
+            )
+            state.error = str(e)
+            return
+
+        n_dns = sum(1 for _ in state.last_dns_registry.iter_sorted())
+        n_dnsr = (
+            len(state.last_dnsr_registry.groups)
+            if state.last_dnsr_registry is not None else 0
+        )
+        state.last_loaded_ts = time.time()
+        state.last_n_qnames = n_dns
+        state.error = None
+        log.info(
+            "instance %s: loaded inline allowlist (%d dns, %d dnsr)",
+            state.cfg.name, n_dns, n_dnsr,
+        )
+        await self._apply_merged()
 
     async def _load_instance(self, state: _InstanceState) -> None:
         """Read compiled allowlist into the per-instance cache, then merge."""
