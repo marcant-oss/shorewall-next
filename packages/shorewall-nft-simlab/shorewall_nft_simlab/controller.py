@@ -236,15 +236,14 @@ class SimController:
                 self._iface_pcap[iface] = writer
 
     def load_nft(self, nft_script_path: str) -> None:
-        """Load an nft script into NS_FW via `ip netns exec`."""
-        import subprocess
-        r = subprocess.run(
-            ["ip", "netns", "exec", self.ns_name, "nft", "-f", nft_script_path],
-            capture_output=True, text=True, timeout=30,
-        )
-        if r.returncode != 0:
-            raise RuntimeError(
-                f"nft -f failed (rc={r.returncode}):\n{r.stderr[:2000]}")
+        """Load an nft script into NS_FW via libnftables + setns."""
+        from shorewall_nft.nft.netlink import NftError, NftInterface
+        nft = NftInterface()
+        text = open(nft_script_path).read()
+        try:
+            nft.cmd(text, netns=self.ns_name)
+        except NftError as exc:
+            raise RuntimeError(f"nft -f failed:\n{exc}") from exc
 
     # ── probe dispatch ────────────────────────────────────────────
 

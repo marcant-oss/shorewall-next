@@ -286,15 +286,17 @@ def _apply_sysctls(ns_name: str | None = None) -> list[str]:
             ("/proc/sys/net/ipv4/ip_forward",          "1"),
             ("/proc/sys/net/ipv6/conf/all/forwarding", "1"),
         ]
-        for rel_path, value in _fwd_paths:
-            cmd = ["sudo", "/usr/local/bin/run-netns", "exec", ns_name,
-                   "sh", "-c", f"echo {value} > {rel_path}"]
-            try:
-                r = subprocess.run(cmd, capture_output=True, timeout=5)
-                if r.returncode == 0:
-                    applied.append(f"[{ns_name}] {rel_path} → {value}")
-            except Exception:
-                pass
+        from shorewall_nft.nft.netlink import _in_netns
+        try:
+            with _in_netns(ns_name):
+                for path, value in _fwd_paths:
+                    try:
+                        open(path, "w").write(value + "\n")
+                        applied.append(f"[{ns_name}] {path} → {value}")
+                    except OSError as e:
+                        applied.append(f"[{ns_name}] {path}: FAILED ({e})")
+        except OSError:
+            pass
     return applied
 
 
@@ -957,24 +959,14 @@ def _flowtable_state(ns_name: str) -> str | None:
     fast-path is engaged at the end of a run — non-zero entry
     count proves at least one flow took the bypass.
 
-    Implementation: shells out to nft because libnftables doesn't
-    surface flowtable entry counts. Single subprocess at the end
-    of the run, not in the hot path.
+    Implementation: uses NftInterface.cmd() via libnftables + setns.
+    Single call at the end of the run, not in the hot path.
     """
-    import subprocess
+    from shorewall_nft.nft.netlink import NftError, NftInterface
     try:
-        cmd = ["nft", "-j", "list", "flowtables"]
-        env_run = ["sudo", "/usr/local/bin/run-netns", "exec", ns_name] + cmd
-        out = subprocess.run(
-            env_run, capture_output=True, text=True, timeout=5)
-        if out.returncode != 0:
-            return None
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    import json as _json
-    try:
-        data = _json.loads(out.stdout or "{}")
-    except _json.JSONDecodeError:
+        nft = NftInterface()
+        data = nft.cmd("list flowtables", netns=ns_name)
+    except (NftError, Exception):
         return None
     flowtables = [
         x.get("flowtable") for x in data.get("nftables", [])
