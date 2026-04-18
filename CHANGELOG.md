@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lifecycle → shorewalld instance registration** — `shorewall-nft
+  start` / `restart` / `reload` now contact the shorewalld control
+  socket and register (or re-register) the instance; `stop`
+  deregisters it. The daemon loads the instance's `dnsnames.compiled`,
+  wires DNSR secondary aliases into the tracker, and updates the
+  PullResolver in one merged write (fixes a pre-existing multi-instance
+  eviction bug where each instance's `load_registry` wiped the
+  previous instance's names).
+
+  - New shorewalld control-socket commands: `register-instance` and
+    `deregister-instance`. Payload carries the full `InstanceConfig`
+    as JSON: `name`, `netns`, `config_dir`, `allowlist_path`.
+  - `shorewall-nft`: new options on `start` / `stop` / `restart` /
+    `reload`: `--shorewalld-socket PATH` (env `SHOREWALLD_SOCKET`,
+    default `/run/shorewalld/control.sock`) and `--instance-name NAME`
+    (env `SHOREWALLD_INSTANCE_NAME`).
+  - New `shorewall.conf` key `INSTANCE_NAME`. Precedence for the
+    registered name: `--instance-name` CLI flag → `INSTANCE_NAME` in
+    `shorewall.conf` → netns name → `config_dir` basename. Fallback is
+    deterministic so restart/stop hit the same daemon-side record.
+  - `restart` and `reload` now also rewrite `dnsnames.compiled`
+    (previously only `start` did). Keeps the daemon's view in sync
+    with the running ruleset.
+  - Error severity: socket missing or permission denied → warning,
+    never fatal (shorewalld down is a normal operator state). Any
+    other failure during `register` with DNS/DNSR sets present →
+    fatal abort. `deregister` is always non-fatal (daemon ages
+    entries out via TTL).
+  - shorewalld now starts its `InstanceManager` whenever a control
+    socket is configured (previously only when `--instance` was also
+    passed), so dynamic registration works without predeclared
+    instances.
+  - `shorewalld ctl register-instance --config-dir PATH [--netns NS]
+    [--name NAME]` and `shorewalld ctl deregister-instance --name NAME`
+    are available for manual testing.
+
+- **`PullResolver.update_registry()`** — replace the active set of
+  `dnsr:` groups at runtime; preserves the scheduled `next_at` for
+  unchanged groups so reloads don't trigger a thundering-herd
+  re-resolve.
+
 - **shorewalld: IP-list sets** — new `iplist/` subsystem fetches public
   prefix lists from cloud providers (AWS, Azure, GCP, Cloudflare, GitHub),
   PeeringDB IX route servers, and hardcoded RFC bogons, and writes them into

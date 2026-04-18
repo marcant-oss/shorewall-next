@@ -461,14 +461,204 @@ def cli(ctx, q, verbose, override_json, override_per_file):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# shorewalld control-socket notification
+# ──────────────────────────────────────────────────────────────────────
+
+DEFAULT_SHOREWALLD_SOCKET = "/run/shorewalld/control.sock"
+
+
+def _resolve_instance_name(
+    cli_name: str | None,
+    settings: dict | None,
+    netns: str | None,
+    config_dir: Path,
+) -> str:
+    """Resolve the instance name for the shorewalld control socket.
+
+    Precedence:
+      1. Explicit CLI flag (``--instance-name``).
+      2. ``INSTANCE_NAME`` from ``shorewall.conf``.
+      3. The netns name (if set).
+      4. The ``config_dir`` basename.
+
+    The last two are deterministic: running ``shorewall-nft start`` twice
+    on the same config yields the same name, which is what shorewalld
+    needs for idempotent register/deregister.
+    """
+    if cli_name:
+        return cli_name.strip()
+    if settings:
+        from_conf = str(settings.get("INSTANCE_NAME", "")).strip()
+        if from_conf:
+            return from_conf
+    if netns:
+        return netns
+    return config_dir.name
+
+
+def _notify_shorewalld(
+    action: str,
+    instance_name: str,
+    config_dir: Path,
+    netns: str | None,
+    socket_path: str,
+) -> dict:
+    """Send register-instance or deregister-instance to shorewalld.
+
+    The *register* payload carries the full :class:`InstanceConfig`
+    equivalent (name, netns, config_dir, allowlist_path) as JSON so the
+    daemon can construct state without any derivation — keeping naming
+    rules authoritative on the shorewall-nft side.
+
+    Returns the response dict. Raises OSError subtypes on transport
+    failure (FileNotFoundError, PermissionError, ConnectionRefusedError,
+    socket.timeout); callers classify severity via
+    :func:`_report_shorewalld_result`.
+    """
+    import json as _json
+    import socket as _sock
+
+    if action == "register":
+        req = {
+            "cmd": "register-instance",
+            "name": instance_name,
+            "netns": netns or "",
+            "config_dir": str(config_dir),
+            "allowlist_path": str(config_dir / "dnsnames.compiled"),
+        }
+    elif action == "deregister":
+        req = {"cmd": "deregister-instance", "name": instance_name}
+    else:
+        raise ValueError(f"unknown action {action!r}")
+
+    payload = _json.dumps(req, separators=(",", ":")).encode() + b"\n"
+    s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
+    s.settimeout(10.0)
+    try:
+        s.connect(socket_path)
+        s.sendall(payload)
+        buf = b""
+        while b"\n" not in buf:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    finally:
+        s.close()
+    if not buf:
+        raise OSError("shorewalld closed the connection without a response")
+    return _json.loads(buf.split(b"\n", 1)[0])
+
+
+def _report_shorewalld_result(
+    step,
+    action: str,
+    has_dns_sets: bool,
+    exc: Exception | None,
+    resp: dict | None,
+    socket_path: str,
+) -> None:
+    """Emit a user-visible message about the shorewalld contact result.
+
+    *step* is a ``_Step`` from ``_Progress.step()`` — if ``None``, falls
+    back to :func:`click.echo`.
+
+    Severity rules:
+
+    * ``FileNotFoundError`` → INFO (no DNS sets) or WARN (with DNS sets);
+      never fatal — shorewalld not running is a common operator state.
+    * ``PermissionError`` → WARN; continue.
+    * Any other failure on ``register`` with DNS/DNSR sets present →
+      raises :class:`click.ClickException` (sets will not be populated).
+    * ``deregister`` failures are always non-fatal — the daemon will
+      age entries out via their per-element TTL.
+    """
+    def _emit(level: str, msg: str) -> None:
+        if step is not None:
+            getattr(step, "warn" if level != "info" else "info")(msg)
+        else:
+            click.echo(
+                f"shorewalld: {msg}",
+                err=(level in ("warn", "error")),
+            )
+
+    if exc is None:
+        n = (resp or {}).get("qnames")
+        suffix = f" ({n} name(s))" if n is not None else ""
+        _emit("info", f"{action}ed{suffix}")
+        return
+
+    if isinstance(exc, FileNotFoundError):
+        msg = f"socket not found ({socket_path}) — skipped"
+        _emit("warn" if has_dns_sets else "info", msg)
+        return
+
+    if isinstance(exc, PermissionError):
+        _emit("warn", f"permission denied on {socket_path}")
+        return
+
+    # Any other error (connection refused, timeout, JSON decode,
+    # ok=false response …)
+    _emit("warn", f"{action} failed: {exc}")
+    if has_dns_sets and action == "register":
+        raise click.ClickException(
+            "DNS/DNSR sets present but shorewalld registration failed — "
+            "sets will not be populated. Check shorewalld status or set "
+            "--shorewalld-socket / SHOREWALLD_SOCKET."
+        )
+
+
+def _try_notify_shorewalld(
+    step,
+    action: str,
+    instance_name: str,
+    config_dir: Path,
+    netns: str | None,
+    socket_path: str,
+    has_dns_sets: bool,
+) -> None:
+    """Send notify + classify the outcome in one call."""
+    try:
+        resp = _notify_shorewalld(
+            action, instance_name, config_dir, netns, socket_path)
+        if not resp.get("ok", False):
+            raise RuntimeError(resp.get("error", "unknown daemon error"))
+        _report_shorewalld_result(
+            step, action, has_dns_sets, None, resp, socket_path)
+    except click.ClickException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — we classify by type
+        _report_shorewalld_result(
+            step, action, has_dns_sets, exc, None, socket_path)
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Shorewall-compatible commands
 # ──────────────────────────────────────────────────────────────────────
 
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @click.option("--netns", type=str, default=None, help="Network namespace name.")
+@click.option(
+    "--shorewalld-socket",
+    default=DEFAULT_SHOREWALLD_SOCKET,
+    envvar="SHOREWALLD_SOCKET",
+    show_default=True,
+    metavar="PATH",
+    help="Path to the shorewalld control socket.",
+)
+@click.option(
+    "--instance-name",
+    default=None,
+    envvar="SHOREWALLD_INSTANCE_NAME",
+    metavar="NAME",
+    help="Override the shorewalld instance name "
+         "(default: INSTANCE_NAME from shorewall.conf, then netns, "
+         "then config_dir basename).",
+)
 @config_options
-def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
+def start(directory, netns, shorewalld_socket, instance_name,
+          config_dir, config_dir_v4, config_dir_v6,
           no_auto_v4, no_auto_v6):
     """Compile and apply firewall rules (like shorewall start)."""
     prog = _Progress()
@@ -516,7 +706,10 @@ def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
     # ── Step 3b: write DNS name allowlist for shorewalld ─────────────
     _dns_reg = getattr(ir, "dns_registry", None)
     _dnsr_reg = getattr(ir, "dnsr_registry", None)
-    if (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups):
+    _has_dns = bool(
+        (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups)
+    )
+    if _has_dns:
         with prog.step("Writing DNS name allowlist") as s:
             try:
                 from shorewall_nft.nft.dns_sets import write_compiled_allowlist
@@ -533,6 +726,16 @@ def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
                     + (f", {n_pull} pull-resolver group(s)" if n_pull else ""))
             except Exception as exc:
                 s.warn(f"allowlist write failed: {exc}")
+
+    # ── Step 3c: register instance with shorewalld ───────────────────
+    _instance = _resolve_instance_name(
+        instance_name, getattr(ir, "settings", None), netns, cfg_primary)
+    with prog.step(
+        f"Registering instance {_instance!r} with shorewalld"
+    ) as s:
+        _try_notify_shorewalld(
+            s, "register", _instance, cfg_primary, netns,
+            shorewalld_socket, _has_dns)
 
     # ── Step 4: proxy-ARP / NDP ───────────────────────────────────────
     with prog.step("Proxy-ARP / NDP") as s:
@@ -580,8 +783,26 @@ def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @click.option("--netns", type=str, default=None, help="Network namespace name.")
+@click.option(
+    "--shorewalld-socket",
+    default=DEFAULT_SHOREWALLD_SOCKET,
+    envvar="SHOREWALLD_SOCKET",
+    show_default=True,
+    metavar="PATH",
+    help="Path to the shorewalld control socket.",
+)
+@click.option(
+    "--instance-name",
+    default=None,
+    envvar="SHOREWALLD_INSTANCE_NAME",
+    metavar="NAME",
+    help="Override the shorewalld instance name "
+         "(default: INSTANCE_NAME from shorewall.conf, then netns, "
+         "then config_dir basename).",
+)
 @config_options
-def stop(directory, netns, config_dir, config_dir_v4, config_dir_v6,
+def stop(directory, netns, shorewalld_socket, instance_name,
+         config_dir, config_dir_v4, config_dir_v6,
          no_auto_v4, no_auto_v6):
     """Stop the firewall.
 
@@ -595,10 +816,17 @@ def stop(directory, netns, config_dir, config_dir_v4, config_dir_v6,
     from shorewall_nft.nft.netlink import NftError, NftInterface
     nft = NftInterface()
 
+    # Resolve the primary config path up front — needed for the
+    # shorewalld deregister even if the compile below fails.
+    primary_cfg_dir, _secondary, _skip = _resolve_config_paths(
+        directory, config_dir, config_dir_v4, config_dir_v6,
+        no_auto_v4, no_auto_v6)
+
     # Try to compile so we can load shorewall_stopped if defined.
     # Compile failures must not block the stop — fall through to the
     # plain `delete table inet shorewall` path.
     stopped_script: str | None = None
+    ir = None
     try:
         (ir, _script, _sets), _paths = _compile_from_cli(
             directory, config_dir, config_dir_v4, config_dir_v6,
@@ -636,11 +864,8 @@ def stop(directory, netns, config_dir, config_dir_v4, config_dir_v6,
             remove_proxyarp,
         )
         from shorewall_nft.config.parser import load_config
-        primary, secondary, skip = _resolve_config_paths(
-            directory, config_dir, config_dir_v4, config_dir_v6,
-            no_auto_v4, no_auto_v6)
-        cfg = load_config(primary, config6_dir=secondary,
-                          skip_sibling_merge=skip)
+        cfg = load_config(primary_cfg_dir, config6_dir=_secondary,
+                          skip_sibling_merge=_skip)
         proxy_entries = (
             parse_proxyarp(getattr(cfg, "proxyarp", []) or []) +
             parse_proxyarp(getattr(cfg, "proxyndp", []) or []))
@@ -651,38 +876,142 @@ def stop(directory, netns, config_dir, config_dir_v4, config_dir_v6,
     except Exception as e:
         click.echo(f"proxy-arp/ndp removal: skipped ({e})", err=True)
 
+    # Deregister from shorewalld. Determine whether DNS/DNSR sets are
+    # present from the compile result if available, else from the
+    # on-disk allowlist file.
+    _has_dns = False
+    if ir is not None:
+        _dns_reg = getattr(ir, "dns_registry", None)
+        _dnsr_reg = getattr(ir, "dnsr_registry", None)
+        _has_dns = bool(
+            (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups)
+        )
+    else:
+        _allowlist = primary_cfg_dir / "dnsnames.compiled"
+        try:
+            _has_dns = _allowlist.is_file() and _allowlist.stat().st_size > 0
+        except OSError:
+            pass
+    _settings = getattr(ir, "settings", None) if ir is not None else None
+    _instance = _resolve_instance_name(
+        instance_name, _settings, netns, primary_cfg_dir)
+    _try_notify_shorewalld(
+        None, "deregister", _instance, primary_cfg_dir, netns,
+        shorewalld_socket, _has_dns)
+
     if stopped_script is None:
         click.echo("Shorewall-nft stopped.")
 
 
+def _apply_and_register(
+    verb: str,
+    directory, netns, shorewalld_socket, instance_name,
+    config_dir, config_dir_v4, config_dir_v6,
+    no_auto_v4, no_auto_v6,
+) -> None:
+    """Shared body for ``restart`` / ``reload``: compile, apply, update
+    the DNS allowlist, and re-register the instance with shorewalld."""
+    (ir, script, _), (cfg_primary, _, _) = _compile_from_cli(
+        directory, config_dir, config_dir_v4, config_dir_v6,
+        no_auto_v4, no_auto_v6)
+    from shorewall_nft.netns.apply import apply_nft
+    apply_nft(script, netns=netns)
+
+    _dns_reg = getattr(ir, "dns_registry", None)
+    _dnsr_reg = getattr(ir, "dnsr_registry", None)
+    _has_dns = bool(
+        (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups)
+    )
+
+    # Keep dnsnames.compiled in sync so shorewalld reloads the current
+    # ruleset's hostnames (not the stale version from the previous
+    # start). If no DNS/DNSR sets are used, don't touch the file.
+    if _has_dns:
+        try:
+            from shorewall_nft.nft.dns_sets import (
+                DnsSetRegistry,
+                write_compiled_allowlist,
+            )
+            write_compiled_allowlist(
+                _dns_reg or DnsSetRegistry(),
+                cfg_primary / "dnsnames.compiled",
+                dnsr_registry=_dnsr_reg,
+            )
+        except Exception as exc:
+            click.echo(f"Note: allowlist write failed: {exc}", err=True)
+
+    click.echo(f"Shorewall-nft {verb} ({len(ir.chains)} chains).")
+    _instance = _resolve_instance_name(
+        instance_name, getattr(ir, "settings", None), netns, cfg_primary)
+    _try_notify_shorewalld(
+        None, "register", _instance, cfg_primary, netns,
+        shorewalld_socket, _has_dns)
+
+
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @click.option("--netns", type=str, default=None, help="Network namespace name.")
+@click.option(
+    "--shorewalld-socket",
+    default=DEFAULT_SHOREWALLD_SOCKET,
+    envvar="SHOREWALLD_SOCKET",
+    show_default=True,
+    metavar="PATH",
+    help="Path to the shorewalld control socket.",
+)
+@click.option(
+    "--instance-name",
+    default=None,
+    envvar="SHOREWALLD_INSTANCE_NAME",
+    metavar="NAME",
+    help="Override the shorewalld instance name "
+         "(default: INSTANCE_NAME from shorewall.conf, then netns, "
+         "then config_dir basename).",
+)
 @config_options
-def restart(directory, netns, config_dir, config_dir_v4, config_dir_v6,
+def restart(directory, netns, shorewalld_socket, instance_name,
+            config_dir, config_dir_v4, config_dir_v6,
             no_auto_v4, no_auto_v6):
     """Recompile and atomically replace the ruleset."""
-    (ir, script, _), _ = _compile_from_cli(
-        directory, config_dir, config_dir_v4, config_dir_v6,
-        no_auto_v4, no_auto_v6)
-    from shorewall_nft.netns.apply import apply_nft
-    apply_nft(script, netns=netns)
-    click.echo(f"Shorewall-nft restarted ({len(ir.chains)} chains).")
+    _apply_and_register(
+        "restarted",
+        directory, netns, shorewalld_socket, instance_name,
+        config_dir, config_dir_v4, config_dir_v6,
+        no_auto_v4, no_auto_v6,
+    )
 
 
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @click.option("--netns", type=str, default=None, help="Network namespace name.")
+@click.option(
+    "--shorewalld-socket",
+    default=DEFAULT_SHOREWALLD_SOCKET,
+    envvar="SHOREWALLD_SOCKET",
+    show_default=True,
+    metavar="PATH",
+    help="Path to the shorewalld control socket.",
+)
+@click.option(
+    "--instance-name",
+    default=None,
+    envvar="SHOREWALLD_INSTANCE_NAME",
+    metavar="NAME",
+    help="Override the shorewalld instance name "
+         "(default: INSTANCE_NAME from shorewall.conf, then netns, "
+         "then config_dir basename).",
+)
 @config_options
-def reload(directory, netns, config_dir, config_dir_v4, config_dir_v6,
+def reload(directory, netns, shorewalld_socket, instance_name,
+           config_dir, config_dir_v4, config_dir_v6,
            no_auto_v4, no_auto_v6):
     """Reload rules (same as restart for nft — atomic replace)."""
-    (ir, script, _), _ = _compile_from_cli(
-        directory, config_dir, config_dir_v4, config_dir_v6,
-        no_auto_v4, no_auto_v6)
-    from shorewall_nft.netns.apply import apply_nft
-    apply_nft(script, netns=netns)
-    click.echo(f"Shorewall-nft reloaded ({len(ir.chains)} chains).")
+    _apply_and_register(
+        "reloaded",
+        directory, netns, shorewalld_socket, instance_name,
+        config_dir, config_dir_v4, config_dir_v6,
+        no_auto_v4, no_auto_v6,
+    )
 
 
 @cli.command()

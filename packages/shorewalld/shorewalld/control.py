@@ -20,6 +20,16 @@ Built-in commands:
 * ``{"cmd": "instance-status"}``
   → ``{"ok": true, "instances": [...]}``
 
+* ``{"cmd": "register-instance", "config_dir": "/etc/shorewall",
+  "netns": "", "name": "...", "allowlist_path": "..."}``
+  (``name`` and ``allowlist_path`` optional — derived from ``config_dir``
+  and ``netns`` when absent)
+  → ``{"ok": true, "name": "shorewall", "qnames": 5}``
+
+* ``{"cmd": "deregister-instance", "name": "shorewall"}``
+  (``"config_dir"`` + ``"netns"`` accepted as alternatives to ``name``)
+  → ``{"ok": true, "name": "shorewall"}``
+
 Additional commands are registered by subsystems via
 :meth:`ControlServer.register_handler`.
 

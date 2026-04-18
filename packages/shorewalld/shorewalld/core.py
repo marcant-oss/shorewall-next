@@ -198,8 +198,15 @@ class Daemon:
 
         # Multi-instance manager: layers on the DNS pipeline.
         # When --instance is used, the InstanceManager takes over
-        # allowlist management from the reload monitor.
-        if self.instances and self._tracker is not None:
+        # allowlist management from the reload monitor.  It is also
+        # started (with an empty instance list) when a control socket
+        # is configured — this lets ``shorewall-nft start`` dynamically
+        # register itself without operators needing to repeat the path
+        # in both shorewalld's ``--instance`` and shorewall-nft's
+        # config directory.
+        if self._tracker is not None and (
+            self.instances or self.control_socket
+        ):
             await self._start_instance_manager()
 
         # IP-list tracker (fetches cloud prefix lists into nft sets).
@@ -468,6 +475,7 @@ class Daemon:
             tracker=self._tracker,
             router=self._router,
             monitor=self.monitor,
+            pull_resolver=self._pull_resolver,
         )
         try:
             await self._instance_manager.start()
@@ -520,11 +528,58 @@ class Daemon:
             async def _handle_instance_status(_req: dict) -> dict:
                 return {"ok": True, "instances": mgr.status()}
 
+            async def _handle_register_instance(req: dict) -> dict:
+                from pathlib import Path
+
+                from .instance import InstanceConfig
+                config_dir = req.get("config_dir")
+                netns = req.get("netns") or ""
+                if not config_dir:
+                    return {"ok": False, "error": "missing 'config_dir'"}
+                dir_path = Path(config_dir)
+                # Client-supplied name wins (from INSTANCE_NAME / CLI);
+                # otherwise derive deterministically.
+                name = (req.get("name") or netns or dir_path.name).strip()
+                allowlist_path = Path(
+                    req.get("allowlist_path")
+                    or (dir_path / "dnsnames.compiled")
+                )
+                cfg = InstanceConfig(
+                    name=name,
+                    netns=netns,
+                    config_dir=dir_path,
+                    allowlist_path=allowlist_path,
+                )
+                n = await mgr.register(cfg)
+                return {"ok": True, "name": cfg.name, "qnames": n}
+
+            async def _handle_deregister_instance(req: dict) -> dict:
+                name = req.get("name")
+                if not name:
+                    config_dir = req.get("config_dir")
+                    netns = req.get("netns") or ""
+                    if config_dir:
+                        from pathlib import Path
+                        name = netns or Path(config_dir).name
+                if not name:
+                    return {
+                        "ok": False,
+                        "error": "missing 'name' or 'config_dir'",
+                    }
+                await mgr.deregister(name)
+                return {"ok": True, "name": name}
+
             self._control_server.register_handler(
                 "reload-instance", _handle_reload_instance
             )
             self._control_server.register_handler(
                 "instance-status", _handle_instance_status
+            )
+            self._control_server.register_handler(
+                "register-instance", _handle_register_instance
+            )
+            self._control_server.register_handler(
+                "deregister-instance", _handle_deregister_instance
             )
 
         try:

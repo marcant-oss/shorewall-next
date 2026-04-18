@@ -16,10 +16,18 @@ version is in [`reference/commands.json`](../reference/commands.json).
 Compile and apply firewall rules (like shorewall start).
 
 ```
-shorewall-nft start [directory] [--netns <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft start [directory] [--netns <value>] [--shorewalld-socket PATH] [--instance-name NAME] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`--netns`** — Network namespace name.
+- **`--shorewalld-socket`** — Path to the shorewalld control socket
+  (env `SHOREWALLD_SOCKET`, default `/run/shorewalld/control.sock`).
+  After applying the ruleset, `start` sends a `register-instance`
+  message so shorewalld picks up the updated `dnsnames.compiled`
+  immediately (no reload hook required).
+- **`--instance-name`** — Override the shorewalld instance name (env
+  `SHOREWALLD_INSTANCE_NAME`). Default precedence: `INSTANCE_NAME`
+  from `shorewall.conf` → `--netns` value → config directory basename.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
 - **`--config-dir-v4`** — Explicit IPv4 config directory.
 - **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
@@ -52,20 +60,32 @@ aborts a `start` that would otherwise succeed on the running kernel.
 Stop the firewall (remove all rules).
 
 ```
-shorewall-nft stop [--netns <value>]
+shorewall-nft stop [--netns <value>] [--shorewalld-socket PATH] [--instance-name NAME]
 ```
 
 - **`--netns`** — Network namespace name.
+- **`--shorewalld-socket`** — Path to the shorewalld control socket
+  (env `SHOREWALLD_SOCKET`). `stop` sends a `deregister-instance`
+  message after removing the `inet shorewall` table. Deregistration
+  failures are always non-fatal (socket down, daemon not running,
+  etc.); the daemon will age entries out via their per-element TTL.
+- **`--instance-name`** — Override the shorewalld instance name (env
+  `SHOREWALLD_INSTANCE_NAME`). Must match the name used during
+  `start`; precedence is the same (`INSTANCE_NAME` from `shorewall.conf`
+  → netns → config dir basename).
 
 ### `restart`
 
-Recompile and atomically replace the ruleset.
+Recompile and atomically replace the ruleset. Also rewrites
+`dnsnames.compiled` and re-registers the instance with shorewalld.
 
 ```
-shorewall-nft restart [directory] [--netns <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft restart [directory] [--netns <value>] [--shorewalld-socket PATH] [--instance-name NAME] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`--netns`** — Network namespace name.
+- **`--shorewalld-socket`** — See `start`.
+- **`--instance-name`** — See `start`.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
 - **`--config-dir-v4`** — Explicit IPv4 config directory.
 - **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
@@ -74,13 +94,16 @@ shorewall-nft restart [directory] [--netns <value>] [-c <value>] [--config-dir-v
 
 ### `reload`
 
-Reload rules (same as restart for nft — atomic replace).
+Reload rules (same as restart for nft — atomic replace). Also rewrites
+`dnsnames.compiled` and re-registers the instance with shorewalld.
 
 ```
-shorewall-nft reload [directory] [--netns <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft reload [directory] [--netns <value>] [--shorewalld-socket PATH] [--instance-name NAME] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`--netns`** — Network namespace name.
+- **`--shorewalld-socket`** — See `start`.
+- **`--instance-name`** — See `start`.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
 - **`--config-dir-v4`** — Explicit IPv4 config directory.
 - **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
