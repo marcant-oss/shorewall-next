@@ -36,14 +36,14 @@ Features include:
 Summary:        Test tooling for shorewall-nft
 Requires:       %{name} = %{version}-%{release}
 @@TESTS_PYTEST_REQ@@
-Requires:       sudo
 Recommends:     python3-scapy
 Recommends:     python3-pytest-cov
 
 %description tests
-Installs the /usr/local/bin/run-netns wrapper and a matching sudoers
-snippet so that unprivileged users in the netns-test group can create
-network namespaces for shorewall-nft integration tests.
+pytest integration test suite for shorewall-nft.
+Tests run as root via tools/run-tests.sh which creates an isolated
+private network + mount namespace (unshare --mount --net) so tests
+cannot affect the host. No extra tooling or sudoers rules needed.
 
 WARNING: Do NOT install this on production firewall hosts.
 
@@ -101,10 +101,9 @@ install -Dm644 tools/completions/shorewall-nft.zsh \
 install -Dm644 tools/completions/shorewall-nft.fish \
     %{buildroot}%{_datadir}/fish/vendor_completions.d/shorewall-nft.fish
 
-# test tooling (goes in the -tests subpackage)
-install -Dm755 tools/run-netns %{buildroot}/usr/local/bin/run-netns
-install -Dm440 tools/sudoers.d-shorewall-nft \
-    %{buildroot}%{_sysconfdir}/sudoers.d/shorewall-nft-tests
+# test runner (goes in the -tests subpackage)
+install -Dm755 tools/run-tests.sh \
+    %{buildroot}%{_datadir}/%{name}-tests/run-tests.sh
 
 # shorewalld persistent state directory
 install -d %{buildroot}%{_sharedstatedir}/shorewalld
@@ -118,9 +117,6 @@ if [ $1 -eq 1 ] ; then
     /usr/bin/systemctl daemon-reload >/dev/null 2>&1 || :
 fi
 
-%post tests
-# Create the netns-test group if it doesn't exist
-getent group netns-test >/dev/null || groupadd --system netns-test
 
 %preun
 if [ $1 -eq 0 ] ; then
@@ -153,8 +149,7 @@ fi
 %{_datadir}/fish/vendor_completions.d/shorewall-nft.fish
 
 %files tests
-/usr/local/bin/run-netns
-%config(noreplace) %{_sysconfdir}/sudoers.d/shorewall-nft-tests
+%{_datadir}/%{name}-tests/run-tests.sh
 
 %files doc
 %license LICENSE

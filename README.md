@@ -120,8 +120,8 @@ cd packages/shorewall-nft     && python -m pytest tests/ -q   # ~333 tests
 cd packages/shorewalld        && python -m pytest tests/ -q   # ~292 tests
 cd packages/shorewall-nft-simlab && python -m pytest tests/ -q
 
-# Install test tooling (run-netns wrapper + sudoers):
-sudo tools/install-test-tooling.sh
+# Run tests (isolated, cannot crash host):
+tools/run-tests.sh
 
 # Packet-level simlab (requires netns + test host):
 python -m shorewall_nft_simlab.smoketest full --random 50 --seed 42

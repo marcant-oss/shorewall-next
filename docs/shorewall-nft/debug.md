@@ -78,7 +78,7 @@ sudo nft insert rule inet shorewall input meta l4proto icmp meta nftrace set 1
 sudo nft insert rule inet shorewall input ip saddr 192.168.1.100 meta nftrace set 1
 
 # Trace in a netns
-sudo /usr/local/bin/run-netns exec fw \
+ip netns exec fw \
     nft insert rule inet shorewall input ip saddr 1.2.3.4 meta nftrace set 1
 ```
 
@@ -135,11 +135,11 @@ shorewall-nft debug /etc/shorewall --netns fw
 # (In another terminal)
 
 # 2. Mark the flow you want to trace
-sudo /usr/local/bin/run-netns exec fw \
+ip netns exec fw \
     nft insert rule inet shorewall input ip saddr 192.168.1.100 meta nftrace set 1
 
 # 3. Start the trace viewer
-sudo /usr/local/bin/run-netns exec fw nft monitor trace
+ip netns exec fw nft monitor trace
 
 # 4. Generate the traffic from 192.168.1.100
 
@@ -147,7 +147,7 @@ sudo /usr/local/bin/run-netns exec fw nft monitor trace
 #    → comment "rules:38: OrgAdmin/ACCEPT net $FW"
 
 # 6. (Optional) query counters to see how often each rule fired
-sudo /usr/local/bin/run-netns exec fw \
+ip netns exec fw \
     nft list counter inet shorewall r_ACCEPT_fw_0000
 
 # 7. Exit debug mode (Ctrl+C in the debug terminal)

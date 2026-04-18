@@ -39,7 +39,7 @@ repos:
     rev: v0.10.0
     hooks:
       - id: shellcheck
-        files: '^tools/.*\.sh$|^tools/run-netns$'
+        files: '^tools/.*\.sh$'
 
   # Markdown linting (relaxed — we have lots of existing prose)
   - repo: https://github.com/igorshubovych/markdownlint-cli

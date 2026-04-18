@@ -91,7 +91,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nftables iproute2 sudo
+          sudo apt-get install -y nftables iproute2 util-linux python3-nftables
 
       - name: Install Python packages
         run: |
@@ -100,20 +100,13 @@ jobs:
             -e "packages/shorewall-nft[dev]" \
             -e "packages/shorewall-nft-simlab[dev]"
 
-      - name: Install test tooling
+      - name: Run integration tests (isolated namespace)
+        timeout-minutes: 10
         run: |
-          sudo tools/install-test-tooling.sh --user runner
-
-      - name: Verify run-netns
-        run: |
-          sudo /usr/local/bin/run-netns list
-
-      - name: Run offline debug/plugin tests
-        timeout-minutes: 5
-        run: |
-          timeout 120 pytest packages/shorewall-nft/tests/test_cli_integration.py::TestDebug -v \
-              --deselect packages/shorewall-nft/tests/test_cli_integration.py::TestDebug::test_debug_command_sigint_restores
-          timeout 60 pytest packages/shorewall-nft/tests/test_cli_integration.py::TestPlugins -v || true
+          sudo tools/run-tests.sh \
+            packages/shorewall-nft/tests/test_cli_integration.py \
+            packages/shorewall-nft/tests/test_netns_routing.py \
+            -v --timeout=60
 
   lint:
     name: Lint
@@ -146,7 +139,7 @@ jobs:
 
       - name: Run shellcheck on tools/
         run: |
-          shellcheck tools/run-netns tools/install-test-tooling.sh tools/gen-rpm-spec.sh
+          shellcheck tools/run-tests.sh tools/gen-rpm-spec.sh tools/release.sh tools/setup-remote-test-host.sh
 
   build:
     name: Build wheels
