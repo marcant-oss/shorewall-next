@@ -110,7 +110,7 @@ esac
 
 # ---- changelog entry for this build ----
 TODAY=$(date -u +"%a %b %d %Y")
-MAINTAINER="shorewall-nft maintainers <shorewall-nft@example.com>"
+MAINTAINER="André Valentin <avalentin@marcant.net>"
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 if [[ "$RELEASE" == "1" ]]; then
     ENTRY_BODY="- Release ${VERSION} — see CHANGELOG.md for details."

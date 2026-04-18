@@ -3,7 +3,7 @@ shorewall-nft (1.5.1-1) unstable; urgency=medium
   * Release 1.5.1: remove run-netns: native ip-netns + unshare test isolation.
   * See CHANGELOG.md for full details.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Sa, 18 Apr 2026 06:45:38 +0000
+ -- André Valentin <avalentin@marcant.net>  Sa, 18 Apr 2026 06:45:38 +0000
 
 
 shorewall-nft (1.5.0-1) unstable; urgency=medium
@@ -11,7 +11,7 @@ shorewall-nft (1.5.0-1) unstable; urgency=medium
   * Release 1.5.0: in-process netns, CLI unification, subprocess cleanup.
   * See CHANGELOG.md for full details.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Sa, 18 Apr 2026 06:22:55 +0000
+ -- André Valentin <avalentin@marcant.net>  Sa, 18 Apr 2026 06:22:55 +0000
 
 
 shorewall-nft (1.4.3-1) unstable; urgency=medium
@@ -23,7 +23,7 @@ shorewall-nft (1.4.3-1) unstable; urgency=medium
     >= 7.4, python3 >= 3.12, EPEL 10 + CRB for click/pyroute2/prometheus).
   * See CHANGELOG.md for full details.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Fri, 17 Apr 2026 22:00:00 +0000
+ -- André Valentin <avalentin@marcant.net>  Fri, 17 Apr 2026 22:00:00 +0000
 
 shorewall-nft (1.4.2-1) unstable; urgency=medium
 
@@ -33,7 +33,7 @@ shorewall-nft (1.4.2-1) unstable; urgency=medium
     scapy-free NDP/ARP fast path in simlab.
   * See CHANGELOG.md for full details.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Sun, 13 Apr 2026 16:00:00 +0000
+ -- André Valentin <avalentin@marcant.net>  Sun, 13 Apr 2026 16:00:00 +0000
 
 shorewall-nft (1.4.1-1) unstable; urgency=medium
 
@@ -43,7 +43,7 @@ shorewall-nft (1.4.1-1) unstable; urgency=medium
     docs/quick-start.md, HOWTO-CLAUDE.md), update man pages to v1.4.1.
   * See CHANGELOG.md for full details.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Sun, 12 Apr 2026 16:00:00 +0000
+ -- André Valentin <avalentin@marcant.net>  Sun, 12 Apr 2026 16:00:00 +0000
 
 shorewall-nft (1.4.0-1) unstable; urgency=medium
 
@@ -53,7 +53,7 @@ shorewall-nft (1.4.0-1) unstable; urgency=medium
     exporter beta (NftCollector, LinkCollector, CtCollector; :9748).
   * See CHANGELOG.md for full details.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Sun, 12 Apr 2026 12:00:00 +0000
+ -- André Valentin <avalentin@marcant.net>  Sun, 12 Apr 2026 12:00:00 +0000
 
 shorewall-nft (1.2.0-1) unstable; urgency=medium
 
@@ -63,7 +63,7 @@ shorewall-nft (1.2.0-1) unstable; urgency=medium
     authenticated UDP. OPTIMIZE=8 is now the compiler default.
   * See CHANGELOG.md for full history.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Sun, 12 Apr 2026 12:00:00 +0000
+ -- André Valentin <avalentin@marcant.net>  Sun, 12 Apr 2026 12:00:00 +0000
 
 shorewall-nft (1.1.0-1) unstable; urgency=medium
 
@@ -73,7 +73,7 @@ shorewall-nft (1.1.0-1) unstable; urgency=medium
     harness with autorepair, pretty structured exporter.
   * See CHANGELOG.md for full history.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Sat, 11 Apr 2026 18:00:00 +0000
+ -- André Valentin <avalentin@marcant.net>  Sat, 11 Apr 2026 18:00:00 +0000
 
 shorewall-nft (1.0.0-1) unstable; urgency=medium
 
@@ -83,7 +83,7 @@ shorewall-nft (1.0.0-1) unstable; urgency=medium
     debug mode, merge-config, verified against three production
     firewalls at 100% coverage.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Sat, 11 Apr 2026 12:00:00 +0000
+ -- André Valentin <avalentin@marcant.net>  Sat, 11 Apr 2026 12:00:00 +0000
 
 shorewall-nft (0.12.0-1) unstable; urgency=medium
 
@@ -92,4 +92,4 @@ shorewall-nft (0.12.0-1) unstable; urgency=medium
     shorewall6-lite so the nft-native replacement cannot coexist with
     the iptables-based Perl stack on the same host.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  Sat, 11 Apr 2026 00:00:00 +0000
+ -- André Valentin <avalentin@marcant.net>  Sat, 11 Apr 2026 00:00:00 +0000

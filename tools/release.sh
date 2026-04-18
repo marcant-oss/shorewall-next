@@ -150,7 +150,7 @@ DEB_ENTRY="shorewall-nft ($BARE-1) unstable; urgency=medium
   * Release $BARE: $SUMMARY.
   * See CHANGELOG.md for full details.
 
- -- shorewall-nft maintainers <shorewall-nft@example.com>  $DATE_RFC
+ -- André Valentin <avalentin@marcant.net>  $DATE_RFC
 
 "
 
