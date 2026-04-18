@@ -185,6 +185,9 @@ class WorkerTransport:
             raise OSError(
                 "SEQPACKET datagram truncated — "
                 "bump recv_buf_size above the worker's max reply")
+        if n == 0:
+            self.stats.recv_errors_total += 1
+            raise OSError("worker connection closed (EOF on SEQPACKET)")
         self.stats.recvs_total += 1
         self.stats.recv_bytes_total += n
         if buf is None:
