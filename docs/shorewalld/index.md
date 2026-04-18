@@ -697,7 +697,7 @@ Commands:
   reload-instance [--name N]                Reload DNS allowlist from disk.
   register-instance --config-dir PATH       Dynamically register a
       [--netns N] [--name N] [--allowlist-path PATH]
-                                            shorewall-nft instance.
+      [--retry-delay SECONDS]               shorewall-nft instance.
   deregister-instance --name N              Deregister a dynamically
       [--config-dir PATH] [--netns N]       registered instance.
   instance-status                           Show status of all instances.
@@ -706,6 +706,17 @@ Commands:
 ```
 
 The `--socket` flag defaults to `/run/shorewalld/control.sock`.
+
+`register-instance` automatically retries up to 10 times when the control
+socket is not yet available (daemon still starting).  The initial wait is
+`--retry-delay` seconds (default `1.0`); each subsequent wait is multiplied
+by 1.5 (≈ 1 s → 1.5 s → 2.25 s → … → 38 s, ~90 s total).  Use this
+option in `ExecStartPost=` units that run before shorewalld is fully up:
+
+```ini
+ExecStartPost=/usr/bin/shorewalld ctl register-instance \
+    --config-dir /etc/shorewall --retry-delay 2
+```
 
 Example:
 

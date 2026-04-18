@@ -21,7 +21,15 @@ import argparse
 import json
 import socket
 import sys
+import time
 from typing import Any
+
+_RETRY_COUNT = 10
+_RETRY_FACTOR = 1.5
+
+
+class _ConnectError(Exception):
+    """Control socket unavailable — retriable."""
 
 
 def _build_ctl_parser() -> argparse.ArgumentParser:
@@ -90,6 +98,11 @@ def _build_ctl_parser() -> argparse.ArgumentParser:
         "--allowlist-path", default=None, metavar="PATH",
         help="Path to dnsnames.compiled (default: <config-dir>/dnsnames.compiled)",
     )
+    ri.add_argument(
+        "--retry-delay", type=float, default=1.0, metavar="SECONDS",
+        help="Initial delay between retries in seconds; grows by factor "
+             f"{_RETRY_FACTOR} each attempt (default: 1.0, max {_RETRY_COUNT} retries)",
+    )
 
     di = sub.add_parser(
         "deregister-instance",
@@ -153,16 +166,14 @@ def _send(socket_path: str, request: dict) -> dict:
     try:
         sock.connect(socket_path)
     except FileNotFoundError:
-        raise SystemExit(
-            f"ctl: control socket not found: {socket_path}\n"
-            f"Is shorewalld running with --control-socket?"
+        raise _ConnectError(
+            f"control socket not found: {socket_path} "
+            f"(is shorewalld running with --control-socket?)"
         ) from None
     except PermissionError:
-        raise SystemExit(
-            f"ctl: permission denied: {socket_path}"
-        ) from None
+        raise SystemExit(f"ctl: permission denied: {socket_path}") from None
     except OSError as e:
-        raise SystemExit(f"ctl: connect to {socket_path}: {e}") from e
+        raise _ConnectError(f"connect to {socket_path}: {e}") from e
 
     try:
         sock.settimeout(15.0)
@@ -186,6 +197,24 @@ def _send(socket_path: str, request: dict) -> dict:
         raise SystemExit(f"ctl: invalid JSON response: {e}; got {line!r}") from e
 
 
+def _send_with_retry(socket_path: str, request: dict, retry_delay: float) -> dict:
+    """Send *request*, retrying up to _RETRY_COUNT times on connection errors."""
+    delay = retry_delay
+    for attempt in range(_RETRY_COUNT + 1):
+        try:
+            return _send(socket_path, request)
+        except _ConnectError as e:
+            if attempt == _RETRY_COUNT:
+                raise SystemExit(f"ctl: {e} (gave up after {_RETRY_COUNT} retries)") from e
+            print(
+                f"ctl: {e} — retry {attempt + 1}/{_RETRY_COUNT} in {delay:.1f}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+            delay *= _RETRY_FACTOR
+    raise AssertionError("unreachable")  # noqa: unreachable
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for ``shorewalld ctl``."""
     parser = _build_ctl_parser()
@@ -194,8 +223,11 @@ def main(argv: list[str] | None = None) -> int:
     request = _build_request(args)
 
     try:
-        response = _send(args.socket, request)
-    except SystemExit as e:
+        if args.command == "register-instance":
+            response = _send_with_retry(args.socket, request, args.retry_delay)
+        else:
+            response = _send(args.socket, request)
+    except (_ConnectError, SystemExit) as e:
         print(str(e), file=sys.stderr)
         return 1
 
