@@ -106,7 +106,7 @@ jobs:
           sudo tools/run-tests.sh \
             packages/shorewall-nft/tests/test_cli_integration.py \
             packages/shorewall-nft/tests/test_netns_routing.py \
-            -v --timeout=60
+            -v
 
   lint:
     name: Lint

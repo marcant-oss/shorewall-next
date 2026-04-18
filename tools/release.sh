@@ -83,7 +83,7 @@ echo "since:   ${LAST_TAG:-<beginning>}"
 echo ""
 if [[ -n "$COMMITS" ]]; then
     echo "commits since last release:"
-    echo "$COMMITS" | sed 's/^/  /'
+    while IFS= read -r line; do echo "  $line"; done <<< "$COMMITS"
     echo ""
 fi
 
@@ -143,8 +143,6 @@ PY
 
 # ── update debian/changelog ──────────────────────────────────────────────────
 
-# Build a one-line summary from commits
-FIRST_COMMIT="$(echo "$COMMITS" | head -1 | sed 's/^[a-f0-9]* //')"
 DEB_ENTRY="shorewall-nft ($BARE-1) unstable; urgency=medium
 
   * Release $BARE: $SUMMARY.
