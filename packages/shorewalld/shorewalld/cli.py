@@ -58,8 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--config-file", default=None, metavar="PATH",
         help="Read shorewalld.conf from PATH "
-             "(default: /etc/shorewall/shorewalld.conf then "
-             "/etc/shorewalld.conf; missing file is OK). CLI flags "
+             "(default: /etc/shorewalld.conf then "
+             "/etc/shorewall/shorewalld.conf; missing file is OK). CLI flags "
              "always override config-file values.")
     p.add_argument(
         "--listen-prom", default=":9748", metavar="HOST:PORT",
