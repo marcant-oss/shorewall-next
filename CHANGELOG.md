@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] — 2026-04-18 — set maintainer to avalentin@marcant.net
+
+### Changes
+
+- chore: set maintainer to André Valentin <avalentin@marcant.net>
+
+
 ## [1.5.1] — 2026-04-18 — remove run-netns: native ip-netns + unshare test isolation
 
 ### Changes
