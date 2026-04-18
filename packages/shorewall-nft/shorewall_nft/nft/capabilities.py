@@ -31,7 +31,7 @@ def _make_runner(nft: "NftInterface", netns: str | None):
 
     All nft operations go through :class:`NftInterface` which prefers
     in-process ``setns()`` + libnftables and falls back to the
-    ``sudo run-netns`` subprocess path only when ``setns()`` is denied.
+    ``ip netns exec`` subprocess path only when ``setns()`` is denied.
     """
     from shorewall_nft.nft.netlink import NftError
 
@@ -119,7 +119,7 @@ class NftCapabilities:
         All nft operations go through *nft* (:class:`NftInterface`).
         When *nft* is ``None`` a fresh instance is created.  The
         interface prefers in-process ``setns()`` + libnftables and
-        falls back to ``sudo run-netns`` only when ``setns()`` is
+        falls back to ``ip netns exec`` only when ``setns()`` is
         denied — so production systems (root + python3-nftables)
         never spawn a subprocess for namespace entry.
         """

@@ -93,8 +93,10 @@ def _in_netns(name: str | None):
 class NftInterface:
     """Interface to nftables — uses libnftables if available, subprocess otherwise.
 
-    All methods that take ``netns=`` honour the same fallback order:
-    libnftables + setns() first, then ``run-netns exec`` subprocess.
+    All methods that take ``netns=`` run in the current namespace when
+    netns is None (libnftables in-process).  When netns is given, a
+    subprocess ``ip netns exec`` is used so the netlink socket is created
+    inside the target namespace (cached sockets cannot be moved via setns).
     """
 
     def __init__(self):
@@ -158,7 +160,7 @@ class NftInterface:
         """Run nft via subprocess with JSON output (fallback path)."""
         cmd: list[str] = []
         if netns:
-            cmd = ["sudo", "/usr/local/bin/run-netns", "exec", netns]
+            cmd = ["ip", "netns", "exec", netns]
         cmd.extend([self._nft_bin, "-j", nft_text])
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -216,7 +218,7 @@ class NftInterface:
                 return
         cmd: list[str] = []
         if netns:
-            cmd = ["sudo", "/usr/local/bin/run-netns", "exec", netns]
+            cmd = ["ip", "netns", "exec", netns]
         cmd.extend([self._nft_bin])
         if check_only:
             cmd.append("-c")
@@ -364,10 +366,8 @@ class NftInterface:
                      **kwargs) -> "subprocess.CompletedProcess[str]":
         """Run a subprocess, entering *netns* via in-process setns() if provided.
 
-        Preferred over ``sudo run-netns exec`` on root systems: setns() avoids
-        a fork+exec and keeps the process tree clean. Falls back to the sudo
-        run-netns wrapper when setns() is denied (EPERM — non-root callers,
-        dev environments).
+        Uses _in_netns() so the forked child inherits the target namespace
+        without a sudo round-trip.  Falls back to ``ip netns exec`` on EPERM.
 
         ``netns=None`` runs the command in the current namespace unchanged.
         Pass ``capture_output=True, text=True`` in *kwargs* as needed.
@@ -377,9 +377,7 @@ class NftInterface:
                 with _in_netns(netns):
                     return subprocess.run(args, **kwargs)
             except OSError:
-                full_args = [
-                    "sudo", "/usr/local/bin/run-netns", "exec", netns,
-                ] + list(args)
+                full_args = ["ip", "netns", "exec", netns] + list(args)
                 return subprocess.run(full_args, **kwargs)
         return subprocess.run(args, **kwargs)
 

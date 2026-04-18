@@ -313,7 +313,7 @@ def _check_loaded_hash(config_dir: Path, netns: str | None) -> tuple[str, str | 
     Returns (source_hash, loaded_hash_or_None). ``loaded_hash_or_None``
     is None when no ruleset is loaded or no hash marker is found.
     Uses :meth:`NftInterface.run_in_netns` — enters the namespace via
-    in-process ``setns()`` on root, falls back to sudo run-netns otherwise.
+    in-process ``setns()`` on root, falls back to ``ip netns exec`` otherwise.
     """
     from shorewall_nft.config.hash import compute_config_hash, extract_hash_from_ruleset
     from shorewall_nft.nft.netlink import NftInterface
@@ -1112,8 +1112,7 @@ def debug(directory, netns, no_restore, trace_filter,
             trace_filter = None  # don't try to remove later
 
     # Step 4: print instructions
-    ns_prefix = (f"sudo /usr/local/bin/run-netns exec {netns} "
-                 if netns else "")
+    ns_prefix = (f"ip netns exec {netns} " if netns else "")
     click.secho("\n── Debug mode active ──", fg="cyan", bold=True)
     click.echo("Every rule has a named counter and source-location comment.")
     click.echo("")

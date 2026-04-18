@@ -1,7 +1,7 @@
 """pyroute2-based netns + link/addr/route topology manager.
 
 Used by the simulate runtime to build multi-netns test topologies
-without forking `ip` / `sudo run-netns` hundreds of times. Requires
+without forking `ip netns exec` hundreds of times. Requires
 the caller to run as root — the shorewall-nft simulate CLI is
 invoked as root on the dedicated test host, which is the only
 supported deployment for this path.
