@@ -18,6 +18,10 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from shorewall_nft.nft.netlink import NftInterface
 
 _PROBE_TABLE = "__swnft_probe"
 
