@@ -476,7 +476,7 @@ def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
 
     # ── Step 1: parse + compile ───────────────────────────────────────
     with prog.step("Parsing and compiling config") as s:
-        (ir, script, _), _ = _compile_from_cli(
+        (ir, script, _), (cfg_primary, _, _) = _compile_from_cli(
             directory, config_dir, config_dir_v4, config_dir_v6,
             no_auto_v4, no_auto_v6)
         n_rules = sum(len(c.rules) for c in ir.chains.values())
@@ -512,6 +512,27 @@ def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
         from shorewall_nft.netns.apply import apply_nft
         apply_nft(script, netns=netns)
         s.info(f"{len(ir.chains)} chains")
+
+    # ── Step 3b: write DNS name allowlist for shorewalld ─────────────
+    _dns_reg = getattr(ir, "dns_registry", None)
+    _dnsr_reg = getattr(ir, "dnsr_registry", None)
+    if (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups):
+        with prog.step("Writing DNS name allowlist") as s:
+            try:
+                from shorewall_nft.nft.dns_sets import write_compiled_allowlist
+                allowlist_path = cfg_primary / "dnsnames.compiled"
+                write_compiled_allowlist(
+                    _dns_reg or type(_dns_reg)(),
+                    allowlist_path,
+                    dnsr_registry=_dnsr_reg,
+                )
+                n_tap = len(_dns_reg.specs) if _dns_reg else 0
+                n_pull = len(_dnsr_reg.groups) if _dnsr_reg else 0
+                s.info(
+                    f"{n_tap} tap name(s)"
+                    + (f", {n_pull} pull-resolver group(s)" if n_pull else ""))
+            except Exception as exc:
+                s.warn(f"allowlist write failed: {exc}")
 
     # ── Step 4: proxy-ARP / NDP ───────────────────────────────────────
     with prog.step("Proxy-ARP / NDP") as s:

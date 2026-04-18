@@ -617,6 +617,7 @@ Commands:
   iplist-status                Show status of all IP-list configs.
   reload-instance [--name N]   Reload DNS allowlist from disk.
   instance-status              Show status of all instances.
+  refresh-dns [--hostname N]   Force immediate re-resolve of dnsr: groups.
 ```
 
 The `--socket` flag defaults to `/run/shorewalld/control.sock`.
@@ -626,6 +627,12 @@ Example:
 ```sh
 $ shorewalld ctl ping
 {"ok": true, "version": "1"}
+
+$ shorewalld ctl refresh-dns
+{"ok": true, "refreshed": 3}
+
+$ shorewalld ctl refresh-dns --hostname github.com
+{"ok": true, "refreshed": 1}
 
 $ shorewalld ctl iplist-status
 [
@@ -724,36 +731,79 @@ systemctl restart shorewalld
   the rule compiler has to declare `set dns_<name>_v4 { type ipv4_addr;
   flags timeout; }` before shorewalld can populate it.
 
-## DNS-backed nft sets (`dns:` rule syntax)
+## DNS-backed nft sets (`dns:` and `dnsr:` rule syntax)
 
 shorewalld can populate nftables sets with the answers to DNS
 queries so a Shorewall rule can match on hostname instead of
 literal IP. The compiler declares the sets, the daemon populates
-them from the local recursor, and the result looks like a
-first-class rule to the user:
+them, and the result looks like a first-class rule to the user.
+
+### Two modes: tap (`dns:`) and pull (`dnsr:`)
+
+| Token | Set population | When to use |
+|---|---|---|
+| `dns:github.com` | Tap — set is populated passively from dnstap/pbdns answers as clients resolve the name | You have a local resolver sending dnstap; the host is queried frequently enough that its IPs stay fresh |
+| `dnsr:github.com` | Pull — shorewalld actively resolves the name on a TTL-driven schedule | No local resolver, outbound-only host, or names that are rarely queried by clients |
+| `dnsr:github.com,mail.github.com` | Pull — both hostnames resolved into the **same** set | Multiple CNAMEs or sub-domains that should share one firewall rule |
+
+Both modes use **identical nft sets** (`dns_<qname>_v4/v6`) and
+can be combined: if a hostname is referenced by both a `dns:` and
+a `dnsr:` rule it gets tap-populated *and* pull-populated, with
+each mechanism refreshing the other's entries.
 
 ```
 # /etc/shorewall46/rules
-ACCEPT      fw      net:dns:github.com           tcp     443
-DROP        fw      net:!dns:badhost.example     -       -
+
+# Tap mode — recursor feeds the set passively
+ACCEPT      fw      net:dns:github.com               tcp     443
+DROP        fw      net:!dns:badhost.example          -       -
+
+# Pull mode — shorewalld resolves on a TTL schedule
+ACCEPT      fw      net:dnsr:github.com               tcp     443
+
+# Pull mode, multi-host — all IPs land in dns_github_com_v4/v6
+ACCEPT      fw      net:dnsr:github.com,api.github.com  tcp   443
 ```
 
-The `dns:` prefix is recognised in the SOURCE/DEST columns and
-triggers three things at compile time:
+The `dns:` / `dnsr:` prefix is recognised in SOURCE/DEST columns
+and triggers three things at compile time:
 
 1. The hostname is registered with `FirewallIR.dns_registry`.
 2. Two sets are declared in the generated nft script —
    `dns_github_com_v4` (type `ipv4_addr`) and `dns_github_com_v6`
    (type `ipv6_addr`), both with `flags timeout` and the
    configured size.
-3. The rule is emitted twice, once per family, matching against
-   the respective set with `ip daddr @dns_github_com_v4` /
+3. The rule is emitted twice — once for v4, once for v6 —
+   matching `ip daddr @dns_github_com_v4` /
    `ip6 daddr @dns_github_com_v6`.
+
+For `dnsr:host1,host2`, the set name is derived from the first
+hostname (`dns_host1_v4/v6`). Shorewalld resolves *all* listed
+hostnames and puts their IPs into that single set. The tap
+pipeline also accepts dnstap/pbdns answers for every listed
+hostname and routes them into the same set, so neither path
+blocks the other.
 
 Name sanitisation is deterministic: `qname_to_set_name()` in
 `shorewall_nft/nft/dns_sets.py` is the single source of truth and
 both the compiler and shorewalld import it, so there is no room
 for naming drift between compile-time and runtime.
+
+### Pull-resolver scheduling
+
+The pull resolver maintains a min-heap of `(next_resolve_at,
+group)` entries. At startup every group is resolved immediately.
+After each resolve:
+
+```
+next_resolve_at = now + max(min_retry, int(min_ttl * 0.8))
+```
+
+capped at `max_ttl` (default 3600 s). The 0.8 fraction means a
+re-resolve fires before any element actually expires, so there is
+no window where the set is empty due to TTL drift. `min_retry`
+(default 30 s) prevents tight loops after NXDOMAIN or network
+errors.
 
 ### `dnsnames` config file (optional)
 
