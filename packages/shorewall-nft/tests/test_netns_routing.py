@@ -5,11 +5,8 @@ interface addresses, routes, broadcast detection, routefilter sysctls —
 by setting up a netns with real veth pairs and verifying shorewall-nft
 behaves correctly against the live kernel state.
 
-Requires: sudo /usr/local/bin/run-netns (NOPASSWD) — see docs/testing/setup.md.
-
-Each test creates its own netns, configures interfaces/addresses/routes,
-loads a compiled ruleset, runs the assertion, and cleans up. Tests skip
-if the run-netns wrapper isn't installed.
+Must be invoked via tools/run-tests.sh (private network + mount namespace).
+Tests skip if not running as root or if `ip` binary is not available.
 """
 
 from __future__ import annotations
@@ -20,16 +17,17 @@ from pathlib import Path
 
 import pytest
 
-RUN_NETNS = ["sudo", "/usr/local/bin/run-netns"]
+IP_NETNS = ["ip", "netns"]
 import sys as _sys; SWNFT = str(Path(_sys.executable).parent / "shorewall-nft")
 NS = "shorewall-next-sim-route"
 
 
 def _have_netns_tooling() -> bool:
-    if not Path("/usr/local/bin/run-netns").exists():
+    """Return True when we can create network namespaces (root + ip binary)."""
+    if os.geteuid() != 0:
         return False
     try:
-        r = subprocess.run([*RUN_NETNS, "list"],
+        r = subprocess.run(["ip", "netns", "list"],
                            capture_output=True, timeout=2)
         return r.returncode == 0
     except Exception:
@@ -38,14 +36,14 @@ def _have_netns_tooling() -> bool:
 
 skip_no_netns = pytest.mark.skipif(
     not _have_netns_tooling(),
-    reason="run-netns wrapper not installed — see docs/testing/setup.md",
+    reason="requires root + ip binary (run via tools/run-tests.sh)",
 )
 
 
 def _ns(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     """Run a command inside the test netns."""
     return subprocess.run(
-        [*RUN_NETNS, "exec", NS, *args],
+        [*IP_NETNS, "exec", NS, *args],
         capture_output=True, text=True, check=check,
     )
 
@@ -54,9 +52,9 @@ def _ns(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 def prepared_netns():
     """Create a netns with lo up and a dummy interface with a route."""
     # Cleanup any leftovers
-    subprocess.run([*RUN_NETNS, "delete", NS],
+    subprocess.run([*IP_NETNS, "delete", NS],
                    capture_output=True, check=False)
-    subprocess.run([*RUN_NETNS, "add", NS], check=True, capture_output=True)
+    subprocess.run([*IP_NETNS, "add", NS], check=True, capture_output=True)
     try:
         _ns("ip", "link", "set", "lo", "up")
         _ns("ip", "link", "add", "dev", "dummy0", "type", "dummy")
@@ -65,7 +63,7 @@ def prepared_netns():
         _ns("ip", "route", "add", "10.88.0.0/16", "dev", "dummy0")
         yield NS
     finally:
-        subprocess.run([*RUN_NETNS, "delete", NS],
+        subprocess.run([*IP_NETNS, "delete", NS],
                        capture_output=True, check=False)
 
 

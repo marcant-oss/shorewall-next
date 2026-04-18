@@ -26,10 +26,10 @@ Depends on `shorewall-nft` (core) for `verify.simulate`, `verify.iptables_parser
 
 - **192.0.2.83** — grml trixie/sid live, RAM-only, passwordless
   ssh as root. Reboots wipe everything.
-- Bootstrap: `tools/setup-remote-test-host.sh root@192.0.2.83`
-  rsyncs the repo to `/root/shorewall-nft`, creates venv, runs
-  `install-test-tooling.sh`, stages ground-truth data at
-  `/root/simulate-data/`. Merged config lives at `/etc/shorewall46`.
+- Bootstrap: `tools/setup-remote-test-host.sh root@<host>`
+  rsyncs the repo to `/root/shorewall-nft`, creates venv, stages
+  ground-truth data at `/root/simulate-data/`. Merged config at `/etc/shorewall46`.
+- Run tests: `tools/run-tests.sh` (unshare --mount --net isolation, no crash risk).
 - **Long-running tests: always use `systemd-run`**, never plain `ssh &`
   or `nohup`:
 
@@ -52,21 +52,20 @@ Depends on `shorewall-nft` (core) for `verify.simulate`, `verify.iptables_parser
 - **Simulate coverage** on this box defaults to `net → host` IPv4.
   Full-rule coverage comes from `verify --iptables /root/simulate-data/iptables.txt`.
 
-## run-netns tool
+## Namespace operations
 
-`sudo /usr/local/bin/run-netns` is a wrapper around `sudo ip netns`.
-Installed by `tools/install-test-tooling.sh` on the test host and by
-the `shorewall-nft-tests` package on distros.
+All namespace operations use `ip netns` directly (no wrapper, no sudoers).
+Tests must run as root — use `tools/run-tests.sh` which creates a private
+network + mount namespace so tests cannot crash the test host.
 
 ```bash
-sudo /usr/local/bin/run-netns add <name>
-sudo /usr/local/bin/run-netns delete <name>
-sudo /usr/local/bin/run-netns exec <name> <cmd>
-sudo /usr/local/bin/run-netns list
+ip netns add <name>
+ip netns delete <name>
+ip netns exec <name> <cmd>
+ip netns list
 ```
 
-**Monorepo note:** `install-test-tooling.sh` installiert nur run-netns + sudoers.
-Die Python-Pakete müssen separat über die Sub-Package-Verzeichnisse installiert werden:
+**Monorepo note:** Python-Pakete müssen über die Sub-Package-Verzeichnisse installiert werden:
 ```bash
 pip install -e packages/shorewall-nft[dev] \
             -e packages/shorewalld[dev] \

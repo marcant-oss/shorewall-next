@@ -10,7 +10,7 @@ Tests that nft ct state tracking works correctly:
 Uses scapy for raw packet crafting where nc can't test specific
 TCP flags. Falls back to nc-based tests if scapy unavailable.
 
-All tests run inside network namespaces via run-netns.
+All tests run inside network namespaces via ip netns.
 """
 
 from __future__ import annotations

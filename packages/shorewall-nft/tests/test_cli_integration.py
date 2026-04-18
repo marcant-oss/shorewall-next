@@ -1,11 +1,11 @@
 """CLI Integration Tests — tests all 32 shorewall-nft commands.
 
 Runs in a single network namespace (shorewall-next-sim-cli) for isolation.
-Requires: sudo /usr/local/bin/run-netns (NOPASSWD)
+Must be invoked via tools/run-tests.sh (private network + mount namespace).
 
 Usage:
-    pytest tests/test_cli_integration.py -v
-    pytest tests/test_cli_integration.py -v -k netns  # only netns tests
+    tools/run-tests.sh tests/test_cli_integration.py -v
+    tools/run-tests.sh tests/test_cli_integration.py -v -k netns
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ IPT_DUMP = Path(os.environ.get(
     "SHOREWALL_NFT_IPT_DUMP",
     "/tmp/iptables-save.txt"))
 NS = "shorewall-next-sim-cli"
-RUN_NETNS = ["sudo", "/usr/local/bin/run-netns"]
+IP_NETNS = ["ip", "netns"]
 
 
 def _run(args: list[str], timeout: int = 30, **kwargs) -> subprocess.CompletedProcess:
@@ -53,28 +53,32 @@ def _cli(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
 def _cli_in_ns(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
     """Run shorewall-nft INSIDE the test namespace as root.
 
-    Uses run-netns exec with full path to the venv binary.
+    Uses ip netns exec with full path to the venv binary.
     """
-    return _run([*RUN_NETNS, "exec", NS, SWNFT, *args], timeout=timeout)
+    return _run([*IP_NETNS, "exec", NS, SWNFT, *args], timeout=timeout)
 
 
 def _ns_exists() -> bool:
     """Check if the test namespace exists."""
-    r = _run([*RUN_NETNS, "list"])
+    r = _run([*IP_NETNS, "list"])
     return NS in r.stdout
 
 
 def _kill_ns_pids(ns: str) -> None:
     # `ip netns exec NS kill -9 -1` is UNSAFE: ip netns shares the host PID
-    # namespace, so -1 targets every process the caller can signal on the host.
-    r = subprocess.run([*RUN_NETNS, "pids", ns],
-                       capture_output=True, text=True, timeout=5)
-    for tok in r.stdout.split():
-        if tok.isdigit():
-            try:
-                os.kill(int(tok), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+    # namespace. Scan /proc/*/ns/net by inode instead.
+    ns_path = Path(f"/run/netns/{ns}")
+    try:
+        ns_ino = ns_path.stat().st_ino
+    except OSError:
+        return
+    for proc_ns in Path("/proc").glob("*/ns/net"):
+        try:
+            if proc_ns.stat().st_ino == ns_ino:
+                pid = int(proc_ns.parts[2])
+                os.kill(pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError, ValueError):
+            pass
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -85,13 +89,13 @@ def _kill_ns_pids(ns: str) -> None:
 def swnft_cli_netns():
     """Create the test namespace for the entire module, clean up after."""
     # Create
-    _run([*RUN_NETNS, "add", NS])
+    _run([*IP_NETNS, "add", NS])
     yield NS
     # Cleanup
     _kill_ns_pids(NS)
     import time
     time.sleep(0.2)
-    _run([*RUN_NETNS, "delete", NS])
+    _run([*IP_NETNS, "delete", NS])
 
 
 @pytest.fixture
@@ -151,7 +155,7 @@ class TestCompileCheck:
 # ──────────────────────────────────────────────────────────────────────
 
 class TestLifecycle:
-    """Lifecycle tests run INSIDE the netns via run-netns exec."""
+    """Lifecycle tests run INSIDE the netns via ip netns exec."""
 
     def test_01_start(self, swnft_cli_netns):
         r = _cli_in_ns("start", str(MINIMAL_DIR), timeout=60)
@@ -461,15 +465,12 @@ class TestDebug:
     def test_debug_command_sigint_restores(self, swnft_cli_netns, tmp_path):
         """End-to-end: start debug, terminate, verify restore ran.
 
-        Signal propagation through `sudo → run-netns → ip netns exec` is
-        fragile: sudo only forwards SIGINT with a controlling TTY, and
-        older wrapper versions don't `exec` into `ip netns`, leaving a
-        dead shell layer that swallows signals. We sidestep both issues
-        by putting the child in its own session and signalling the whole
-        process group so *every* layer (sudo, wrapper sh, python) gets
-        the signal simultaneously. SIGTERM is used because the handler
-        in cli.py treats SIGTERM and SIGINT identically and SIGTERM is
-        not TTY-gated by sudo.
+        Signal propagation through `ip netns exec` is clean — ip exec's
+        directly into the target command with no extra shell layer.
+        We still put the child in its own session and signal the whole
+        process group so every layer (ip, python) gets the signal at once.
+        SIGTERM is used because the handler in cli.py treats SIGTERM and
+        SIGINT identically.
         """
         import signal
         import time
@@ -478,7 +479,7 @@ class TestDebug:
 
         # Launch debug in the background in its own process group
         proc = subprocess.Popen(
-            [*RUN_NETNS, "exec", NS, SWNFT, "debug", str(MINIMAL_DIR),
+            [*IP_NETNS, "exec", NS, SWNFT, "debug", str(MINIMAL_DIR),
              "--netns", NS],
             env={**os.environ,
                  "PYTHONPATH": str(Path(__file__).parent.parent)},
@@ -502,10 +503,7 @@ class TestDebug:
             except subprocess.TimeoutExpired:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 proc.communicate()
-                pytest.skip(
-                    "debug command hung on SIGTERM — likely a stale "
-                    "/usr/local/bin/run-netns without `exec`; reinstall "
-                    "via tools/install-test-tooling.sh")
+                pytest.skip("debug command hung on SIGTERM")
         finally:
             if proc.poll() is None:
                 try:

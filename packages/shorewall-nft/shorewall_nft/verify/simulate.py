@@ -8,7 +8,7 @@ Topology:
     shorewall-next-sim-src  ←veth→  shorewall-next-sim-fw  ←veth→  shorewall-next-sim-dst
     (source)                        (firewall)                     (destination)
 
-Uses sudo /usr/local/bin/run-netns for all namespace operations.
+Uses ip netns for all namespace operations (must run as root).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-RUN_NETNS = ["sudo", "/usr/local/bin/run-netns"]
+IP_NETNS = ["ip", "netns"]
 
 NS_SRC = "shorewall-next-sim-src"
 NS_FW = "shorewall-next-sim-fw"
@@ -1228,7 +1228,7 @@ def _start_trace(trace_log: Path) -> subprocess.Popen | None:
     try:
         f = open(trace_log, "w")
         proc = subprocess.Popen(
-            [*RUN_NETNS, "exec", NS_FW, "nft", "monitor", "trace"],
+            [*IP_NETNS, "exec", NS_FW, "nft", "monitor", "trace"],
             stdout=f, stderr=subprocess.DEVNULL,
         )
         return proc

@@ -4,9 +4,11 @@
 # Bootstraps a disposable test host over SSH:
 #   1. rsyncs the working copy to /root/shorewall-nft (excluding .venv, caches)
 #   2. creates a venv and installs all three sub-packages (packages/*)
-#   3. runs tools/install-test-tooling.sh for the run-netns wrapper + sudoers
-#   4. copies the marcant-fw iptables-save dump + matching shorewall config
+#   3. copies the marcant-fw iptables-save dump + matching shorewall config
 #      to /root/simulate-data, so `shorewall-nft simulate` has ground truth
+#
+# No extra tooling (run-netns, sudoers) is installed — tests run as root
+# inside a fully isolated private namespace via tools/run-tests.sh.
 #
 # Usage:
 #   tools/setup-remote-test-host.sh root@192.0.2.83
@@ -88,13 +90,11 @@ try:
     print(\"libnft OK — production setns path available\")
 except Exception as e:
     print(\"WARNING: python3-nftables not importable:\", e, file=sys.stderr)
-    print(\"  CLI will fall back to sudo run-netns for all namespace operations\", file=sys.stderr)
+    print(\"  CLI will fall back to ip netns exec for namespace operations\", file=sys.stderr)
     print(\"  Install python3-nftables for the full production code path\", file=sys.stderr)
     sys.exit(1)
 " || true'
 
-info "run install-test-tooling.sh on remote"
-ssh "$REMOTE" 'sh /root/shorewall-nft/tools/install-test-tooling.sh'
 
 if [ -f "$SIMULATE_SRC/iptables.txt" ] && [ -d "$SIMULATE_SRC/etc/shorewall" ]; then
     info "copy simulate ground truth from $SIMULATE_SRC"
@@ -187,16 +187,17 @@ echo "merged: $(find /etc/shorewall46 -maxdepth 1 -type f | wc -l) files"
 '
 
 info "done. next steps on the remote:"
-info "  # run full test suite (requires python3-nftables for production setns path):"
-info "  systemd-run --unit=shorewall-pytest --collect --working-directory=/root/shorewall-nft \\"
+info "  # run full test suite (fully isolated — cannot crash the host network):"
+info "  systemd-run --unit=shorewall-pytest --collect \\"
 info "    --property=StandardOutput=file:/tmp/pytest.log \\"
 info "    --property=StandardError=file:/tmp/pytest.log \\"
-info "    /root/shorewall-nft/.venv/bin/python -m pytest \\"
+info "    /root/shorewall-nft/tools/run-tests.sh \\"
 info "        packages/shorewall-nft/tests/ \\"
 info "        packages/shorewalld/tests/ \\"
 info "        packages/shorewall-nft-simlab/tests/ -v"
+info "  # Follow: systemctl is-active shorewall-pytest; tail -f /tmp/pytest.log"
 info ""
-info "  # smoke the production path (setns, no subprocess run-netns needed):"
+info "  # smoke the production path:"
 info "  /root/shorewall-nft/.venv/bin/shorewall-nft start /etc/shorewall46"
 info "  /root/shorewall-nft/.venv/bin/shorewall-nft status"
 info "  /root/shorewall-nft/.venv/bin/shorewall-nft stop"

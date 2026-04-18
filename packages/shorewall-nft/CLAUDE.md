@@ -68,7 +68,6 @@ Source of truth: `docs/reference/dependencies.md`.
 
 **Optional (Suggests):**
 - python3-scapy — only for `simulate` and `connstate` verification tools
-- sudo — only if shipping test tooling (`run-netns` + sudoers)
 
 **Kernel floor:** Linux ≥ 5.8.
 Required (usually auto-loaded): nf_tables, nf_tables_inet,
@@ -85,10 +84,10 @@ Soft: nft_objref, nft_connlimit, nft_numgen, nft_flow_offload, nft_synproxy.
 | Arch   | shorewall-nft (all-in-one) | — | — |
 | Alpine | shorewall-nft | shorewall-nft-tests | shorewall-nft-doc |
 
-The `shorewall-nft-tests` package should install `run-netns` +
-`sudoers.d/shorewall-nft-tests` + create group `netns-test`. Do NOT
-call `tools/install-test-tooling.sh` from packaging scripts — call
-the underlying install steps directly.
+The `shorewall-nft-tests` package does not need extra tooling.
+Tests run as root via `tools/run-tests.sh` which creates a private
+network + mount namespace (`unshare --mount --net`) before pytest starts.
+No sudoers rules, no helper binary, no `netns-test` group needed.
 
 pytest ≥ 8.0 (modern fixture scoping used in `test_cli_integration.py`).
 
