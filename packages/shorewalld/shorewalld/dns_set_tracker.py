@@ -216,6 +216,31 @@ class DnsSetTracker:
         with self._lock:
             return self._by_id.get(set_id)
 
+    def add_qname_alias(
+        self,
+        alias_qname: str,
+        primary_qname: str,
+        family: int,
+    ) -> bool:
+        """Map ``alias_qname`` to the same set_id as ``primary_qname``.
+
+        Called after :meth:`load_registry` to wire secondary hostnames
+        from ``dnsr:`` groups into the tap pipeline.  When the dnstap or
+        pbdns decoder sees a DNS answer for ``alias_qname``, it resolves
+        it to ``set_id_for(alias_qname, family)`` which now points at the
+        primary's set — so the answer populates the same nft set without
+        any changes to the decoder hot path.
+
+        Returns ``True`` if the alias was installed, ``False`` if the
+        primary is not (yet) in the allowlist.
+        """
+        with self._lock:
+            primary_id = self._by_name.get((primary_qname, family))
+            if primary_id is None:
+                return False
+            self._by_name[(alias_qname, family)] = primary_id
+            return True
+
     def note_unknown_qname(self) -> None:
         """Counter bump for decoder pre-filter rejections.
 

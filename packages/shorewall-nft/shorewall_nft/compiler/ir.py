@@ -18,6 +18,7 @@ from shorewall_nft.nft.dns_sets import (
     DEFAULT_TTL_CEIL,
     DEFAULT_TTL_FLOOR,
     DnsSetRegistry,
+    DnsrRegistry,
     canonical_qname,
     is_valid_hostname,
     parse_dnsnames_file,
@@ -116,6 +117,11 @@ class FirewallIR:
     # ``dns_<name>_v6`` pair per hostname, and the start command writes
     # a compiled allowlist for shorewalld to consume at runtime.
     dns_registry: DnsSetRegistry = field(default_factory=DnsSetRegistry)
+    # Pull-resolver groups — populated from ``dnsr:hostname[,hostname…]``
+    # tokens. Uses the same dns_* nft sets as the tap pipeline; the
+    # registry carries the extra metadata (secondary qnames) needed by
+    # shorewalld's PullResolver to actively maintain those sets.
+    dnsr_registry: DnsrRegistry = field(default_factory=DnsrRegistry)
 
     def add_chain(self, chain: Chain) -> None:
         self.chains[chain.name] = chain
@@ -668,6 +674,88 @@ def _rewrite_dns_spec(
     return f"{prefix}{sentinel_negate}+{set_name}"
 
 
+def _spec_contains_dnsr_token(spec: str) -> bool:
+    """Cheap test for ``dnsr:HOSTNAME[,HOSTNAME…]`` embedded in a spec column.
+
+    Mirrors :func:`_spec_contains_dns_token` but for the pull-resolver
+    variant.  Covers bare, negated, zone-prefixed, and zone+negation forms.
+    """
+    return (
+        spec.startswith("dnsr:")
+        or spec.startswith("!dnsr:")
+        or ":dnsr:" in spec
+        or ":!dnsr:" in spec
+    )
+
+
+def _rewrite_dnsr_spec(
+    spec: str,
+    dns_registry: DnsSetRegistry,
+    dnsr_registry: DnsrRegistry,
+    family: str,
+) -> str:
+    """Replace a ``dnsr:host[,host…]`` token with the same sentinel as ``dns:``.
+
+    The primary hostname (first in the comma list) is registered in
+    ``dns_registry`` so the emitter declares the ``dns_<primary>_v4/v6``
+    sets.  The full hostname list is recorded in ``dnsr_registry`` so the
+    daemon's PullResolver knows which hostnames to actively resolve into
+    that set.
+
+    Secondary hostnames are also registered individually in ``dns_registry``
+    so the tap pipeline's qname-filter accepts their DNS answers and
+    routes them to the same set via tracker aliases.
+
+    The returned sentinel is identical to a ``dns:primary`` rewrite
+    (``+dns_<primary>_<family>``), so the downstream IR and emitter need
+    no changes.
+    """
+    prefix = ""
+    body = spec
+    sentinel_negate = ""
+
+    if body.startswith("dnsr:"):
+        host_str = body[5:]
+    elif body.startswith("!dnsr:"):
+        sentinel_negate = "!"
+        host_str = body[6:]
+    else:
+        colon = body.find(":")
+        if colon < 0:
+            return spec
+        prefix = body[: colon + 1]
+        rest = body[colon + 1:]
+        if rest.startswith("dnsr:"):
+            host_str = rest[5:]
+        elif rest.startswith("!dnsr:"):
+            sentinel_negate = "!"
+            host_str = rest[6:]
+        else:
+            return spec
+
+    host_str = host_str.rstrip(">").lstrip("<")
+    raw_hosts = [h.strip() for h in host_str.split(",") if h.strip()]
+    if not raw_hosts:
+        return spec
+    for h in raw_hosts:
+        if not is_valid_hostname(h):
+            return spec
+
+    qnames = [canonical_qname(h) for h in raw_hosts]
+    primary = qnames[0]
+
+    # Declare the set via the normal dns_registry path (emitter already
+    # handles dns_registry → set declarations).
+    for qn in qnames:
+        dns_registry.add_from_rule(qn)
+
+    # Record the full pull-resolver group (primary + secondaries).
+    dnsr_registry.add_from_rule(primary, qnames)
+
+    set_name = qname_to_set_name(primary, family)
+    return f"{prefix}{sentinel_negate}+{set_name}"
+
+
 def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
                    zones: ZoneModel) -> None:
     """Process firewall rules into chain rules."""
@@ -680,23 +768,36 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
         source_spec_raw = cols[1] if len(cols) > 1 else "all"
         dest_spec_raw = cols[2] if len(cols) > 2 else "all"
 
-        # DNS-token pre-pass: if SOURCE or DEST carries ``dns:HOST``,
-        # clone the rule line into two family-specific variants. Each
-        # clone references the deterministic set name the emitter will
-        # declare, so the downstream pipeline sees only ``+dns_*_v4``
-        # or ``+dns_*_v6`` sentinels and never a raw hostname.
-        if (_spec_contains_dns_token(source_spec_raw)
-                or _spec_contains_dns_token(dest_spec_raw)):
+        # DNS-token pre-pass: if SOURCE or DEST carries a ``dns:HOST`` or
+        # ``dnsr:HOST[,HOST…]`` token, clone the rule into two
+        # family-specific variants.  Each clone gets rewritten sentinels
+        # (``+dns_*_v4`` / ``+dns_*_v6``) so the downstream pipeline never
+        # sees raw hostnames.  Both rewriters are applied sequentially; each
+        # is a no-op when its token type is absent.
+        _src_has_dns = _spec_contains_dns_token(source_spec_raw)
+        _dst_has_dns = _spec_contains_dns_token(dest_spec_raw)
+        _src_has_dnsr = _spec_contains_dnsr_token(source_spec_raw)
+        _dst_has_dnsr = _spec_contains_dnsr_token(dest_spec_raw)
+        if _src_has_dns or _dst_has_dns or _src_has_dnsr or _dst_has_dnsr:
             for family in ("v4", "v6"):
                 new_cols = list(cols)
-                new_cols[1] = _rewrite_dns_spec(
+                src = _rewrite_dns_spec(
                     source_spec_raw, ir.dns_registry, family)
+                src = _rewrite_dnsr_spec(
+                    src, ir.dns_registry, ir.dnsr_registry, family)
+                new_cols[1] = src
                 if len(new_cols) > 2:
-                    new_cols[2] = _rewrite_dns_spec(
+                    dst = _rewrite_dns_spec(
                         dest_spec_raw, ir.dns_registry, family)
-                elif _spec_contains_dns_token(dest_spec_raw):
-                    new_cols.append(_rewrite_dns_spec(
-                        dest_spec_raw, ir.dns_registry, family))
+                    dst = _rewrite_dnsr_spec(
+                        dst, ir.dns_registry, ir.dnsr_registry, family)
+                    new_cols[2] = dst
+                elif _dst_has_dns or _dst_has_dnsr:
+                    dst = _rewrite_dns_spec(
+                        dest_spec_raw, ir.dns_registry, family)
+                    dst = _rewrite_dnsr_spec(
+                        dst, ir.dns_registry, ir.dnsr_registry, family)
+                    new_cols.append(dst)
                 expanded_line = ConfigLine(
                     columns=new_cols,
                     file=line.file,

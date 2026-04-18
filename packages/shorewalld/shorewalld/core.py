@@ -125,6 +125,8 @@ class Daemon:
         self._pbdns_server: Any | None = None
         self._peer_link: Any | None = None
 
+        self._pull_resolver: Any | None = None
+
         # New subsystems.
         self._iplist_tracker: Any | None = None
         self._iplist_task: asyncio.Task[None] | None = None
@@ -230,9 +232,12 @@ class Daemon:
         """
         assert self.allowlist_file is not None
         assert self._nft is not None
-        from shorewall_nft.nft.dns_sets import read_compiled_allowlist
+        from shorewall_nft.nft.dns_sets import (
+            read_compiled_allowlist,
+            read_compiled_dnsr_allowlist,
+        )
 
-        from .dns_set_tracker import DnsSetTracker
+        from .dns_set_tracker import FAMILY_V4, FAMILY_V6, DnsSetTracker
         from .dnstap_bridge import TrackerBridge
         from .reload_monitor import ReloadMonitor, TableFingerprintProbe
         from .setwriter import SetWriter
@@ -252,6 +257,27 @@ class Daemon:
             "dns pipeline: loaded allowlist (%d qnames)",
             sum(1 for _ in registry.iter_sorted()),
         )
+
+        # Load pull-resolver groups and wire secondary qnames as tracker
+        # aliases so the tap pipeline also populates dnsr: sets.
+        try:
+            dnsr_registry = read_compiled_dnsr_allowlist(self.allowlist_file)
+        except Exception:
+            log.exception(
+                "failed to read dnsr section from allowlist %s",
+                self.allowlist_file)
+            dnsr_registry = None
+
+        if dnsr_registry and dnsr_registry.groups:
+            for group in dnsr_registry.iter_sorted():
+                for secondary in group.qnames[1:]:
+                    for family in (FAMILY_V4, FAMILY_V6):
+                        self._tracker.add_qname_alias(
+                            secondary, group.primary_qname, family)
+            log.info(
+                "dns pipeline: loaded %d pull-resolver group(s)",
+                len(dnsr_registry.groups),
+            )
 
         loop = asyncio.get_running_loop()
         self._router = WorkerRouter(tracker=self._tracker, loop=loop)
@@ -376,12 +402,36 @@ class Daemon:
                         self.peer_host, self.peer_port)
                     self._peer_link = None
 
+        # Pull resolver — active DNS resolution for dnsr: groups.
+        if dnsr_registry and dnsr_registry.groups:
+            from .dns_pull_resolver import PullResolver
+            self._pull_resolver = PullResolver(
+                dnsr_registry,
+                self._tracker,
+                self._set_writer,
+                default_netns=netns_list[0] if netns_list else "",
+            )
+            await self._pull_resolver.start()
+            # Register control-socket handler for manual refresh.
+            if self._control_server is not None:
+                async def _handle_refresh_dns(req: dict) -> dict:
+                    hostname = req.get("hostname")
+                    n = await self._pull_resolver.refresh(hostname)
+                    return {"ok": True, "rescheduled": n}
+                self._control_server.register_handler(
+                    "refresh-dns", _handle_refresh_dns)
+            log.info(
+                "dns pipeline: pull resolver started (%d group(s))",
+                dnsr_registry and len(dnsr_registry.groups),
+            )
+
         log.info(
             "dns pipeline: ready "
-            "(pbdns=%s peer=%s state=%s reload_monitor=on)",
+            "(pbdns=%s peer=%s state=%s pull=%s reload_monitor=on)",
             "on" if self._pbdns_server else "off",
             "on" if self._peer_link else "off",
             "on" if self._state_store else "off",
+            "on" if self._pull_resolver else "off",
         )
 
     async def _start_iplist_tracker(self, netns_list: list[str]) -> None:
@@ -639,6 +689,14 @@ class Daemon:
             except Exception:
                 log.exception("control server shutdown failed")
             self._control_server = None
+
+        # Pull resolver.
+        if self._pull_resolver is not None:
+            try:
+                await self._pull_resolver.shutdown()
+            except Exception:
+                log.exception("pull resolver shutdown failed")
+            self._pull_resolver = None
 
         # IP-list tracker.
         if self._iplist_task is not None:

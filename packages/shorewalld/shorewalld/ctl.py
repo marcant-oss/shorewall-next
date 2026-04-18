@@ -59,6 +59,15 @@ def _build_ctl_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("instance-status", help="Show instance status")
 
+    rd = sub.add_parser(
+        "refresh-dns",
+        help="Trigger an immediate DNS re-resolve for dnsr: pull-resolver groups",
+    )
+    rd.add_argument(
+        "--hostname", default=None, metavar="HOSTNAME",
+        help="Refresh only this primary hostname (default: all groups)",
+    )
+
     return p
 
 
@@ -71,6 +80,8 @@ def _build_request(args: argparse.Namespace) -> dict:
         req["name"] = args.name
     elif cmd == "reload-instance" and args.name:
         req["name"] = args.name
+    elif cmd == "refresh-dns" and args.hostname:
+        req["hostname"] = args.hostname
 
     return req
 
