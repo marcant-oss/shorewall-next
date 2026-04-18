@@ -1,9 +1,7 @@
 [Unit]
 Description=shorewall-nft monitoring + DNS-set API daemon
 Documentation=file:///usr/share/doc/shorewall-nft/shorewalld.md
-# Start after shorewall-nft so the ruleset is present when
-# shorewalld probes for tables.
-After=network.target shorewall-nft.service
+After=network.target
 Wants=network.target
 
 [Service]
