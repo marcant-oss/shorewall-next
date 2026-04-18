@@ -56,7 +56,7 @@ class TestResolvePaths:
         assert skip is True
 
     def test_v4_only_with_auto_sibling(self, dirs):
-        """--config-dir4 alone lets the parser auto-detect v6 sibling."""
+        """--config-dir-v4 alone lets the parser auto-detect v6 sibling."""
         primary, secondary, skip = _resolve_config_paths(
             None, None, dirs["v4"], None, False, False)
         assert primary == dirs["v4"]
@@ -64,7 +64,7 @@ class TestResolvePaths:
         assert skip is False  # parser will auto-detect
 
     def test_v4_with_no_auto_v6(self, dirs):
-        """--config-dir4 + --no-auto-v6 = v4-only."""
+        """--config-dir-v4 + --no-auto-v6 = v4-only."""
         primary, secondary, skip = _resolve_config_paths(
             None, None, dirs["v4"], None, False, True)
         assert primary == dirs["v4"]
@@ -72,7 +72,7 @@ class TestResolvePaths:
         assert skip is True
 
     def test_v6_finds_v4_sibling(self, dirs):
-        """--config6-dir alone finds v4 sibling manually."""
+        """--config-dir-v6 alone finds v4 sibling manually."""
         primary, secondary, skip = _resolve_config_paths(
             None, None, None, dirs["v6"], False, False)
         assert primary == dirs["v4"]
@@ -80,7 +80,7 @@ class TestResolvePaths:
         assert skip is True
 
     def test_v6_only(self, dirs):
-        """--config6-dir + --no-auto-v4 = v6-only."""
+        """--config-dir-v6 + --no-auto-v4 = v6-only."""
         primary, secondary, skip = _resolve_config_paths(
             None, None, None, dirs["v6"], True, False)
         assert primary == dirs["v6"]
@@ -88,7 +88,7 @@ class TestResolvePaths:
         assert skip is True
 
     def test_v6_orphan_no_sibling(self, dirs):
-        """--config6-dir on a dir with no v4 sibling → v6-only."""
+        """--config-dir-v6 on a dir with no v4 sibling → v6-only."""
         primary, secondary, skip = _resolve_config_paths(
             None, None, None, dirs["orphan"], False, False)
         assert primary == dirs["orphan"]

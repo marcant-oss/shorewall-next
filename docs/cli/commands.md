@@ -16,13 +16,13 @@ version is in [`reference/commands.json`](../reference/commands.json).
 Compile and apply firewall rules (like shorewall start).
 
 ```
-shorewall-nft start [directory] [--netns <value>] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft start [directory] [--netns <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
-- **`--netns`** — Apply in network namespace.
+- **`--netns`** — Network namespace name.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -55,20 +55,20 @@ Stop the firewall (remove all rules).
 shorewall-nft stop [--netns <value>]
 ```
 
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 
 ### `restart`
 
 Recompile and atomically replace the ruleset.
 
 ```
-shorewall-nft restart [directory] [--netns <value>] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft restart [directory] [--netns <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -77,13 +77,13 @@ shorewall-nft restart [directory] [--netns <value>] [-c <value>] [--config-dir4 
 Reload rules (same as restart for nft — atomic replace).
 
 ```
-shorewall-nft reload [directory] [--netns <value>] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft reload [directory] [--netns <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -95,7 +95,7 @@ Show firewall status.
 shorewall-nft status [--netns <value>]
 ```
 
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 
 ### `clear`
 
@@ -105,18 +105,18 @@ Clear all firewall rules (accept all traffic).
 shorewall-nft clear [--netns <value>]
 ```
 
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 
 ### `save`
 
 Save current ruleset (like shorewall save).
 
 ```
-shorewall-nft save [filename] [-C] [--netns <value>]
+shorewall-nft save [filename] [--counters] [--netns <value>]
 ```
 
-- **`-C`** — Include counters.
-- **`--netns`** — Target network namespace.
+- **`--counters`** — Include counters in the saved ruleset.
+- **`--netns`** — Network namespace name.
 
 ### `restore`
 
@@ -126,20 +126,20 @@ Restore a saved ruleset (like shorewall restore).
 shorewall-nft restore <filename> [--netns <value>]
 ```
 
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 
 ### `check`
 
 Validate config without applying (like shorewall check).
 
 ```
-shorewall-nft check [directory] [--skip-caps] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft check [directory] [--skip-caps] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`--skip-caps`** — Skip capability check.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -148,13 +148,13 @@ shorewall-nft check [directory] [--skip-caps] [-c <value>] [--config-dir4 <value
 Compile config to nft script (like shorewall compile).
 
 ```
-shorewall-nft compile [directory] [-o <value>] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft compile [directory] [-o <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`-o, --output`** — Output file.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -169,7 +169,7 @@ shorewall-nft show [what] [-x] [--netns <value>]
 ```
 
 - **`-x`** — Show exact counters.
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 
 ### `counters`
 
@@ -179,7 +179,7 @@ List all counter values (packets/bytes).
 shorewall-nft counters [--netns <value>]
 ```
 
-- **`--netns`**
+- **`--netns`** — Network namespace name.
 
 ### `reset`
 
@@ -189,7 +189,7 @@ Reset counters (like shorewall reset).
 shorewall-nft reset [chains] [--netns <value>]
 ```
 
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 
 ## Dynamic blacklist
 
@@ -201,7 +201,7 @@ Dynamically drop traffic from addresses (like shorewall drop).
 shorewall-nft drop <addresses> [--netns <value>]
 ```
 
-- **`--netns`**
+- **`--netns`** — Network namespace name.
 
 ### `blacklist`
 
@@ -212,7 +212,7 @@ shorewall-nft blacklist <address> [-t <value>] [--netns <value>]
 ```
 
 - **`-t, --timeout`** — Timeout (e.g. 1h, 30m, 1d).
-- **`--netns`**
+- **`--netns`** — Network namespace name.
 
 ### `reject`
 
@@ -222,7 +222,7 @@ Dynamically reject traffic from addresses (like shorewall reject).
 shorewall-nft reject <addresses> [--netns <value>]
 ```
 
-- **`--netns`**
+- **`--netns`** — Network namespace name.
 
 ### `allow`
 
@@ -232,7 +232,7 @@ Remove addresses from the blacklist (like shorewall allow).
 shorewall-nft allow <addresses> [--netns <value>]
 ```
 
-- **`--netns`**
+- **`--netns`** — Network namespace name.
 
 ## Capabilities & features
 
@@ -244,7 +244,7 @@ Detect nftables capabilities of the running kernel.
 shorewall-nft capabilities [--netns <value>] [--json]
 ```
 
-- **`--netns`** — Probe in network namespace.
+- **`--netns`** — Network namespace name.
 - **`--json`** — Output as JSON.
 
 ### `explain-nft-features`
@@ -256,7 +256,7 @@ shorewall-nft explain-nft-features [--probe] [--category <value>] [--json]
 ```
 
 - **`--probe`** — Probe kernel for feature availability.
-- **`--category, -c`** — Filter by category (e.g. 'Sets', 'NAT', 'IPv6').
+- **`--category`** — Filter by category (e.g. 'Sets', 'NAT', 'IPv6').
 - **`--json`** — Output as JSON.
 
 ## Verification
@@ -266,13 +266,13 @@ shorewall-nft explain-nft-features [--probe] [--category <value>] [--json]
 Verify compiled output against iptables baseline.
 
 ```
-shorewall-nft verify [directory] [--iptables <value>] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft verify [directory] [--iptables <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`--iptables`** — Path to iptables-save dump (ground truth).
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -281,19 +281,20 @@ shorewall-nft verify [directory] [--iptables <value>] [-c <value>] [--config-dir
 Run packet-level simulation in 3 network namespaces.
 
 ```
-shorewall-nft simulate [directory] [--iptables <value>] [--target <value>] [--max-tests <value>] [--seed <value>] [-V] [--parallel <value>] [--no-trace] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft simulate [directory] [--iptables <value>] [--target <value>] [--targets-v6 <value>] [--max-tests <value>] [--seed <value>] [-v] [--parallel <value>] [--no-trace] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`--iptables`** — iptables-save dump (ground truth).
 - **`--target`** — Target IP for tests.
+- **`--targets-v6`** — Comma-separated list or @FILE of IPv6 target addresses. Requires --ip6tables.
 - **`--max-tests, -n`** — Max test cases.
 - **`--seed`** — Random seed for sampling.
-- **`-V, --sim-verbose`** — Show all test results.
+- **`-v, --verbose`** — Show all test results.
 - **`--parallel, -j`** — Parallel test threads.
 - **`--no-trace`** — Disable nft trace logging.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -302,15 +303,15 @@ shorewall-nft simulate [directory] [--iptables <value>] [--target <value>] [--ma
 Verify migration from Shorewall to shorewall-nft.
 
 ```
-shorewall-nft migrate [directory] [--iptables <value>] [-o <value>] [--dry-run] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft migrate [directory] [--iptables <value>] [-o <value>] [--dry-run] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`--iptables`** — iptables-save dump for verification.
 - **`-o, --output`**
 - **`--dry-run`** — Validate with nft -c.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -322,7 +323,7 @@ Start live packet tracing (nft monitor trace).
 shorewall-nft trace [--netns <value>]
 ```
 
-- **`--netns`** — Trace in network namespace.
+- **`--netns`** — Network namespace name.
 
 ## Generators
 
@@ -331,12 +332,12 @@ shorewall-nft trace [--netns <value>]
 Generate sysctl configuration script.
 
 ```
-shorewall-nft generate-sysctl [directory] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft generate-sysctl [directory] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -345,10 +346,10 @@ shorewall-nft generate-sysctl [directory] [-c <value>] [--config-dir4 <value>] [
 Generate systemd service files.
 
 ```
-shorewall-nft generate-systemd [--netns] [-o <value>]
+shorewall-nft generate-systemd [--with-netns] [-o <value>]
 ```
 
-- **`--netns`** — Generate template for network namespaces.
+- **`--with-netns`** — Generate template for network namespace deployments.
 - **`-o, --output-dir`**
 
 ### `generate-tc`
@@ -356,12 +357,12 @@ shorewall-nft generate-systemd [--netns] [-o <value>]
 Generate tc (traffic control) commands.
 
 ```
-shorewall-nft generate-tc [directory] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft generate-tc [directory] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -370,12 +371,12 @@ shorewall-nft generate-tc [directory] [-c <value>] [--config-dir4 <value>] [--co
 Generate a shell script that loads external sets.
 
 ```
-shorewall-nft generate-set-loader [directory] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft generate-set-loader [directory] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -384,14 +385,14 @@ shorewall-nft generate-set-loader [directory] [-c <value>] [--config-dir4 <value
 Load external sets (ipsets, GeoIP) into nft after apply.
 
 ```
-shorewall-nft load-sets [directory] [--netns <value>] [--geoip-dir <value>] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft load-sets [directory] [--netns <value>] [--geoip-dir <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 - **`--geoip-dir`** — GeoIP prefix directory.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
@@ -450,15 +451,15 @@ shorewall-nft enrich [directory] [--no-backup] [--dry-run]
 Temporarily load a debug-annotated ruleset.
 
 ```
-shorewall-nft debug [directory] [--netns <value>] [--no-restore] [--trace <value>] [-c <value>] [--config-dir4 <value>] [--config6-dir <value>] [--no-auto-v4] [--no-auto-v6]
+shorewall-nft debug [directory] [--netns <value>] [--no-restore] [--trace <value>] [-c <value>] [--config-dir-v4 <value>] [--config-dir-v6 <value>] [--no-auto-v4] [--no-auto-v6]
 ```
 
-- **`--netns`** — Target network namespace.
+- **`--netns`** — Network namespace name.
 - **`--no-restore`** — Do not restore the original ruleset on exit.
 - **`--trace`** — Auto-install a `meta nftrace set 1` rule in the input chain for the given nft match (e.g. 'ip saddr 1.2.3.4' or 'meta l4proto icmp'). Removed on exit.
 - **`-c, --config-dir`** — Explicit merged config directory (overrides /etc/shorewall46 default).
-- **`--config-dir4`** — Explicit IPv4 config directory.
-- **`--config6-dir`** — Explicit IPv6 config directory (use with --config-dir4 for dual mode).
+- **`--config-dir-v4`** — Explicit IPv4 config directory.
+- **`--config-dir-v6`** — Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
