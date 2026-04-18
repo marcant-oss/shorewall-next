@@ -31,6 +31,7 @@ from dataclasses import dataclass
 
 from shorewall_nft.nft.dns_sets import canonical_qname
 
+from .exporter import CollectorBase, _MetricFamily
 from .dns_set_tracker import (
     FAMILY_V4,
     FAMILY_V6,
@@ -199,3 +200,40 @@ def _coerce_ip6(rr: bytes | str) -> bytes | None:
         except OSError:
             return None
     return None
+
+
+class BridgeMetricsCollector(CollectorBase):
+    """Prometheus collector for the decoder → tracker bridge."""
+
+    def __init__(self, bridge: TrackerBridge) -> None:
+        super().__init__(netns="")
+        self._bridge = bridge
+
+    def collect(self) -> list[_MetricFamily]:
+        m = self._bridge.metrics
+        fams: list[_MetricFamily] = []
+
+        def counter(name: str, help_text: str, value: int) -> None:
+            fam = _MetricFamily(name, help_text, [], mtype="counter")
+            fam.add([], float(value))
+            fams.append(fam)
+
+        counter("shorewalld_bridge_updates_total",
+                "DNS answer records seen by the tracker bridge",
+                m.updates_total)
+        counter("shorewalld_bridge_updates_empty_total",
+                "DNS records skipped — no A/AAAA RRs",
+                m.updates_empty_total)
+        counter("shorewalld_bridge_early_filter_miss_total",
+                "Records dropped — qname not in compiled allowlist",
+                m.early_filter_miss_total)
+        counter("shorewalld_bridge_early_filter_pass_total",
+                "Records forwarded to the tracker",
+                m.early_filter_pass_total)
+        counter("shorewalld_bridge_proposals_total",
+                "Individual (qname, ip) proposals submitted to SetWriter",
+                m.proposals_total)
+        counter("shorewalld_bridge_dropped_queue_full_total",
+                "Proposals dropped — SetWriter queue saturated",
+                m.submit_dropped_queue_full_total)
+        return fams

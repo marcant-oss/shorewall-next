@@ -64,6 +64,7 @@ from typing import Protocol
 from shorewall_nft.nft.dns_sets import canonical_qname
 
 from .dns_set_tracker import DnsSetTracker, Proposal
+from .exporter import CollectorBase, _MetricFamily
 from .logsetup import get_logger, get_rate_limiter
 from .proto import peer_pb2
 from .setwriter import SetWriter
@@ -737,3 +738,57 @@ def peer_is_up(metrics: PeerMetrics, interval: float) -> bool:
         return False
     return (time.monotonic() - metrics.last_heartbeat_recv_mono
             < interval * 3.0)
+
+
+class PeerMetricsCollector(CollectorBase):
+    """Prometheus collector for the HA peer-link metrics."""
+
+    def __init__(self, link: "PeerLink") -> None:
+        super().__init__(netns="")
+        self._link = link
+
+    def collect(self) -> list[_MetricFamily]:
+        m = self._link.metrics
+        fams: list[_MetricFamily] = []
+
+        def gauge(name: str, help_text: str, value: float) -> None:
+            fam = _MetricFamily(name, help_text, [])
+            fam.add([], value)
+            fams.append(fam)
+
+        def counter(name: str, help_text: str, value: int) -> None:
+            fam = _MetricFamily(name, help_text, [], mtype="counter")
+            fam.add([], float(value))
+            fams.append(fam)
+
+        gauge("shorewalld_peer_up",
+              "1 if peer heartbeat is fresh, 0 otherwise", float(m.up))
+        counter("shorewalld_peer_frames_sent_total",
+                "UDP frames sent to HA peer", m.frames_sent_total)
+        counter("shorewalld_peer_frames_received_total",
+                "UDP frames received from HA peer", m.frames_received_total)
+        counter("shorewalld_peer_frames_lost_total",
+                "Detected sequence-number gaps from HA peer", m.frames_lost_total)
+        counter("shorewalld_peer_hmac_failures_total",
+                "Frames rejected by HMAC-SHA256 verification", m.hmac_failures_total)
+        counter("shorewalld_peer_decode_errors_total",
+                "Frames that failed protobuf decode", m.decode_errors_total)
+        counter("shorewalld_peer_bytes_sent_total",
+                "Bytes sent to HA peer", m.bytes_sent_total)
+        counter("shorewalld_peer_bytes_received_total",
+                "Bytes received from HA peer", m.bytes_received_total)
+        counter("shorewalld_peer_dns_updates_applied_total",
+                "Individual DNS set entries replicated from peer",
+                m.dns_updates_applied_total)
+        counter("shorewalld_peer_heartbeats_sent_total",
+                "Heartbeat frames sent to peer", m.heartbeats_sent_total)
+        counter("shorewalld_peer_heartbeats_received_total",
+                "Heartbeat frames received from peer", m.heartbeats_received_total)
+        counter("shorewalld_peer_send_errors_total",
+                "Errors sending UDP datagrams to peer", m.send_errors_total)
+        gauge("shorewalld_peer_rtt_seconds",
+              "Latest peer round-trip time estimate in seconds", m.rtt_seconds)
+        counter("shorewalld_peer_snapshot_complete_total",
+                "Full peer state snapshots successfully applied",
+                m.snapshot_complete_total)
+        return fams

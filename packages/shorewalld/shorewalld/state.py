@@ -76,6 +76,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .dns_set_tracker import DnsSetTracker
+from .exporter import CollectorBase, _MetricFamily
 from .logsetup import get_logger
 
 log = get_logger("state")
@@ -409,3 +410,45 @@ class StateStore:
             path.unlink()
         except FileNotFoundError:
             pass
+
+
+class StateMetricsCollector(CollectorBase):
+    """Prometheus collector for the DNS-set persistence store."""
+
+    def __init__(self, store: "StateStore") -> None:
+        super().__init__(netns="")
+        self._store = store
+
+    def collect(self) -> list[_MetricFamily]:
+        snap = self._store.metrics.snapshot()
+        fams: list[_MetricFamily] = []
+
+        def counter(name: str, help_text: str, key: str) -> None:
+            fam = _MetricFamily(name, help_text, [], mtype="counter")
+            fam.add([], float(snap[key]))
+            fams.append(fam)
+
+        def gauge(name: str, help_text: str, key: str) -> None:
+            fam = _MetricFamily(name, help_text, [])
+            fam.add([], float(snap[key]))
+            fams.append(fam)
+
+        counter("shorewalld_state_saves_total",
+                "Successful DNS-set state snapshots written to disk",
+                "saves_total")
+        counter("shorewalld_state_save_errors_total",
+                "Failed state snapshot writes",
+                "save_errors_total")
+        counter("shorewalld_state_load_entries_total",
+                "Entries loaded from state file on daemon startup",
+                "load_entries_total")
+        counter("shorewalld_state_load_expired_total",
+                "Entries pruned as expired during startup load",
+                "load_expired_total")
+        gauge("shorewalld_state_last_save_age_seconds",
+              "Seconds since the last successful periodic state save",
+              "last_save_age_seconds")
+        gauge("shorewalld_state_file_bytes",
+              "Current size of the on-disk state file in bytes",
+              "file_bytes")
+        return fams

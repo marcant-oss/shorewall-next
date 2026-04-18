@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 
 from .batch_codec import BATCH_OP_ADD, BatchBuilder
 from .dns_set_tracker import DnsSetTracker, Proposal, Verdict
+from .exporter import CollectorBase, _MetricFamily
 from .logsetup import get_logger
 from .worker_router import WorkerRouter
 
@@ -353,3 +354,50 @@ class SetWriter:
 # rather than None distinguishes "window elapsed" from "stop requested"
 # without an extra flag check on the hot path.
 _SENTINEL: object = object()
+
+
+class SetWriterMetricsCollector(CollectorBase):
+    """Prometheus collector for the SetWriter batch pipeline."""
+
+    def __init__(self, writer: "SetWriter") -> None:
+        super().__init__(netns="")
+        self._writer = writer
+
+    def collect(self) -> list[_MetricFamily]:
+        m = self._writer.metrics
+        fams: list[_MetricFamily] = []
+
+        def gauge(name: str, help_text: str, value: float) -> None:
+            fam = _MetricFamily(name, help_text, [])
+            fam.add([], value)
+            fams.append(fam)
+
+        def counter(name: str, help_text: str, value: int) -> None:
+            fam = _MetricFamily(name, help_text, [], mtype="counter")
+            fam.add([], float(value))
+            fams.append(fam)
+
+        gauge("shorewalld_setwriter_queue_depth",
+              "Current DNS-update proposal queue depth", m.queue_depth)
+        gauge("shorewalld_setwriter_queue_high_water",
+              "Peak queue depth since daemon start", m.queue_high_water)
+        counter("shorewalld_setwriter_submits_total",
+                "Total proposals submitted from decoder threads", m.submits_total)
+        counter("shorewalld_setwriter_dropped_queue_full_total",
+                "Proposals dropped because the queue was saturated",
+                m.dropped_queue_full_total)
+        counter("shorewalld_setwriter_batches_flushed_total",
+                "Batches dispatched to nft workers", m.batches_flushed_total)
+        fam = _MetricFamily(
+            "shorewalld_setwriter_flush_reason_total",
+            "Batch flushes broken down by trigger reason",
+            ["reason"], mtype="counter")
+        fam.add(["window"], float(m.flush_reason_window_total))
+        fam.add(["full"],   float(m.flush_reason_full_total))
+        fam.add(["shutdown"], float(m.flush_reason_shutdown_total))
+        fams.append(fam)
+        counter("shorewalld_setwriter_commits_total",
+                "Batches acknowledged OK by nft workers", m.commits_total)
+        counter("shorewalld_setwriter_commit_errors_total",
+                "Batches that returned a worker error", m.commit_errors_total)
+        return fams

@@ -60,9 +60,7 @@ class Daemon:
         state_enabled: bool = True,
         state_no_load: bool = False,
         state_flush: bool = False,
-        reload_poll_interval: float = 2.0,
         instances: list[str] | None = None,
-        monitor: bool = False,
         control_socket: str | None = None,
         control_socket_netns: str | None = None,
         iplist_configs: list[Any] | None = None,
@@ -91,11 +89,9 @@ class Daemon:
         self.state_enabled = state_enabled
         self.state_no_load = state_no_load
         self.state_flush = state_flush
-        self.reload_poll_interval = reload_poll_interval
 
         # New multi-instance / iplist / control settings.
         self.instances: list[str] = instances or []
-        self.monitor = monitor
         self.control_socket = control_socket
         self.control_socket_netns = control_socket_netns
         self.iplist_configs: list[Any] = iplist_configs or []
@@ -121,7 +117,6 @@ class Daemon:
         self._set_writer: Any | None = None
         self._tracker_bridge: Any | None = None
         self._state_store: Any | None = None
-        self._reload_monitor: Any | None = None
         self._pbdns_server: Any | None = None
         self._peer_link: Any | None = None
 
@@ -252,7 +247,6 @@ class Daemon:
 
         from .dns_set_tracker import FAMILY_V4, FAMILY_V6, DnsSetTracker
         from .dnstap_bridge import TrackerBridge
-        from .reload_monitor import ReloadMonitor, TableFingerprintProbe
         from .setwriter import SetWriter
         from .state import StateConfig, StateStore
         from .worker_router import WorkerRouter
@@ -315,9 +309,15 @@ class Daemon:
             default_netns=netns_list[0] if netns_list else "",
         )
 
-        # State persistence: load first so the pre-populated tracker
-        # gets repopulated to the live ruleset by ReloadMonitor's
-        # startup pass, then schedule periodic saves.
+        assert self._registry is not None
+        from .setwriter import SetWriterMetricsCollector
+        from .worker_router import WorkerRouterMetricsCollector
+        from .dnstap_bridge import BridgeMetricsCollector
+        self._registry.add(SetWriterMetricsCollector(self._set_writer))
+        self._registry.add(WorkerRouterMetricsCollector(self._router))
+        self._registry.add(BridgeMetricsCollector(self._tracker_bridge))
+
+        # State persistence.
         if self.state_enabled:
             state_cfg = StateConfig(
                 state_dir=self.state_dir or StateConfig().state_dir,
@@ -331,24 +331,8 @@ class Daemon:
             except Exception:
                 log.exception("state load failed")
             await self._state_store.start(loop)
-
-        # Reload monitor: one fingerprint probe per netns. Cheap
-        # (one list_table per poll) — the 2 s default poll interval
-        # catches ``nft -f`` swaps within a couple of seconds.
-        probes = {
-            netns: TableFingerprintProbe(self._nft, netns=netns)
-            for netns in netns_list
-        }
-        self._reload_monitor = ReloadMonitor(
-            tracker=self._tracker,
-            router=self._router,
-            probes=probes,
-            poll_interval=self.reload_poll_interval,
-        )
-        try:
-            await self._reload_monitor.start(loop)
-        except Exception:
-            log.exception("reload monitor start failed")
+            from .state import StateMetricsCollector
+            self._registry.add(StateMetricsCollector(self._state_store))
 
         # PBDNSMessage (PowerDNS recursor protobuf logger) ingress.
         # Accepts unix socket (for out-of-tree producers) and/or TCP
@@ -420,6 +404,9 @@ class Daemon:
                         self.peer_bind_host, self.peer_bind_port,
                         self.peer_host, self.peer_port)
                     self._peer_link = None
+                else:
+                    from .peer import PeerMetricsCollector
+                    self._registry.add(PeerMetricsCollector(self._peer_link))
 
         # Pull resolver — active DNS resolution for dnsr: groups.
         # Created eagerly iff groups are known at bootstrap; otherwise
@@ -430,8 +417,7 @@ class Daemon:
             await self._ensure_pull_resolver(dnsr_registry)
 
         log.info(
-            "dns pipeline: ready "
-            "(pbdns=%s peer=%s state=%s pull=%s reload_monitor=on)",
+            "dns pipeline: ready (pbdns=%s peer=%s state=%s pull=%s)",
             "on" if self._pbdns_server else "off",
             "on" if self._peer_link else "off",
             "on" if self._state_store else "off",
@@ -469,6 +455,9 @@ class Daemon:
             default_netns=self._pull_resolver_netns,
         )
         await self._pull_resolver.start()
+        if self._registry is not None:
+            from .dns_pull_resolver import PullResolverMetricsCollector
+            self._registry.add(PullResolverMetricsCollector(self._pull_resolver))
         # Wire the refresh-dns control handler now if the control server
         # is up; otherwise _start_control_server does it later.
         self._register_refresh_dns_handler()
@@ -555,6 +544,14 @@ class Daemon:
             default_netns=netns_list[0] if netns_list else "",
         )
 
+        assert self._registry is not None
+        from .setwriter import SetWriterMetricsCollector
+        from .worker_router import WorkerRouterMetricsCollector
+        from .dnstap_bridge import BridgeMetricsCollector
+        self._registry.add(SetWriterMetricsCollector(self._set_writer))
+        self._registry.add(WorkerRouterMetricsCollector(self._router))
+        self._registry.add(BridgeMetricsCollector(self._tracker_bridge))
+
         log.info("dns pipeline: empty pipeline ready for dynamic registration")
 
     async def _start_instance_manager(self) -> None:
@@ -568,7 +565,6 @@ class Daemon:
             configs=configs,
             tracker=self._tracker,
             router=self._router,
-            monitor=self.monitor,
             pull_resolver=self._pull_resolver,
             pull_resolver_factory=self._ensure_pull_resolver,
         )
@@ -694,6 +690,9 @@ class Daemon:
         # Now that the control server is up, register handlers for
         # subsystems that came online before it.
         self._register_refresh_dns_handler()
+        if self._registry is not None:
+            from .control import ControlMetricsCollector
+            self._registry.add(ControlMetricsCollector(self._control_server))
 
     def _install_sigusr1(self) -> None:
         """Install a SIGUSR1 handler that triggers iplist refresh_all."""
@@ -891,14 +890,6 @@ class Daemon:
             except Exception:
                 log.exception("pbdns server close failed")
             self._pbdns_server = None
-
-        # Reload monitor.
-        if self._reload_monitor is not None:
-            try:
-                await self._reload_monitor.stop()
-            except Exception:
-                log.exception("reload monitor stop failed")
-            self._reload_monitor = None
 
         # State store: final save before the tracker gets torn down.
         if self._state_store is not None:

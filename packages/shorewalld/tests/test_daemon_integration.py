@@ -14,12 +14,9 @@ the user-visible happy paths:
    decoder path.
 4. **State persistence across restart**: save, simulate daemon
    restart, load, verify entries survive.
-5. **Reload monitor repopulation**: simulate a ruleset reload
-   (fingerprint change) and verify the repopulate fires with the
-   tracker's state.
-6. **HA peer convergence**: two PeerLink instances exchange
+5. **HA peer convergence**: two PeerLink instances exchange
    heartbeats + a DNS batch; entries land on both sides.
-7. **HA peer snapshot resync**: fresh node joins, requests a
+6. **HA peer snapshot resync**: fresh node joins, requests a
    snapshot, applies the full state.
 
 Everything runs on one asyncio loop with ``inproc_worker_pair``
@@ -50,11 +47,6 @@ from shorewalld.peer import (
     PeerLink,
 )
 from shorewalld.proto import dnsmessage_pb2, dnstap_pb2
-from shorewalld.reload_monitor import (
-    REASON_INITIAL,
-    ReloadMonitor,
-    ScriptedProbe,
-)
 from shorewalld.setwriter import SetWriter
 from shorewalld.state import StateConfig, StateStore
 from shorewalld.worker_router import (
@@ -384,54 +376,7 @@ class TestStatePersistence:
 
 
 # ---------------------------------------------------------------------------
-# 5) Reload monitor repopulation
-# ---------------------------------------------------------------------------
-
-
-class TestReloadRepopulation:
-    def test_repopulate_after_fingerprint_change(
-        self, tracker, event_loop
-    ):
-        # Seed the tracker.
-        sid = tracker.set_id_for("github.com", FAMILY_V4)
-        tracker.commit([
-            Proposal(set_id=sid, ip_bytes=b"\x01\x02\x03\x04", ttl=600),
-            Proposal(set_id=sid, ip_bytes=b"\x05\x06\x07\x08", ttl=600),
-        ], [Verdict.ADD] * 2)
-
-        harness = _Harness(tracker, event_loop)
-        probe = ScriptedProbe([
-            (1, 1, 2),      # initial — monitor starts, repopulates
-            (1, 1, 2),      # same — no-op
-            (2, 2, 3),      # changed — repopulate
-            (2, 2, 3),
-        ])
-        monitor = ReloadMonitor(
-            tracker=tracker,
-            router=harness.router,
-            probes={"inproc": probe},
-            poll_interval=0.02,
-        )
-
-        async def run():
-            await harness.start()
-            await monitor.start(event_loop)
-            await asyncio.sleep(0.2)
-            await monitor.stop()
-            await harness.stop()
-
-        event_loop.run_until_complete(run())
-        assert monitor.metrics.events_by_reason_total[REASON_INITIAL] >= 1
-        # At least one repopulate executed scripts.
-        assert any("dns_github_com_v4" in s for s in harness.scripts)
-        # Both IPs replayed.
-        joined = "\n".join(harness.scripts)
-        assert "1.2.3.4" in joined
-        assert "5.6.7.8" in joined
-
-
-# ---------------------------------------------------------------------------
-# 6) HA peer convergence
+# 5) HA peer convergence
 # ---------------------------------------------------------------------------
 
 

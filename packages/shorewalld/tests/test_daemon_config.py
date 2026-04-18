@@ -57,7 +57,6 @@ def test_load_defaults_typed(tmp_path: Path):
         "PEER_HEARTBEAT_INTERVAL=3.5\n"
         "STATE_DIR=/var/lib/shorewalld\n"
         "STATE_ENABLED=yes\n"
-        "RELOAD_POLL_INTERVAL=2.5\n"
         "LOG_LEVEL=debug\n"
         "LOG_LEVEL_peer=info\n"
     )
@@ -71,7 +70,6 @@ def test_load_defaults_typed(tmp_path: Path):
     assert d.peer_heartbeat_interval == 3.5
     assert d.state_dir == "/var/lib/shorewalld"
     assert d.state_enabled is True
-    assert d.reload_poll_interval == 2.5
     assert d.log_level == "debug"
     assert d.subsys_log_levels == {"peer": "info"}
 
@@ -93,7 +91,7 @@ def test_bool_coercion_rejects_garbage(tmp_path: Path):
 
 def test_float_coercion_rejects_garbage(tmp_path: Path):
     conf = tmp_path / "bad.conf"
-    conf.write_text("RELOAD_POLL_INTERVAL=soon\n")
+    conf.write_text("SCRAPE_INTERVAL=soon\n")
     with pytest.raises(ConfigError):
         load_defaults(conf)
 

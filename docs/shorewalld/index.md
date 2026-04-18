@@ -46,7 +46,6 @@ REPROBE_INTERVAL=300
 # Multi-instance (repeat INSTANCE= for each directory)
 INSTANCE=fw:/etc/shorewall
 INSTANCE=rns1:/etc/shorewall-rns1
-MONITOR=no                     # set yes to enable inotify watching
 
 # Control socket
 CONTROL_SOCKET=/run/shorewalld/control.sock
@@ -78,7 +77,7 @@ PEER_SECRET_FILE=/etc/shorewall/peer.key
 PEER_HEARTBEAT_INTERVAL=5
 
 STATE_DIR=/var/lib/shorewalld
-RELOAD_POLL_INTERVAL=2
+STATE_PERSIST_INTERVAL=30
 
 LOG_LEVEL=info
 LOG_TARGET=syslog
@@ -129,8 +128,6 @@ shorewalld [OPTIONS]
   --instance [NETNS:]DIR           shorewall-nft config directory (repeat
                                    for multiple instances). Replaces
                                    --allowlist-file.
-  --monitor                        Watch instance dirs with inotify; reload
-                                   dnsnames.compiled on change.
   --control-socket PATH            Unix socket for the control API
                                    (refresh-iplist, reload-instance, …)
   --control-socket-netns NETNS     Bind the control socket inside this netns
@@ -198,6 +195,63 @@ are opaque.
 Watch `queue_depth / queue_capacity` — if it climbs toward 1.0 the
 decoder is falling behind the recursor and you should increase
 `--scrape-interval`-equivalent tuning or throw hardware at it.
+
+### DNS-set pipeline metrics (when DNS pipeline is active)
+
+**Decoder → tracker bridge** (`shorewalld_bridge_*`):
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewalld_bridge_updates_total` | Counter | DnsUpdate records seen |
+| `shorewalld_bridge_updates_empty_total` | Counter | Records with no A/AAAA RRs, skipped |
+| `shorewalld_bridge_early_filter_miss_total` | Counter | qname not in compiled allowlist, dropped |
+| `shorewalld_bridge_early_filter_pass_total` | Counter | qname matched, forwarded to tracker |
+| `shorewalld_bridge_proposals_total` | Counter | Individual (qname, ip) proposals submitted |
+| `shorewalld_bridge_dropped_queue_full_total` | Counter | Proposals dropped — SetWriter queue saturated |
+
+**Coalescing write buffer** (`shorewalld_setwriter_*`):
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewalld_setwriter_queue_depth` | Gauge | Pending proposals in the write queue |
+| `shorewalld_setwriter_queue_high_water` | Gauge | Peak queue depth since daemon start |
+| `shorewalld_setwriter_submits_total` | Counter | Proposals accepted into the queue |
+| `shorewalld_setwriter_dropped_queue_full_total` | Counter | Proposals rejected — queue at capacity |
+| `shorewalld_setwriter_batches_flushed_total` | Counter | Batches handed to WorkerRouter |
+| `shorewalld_setwriter_flush_reason_total{reason}` | Counter | Flush trigger: `window`, `full`, `shutdown` |
+| `shorewalld_setwriter_commits_total` | Counter | Successful nft element-add commits |
+| `shorewalld_setwriter_commit_errors_total` | Counter | Failed commits |
+
+**Per-netns worker pool** (`shorewalld_worker_*`, label `{netns}`):
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewalld_worker_spawned_total` | Counter | Workers ever started for this netns |
+| `shorewalld_worker_restarts_total` | Counter | Worker restarts after crash |
+| `shorewalld_worker_alive` | Gauge | 1 if the worker process is running |
+| `shorewalld_worker_batches_sent_total` | Counter | Batches sent over the IPC socket |
+| `shorewalld_worker_batches_applied_total` | Counter | Batches successfully applied by worker |
+| `shorewalld_worker_batches_failed_total` | Counter | Batches the worker reported as failed |
+| `shorewalld_worker_ipc_errors_total` | Counter | IPC transport errors |
+| `shorewalld_worker_ack_timeout_total` | Counter | Batches that timed out waiting for ACK |
+
+**Pull resolver** (`shorewalld_pull_resolver_*`):
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewalld_pull_resolver_groups_active` | Gauge | `dnsr:` groups currently scheduled |
+| `shorewalld_pull_resolver_in_flight` | Gauge | Resolves currently in progress |
+| `shorewalld_pull_resolver_resolves_total` | Counter | Completed resolution passes |
+| `shorewalld_pull_resolver_resolve_errors_total` | Counter | Resolves that returned no usable IPs |
+| `shorewalld_pull_resolver_nxdomain_total` | Counter | NXDOMAIN responses |
+| `shorewalld_pull_resolver_entries_submitted_total` | Counter | IP entries submitted to SetWriter |
+
+**Control socket** (`shorewalld_control_*`, label `{cmd}`):
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewalld_control_requests_total` | Counter | Requests dispatched per command |
+| `shorewalld_control_errors_total` | Counter | Handler errors per command |
 
 ## Multi-netns operation
 
@@ -387,25 +441,6 @@ ExecStartPost=-/usr/bin/shorewalld ctl \
     --socket /run/shorewalld/control.sock \
     reload-instance --name fw
 ```
-
-### File-watching (`--monitor`)
-
-`--monitor` (or `MONITOR=yes` in `shorewalld.conf`) enables inotify
-watching on every instance's `dnsnames.compiled` file. When the file
-is atomically replaced by `shorewall-nft start`, shorewalld detects
-the write and reloads the instance immediately — no hook needed.
-
-**Caution:** `--monitor` conflicts with the dynamic-registration
-path and the explicit reload-hook approach because all three fire
-independently on a `shorewall-nft start`. Use only one. For new
-deployments, prefer dynamic registration (built-in since v1.6).
-
-```
-# shorewalld.conf
-MONITOR=yes
-```
-
-Uses `watchfiles` if installed, otherwise falls back to 5-second polling.
 
 ---
 
@@ -1096,43 +1131,13 @@ shorewalld --state-dir /tmp/x   # alternative directory (tests)
 ### Metrics
 
 ```
-shorewalld_state_dns_sets_saves_total
-shorewalld_state_dns_sets_save_errors_total
-shorewalld_state_dns_sets_load_entries_total
-shorewalld_state_dns_sets_load_expired_total
+shorewalld_state_saves_total
+shorewalld_state_save_errors_total
+shorewalld_state_load_entries_total
+shorewalld_state_load_expired_total
 shorewalld_state_last_save_age_seconds
 shorewalld_state_file_bytes
 ```
-
-## Reload monitor (ruleset change detection)
-
-When `shorewall-nft start` replaces the running ruleset, every
-DNS-managed set is wiped (they are part of the old `inet
-shorewall` table instance). The `ReloadMonitor` detects this
-within `poll_interval` (default 2 s) and repopulates the new
-table directly from the tracker's shadow state — no waiting for
-the recursor to re-answer every name.
-
-Detection is poll-based: a fingerprint probe checks
-`list table inet shorewall` periodically. Transitions (absent →
-present, or changed fingerprint) trigger a repopulate. A future
-phase can replace the poll with a real `NFNLGRP_NFTABLES`
-multicast listener; the interface already hides the
-implementation detail.
-
-Metrics:
-
-```
-shorewalld_reload_events_total{reason}       # initial|table_appeared|table_replaced|manual
-shorewalld_reload_repopulate_batches_total
-shorewalld_reload_repopulate_entries_total
-shorewalld_reload_repopulate_last_seconds
-shorewalld_reload_errors_total
-```
-
-Operators can also force a repopulate via `PeerLink.request_...`
-or a future SIGHUP/API handler — the manual path exists even
-though the poll usually catches it on its own.
 
 ## HA peer replication (two-node cluster)
 
@@ -1180,6 +1185,25 @@ Ingestion from the local recursor is *never* authenticated
 (both dnstap and pbdns are local unix sockets, protected by
 filesystem permissions). Only the peer-to-peer network traffic
 carries HMAC.
+
+### Metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewalld_peer_up` | Gauge | 1 if the peer sent a heartbeat within 3× the heartbeat interval |
+| `shorewalld_peer_frames_sent_total` | Counter | Envelopes sent to the peer |
+| `shorewalld_peer_frames_received_total` | Counter | Envelopes received from the peer |
+| `shorewalld_peer_frames_lost_total` | Counter | Sequence gaps detected in received stream |
+| `shorewalld_peer_hmac_failures_total` | Counter | Envelopes rejected due to HMAC mismatch |
+| `shorewalld_peer_decode_errors_total` | Counter | Envelopes that failed protobuf decode |
+| `shorewalld_peer_bytes_sent_total` | Counter | Bytes sent over the peer socket |
+| `shorewalld_peer_bytes_received_total` | Counter | Bytes received from the peer |
+| `shorewalld_peer_dns_updates_applied_total` | Counter | DNS set updates applied from peer frames |
+| `shorewalld_peer_heartbeats_sent_total` | Counter | Heartbeat envelopes sent |
+| `shorewalld_peer_heartbeats_received_total` | Counter | Heartbeat envelopes received |
+| `shorewalld_peer_send_errors_total` | Counter | Send failures (UDP write errors) |
+| `shorewalld_peer_rtt_seconds` | Gauge | Last measured round-trip time |
+| `shorewalld_peer_snapshot_complete_total` | Counter | Snapshot sync exchanges completed |
 
 ### Cold-boot snapshot resync
 
@@ -1255,7 +1279,6 @@ docstrings:
 - `shorewall_nft/daemon/worker_router.py` — worker pool management
 - `shorewall_nft/daemon/setwriter.py` — batching coroutine
 - `shorewall_nft/daemon/state.py` — persistence store
-- `shorewall_nft/daemon/reload_monitor.py` — reload detection + repopulate
 - `shorewall_nft/daemon/peer.py` — HA peer replication link
 - `shorewall_nft/daemon/tap.py` — operator inspection CLI
 - `shorewall_nft/nft/dns_sets.py` — shared qname/set helpers

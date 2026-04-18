@@ -52,6 +52,7 @@ from .batch_codec import (
     encode_control,
 )
 from .dns_set_tracker import DnsSetTracker
+from .exporter import CollectorBase, _MetricFamily
 from .logsetup import get_logger
 from .nft_worker import (
     NFT_FAMILY,
@@ -555,3 +556,51 @@ def inproc_worker_pair(
     pw.metrics.alive = 1
     pw.metrics.last_spawn_mono = time.monotonic()
     return pw, worker_t
+
+
+class WorkerRouterMetricsCollector(CollectorBase):
+    """Prometheus collector for per-netns nft worker pool metrics."""
+
+    def __init__(self, router: WorkerRouter) -> None:
+        super().__init__(netns="")
+        self._router = router
+
+    def collect(self) -> list[_MetricFamily]:
+        spawned   = _MetricFamily("shorewalld_worker_spawned_total",
+                                  "nft worker forks since daemon start",
+                                  ["netns"], mtype="counter")
+        restarts  = _MetricFamily("shorewalld_worker_restarts_total",
+                                  "nft worker crash-respawns",
+                                  ["netns"], mtype="counter")
+        alive     = _MetricFamily("shorewalld_worker_alive",
+                                  "1 if the nft worker process is running",
+                                  ["netns"])
+        sent      = _MetricFamily("shorewalld_worker_batches_sent_total",
+                                  "Batches dispatched to worker",
+                                  ["netns"], mtype="counter")
+        applied   = _MetricFamily("shorewalld_worker_batches_applied_total",
+                                  "Batches acknowledged OK by worker",
+                                  ["netns"], mtype="counter")
+        failed    = _MetricFamily("shorewalld_worker_batches_failed_total",
+                                  "Batches that returned a worker error",
+                                  ["netns"], mtype="counter")
+        ipc_err   = _MetricFamily("shorewalld_worker_ipc_errors_total",
+                                  "IPC transport errors (SEQPACKET)",
+                                  ["netns"], mtype="counter")
+        ack_to    = _MetricFamily("shorewalld_worker_ack_timeout_total",
+                                  "Batches that timed out waiting for worker ack",
+                                  ["netns"], mtype="counter")
+
+        for w in self._router.iter_workers():
+            ns = w.netns or "(own)"
+            m = w.metrics
+            spawned.add([ns],  float(m.spawned_total))
+            restarts.add([ns], float(m.restarts_total))
+            alive.add([ns],    float(m.alive))
+            sent.add([ns],     float(m.batches_sent_total))
+            applied.add([ns],  float(m.batches_applied_total))
+            failed.add([ns],   float(m.batches_failed_total))
+            ipc_err.add([ns],  float(m.ipc_errors_total))
+            ack_to.add([ns],   float(m.ack_timeout_total))
+
+        return [spawned, restarts, alive, sent, applied, failed, ipc_err, ack_to]

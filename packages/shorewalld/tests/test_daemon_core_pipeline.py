@@ -2,7 +2,7 @@
 
 Asserts the new opt-in wiring in ``shorewalld.core``: when
 ``allowlist_file`` is set, the Daemon builds tracker + router +
-setwriter + bridge + state store + reload monitor; when not, it
+setwriter + bridge + state store; when not, it
 builds none of them. WorkerRouter is stubbed so no fork happens.
 """
 
@@ -16,6 +16,16 @@ import pytest
 from shorewalld import core as core_mod
 from shorewalld.core import Daemon
 from shorewall_nft.nft.dns_sets import DnsSetRegistry, DnsSetSpec, write_compiled_allowlist
+
+
+class _StubRegistry:
+    """Registry double that silently accepts collector registrations."""
+
+    def add(self, collector) -> None:
+        pass
+
+    def to_prom_families(self):
+        return []
 
 
 class _StubRouter:
@@ -115,7 +125,7 @@ def test_daemon_without_allowlist_does_not_build_pipeline(
             monkeypatch.setattr(
                 mod, "NftScraper", lambda nft, ttl_s: object())
             monkeypatch.setattr(
-                mod, "ShorewalldRegistry", lambda: object())
+                mod, "ShorewalldRegistry", lambda: _StubRegistry())
             asyncio.get_running_loop().create_task(trigger_stop())
             return await orig_run()
 
@@ -126,7 +136,6 @@ def test_daemon_without_allowlist_does_not_build_pipeline(
         assert d._set_writer is None
         assert d._tracker_bridge is None
         assert d._state_store is None
-        assert d._reload_monitor is None
 
     asyncio.run(run())
 
@@ -135,7 +144,7 @@ def test_daemon_with_allowlist_builds_pipeline(
     monkeypatch, allowlist_file: Path, tmp_path: Path,
 ):
     """With ``allowlist_file`` set, tracker + router + writer + bridge +
-    state store + reload monitor are all initialised, and the stub
+    state store are all initialised, and the stub
     router sees the configured netns list."""
     stub_router: _StubRouter | None = None
 
@@ -174,7 +183,7 @@ def test_daemon_with_allowlist_builds_pipeline(
         monkeypatch.setattr(
             core_mod, "NftScraper", lambda nft, ttl_s: object())
         monkeypatch.setattr(
-            core_mod, "ShorewalldRegistry", lambda: object())
+            core_mod, "ShorewalldRegistry", lambda: _StubRegistry())
 
         # Swap the real WorkerRouter for the stub before the daemon
         # imports it inside _start_dns_pipeline.
@@ -188,13 +197,12 @@ def test_daemon_with_allowlist_builds_pipeline(
             netns_spec=[""], scrape_interval=30.0, reprobe_interval=300.0,
             allowlist_file=allowlist_file,
             state_dir=state_dir,
-            reload_poll_interval=60.0,  # keep the poll loop quiet
         )
 
         async def trigger_stop():
             # Give _start_dns_pipeline time to finish wiring.
             for _ in range(40):
-                if d._tracker is not None and d._reload_monitor is not None:
+                if d._tracker is not None and d._set_writer is not None:
                     break
                 await asyncio.sleep(0.01)
             assert d._stop_event is not None
