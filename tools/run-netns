@@ -12,8 +12,17 @@
 #   run-netns exec myns nft list ruleset
 #   run-netns exec myns ip link set lo up
 #
-# Used by shorewall-nft tests (via `sudo /usr/local/bin/run-netns`) and
-# by the debug/simulate/trace commands for per-netns operations.
+# PRIMARY USE: test isolation — the integration test suite (test_cli_integration.py
+# and test_netns_routing.py) uses `sudo run-netns exec <ns> <cmd>` to create and
+# enter network namespaces for isolated test runs.
+#
+# FALLBACK USE: non-root / no libnft — when shorewall-nft is invoked without
+# CAP_SYS_ADMIN (or without python3-nftables installed), NftInterface falls back
+# to `sudo run-netns exec` for namespace-entering operations.
+#
+# PRODUCTION: root systems with python3-nftables installed do NOT use this script
+# for CLI operations (start, stop, status, etc.). NftInterface enters namespaces
+# directly via setns(2) + libnftables — no fork, no sudo, no exec overhead.
 #
 # Install this file to /usr/local/bin/run-netns (root-owned, mode 0755)
 # and pair it with a sudoers entry allowing the test user NOPASSWD access.

@@ -365,6 +365,30 @@ class NftInterface:
         except NftError as e:
             raise NftError(f"Failed to delete element: {e}") from e
 
+    def run_in_netns(self, args: list[str], *,
+                     netns: str | None = None,
+                     **kwargs) -> "subprocess.CompletedProcess[str]":
+        """Run a subprocess, entering *netns* via in-process setns() if provided.
+
+        Preferred over ``sudo run-netns exec`` on root systems: setns() avoids
+        a fork+exec and keeps the process tree clean. Falls back to the sudo
+        run-netns wrapper when setns() is denied (EPERM — non-root callers,
+        dev environments).
+
+        ``netns=None`` runs the command in the current namespace unchanged.
+        Pass ``capture_output=True, text=True`` in *kwargs* as needed.
+        """
+        if netns:
+            try:
+                with _in_netns(netns):
+                    return subprocess.run(args, **kwargs)
+            except OSError:
+                full_args = [
+                    "sudo", "/usr/local/bin/run-netns", "exec", netns,
+                ] + list(args)
+                return subprocess.run(full_args, **kwargs)
+        return subprocess.run(args, **kwargs)
+
     # ── back-compat alias for callers still using _subprocess_cmd ───
 
     def _subprocess_cmd(self, command: str) -> dict[str, Any]:

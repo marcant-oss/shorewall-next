@@ -26,6 +26,27 @@ shorewall-nft start [directory] [--netns <value>] [-c <value>] [--config-dir4 <v
 - **`--no-auto-v4`** — Disable auto-detection of a v4 sibling directory.
 - **`--no-auto-v6`** — Disable auto-detection of a v6 sibling directory.
 
+#### Progress output
+
+`start` reports each phase. On a TTY the current step is overwritten
+in-place with ANSI colour; piped or under systemd the same text is
+emitted as plain lines suitable for journald:
+
+```
+[1/5] Parsing and compiling config …        ✓
+[2/5] Probing kernel capabilities …         ⚠  (warnings logged; never aborts)
+[3/5] Applying ruleset …                    ✓
+[4/5] Configuring proxy-ARP / NDP …         ✓
+[5/5] Cleaning up stopped-firewall table …  ✓
+Firewall started.
+```
+
+Capability warnings in step 2 are **non-fatal** — they are collected
+and shown, but `start` continues. Step 3 (`apply_nft`) is the
+authoritative gate: if the kernel rejects a rule, that step fails with
+a ✗ and the command exits non-zero. This means capability probing never
+aborts a `start` that would otherwise succeed on the running kernel.
+
 ### `stop`
 
 Stop the firewall (remove all rules).

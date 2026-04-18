@@ -101,11 +101,33 @@ Runtime dependencies for testing, by distro:
     sudo apk add python3 py3-pip nftables iproute2 sudo
     ```
 
-Optional tools for the full experience:
+**`python3-nftables` is required** — without it, all namespace-entering
+operations (`--netns`, capability probing, start/stop/status inside a netns)
+fall back to spawning `sudo run-netns exec` subprocesses instead of using
+in-process `setns()` + libnftables. On production root systems, install it:
+
+=== "Debian / Ubuntu"
+
+    ```bash
+    sudo apt install python3-nftables
+    ```
+
+=== "Fedora / RHEL"
+
+    ```bash
+    sudo dnf install python3-nftables
+    ```
+
+Verify after install:
+
+```bash
+python3 -c "import nftables; n = nftables.Nftables(); print('libnft OK')"
+```
+
+Other optional tools:
 
 | Package | Purpose | Used by |
 |---------|---------|---------|
-| `python3-nftables` | libnftables Python bindings | `shorewall_nft.nft.netlink` (fallback to subprocess if missing) |
 | `tcpdump` | capture packets in netns for debugging | ad-hoc |
 | `ipset` | userspace ipset tool | `load-sets` command |
 | `pandoc` | DocBook → Markdown conversion | docs build only |

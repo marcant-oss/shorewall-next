@@ -206,24 +206,124 @@ def config_options(f):
     return f
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Start-command progress reporter
+# ──────────────────────────────────────────────────────────────────────
+
+import contextlib
+
+
+class _Step:
+    """Detail / warning collector yielded inside a :class:`_Progress` step."""
+
+    def __init__(self) -> None:
+        self._detail: list[str] = []
+        self._warnings: list[str] = []
+
+    def info(self, msg: str) -> None:
+        self._detail.append(msg)
+
+    def warn(self, msg: str) -> None:
+        self._warnings.append(msg)
+
+    @property
+    def has_warnings(self) -> bool:
+        return bool(self._warnings)
+
+    def _detail_str(self) -> str:
+        return ", ".join(self._detail)
+
+
+class _Progress:
+    """Step-by-step progress for interactive terminals and journal output.
+
+    TTY: inline overwrite  ``  … label`` → ``  ✓ label  (detail)``
+    with ANSI colour via :func:`click.style`.
+
+    Non-TTY (journal, pipe): one plain text line per step, no \\\\r, no
+    ANSI — clean for ``journalctl`` and log files.
+    """
+
+    def __init__(self) -> None:
+        self._tty = sys.stdout.isatty()
+
+    def header(self, msg: str) -> None:
+        if self._tty:
+            click.secho(msg, bold=True)
+        else:
+            click.echo(msg)
+
+    @contextlib.contextmanager
+    def step(self, label: str):
+        s = _Step()
+        if self._tty:
+            sys.stdout.write(f"  \033[2m\u2026\033[0m {label}")
+            sys.stdout.flush()
+        try:
+            yield s
+        except Exception as exc:
+            detail = s._detail_str()
+            suffix = f"  ({detail})" if detail else ""
+            err_msg = str(exc)
+            if self._tty:
+                marker = click.style("\u2717", fg="red", bold=True)
+                sys.stdout.write(
+                    f"\r  {marker} {label}{suffix}"
+                    + (f"\n    {err_msg}" if err_msg else "") + "\n")
+                sys.stdout.flush()
+            else:
+                click.echo(f"  \u2717 {label}{suffix}"
+                           + (f": {err_msg}" if err_msg else ""))
+            raise
+        else:
+            detail = s._detail_str()
+            suffix = f"  ({detail})" if detail else ""
+            if s.has_warnings:
+                if self._tty:
+                    marker = click.style("\u26a0", fg="yellow", bold=True)
+                    sys.stdout.write(f"\r  {marker} {label}{suffix}\n")
+                    sys.stdout.flush()
+                    for w in s._warnings:
+                        click.secho(f"    \u26a0  {w}", fg="yellow")
+                else:
+                    click.echo(f"  \u26a0 {label}{suffix}")
+                    for w in s._warnings:
+                        click.echo(f"    warn: {w}")
+            else:
+                if self._tty:
+                    marker = click.style("\u2713", fg="green", bold=True)
+                    sys.stdout.write(f"\r  {marker} {label}{suffix}\n")
+                    sys.stdout.flush()
+                else:
+                    click.echo(f"  \u2713 {label}{suffix}")
+
+    def done(self, msg: str) -> None:
+        if self._tty:
+            click.secho(msg, fg="green", bold=True)
+        else:
+            click.echo(msg)
+
+
+# ──────────────────────────────────────────────────────────────────────
+
+
 def _check_loaded_hash(config_dir: Path, netns: str | None) -> tuple[str, str | None]:
     """Compare the hash of the on-disk config vs the loaded ruleset.
 
-    Returns (source_hash, loaded_hash_or_None). `loaded_hash_or_None` is
-    None if no ruleset is loaded or no hash marker is present.
+    Returns (source_hash, loaded_hash_or_None). ``loaded_hash_or_None``
+    is None when no ruleset is loaded or no hash marker is found.
+    Uses :meth:`NftInterface.run_in_netns` — enters the namespace via
+    in-process ``setns()`` on root, falls back to sudo run-netns otherwise.
     """
-    import subprocess
-
     from shorewall_nft.config.hash import compute_config_hash, extract_hash_from_ruleset
+    from shorewall_nft.nft.netlink import NftInterface
 
     source_hash = compute_config_hash(config_dir)
-
-    cmd = []
-    if netns:
-        cmd = ["sudo", "/usr/local/bin/run-netns", "exec", netns]
-    cmd.extend(["nft", "list", "table", "inet", "shorewall"])
+    nft = NftInterface()
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        r = nft.run_in_netns(
+            [nft._nft_bin, "list", "table", "inet", "shorewall"],
+            netns=netns, capture_output=True, text=True, timeout=5)
         if r.returncode != 0:
             return source_hash, None
         loaded_hash = extract_hash_from_ruleset(r.stdout)
@@ -372,76 +472,91 @@ def cli(ctx, q, verbose, override_json, override_per_file):
 def start(directory, netns, config_dir, config_dir4, config6_dir,
           no_auto_v4, no_auto_v6):
     """Compile and apply firewall rules (like shorewall start)."""
-    (ir, script, _), _ = _compile_from_cli(
-        directory, config_dir, config_dir4, config6_dir,
-        no_auto_v4, no_auto_v6)
+    prog = _Progress()
+    prog.header("Starting shorewall-nft\u2026")
 
-    # Capability check before loading
-    from shorewall_nft.compiler.capability_check import check_capabilities, format_errors
-    from shorewall_nft.nft.capabilities import NftCapabilities
-    caps = NftCapabilities.probe(netns=netns)
-    errors = check_capabilities(ir, caps)
-    if errors:
-        click.echo(format_errors(errors), err=True)
-        sys.exit(1)
-
-    from shorewall_nft.netns.apply import apply_nft
-    apply_nft(script, netns=netns)
-
-    # Apply proxyarp / proxyndp via pyroute2 — best effort, errors
-    # are surfaced as warnings but never block start. Loaded only
-    # when the config actually defines entries.
-    try:
-        from shorewall_nft.compiler.proxyarp import (
-            apply_proxyarp,
-            parse_proxyarp,
-        )
-        from shorewall_nft.config.parser import load_config
-        primary, secondary, skip = _resolve_config_paths(
+    # ── Step 1: parse + compile ───────────────────────────────────────
+    with prog.step("Parsing and compiling config") as s:
+        (ir, script, _), _ = _compile_from_cli(
             directory, config_dir, config_dir4, config6_dir,
             no_auto_v4, no_auto_v6)
-        cfg = load_config(primary, config6_dir=secondary,
-                          skip_sibling_merge=skip)
-        proxy_entries = (
-            parse_proxyarp(getattr(cfg, "proxyarp", []) or []) +
-            parse_proxyarp(getattr(cfg, "proxyndp", []) or []))
-        if proxy_entries:
-            applied, skipped, errors = apply_proxyarp(
-                proxy_entries, netns=netns)
-            if applied:
-                click.echo(
-                    f"proxy-arp/ndp: {applied} entries applied"
-                    + (f", {skipped} skipped" if skipped else ""))
-            for err in errors:
-                click.echo(f"proxy-arp/ndp warning: {err}", err=True)
-    except Exception as e:
-        click.echo(f"proxy-arp/ndp: skipped ({e})", err=True)
+        n_rules = sum(len(c.rules) for c in ir.chains.values())
+        s.info(f"{len(ir.chains)} chains, {n_rules} rules")
 
-    # Tear down any leftover shorewall_stopped table so the two
-    # rulesets never run side by side. Best-effort: missing is fine.
-    from shorewall_nft.nft.netlink import NftError, NftInterface
-    _nft = NftInterface()
-    try:
-        if netns:
-            import subprocess
-            subprocess.run(
-                ["sudo", "/usr/local/bin/run-netns", "exec", netns,
-                 _nft._nft_bin, "delete table inet shorewall_stopped"],
-                check=False, capture_output=True, text=True)
-        elif _nft.has_library:
+    # ── Step 2: capability probe — non-fatal ─────────────────────────
+    # Probing failures or missing capabilities produce warnings, not
+    # hard errors.  The actual kernel verdict comes in step 3 when the
+    # ruleset is loaded: if nft rejects it, *that* is the hard failure.
+    nft_iface = None
+    with prog.step("Probing kernel capabilities") as s:
+        try:
+            from shorewall_nft.compiler.capability_check import (
+                check_capabilities, format_errors)
+            from shorewall_nft.nft.capabilities import NftCapabilities
+            from shorewall_nft.nft.netlink import NftInterface
+            nft_iface = NftInterface()
+            caps = NftCapabilities.probe(netns=netns, nft=nft_iface)
+            n_ok = sum(1 for a in dir(caps)
+                       if a.startswith("has_") and getattr(caps, a))
+            cap_errors = check_capabilities(ir, caps)
+            if cap_errors:
+                s.info(f"{n_ok} ok, {len(cap_errors)} warning(s)")
+                for line in format_errors(cap_errors).splitlines():
+                    if line.strip():
+                        s.warn(line)
+            else:
+                s.info(f"{n_ok} available")
+        except Exception as exc:
+            s.warn(f"probe failed ({exc}) — attempting load anyway")
+
+    # ── Step 3: apply ruleset — this is the real gate ─────────────────
+    with prog.step("Applying ruleset") as s:
+        from shorewall_nft.netns.apply import apply_nft
+        apply_nft(script, netns=netns)
+        s.info(f"{len(ir.chains)} chains")
+
+    # ── Step 4: proxy-ARP / NDP ───────────────────────────────────────
+    with prog.step("Proxy-ARP / NDP") as s:
+        try:
+            from shorewall_nft.compiler.proxyarp import (
+                apply_proxyarp, parse_proxyarp)
+            from shorewall_nft.config.parser import load_config
+            primary, secondary, skip = _resolve_config_paths(
+                directory, config_dir, config_dir4, config6_dir,
+                no_auto_v4, no_auto_v6)
+            cfg = load_config(primary, config6_dir=secondary,
+                              skip_sibling_merge=skip)
+            proxy_entries = (
+                parse_proxyarp(getattr(cfg, "proxyarp", []) or []) +
+                parse_proxyarp(getattr(cfg, "proxyndp", []) or []))
+            if proxy_entries:
+                applied, skipped, errs = apply_proxyarp(
+                    proxy_entries, netns=netns)
+                s.info(f"{applied} applied"
+                       + (f", {skipped} skipped" if skipped else ""))
+                for e in errs:
+                    s.warn(e)
+            else:
+                s.info("none configured")
+        except Exception as exc:
+            s.warn(f"skipped ({exc})")
+
+    # ── Step 5: tear down leftover shorewall_stopped table ────────────
+    with prog.step("Cleanup") as s:
+        try:
+            from shorewall_nft.nft.netlink import NftError, NftInterface
+            if nft_iface is None:
+                nft_iface = NftInterface()
             try:
-                _nft.cmd("delete table inet shorewall_stopped")
+                nft_iface.cmd(
+                    "delete table inet shorewall_stopped", netns=netns)
+                s.info("stopped table removed")
             except NftError:
-                pass
-        else:
-            import subprocess
-            subprocess.run(
-                [_nft._nft_bin, "delete table inet shorewall_stopped"],
-                check=False, capture_output=True, text=True)
-    except Exception:
-        pass
+                s.info("nothing to clean")
+        except Exception:
+            s.info("nothing to clean")
 
-    click.echo(f"Shorewall-nft started ({len(ir.chains)} chains).")
+    prog.done(f"Shorewall-nft started.")
 
 
 @cli.command()
@@ -479,18 +594,7 @@ def stop(directory, netns, config_dir, config_dir4, config6_dir,
                    "falling back to plain delete.", err=True)
 
     def _run(cmd_str: str) -> None:
-        if netns:
-            import subprocess
-            subprocess.run(
-                ["sudo", "/usr/local/bin/run-netns", "exec", netns,
-                 nft._nft_bin, cmd_str],
-                check=True, capture_output=True, text=True)
-        elif nft.has_library:
-            nft.cmd(cmd_str)
-        else:
-            import subprocess
-            subprocess.run([nft._nft_bin, cmd_str],
-                           check=True, capture_output=True, text=True)
+        nft.cmd(cmd_str, netns=netns)
 
     # Best-effort delete of the running table.
     try:
@@ -588,14 +692,10 @@ def status(netns: str | None):
     """Show firewall status."""
     from shorewall_nft.nft.netlink import NftInterface
     nft = NftInterface()
-    import subprocess
 
-    cmd_parts = []
-    if netns:
-        cmd_parts = ["sudo", "/usr/local/bin/run-netns", "exec", netns]
-    cmd_parts.extend([nft._nft_bin, "list", "table", "inet", "shorewall"])
-
-    result = subprocess.run(cmd_parts, capture_output=True, text=True)
+    result = nft.run_in_netns(
+        [nft._nft_bin, "list", "table", "inet", "shorewall"],
+        netns=netns, capture_output=True, text=True)
     if result.returncode == 0:
         click.echo("Shorewall-nft is running.")
         # Count chains and rules
@@ -694,14 +794,10 @@ def save(c, netns: str | None, filename: str | None):
     """Save current ruleset (like shorewall save)."""
     from shorewall_nft.nft.netlink import NftInterface
     nft = NftInterface()
-    import subprocess
 
-    cmd_parts = []
-    if netns:
-        cmd_parts = ["sudo", "/usr/local/bin/run-netns", "exec", netns]
-    cmd_parts.extend([nft._nft_bin, "list", "ruleset"])
-
-    result = subprocess.run(cmd_parts, capture_output=True, text=True)
+    result = nft.run_in_netns(
+        [nft._nft_bin, "list", "ruleset"],
+        netns=netns, capture_output=True, text=True)
     if result.returncode != 0:
         click.echo("ERROR: No ruleset to save.", err=True)
         sys.exit(1)
@@ -732,22 +828,17 @@ def show(x, netns: str | None, what: str | None):
     """Show firewall info (like shorewall show). Subcommands: zones, policies, config, connections."""
     from shorewall_nft.nft.netlink import NftInterface
     nft = NftInterface()
-    import subprocess
 
-    cmd_parts = []
-    if netns:
-        cmd_parts = ["sudo", "/usr/local/bin/run-netns", "exec", netns]
-
-    if what == "zones" or what == "connections":
-        cmd_parts.extend([nft._nft_bin, "list", "table", "inet", "shorewall"])
+    if what in ("zones", "connections"):
+        args = [nft._nft_bin, "list", "table", "inet", "shorewall"]
     elif what == "counters":
-        cmd_parts.extend([nft._nft_bin, "list", "counters", "table", "inet", "shorewall"])
+        args = [nft._nft_bin, "list", "counters", "table", "inet", "shorewall"]
     elif what == "sets":
-        cmd_parts.extend([nft._nft_bin, "list", "sets", "table", "inet", "shorewall"])
+        args = [nft._nft_bin, "list", "sets", "table", "inet", "shorewall"]
     else:
-        cmd_parts.extend([nft._nft_bin, "list", "ruleset"])
+        args = [nft._nft_bin, "list", "ruleset"]
 
-    result = subprocess.run(cmd_parts, capture_output=True, text=True)
+    result = nft.run_in_netns(args, netns=netns, capture_output=True, text=True)
     click.echo(result.stdout if result.returncode == 0 else "No rules loaded.")
 
 
@@ -764,14 +855,10 @@ def reset(netns: str | None, chains: tuple[str]):
     """Reset counters (like shorewall reset)."""
     from shorewall_nft.nft.netlink import NftInterface
     nft = NftInterface()
-    import subprocess
 
-    cmd_parts = []
-    if netns:
-        cmd_parts = ["sudo", "/usr/local/bin/run-netns", "exec", netns]
-    cmd_parts.extend([nft._nft_bin, "reset", "counters", "table", "inet", "shorewall"])
-
-    result = subprocess.run(cmd_parts, capture_output=True, text=True)
+    result = nft.run_in_netns(
+        [nft._nft_bin, "reset", "counters", "table", "inet", "shorewall"],
+        netns=netns, capture_output=True, text=True)
     click.echo("Counters reset." if result.returncode == 0 else f"Error: {result.stderr}")
 
 
@@ -975,11 +1062,9 @@ def debug(directory, netns, no_restore, trace_filter,
 
     # Step 1: save the current ruleset
     nft = NftInterface()
-    cmd_parts: list[str] = []
-    if netns:
-        cmd_parts = ["sudo", "/usr/local/bin/run-netns", "exec", netns]
-    cmd_parts.extend([nft._nft_bin, "list", "ruleset"])
-    result = subprocess.run(cmd_parts, capture_output=True, text=True)
+    result = nft.run_in_netns(
+        [nft._nft_bin, "list", "ruleset"],
+        netns=netns, capture_output=True, text=True)
     saved_path: Path | None = None
     if result.returncode == 0 and result.stdout.strip():
         tmp = tempfile.NamedTemporaryFile(
@@ -1015,17 +1100,16 @@ def debug(directory, netns, no_restore, trace_filter,
     if trace_filter:
         # Inserts `<FILTER> meta nftrace set 1` as the first rule in the
         # input chain. The rule is removed on exit (see _restore_and_exit).
-        trace_install = list(cmd_parts[:-2]) + [
-            "insert", "rule", "inet", "shorewall", "input",
-            *trace_filter.split(), "meta", "nftrace", "set", "1",
-        ]
-        r = subprocess.run(trace_install, capture_output=True, text=True)
-        if r.returncode != 0:
-            click.echo(f"WARNING: --trace filter install failed: "
-                       f"{r.stderr.strip()}", err=True)
-            trace_filter = None  # don't try to remove later
-        else:
+        try:
+            nft.cmd(
+                f"insert rule inet shorewall input "
+                f"{trace_filter} meta nftrace set 1",
+                netns=netns)
             click.echo(f"Trace filter active: {trace_filter}")
+        except Exception as exc:
+            click.echo(f"WARNING: --trace filter install failed: {exc}",
+                       err=True)
+            trace_filter = None  # don't try to remove later
 
     # Step 4: print instructions
     ns_prefix = (f"sudo /usr/local/bin/run-netns exec {netns} "
@@ -1065,10 +1149,10 @@ def debug(directory, netns, no_restore, trace_filter,
             # ruleset had additional tables, they weren't changed by
             # debug mode, so they're already correct and don't need
             # re-loading.
-            delete_cmd = list(cmd_parts[:-2]) + [
-                "delete", "table", "inet", "shorewall"]
-            subprocess.run(delete_cmd, check=False,
-                           capture_output=True)
+            try:
+                nft.cmd("delete table inet shorewall", netns=netns)
+            except Exception:
+                pass
 
             if saved_path and saved_path.exists():
                 saved_text = saved_path.read_text()
