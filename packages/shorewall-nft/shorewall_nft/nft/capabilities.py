@@ -158,7 +158,12 @@ class NftCapabilities:
         caps.has_counter = _probe_rule("counter accept", netns)
         caps.has_log = _probe_rule('log prefix "test" accept', netns)
         caps.has_notrack = _probe_rule("notrack", netns)
-        caps.has_nat = _probe_rule("masquerade", netns)  # Quick nat check
+        # NAT probe: masquerade only works in a nat-type chain, not filter.
+        _nft(f"add chain inet {_PROBE_TABLE} __nat_test {{ type nat hook postrouting priority 100; }}", netns)
+        rc_nat, _, _ = _nft(f"add rule inet {_PROBE_TABLE} __nat_test masquerade", netns)
+        caps.has_nat = rc_nat == 0
+        _nft(f"flush chain inet {_PROBE_TABLE} __nat_test", netns)
+        _nft(f"delete chain inet {_PROBE_TABLE} __nat_test", netns)
         caps.has_flow_offload = _probe_rule("flow offload @__nonexistent", netns) is False  # Will fail but module presence detectable
 
         # Set features
