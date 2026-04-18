@@ -94,69 +94,69 @@ def _derive_v4_sibling(v6_dir: Path) -> Path | None:
 def _resolve_config_paths(
     positional: Path | None,
     config_dir: Path | None,
-    config_dir4: Path | None,
-    config6_dir: Path | None,
+    config_dir_v4: Path | None,
+    config_dir_v6: Path | None,
     no_auto_v4: bool,
     no_auto_v6: bool,
 ) -> tuple[Path, Path | None, bool]:
     """Resolve CLI config options into (primary, secondary, skip_sibling).
 
     primary: the Path passed as first arg to load_config
-    secondary: optional config6_dir kwarg for load_config (explicit v6 dir)
+    secondary: optional config_dir_v6 kwarg for load_config (explicit v6 dir)
     skip_sibling: if True, disable parser's v6 sibling auto-detection
 
     Modes supported:
       --config-dir /srv/merged
             → merged mode, single dir, no sibling merge
-      --config-dir4 /srv/v4 --config6-dir /srv/v6
+      --config-dir-v4 /srv/v4 --config-dir-v6 /srv/v6
             → explicit dual mode
-      --config-dir4 /srv/v4
+      --config-dir-v4 /srv/v4
             → v4 + auto-detected v6 sibling (legacy behavior)
-      --config-dir4 /srv/v4 --no-auto-v6
+      --config-dir-v4 /srv/v4 --no-auto-v6
             → v4-only, no sibling merge
-      --config6-dir /srv/v6
+      --config-dir-v6 /srv/v6
             → v6 + auto-detected v4 sibling (symmetric)
-      --config6-dir /srv/v6 --no-auto-v4
+      --config-dir-v6 /srv/v6 --no-auto-v4
             → v6-only
       positional /srv/foo
-            → equivalent to --config-dir4 /srv/foo (or --config-dir if
+            → equivalent to --config-dir-v4 /srv/foo (or --config-dir if
               the name ends in "46" — auto-detect via load_config)
       (no args)
             → /etc/shorewall46 if present, else /etc/shorewall + sibling
     """
     # Conflict checks
-    if config_dir is not None and (config_dir4 is not None
-                                   or config6_dir is not None):
+    if config_dir is not None and (config_dir_v4 is not None
+                                   or config_dir_v6 is not None):
         raise click.UsageError(
             "--config-dir is mutually exclusive with "
-            "--config-dir4/--config6-dir")
+            "--config-dir-v4/--config-dir-v6")
     if positional is not None and (config_dir is not None
-                                   or config_dir4 is not None
-                                   or config6_dir is not None):
+                                   or config_dir_v4 is not None
+                                   or config_dir_v6 is not None):
         raise click.UsageError(
             "Positional directory cannot be combined with --config-dir, "
-            "--config-dir4 or --config6-dir")
+            "--config-dir-v4 or --config-dir-v6")
 
     # 1. Explicit merged dir
     if config_dir is not None:
         return config_dir, None, True
 
     # 2. Explicit v4 + v6 (fully specified dual mode)
-    if config_dir4 is not None and config6_dir is not None:
-        return config_dir4, config6_dir, True
+    if config_dir_v4 is not None and config_dir_v6 is not None:
+        return config_dir_v4, config_dir_v6, True
 
     # 3. v4 only (with optional no-auto-v6)
-    if config_dir4 is not None:
-        return config_dir4, None, bool(no_auto_v6)
+    if config_dir_v4 is not None:
+        return config_dir_v4, None, bool(no_auto_v6)
 
     # 4. v6 only / v6 + auto v4 sibling
-    if config6_dir is not None:
+    if config_dir_v6 is not None:
         if no_auto_v4:
-            return config6_dir, None, True
-        v4_sibling = _derive_v4_sibling(config6_dir)
+            return config_dir_v6, None, True
+        v4_sibling = _derive_v4_sibling(config_dir_v6)
         if v4_sibling is not None:
-            return v4_sibling, config6_dir, True
-        return config6_dir, None, True
+            return v4_sibling, config_dir_v6, True
+        return config_dir_v6, None, True
 
     # 5. Positional arg (legacy behavior — parser auto-detects sibling)
     if positional is not None:
@@ -174,11 +174,11 @@ def config_options(f):
     """Click decorator: add config directory override options to a command.
 
     Adds:
-      -c, --config-dir   explicit merged config directory
-      --config-dir4      explicit IPv4 config directory
-      --config6-dir      explicit IPv6 config directory
-      --no-auto-v4       disable auto-detection of a v4 sibling
-      --no-auto-v6       disable auto-detection of a v6 sibling
+      -c, --config-dir    explicit merged config directory
+      --config-dir-v4     explicit IPv4 config directory
+      --config-dir-v6     explicit IPv6 config directory
+      --no-auto-v4        disable auto-detection of a v4 sibling
+      --no-auto-v6        disable auto-detection of a v6 sibling
     """
     f = click.option("--no-auto-v6", is_flag=True, default=False,
                      help="Disable auto-detection of a v6 sibling "
@@ -186,13 +186,13 @@ def config_options(f):
     f = click.option("--no-auto-v4", is_flag=True, default=False,
                      help="Disable auto-detection of a v4 sibling "
                           "directory.")(f)
-    f = click.option("--config6-dir", "config6_dir",
+    f = click.option("--config-dir-v6", "config_dir_v6",
                      type=click.Path(exists=True, file_okay=False,
                                      path_type=Path),
                      default=None,
                      help="Explicit IPv6 config directory "
-                          "(use with --config-dir4 for dual mode).")(f)
-    f = click.option("--config-dir4", "config_dir4",
+                          "(use with --config-dir-v4 for dual mode).")(f)
+    f = click.option("--config-dir-v4", "config_dir_v4",
                      type=click.Path(exists=True, file_okay=False,
                                      path_type=Path),
                      default=None,
@@ -363,7 +363,7 @@ def _compile(config_dir: Path, config6_dir: Path | None = None,
     return ir, script, nft_sets
 
 
-def _compile_from_cli(directory, config_dir, config_dir4, config6_dir,
+def _compile_from_cli(directory, config_dir, config_dir_v4, config_dir_v6,
                       no_auto_v4, no_auto_v6, debug=False,
                       override=None):
     """Helper for commands using @config_options + positional directory.
@@ -371,7 +371,7 @@ def _compile_from_cli(directory, config_dir, config_dir4, config6_dir,
     Resolves the CLI flags to (primary, secondary, skip) and calls _compile.
     """
     primary, secondary, skip = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     if override is None:
         # Pick up the ctx-stashed overlay if a subcommand caller
@@ -467,9 +467,9 @@ def cli(ctx, q, verbose, override_json, override_per_file):
 
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
-@click.option("--netns", type=str, default=None, help="Apply in network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @config_options
-def start(directory, netns, config_dir, config_dir4, config6_dir,
+def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
           no_auto_v4, no_auto_v6):
     """Compile and apply firewall rules (like shorewall start)."""
     prog = _Progress()
@@ -478,7 +478,7 @@ def start(directory, netns, config_dir, config_dir4, config6_dir,
     # ── Step 1: parse + compile ───────────────────────────────────────
     with prog.step("Parsing and compiling config") as s:
         (ir, script, _), _ = _compile_from_cli(
-            directory, config_dir, config_dir4, config6_dir,
+            directory, config_dir, config_dir_v4, config_dir_v6,
             no_auto_v4, no_auto_v6)
         n_rules = sum(len(c.rules) for c in ir.chains.values())
         s.info(f"{len(ir.chains)} chains, {n_rules} rules")
@@ -522,7 +522,7 @@ def start(directory, netns, config_dir, config_dir4, config6_dir,
                 apply_proxyarp, parse_proxyarp)
             from shorewall_nft.config.parser import load_config
             primary, secondary, skip = _resolve_config_paths(
-                directory, config_dir, config_dir4, config6_dir,
+                directory, config_dir, config_dir_v4, config_dir_v6,
                 no_auto_v4, no_auto_v6)
             cfg = load_config(primary, config6_dir=secondary,
                               skip_sibling_merge=skip)
@@ -561,9 +561,9 @@ def start(directory, netns, config_dir, config_dir4, config6_dir,
 
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @config_options
-def stop(directory, netns, config_dir, config_dir4, config6_dir,
+def stop(directory, netns, config_dir, config_dir_v4, config_dir_v6,
          no_auto_v4, no_auto_v6):
     """Stop the firewall.
 
@@ -583,7 +583,7 @@ def stop(directory, netns, config_dir, config_dir4, config6_dir,
     stopped_script: str | None = None
     try:
         (ir, _script, _sets), _paths = _compile_from_cli(
-            directory, config_dir, config_dir4, config6_dir,
+            directory, config_dir, config_dir_v4, config_dir_v6,
             no_auto_v4, no_auto_v6)
         from shorewall_nft.nft.emitter import emit_stopped_nft
         s = emit_stopped_nft(ir)
@@ -619,7 +619,7 @@ def stop(directory, netns, config_dir, config_dir4, config6_dir,
         )
         from shorewall_nft.config.parser import load_config
         primary, secondary, skip = _resolve_config_paths(
-            directory, config_dir, config_dir4, config6_dir,
+            directory, config_dir, config_dir_v4, config_dir_v6,
             no_auto_v4, no_auto_v6)
         cfg = load_config(primary, config6_dir=secondary,
                           skip_sibling_merge=skip)
@@ -639,13 +639,13 @@ def stop(directory, netns, config_dir, config_dir4, config6_dir,
 
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @config_options
-def restart(directory, netns, config_dir, config_dir4, config6_dir,
+def restart(directory, netns, config_dir, config_dir_v4, config_dir_v6,
             no_auto_v4, no_auto_v6):
     """Recompile and atomically replace the ruleset."""
     (ir, script, _), _ = _compile_from_cli(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     from shorewall_nft.netns.apply import apply_nft
     apply_nft(script, netns=netns)
@@ -654,13 +654,13 @@ def restart(directory, netns, config_dir, config_dir4, config6_dir,
 
 @cli.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @config_options
-def reload(directory, netns, config_dir, config_dir4, config6_dir,
+def reload(directory, netns, config_dir, config_dir_v4, config_dir_v6,
            no_auto_v4, no_auto_v6):
     """Reload rules (same as restart for nft — atomic replace)."""
     (ir, script, _), _ = _compile_from_cli(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     from shorewall_nft.netns.apply import apply_nft
     apply_nft(script, netns=netns)
@@ -668,7 +668,7 @@ def reload(directory, netns, config_dir, config_dir4, config6_dir,
 
 
 @cli.command()
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 def clear(netns: str | None):
     """Clear all firewall rules (accept all traffic)."""
     # In nft: delete table then create empty with accept policies
@@ -687,7 +687,7 @@ table inet shorewall {
 
 
 @cli.command()
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 def status(netns: str | None):
     """Show firewall status."""
     from shorewall_nft.nft.netlink import NftInterface
@@ -743,12 +743,12 @@ def status(netns: str | None):
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @click.option("--skip-caps", is_flag=True, help="Skip capability check.")
 @config_options
-def check(directory, skip_caps, config_dir, config_dir4, config6_dir,
+def check(directory, skip_caps, config_dir, config_dir_v4, config_dir_v6,
           no_auto_v4, no_auto_v6):
     """Validate config without applying (like shorewall check)."""
     try:
         (ir, script, _), _ = _compile_from_cli(
-            directory, config_dir, config_dir4, config6_dir,
+            directory, config_dir, config_dir_v4, config_dir_v6,
             no_auto_v4, no_auto_v6)
         click.echo(f"Configuration compiled ({len(ir.chains)} chains).")
 
@@ -773,11 +773,11 @@ def check(directory, skip_caps, config_dir, config_dir4, config6_dir,
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @click.option("-o", "--output", type=click.Path(path_type=Path), help="Output file.")
 @config_options
-def compile(directory, output, config_dir, config_dir4, config6_dir,
+def compile(directory, output, config_dir, config_dir_v4, config_dir_v6,
             no_auto_v4, no_auto_v6):
     """Compile config to nft script (like shorewall compile)."""
     (_, script, _), _ = _compile_from_cli(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     if output:
         output.write_text(script)
@@ -787,10 +787,10 @@ def compile(directory, output, config_dir, config_dir4, config6_dir,
 
 
 @cli.command()
-@click.option("-C", is_flag=True, help="Include counters.")
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--counters", is_flag=True, help="Include counters in the saved ruleset.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @click.argument("filename", required=False)
-def save(c, netns: str | None, filename: str | None):
+def save(counters, netns: str | None, filename: str | None):
     """Save current ruleset (like shorewall save)."""
     from shorewall_nft.nft.netlink import NftInterface
     nft = NftInterface()
@@ -810,7 +810,7 @@ def save(c, netns: str | None, filename: str | None):
 
 
 @cli.command()
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @click.argument("filename", type=click.Path(exists=True, path_type=Path))
 def restore(netns: str | None, filename: Path):
     """Restore a saved ruleset (like shorewall restore)."""
@@ -822,7 +822,7 @@ def restore(netns: str | None, filename: Path):
 
 @cli.command()
 @click.option("-x", is_flag=True, help="Show exact counters.")
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @click.argument("what", required=False)
 def show(x, netns: str | None, what: str | None):
     """Show firewall info (like shorewall show). Subcommands: zones, policies, config, connections."""
@@ -849,7 +849,7 @@ cli.add_command(show, "dump")
 
 
 @cli.command()
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @click.argument("chains", nargs=-1)
 def reset(netns: str | None, chains: tuple[str]):
     """Reset counters (like shorewall reset)."""
@@ -868,7 +868,7 @@ def reset(netns: str | None, chains: tuple[str]):
 
 @cli.command()
 @click.argument("addresses", nargs=-1, required=True)
-@click.option("--netns", type=str, default=None)
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 def drop(addresses: tuple[str], netns: str | None):
     """Dynamically drop traffic from addresses (like shorewall drop)."""
     from shorewall_nft.nft.netlink import NftError, NftInterface
@@ -883,7 +883,7 @@ def drop(addresses: tuple[str], netns: str | None):
 
 @cli.command()
 @click.argument("addresses", nargs=-1, required=True)
-@click.option("--netns", type=str, default=None)
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 def allow(addresses: tuple[str], netns: str | None):
     """Remove addresses from the blacklist (like shorewall allow)."""
     from shorewall_nft.nft.netlink import NftError, NftInterface
@@ -898,7 +898,7 @@ def allow(addresses: tuple[str], netns: str | None):
 
 @cli.command()
 @click.argument("addresses", nargs=-1, required=True)
-@click.option("--netns", type=str, default=None)
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 def reject(addresses: tuple[str], netns: str | None):
     """Dynamically reject traffic from addresses (like shorewall reject)."""
     # In nft, we use the same blacklist set — reject vs drop distinction
@@ -916,7 +916,7 @@ def reject(addresses: tuple[str], netns: str | None):
 @cli.command()
 @click.argument("address")
 @click.option("-t", "--timeout", default="1h", help="Timeout (e.g. 1h, 30m, 1d).")
-@click.option("--netns", type=str, default=None)
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 def blacklist(address: str, timeout: str, netns: str | None):
     """Add address to dynamic blacklist with timeout (like shorewall blacklist)."""
     from shorewall_nft.nft.netlink import NftError, NftInterface
@@ -938,11 +938,11 @@ def blacklist(address: str, timeout: str, netns: str | None):
 @click.option("--iptables", type=click.Path(exists=True, path_type=Path), required=True,
               help="Path to iptables-save dump (ground truth).")
 @config_options
-def verify(directory, iptables, config_dir, config_dir4, config6_dir,
+def verify(directory, iptables, config_dir, config_dir_v4, config_dir_v6,
            no_auto_v4, no_auto_v6):
     """Verify compiled output against iptables baseline."""
     primary, secondary, _ = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config_dir = primary
     from shorewall_nft.verify.triangle import run_triangle
@@ -986,7 +986,7 @@ def verify(directory, iptables, config_dir, config_dir4, config6_dir,
 
 
 @cli.command()
-@click.option("--netns", type=str, default=None, help="Trace in network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 def trace(netns: str | None):
     """Start live packet tracing (nft monitor trace)."""
     from shorewall_nft.runtime.monitor import trace_start
@@ -997,7 +997,7 @@ def trace(netns: str | None):
 @click.argument("directory", type=click.Path(exists=True, file_okay=False,
                                              path_type=Path), required=False)
 @click.option("--netns", type=str, default=None,
-              help="Target network namespace.")
+              help="Network namespace name.")
 @click.option("--no-restore", is_flag=True,
               help="Do not restore the original ruleset on exit.")
 @click.option("--trace", "trace_filter", type=str, default=None,
@@ -1007,7 +1007,7 @@ def trace(netns: str | None):
                    "or 'meta l4proto icmp'). Removed on exit.")
 @config_options
 def debug(directory, netns, no_restore, trace_filter,
-          config_dir, config_dir4, config6_dir,
+          config_dir, config_dir_v4, config_dir_v6,
           no_auto_v4, no_auto_v6):
     """Temporarily load a debug-annotated ruleset.
 
@@ -1030,7 +1030,7 @@ def debug(directory, netns, no_restore, trace_filter,
     from shorewall_nft.nft.netlink import NftInterface
 
     primary, secondary, skip = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config_dir = primary
 
@@ -1188,7 +1188,7 @@ def debug(directory, netns, no_restore, trace_filter,
 
 
 @cli.command()
-@click.option("--netns", type=str, default=None)
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 def counters(netns: str | None):
     """List all counter values (packets/bytes)."""
     from shorewall_nft.nft.netlink import NftError, NftInterface
@@ -1213,11 +1213,11 @@ def counters(netns: str | None):
 @click.option("--dry-run", is_flag=True, help="Validate with nft -c.")
 @config_options
 def migrate(directory, iptables, output, dry_run,
-            config_dir, config_dir4, config6_dir, no_auto_v4, no_auto_v6):
+            config_dir, config_dir_v4, config_dir_v6, no_auto_v4, no_auto_v6):
     """Verify migration from Shorewall to shorewall-nft."""
     from shorewall_nft.tools.migrate import migrate as run_migrate
     primary, _, _ = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     ctx = click.Context(run_migrate)
     ctx.invoke(run_migrate, config_dir=primary,
@@ -1226,17 +1226,17 @@ def migrate(directory, iptables, output, dry_run,
 
 @cli.command("load-sets")
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
-@click.option("--netns", type=str, default=None, help="Target network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @click.option("--geoip-dir", type=click.Path(exists=True, path_type=Path), default=None,
               help="GeoIP prefix directory.")
 @config_options
 def load_sets(directory, netns, geoip_dir,
-              config_dir, config_dir4, config6_dir, no_auto_v4, no_auto_v6):
+              config_dir, config_dir_v4, config_dir_v6, no_auto_v4, no_auto_v6):
     """Load external sets (ipsets, GeoIP) into nft after apply."""
     from shorewall_nft.nft.set_loader import SetLoader
 
     primary, _, _ = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config_dir = primary
     loader = SetLoader(netns=netns)
@@ -1261,13 +1261,13 @@ def load_sets(directory, netns, geoip_dir,
 @cli.command("generate-set-loader")
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @config_options
-def generate_set_loader(directory, config_dir, config_dir4, config6_dir,
+def generate_set_loader(directory, config_dir, config_dir_v4, config_dir_v6,
                         no_auto_v4, no_auto_v6):
     """Generate a shell script that loads external sets."""
     from shorewall_nft.nft.set_loader import generate_set_loader_script
 
     primary, _, _ = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     click.echo(generate_set_loader_script(primary))
 
@@ -1284,7 +1284,7 @@ def generate_set_loader(directory, config_dir, config_dir4, config6_dir,
 @click.option("--ip6tables", "ip6tables_dump",
               type=click.Path(exists=True, path_type=Path), default=None,
               help="ip6tables-save dump for IPv6 tests (optional).")
-@click.option("--targets6", default=None,
+@click.option("--targets-v6", "targets_v6", default=None,
               help="Comma-separated list or @FILE of IPv6 target addresses. "
                    "Requires --ip6tables.")
 @click.option("--src-iface", default=None,
@@ -1303,14 +1303,14 @@ def generate_set_loader(directory, config_dir, config_dir4, config6_dir,
 @click.option("--max-tests", "-n", default=60,
               help="Max test cases per target.")
 @click.option("--seed", default=42, help="Random seed for sampling.")
-@click.option("-V", "--sim-verbose", is_flag=True, help="Show all test results.")
+@click.option("-v", "--verbose", is_flag=True, help="Show all test results.")
 @click.option("--parallel", "-j", default=4, help="Parallel test threads.")
 @click.option("--no-trace", is_flag=True, help="Disable nft trace logging.")
 @config_options
-def simulate(directory, iptables, target, targets, ip6tables_dump, targets6,
-             src_iface, dst_iface, all_zones, max_tests, seed, sim_verbose,
+def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
+             src_iface, dst_iface, all_zones, max_tests, seed, verbose,
              parallel, no_trace,
-             config_dir, config_dir4, config6_dir, no_auto_v4, no_auto_v6):
+             config_dir, config_dir_v4, config_dir_v6, no_auto_v4, no_auto_v6):
     """Run packet-level simulation in 3 network namespaces."""
     from shorewall_nft.verify.simulate import (
         DST_IFACE_DEFAULT,
@@ -1319,7 +1319,7 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets6,
     )
 
     primary, _, _ = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config_dir = primary
 
@@ -1335,7 +1335,7 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets6,
         return [t.strip() for t in val.split(",") if t.strip()]
 
     target_list = _parse_list(targets)
-    target_list6 = _parse_list(targets6)
+    target_list6 = _parse_list(targets_v6)
     sif = src_iface or SRC_IFACE_DEFAULT
     dif = dst_iface or DST_IFACE_DEFAULT
 
@@ -1365,7 +1365,7 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets6,
         targets6=target_list6,
         max_tests=max_tests,
         seed=seed,
-        verbose=sim_verbose,
+        verbose=verbose,
         parallel=parallel,
         trace=not no_trace,
         all_zones_from_config=all_zones,
@@ -1392,7 +1392,7 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets6,
 
 
 @cli.command("capabilities")
-@click.option("--netns", type=str, default=None, help="Probe in network namespace.")
+@click.option("--netns", type=str, default=None, help="Network namespace name.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 def capabilities(netns: str | None, as_json: bool):
     """Detect nftables capabilities of the running kernel."""
@@ -1412,7 +1412,7 @@ def capabilities(netns: str | None, as_json: bool):
 
 @cli.command("explain-nft-features")
 @click.option("--probe", is_flag=True, help="Probe kernel for feature availability.")
-@click.option("--category", "-c", type=str, default=None,
+@click.option("--category", type=str, default=None,
               help="Filter by category (e.g. 'Sets', 'NAT', 'IPv6').")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 def explain_nft_features(probe: bool, category: str | None, as_json: bool):
@@ -1654,14 +1654,14 @@ _register_plugin_commands()
 @cli.command("generate-sysctl")
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @config_options
-def generate_sysctl(directory, config_dir, config_dir4, config6_dir,
+def generate_sysctl(directory, config_dir, config_dir_v4, config_dir_v6,
                     no_auto_v4, no_auto_v6):
     """Generate sysctl configuration script."""
     from shorewall_nft.config.parser import load_config
     from shorewall_nft.runtime.sysctl import generate_sysctl_script
 
     primary, secondary, skip = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config = load_config(primary, config6_dir=secondary,
                          skip_sibling_merge=skip)
@@ -1669,13 +1669,13 @@ def generate_sysctl(directory, config_dir, config_dir4, config6_dir,
 
 
 @cli.command("generate-systemd")
-@click.option("--netns", is_flag=True, help="Generate template for network namespaces.")
+@click.option("--with-netns", is_flag=True, help="Generate template for network namespace deployments.")
 @click.option("-o", "--output-dir", type=click.Path(path_type=Path), default=None)
-def generate_systemd(netns: bool, output_dir: Path | None):
+def generate_systemd(with_netns: bool, output_dir: Path | None):
     """Generate systemd service files."""
     from shorewall_nft.netns.systemd import generate_netns_service, generate_service
 
-    if netns:
+    if with_netns:
         content = generate_netns_service()
         filename = "shorewall-nft@.service"
     else:
@@ -1703,7 +1703,7 @@ def generate_systemd(netns: bool, output_dir: Path | None):
               help="Shared VIP that HA failover moves.")
 @config_options
 def generate_conntrackd(directory, sync_iface, peer_ip, local_ip, cluster_ip,
-                        config_dir, config_dir4, config6_dir,
+                        config_dir, config_dir_v4, config_dir_v6,
                         no_auto_v4, no_auto_v6):
     """Generate a conntrackd.conf fragment for an HA firewall pair.
 
@@ -1715,7 +1715,7 @@ def generate_conntrackd(directory, sync_iface, peer_ip, local_ip, cluster_ip,
     from shorewall_nft.runtime.conntrackd import generate_conntrackd_fragment
 
     primary, secondary, skip = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config = load_config(primary, config6_dir=secondary,
                          skip_sibling_merge=skip)
@@ -1731,14 +1731,14 @@ def generate_conntrackd(directory, sync_iface, peer_ip, local_ip, cluster_ip,
 @cli.command("generate-tc")
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @config_options
-def generate_tc(directory, config_dir, config_dir4, config6_dir,
+def generate_tc(directory, config_dir, config_dir_v4, config_dir_v6,
                 no_auto_v4, no_auto_v6):
     """Generate tc (traffic control) commands."""
     from shorewall_nft.compiler.tc import emit_tc_commands, parse_tc_config
     from shorewall_nft.config.parser import load_config
 
     primary, secondary, skip = _resolve_config_paths(
-        directory, config_dir, config_dir4, config6_dir,
+        directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config = load_config(primary, config6_dir=secondary,
                          skip_sibling_merge=skip)
@@ -2018,7 +2018,7 @@ def config_template(source: Path, host_name: str,
               help="Interleave `# from <file>:<lineno>` shell "
                    "comments before each rule so a future bisect "
                    "can blame the origin file/line.")
-@click.option("--config6-dir", "config6_dir",
+@click.option("--config-dir-v6", "config_dir_v6",
               type=click.Path(exists=True, file_okay=False,
                               path_type=Path),
               default=None,
@@ -2026,7 +2026,7 @@ def config_template(source: Path, host_name: str,
                    "When given, the parser merges shorewall + "
                    "shorewall6 into a unified inet config.")
 def config_merge(sources: tuple[Path, ...], target: Path, force: bool,
-                 provenance: bool, config6_dir: Path | None) -> None:
+                 provenance: bool, config_dir_v6: Path | None) -> None:
     """Merge one or more Shorewall config directories into a pretty
     unified output (TODO #13: 3-firewall config-merge replay).
 
@@ -2067,7 +2067,7 @@ def config_merge(sources: tuple[Path, ...], target: Path, force: bool,
     merged = None
     total_rules = 0
     for i, src in enumerate(sources):
-        c6 = config6_dir if i == 0 else None
+        c6 = config_dir_v6 if i == 0 else None
         cfg = load_config(src, config6_dir=c6)
         n = len(cfg.rules)
         click.echo(f"loaded {src} → {n} rules, "

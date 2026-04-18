@@ -54,8 +54,7 @@ def _make_runner(nft: "NftInterface", netns: str | None):
 @dataclass
 class NftCapabilities:
     """Detected nftables capabilities."""
-    version: str = ""
-    nft_path: str = ""
+    libnft_path: str = ""
 
     # Table families
     families: list[str] = field(default_factory=list)
@@ -131,18 +130,8 @@ class NftCapabilities:
         _cmd, _probe_rule = _make_runner(nft, netns)
         caps = cls()
 
-        # nft binary version — plain subprocess, no netns needed.
-        try:
-            r = subprocess.run(
-                [nft._nft_bin, "-v"],
-                capture_output=True, text=True, timeout=5)
-            if r.returncode == 0:
-                parts = r.stdout.strip().split()
-                if parts:
-                    caps.version = parts[-1].strip("()")
-                caps.nft_path = nft._nft_bin
-        except Exception:
-            pass
+        # Record which libnftables binary backs this NftInterface instance.
+        caps.libnft_path = nft._nft_bin
 
         # Create probe table + filter chain.
         _cmd(f"add table inet {_PROBE_TABLE}")
@@ -270,7 +259,7 @@ class NftCapabilities:
 
     def summary(self) -> str:
         """Human-readable summary of capabilities."""
-        lines = [f"nftables {self.version}"]
+        lines = [f"nftables  (libnftables, path: {self.libnft_path or 'unknown'})"]
         lines.append(f"Families: {', '.join(self.families)}")
         for ct, hooks in self.chain_hooks.items():
             lines.append(f"  {ct}: {', '.join(hooks)}")
