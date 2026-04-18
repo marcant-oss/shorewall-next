@@ -58,6 +58,10 @@ DEFAULT_BATCH_WINDOW_SEC = 0.010       # 10 ms
 DEFAULT_BATCH_MAX_OPS = 40              # matches BatchBuilder default
 DEFAULT_QUEUE_SIZE = 16384
 
+# Retry policy for transient nft errors (e.g. set not yet created at boot).
+_BATCH_MAX_RETRIES = 3
+_BATCH_RETRY_BASE_SEC = 1.0
+
 
 @dataclass
 class SetWriterMetrics:
@@ -320,18 +324,34 @@ class SetWriter:
         if state is None or not state.proposals:
             return
         netns, _family = key
-        try:
-            applied = await self._router.dispatch(netns, state.builder)
-        except Exception as e:  # noqa: BLE001
-            self.metrics.commit_errors_total += 1
-            log.warning(
-                "batch dispatch failed: %s", e,
-                extra={"netns": netns, "reason": reason})
-            # The tracker never saw these as committed, so the
-            # decoder is free to resubmit them — do NOT call commit().
-            # Just forget the pending state to keep the builder fresh.
-            self._batches.pop(key, None)
-            return
+        applied = None
+        for attempt in range(_BATCH_MAX_RETRIES + 1):
+            if attempt:
+                delay = _BATCH_RETRY_BASE_SEC * (2 ** (attempt - 1))
+                log.debug(
+                    "batch dispatch retry %d/%d in %.1fs",
+                    attempt, _BATCH_MAX_RETRIES, delay,
+                    extra={"netns": netns})
+                await asyncio.sleep(delay)
+            try:
+                applied = await self._router.dispatch(netns, state.builder)
+                break
+            except Exception as e:  # noqa: BLE001
+                # Retry transient errors (set/table not yet created at
+                # boot) up to _BATCH_MAX_RETRIES times; fail fast on
+                # anything else.
+                if "No such file or directory" in str(e) and attempt < _BATCH_MAX_RETRIES:
+                    continue
+                self.metrics.commit_errors_total += 1
+                log.warning(
+                    "batch dispatch failed: %s", e,
+                    extra={"netns": netns, "reason": reason})
+                # The tracker never saw these as committed, so the
+                # decoder is free to resubmit them — do NOT call commit().
+                # Just forget the pending state to keep the builder fresh.
+                self._batches.pop(key, None)
+                return
+        assert applied is not None
 
         # On success, commit to tracker so metrics reflect reality.
         self._tracker.commit(state.proposals, state.verdicts)
