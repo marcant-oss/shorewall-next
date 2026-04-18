@@ -106,6 +106,9 @@ install -Dm755 tools/run-netns %{buildroot}/usr/local/bin/run-netns
 install -Dm440 tools/sudoers.d-shorewall-nft \
     %{buildroot}%{_sysconfdir}/sudoers.d/shorewall-nft-tests
 
+# shorewalld persistent state directory
+install -d %{buildroot}%{_sharedstatedir}/shorewalld
+
 # docs (goes in the -doc subpackage)
 install -d %{buildroot}%{_docdir}/%{name}
 cp -r docs/* %{buildroot}%{_docdir}/%{name}/
@@ -142,6 +145,7 @@ fi
 %{_unitdir}/shorewall-nft@.service
 %{_unitdir}/shorewalld.service
 %{_unitdir}/shorewalld@.service
+%dir %{_sharedstatedir}/shorewalld
 %{_mandir}/man8/shorewall-nft.8*
 %{_mandir}/man8/shorewalld.8*
 %{_datadir}/bash-completion/completions/shorewall-nft
