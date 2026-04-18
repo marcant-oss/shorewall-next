@@ -1,7 +1,7 @@
 Source: shorewall-nft
 Section: net
 Priority: optional
-Maintainer: shorewall-nft maintainers <shorewall-nft@example.com>
+Maintainer: André Valentin <avalentin@marcant.net>
 Build-Depends:
  debhelper-compat (= 13),
  dh-python,

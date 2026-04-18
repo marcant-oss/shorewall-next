@@ -158,34 +158,34 @@ fi
 %changelog
 @@CHANGELOG_ENTRY@@
 
-* Thu Apr 17 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.3-1
+* Thu Apr 17 2026 André Valentin <avalentin@marcant.net> - 1.4.3-1
 - Release 1.4.3: auto-generated RPM spec + AlmaLinux 10 build target.
   spec.in template, tools/gen-rpm-spec.sh, matrix CI (fedora40 + almalinux10).
   AL10 profile: python3-protobuf >= 3.19, python3-pytest >= 7.4, python3 >= 3.12.
 - See CHANGELOG.md for full details.
 
-* Sun Apr 13 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.2-1
+* Sun Apr 13 2026 André Valentin <avalentin@marcant.net> - 1.4.2-1
 - Release 1.4.2: IPv6 NDP & baseline security fixes — raw chains excluded
   from dispatch, base chain policy drop, ct state moved to zone-pair chains,
   dual-stack zone promotion, dispatch ordering fix, scapy-free NDP/ARP fast path.
 - See CHANGELOG.md for full details.
 
-* Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.1-1
+* Sun Apr 12 2026 André Valentin <avalentin@marcant.net> - 1.4.1-1
 - Release 1.4.1: fix monorepo install in setup scripts, add shorewalld.8 man
   page, restructure docs, update man pages to v1.4.1.
 - See CHANGELOG.md for full details.
 
-* Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.4.0-1
+* Sun Apr 12 2026 André Valentin <avalentin@marcant.net> - 1.4.0-1
 - Release 1.4.0: DNS-driven nft-set population (dnstap + PBDNSMessage
   pipelines) and Prometheus metrics exporter beta.
 - See CHANGELOG.md for full details.
 
-* Sun Apr 12 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.2.0-1
+* Sun Apr 12 2026 André Valentin <avalentin@marcant.net> - 1.2.0-1
 - Release 1.2.0: shorewalld DNS-set pipeline. OPTIMIZE=8 is the new default.
 - See CHANGELOG.md for full history.
 
-* Sat Apr 11 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.1.0-1
+* Sat Apr 11 2026 André Valentin <avalentin@marcant.net> - 1.1.0-1
 - Release 1.1.0: flowtable + vmap dispatch + ct zone tag, concat-map DNAT.
 
-* Sat Apr 11 2026 shorewall-nft maintainers <shorewall-nft@example.com> - 1.0.0-1
+* Sat Apr 11 2026 André Valentin <avalentin@marcant.net> - 1.0.0-1
 - Release 1.0.0: first stable release.
