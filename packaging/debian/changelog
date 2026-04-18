@@ -1,3 +1,11 @@
+shorewall-nft (1.5.3-1) unstable; urgency=medium
+
+  * Release 1.5.3: fix ruff lint + CI test runner venv fallback.
+  * See CHANGELOG.md for full details.
+
+ -- André Valentin <avalentin@marcant.net>  Sa, 18 Apr 2026 06:53:07 +0000
+
+
 shorewall-nft (1.5.2-1) unstable; urgency=medium
 
   * Release 1.5.2: set maintainer to avalentin@marcant.net.
