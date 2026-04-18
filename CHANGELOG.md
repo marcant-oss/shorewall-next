@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **shorewalld — `register-instance` unavailable on control-socket-only
+  startup** — when shorewalld was started with only `--control-socket`
+  (no `--allowlist-file`, no `--instance`), the DNS pipeline was never
+  initialised, so the `InstanceManager` — and with it all control-socket
+  handlers beyond `ping` — was never started. `shorewall-nft start`
+  received `"unknown command 'register-instance'; available: ['ping']"`.
+  A minimal empty DNS pipeline (tracker + router + set-writer) is now
+  bootstrapped in this path so dynamic registration works immediately.
+
 ## [1.6.0] — 2026-04-18 — dns: multi-host, dnsr: pull-resolver hardening, lifecycle registration, IP-list sets
 
 ### Added
