@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-04-18 — dns: multi-host, dnsr: pull-resolver hardening, lifecycle registration, IP-list sets
+
 ### Added
 
 - **`dns:` multi-host** — `dns:host1,host2,…` is now accepted in

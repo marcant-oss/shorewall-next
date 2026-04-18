@@ -163,6 +163,12 @@ fi
 %changelog
 @@CHANGELOG_ENTRY@@
 
+* Sat Apr 18 2026 André Valentin <avalentin@marcant.net> - 1.6.0-1
+- Release 1.6.0: dns: multi-host, dnsr: pull-resolver hardening (7 fixes),
+  lifecycle instance registration, shorewalld IP-list sets + control socket,
+  multi-instance support, sysconfig/defaults, SIGUSR1 refresh.
+- See CHANGELOG.md for full details.
+
 * Thu Apr 17 2026 André Valentin <avalentin@marcant.net> - 1.4.3-1
 - Release 1.4.3: auto-generated RPM spec + AlmaLinux 10 build target.
   spec.in template, tools/gen-rpm-spec.sh, matrix CI (fedora40 + almalinux10).
