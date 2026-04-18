@@ -140,19 +140,17 @@ class NftInterface:
                   netns: str | None = None) -> dict[str, Any]:
         """Run one or more nft text commands, return JSON dict.
 
-        Prefers libnftables. Falls back to subprocess on missing
-        library OR on netns-entry EPERM (non-root caller).
+        Uses libnftables in-process when netns is None (current namespace).
+        When netns is given, always uses subprocess: libnftables caches its
+        netlink socket in the namespace it was first used in, so setns() before
+        cmd() doesn't redirect it — the subprocess fork+exec enters the
+        namespace before opening any sockets, which is the only correct way.
         """
-        if self._use_lib:
-            try:
-                with _in_netns(netns):
-                    rc, output, error = self._nft.cmd(nft_text)
-                if rc != 0:
-                    raise NftError(f"nft: {error}")
-                return json.loads(output) if output else {}
-            except OSError:
-                # setns failed — fall through to subprocess path
-                pass
+        if self._use_lib and netns is None:
+            rc, output, error = self._nft.cmd(nft_text)
+            if rc != 0:
+                raise NftError(f"nft: {error}")
+            return json.loads(output) if output else {}
         return self._subprocess_text(nft_text, netns=netns)
 
     def _subprocess_text(self, nft_text: str, *,
@@ -193,33 +191,29 @@ class NftInterface:
 
     def load_file(self, path: str | Path, *, check_only: bool = False,
                   netns: str | None = None) -> None:
-        """Load an nft script file atomically."""
-        script = Path(path).read_text()
-        if self._use_lib:
+        """Load an nft script file atomically.
+
+        Uses libnftables in-process when netns is None (current namespace).
+        Falls back to subprocess for a different netns (see _run_text comment).
+        """
+        if self._use_lib and netns is None:
+            script = Path(path).read_text()
             try:
-                with _in_netns(netns):
-                    # Library dry-run toggle for -c; the flag is sticky
-                    # so we always reset it after the call.
+                if check_only:
+                    self._nft.set_dry_run(True)
+                try:
+                    rc, _output, error = self._nft.cmd(script)
+                finally:
                     if check_only:
-                        self._nft.set_dry_run(True)
-                    try:
-                        rc, _output, error = self._nft.cmd(script)
-                    finally:
-                        if check_only:
-                            self._nft.set_dry_run(False)
+                        self._nft.set_dry_run(False)
+            except AttributeError:
+                # older libnftables without set_dry_run
+                if not check_only:
+                    raise
+            else:
                 if rc != 0:
                     raise NftError(f"nft -f{'c' if check_only else ''}: {error}")
                 return
-            except OSError:
-                # setns failed, fall through
-                pass
-            except AttributeError:
-                # older libnftables without set_dry_run — fall through
-                # to subprocess for the check_only case
-                if check_only:
-                    pass
-                else:
-                    raise
         cmd: list[str] = []
         if netns:
             cmd = ["sudo", "/usr/local/bin/run-netns", "exec", netns]

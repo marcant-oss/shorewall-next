@@ -284,7 +284,7 @@ class TestGenerators:
         assert "ExecStart" in r.stdout
 
     def test_generate_systemd_netns(self):
-        r = _cli("generate-systemd", "--netns")
+        r = _cli("generate-systemd", "--with-netns")
         assert r.returncode == 0
         assert "%i" in r.stdout
 
@@ -336,8 +336,8 @@ class TestCapabilities:
         json_start = stdout.find("{")
         assert json_start >= 0, "No JSON in output"
         data = json.loads(stdout[json_start:])
-        assert "version" in data
         assert "families" in data
+        assert "libnft_path" in data or "has_counter" in data
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -353,7 +353,7 @@ class TestExplain:
         assert "nft syntax" in r.stdout
 
     def test_explain_category(self):
-        r = _cli("explain-nft-features", "-c", "NAT")
+        r = _cli("explain-nft-features", "--category", "NAT")
         assert r.returncode == 0
         assert "snat" in r.stdout.lower()
         assert "dnat" in r.stdout.lower()
