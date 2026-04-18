@@ -54,4 +54,9 @@ mount -t tmpfs tmpfs /run/netns
 
 # ── run pytest ───────────────────────────────────────────────────────────────
 cd "$REPO"
-exec "$REPO/.venv/bin/python" -m pytest "$@"
+# Use venv python if present (local dev), otherwise fall back to system python.
+if [[ -x "$REPO/.venv/bin/python" ]]; then
+    exec "$REPO/.venv/bin/python" -m pytest "$@"
+else
+    exec python3 -m pytest "$@"
+fi

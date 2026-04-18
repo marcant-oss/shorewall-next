@@ -13,6 +13,7 @@ nft-native extensions: verify, trace, counters, generate-sysctl,
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from pathlib import Path
 
@@ -209,8 +210,6 @@ def config_options(f):
 # ──────────────────────────────────────────────────────────────────────
 # Start-command progress reporter
 # ──────────────────────────────────────────────────────────────────────
-
-import contextlib
 
 
 class _Step:
@@ -490,8 +489,7 @@ def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
     nft_iface = None
     with prog.step("Probing kernel capabilities") as s:
         try:
-            from shorewall_nft.compiler.capability_check import (
-                check_capabilities, format_errors)
+            from shorewall_nft.compiler.capability_check import check_capabilities, format_errors
             from shorewall_nft.nft.capabilities import NftCapabilities
             from shorewall_nft.nft.netlink import NftInterface
             nft_iface = NftInterface()
@@ -518,8 +516,7 @@ def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
     # ── Step 4: proxy-ARP / NDP ───────────────────────────────────────
     with prog.step("Proxy-ARP / NDP") as s:
         try:
-            from shorewall_nft.compiler.proxyarp import (
-                apply_proxyarp, parse_proxyarp)
+            from shorewall_nft.compiler.proxyarp import apply_proxyarp, parse_proxyarp
             from shorewall_nft.config.parser import load_config
             primary, secondary, skip = _resolve_config_paths(
                 directory, config_dir, config_dir_v4, config_dir_v6,
@@ -556,7 +553,7 @@ def start(directory, netns, config_dir, config_dir_v4, config_dir_v6,
         except Exception:
             s.info("nothing to clean")
 
-    prog.done(f"Shorewall-nft started.")
+    prog.done("Shorewall-nft started.")
 
 
 @cli.command()
@@ -1022,7 +1019,6 @@ def debug(directory, netns, no_restore, trace_filter,
     trace output as a rule comment.
     """
     import signal
-    import subprocess
     import sys
     import tempfile
 
