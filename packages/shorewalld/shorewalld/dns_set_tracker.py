@@ -161,7 +161,7 @@ class DnsSetTracker:
         """Install (or replace) the compiled allowlist.
 
         Called at startup from the compiled-allowlist file and again
-        on ``reload_monitor`` notifications. Assigns a stable integer
+        on control-socket reload. Assigns a stable integer
         set_id per (qname, family) pair in deterministic sort order
         so two shorewalld processes serving the same compiled file
         agree on the mapping without explicit negotiation.

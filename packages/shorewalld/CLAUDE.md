@@ -18,7 +18,6 @@ Python package: `shorewalld`. Entry point: `shorewalld`.
 - `setwriter.py` — coalescing `SetWriter` (batched netlink writes).
 - `dnstap_bridge.py` — routes dnstap answers through tracker or direct-nft.
 - `state.py` — persistent set state across daemon restarts.
-- `reload_monitor.py` — watches shorewall-nft config for hot-reload.
 - `peer.py` — HA peer-link UDP (snapshot + incremental sync).
 - `tap.py` + `logsetup.py` — live trace output + rate-limited logging.
 - `proto/` — hand-compiled protobuf (`dnstap_pb2.py`, `peer_pb2.py`,

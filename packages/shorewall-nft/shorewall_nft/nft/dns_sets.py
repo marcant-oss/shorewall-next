@@ -464,7 +464,7 @@ def write_compiled_allowlist(
 def read_compiled_allowlist(path: Path) -> DnsSetRegistry:
     """Parse the ``[dns]`` section of the compiled allowlist.
 
-    Used by shorewalld at startup (and on reload-monitor signals) to
+    Used by shorewalld at startup (and on control-socket reload) to
     load the current set of managed hostnames without re-parsing the
     raw ``dnsnames`` file — the compiled form is the stable contract.
 

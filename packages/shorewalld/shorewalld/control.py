@@ -44,13 +44,22 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .exporter import CollectorBase, _MetricFamily
 
 log = logging.getLogger("shorewalld.control")
 
 _VERSION = "1"
 _MAX_LINE = 65536  # bytes; guard against runaway clients
+
+
+@dataclass
+class ControlMetrics:
+    requests_by_cmd: dict[str, int] = field(default_factory=dict)
+    errors_by_cmd: dict[str, int] = field(default_factory=dict)
 
 
 class ControlServer:
@@ -67,6 +76,7 @@ class ControlServer:
         self._socket_mode = socket_mode
         self._handlers: dict[str, Callable[[dict], Awaitable[dict]]] = {}
         self._server: asyncio.Server | None = None
+        self.metrics = ControlMetrics()
 
         # Register built-in commands.
         self.register_handler("ping", self._handle_ping)
@@ -211,9 +221,13 @@ class ControlServer:
                 "error": f"unknown command {cmd!r}; available: {available}",
             }
 
+        self.metrics.requests_by_cmd[cmd] = (
+            self.metrics.requests_by_cmd.get(cmd, 0) + 1)
         try:
             result = await handler(request)
         except Exception as e:
+            self.metrics.errors_by_cmd[cmd] = (
+                self.metrics.errors_by_cmd.get(cmd, 0) + 1)
             log.exception("control: handler for %r raised", cmd)
             return {"ok": False, "error": str(e)}
 
@@ -230,3 +244,27 @@ async def _write_json(writer: asyncio.StreamWriter, obj: dict) -> None:
     data = json.dumps(obj, separators=(",", ":"), default=str)
     writer.write(data.encode() + b"\n")
     await writer.drain()
+
+
+class ControlMetricsCollector(CollectorBase):
+    """Prometheus collector for the control socket server."""
+
+    def __init__(self, server: ControlServer) -> None:
+        super().__init__(netns="")
+        self._server = server
+
+    def collect(self) -> list[_MetricFamily]:
+        m = self._server.metrics
+        req_fam = _MetricFamily(
+            "shorewalld_control_requests_total",
+            "Control socket requests dispatched by command",
+            ["cmd"], mtype="counter")
+        err_fam = _MetricFamily(
+            "shorewalld_control_errors_total",
+            "Control socket handler errors by command",
+            ["cmd"], mtype="counter")
+        for cmd, count in m.requests_by_cmd.items():
+            req_fam.add([cmd], float(count))
+        for cmd, count in m.errors_by_cmd.items():
+            err_fam.add([cmd], float(count))
+        return [req_fam, err_fam]

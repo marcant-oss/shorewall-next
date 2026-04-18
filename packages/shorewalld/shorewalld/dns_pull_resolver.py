@@ -42,8 +42,17 @@ import dns.resolver
 from shorewall_nft.nft.dns_sets import DnsrGroup, DnsrRegistry
 
 from .dns_set_tracker import FAMILY_V4, FAMILY_V6, DnsSetTracker, Proposal
+from .exporter import CollectorBase, _MetricFamily
 from .logsetup import get_rate_limiter
 from .setwriter import SetWriter
+
+
+@dataclass
+class PullResolverMetrics:
+    resolves_total: int = 0
+    resolve_errors_total: int = 0
+    nxdomain_total: int = 0
+    entries_submitted_total: int = 0
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +139,7 @@ class PullResolver:
 
         self._sem = asyncio.Semaphore(max(1, concurrency))
         self._rate_limiter = get_rate_limiter()
+        self.metrics = PullResolverMetrics()
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -353,8 +363,11 @@ class PullResolver:
                 prop = Proposal(set_id=set_id, ip_bytes=ip_bytes, ttl=ttl)
                 self._writer.submit(
                     netns=self._netns, family=family, proposal=prop)
+                self.metrics.entries_submitted_total += 1
 
+        self.metrics.resolves_total += 1
         if not has_results:
+            self.metrics.resolve_errors_total += 1
             wait = self._min_retry
         else:
             wait = max(
@@ -392,6 +405,7 @@ class PullResolver:
                         ip_bytes = ipaddress.IPv6Address(rdata.address).packed
                     results.append((ip_bytes, ttl))
             except dns.resolver.NXDOMAIN:
+                self.metrics.nxdomain_total += 1
                 self._rate_limiter.info(
                     log, ("nxdomain", qname, rdtype),
                     "pull_resolver: %s NXDOMAIN (%s)", qname, rdtype,
@@ -405,3 +419,45 @@ class PullResolver:
                     qname, rdtype, exc,
                 )
         return results
+
+
+class PullResolverMetricsCollector(CollectorBase):
+    """Prometheus collector for the active DNS pull resolver."""
+
+    def __init__(self, resolver: PullResolver) -> None:
+        super().__init__(netns="")
+        self._resolver = resolver
+
+    def collect(self) -> list[_MetricFamily]:
+        m = self._resolver.metrics
+        fams: list[_MetricFamily] = []
+
+        def gauge(name: str, help_text: str, value: float) -> None:
+            fam = _MetricFamily(name, help_text, [])
+            fam.add([], value)
+            fams.append(fam)
+
+        def counter(name: str, help_text: str, value: int) -> None:
+            fam = _MetricFamily(name, help_text, [], mtype="counter")
+            fam.add([], float(value))
+            fams.append(fam)
+
+        gauge("shorewalld_pull_resolver_groups_active",
+              "Number of dnsr: groups currently managed by the pull resolver",
+              float(self._resolver.group_count))
+        gauge("shorewalld_pull_resolver_in_flight",
+              "dnsr: groups currently mid-resolve",
+              float(len(self._resolver._in_flight)))
+        counter("shorewalld_pull_resolver_resolves_total",
+                "Completed group resolve passes (success + NXDOMAIN/error)",
+                m.resolves_total)
+        counter("shorewalld_pull_resolver_resolve_errors_total",
+                "Group resolves that returned no usable A/AAAA records",
+                m.resolve_errors_total)
+        counter("shorewalld_pull_resolver_nxdomain_total",
+                "NXDOMAIN responses received during qname resolution",
+                m.nxdomain_total)
+        counter("shorewalld_pull_resolver_entries_submitted_total",
+                "Individual (ip, ttl) entries submitted to SetWriter",
+                m.entries_submitted_total)
+        return fams

@@ -5,22 +5,12 @@ shorewalld process.  Operators configure multiple instances when running
 shorewall-nft in multiple network namespaces on the same host.
 
 Each instance tracks one compiled allowlist
-(``config_dir/dnsnames.compiled``) and reloads it into the DNS-set
-tracker when the file changes.
-
-Instances can be registered dynamically via the control socket
-(``register-instance`` / ``deregister-instance``). Dynamically registered
-instances are **not** monitored by :class:`InstanceManager`'s file watcher
-— they are updated explicitly via the control socket from the
-``shorewall-nft`` lifecycle commands.
-
-File-watching uses ``watchfiles`` if available, otherwise falls back to
-polling every 5 s.
+(``config_dir/dnsnames.compiled``).  Reloads are driven explicitly via
+the control socket (``register-instance`` / ``reload-instance``).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -123,14 +113,12 @@ class InstanceManager:
         configs: list[InstanceConfig],
         tracker: "DnsSetTracker",
         router: "WorkerRouter",
-        monitor: bool = False,
         pull_resolver: "PullResolver | None" = None,
         pull_resolver_factory: "PullResolverFactory | None" = None,
     ) -> None:
         self._configs = configs
         self._tracker = tracker
         self._router = router
-        self._monitor = monitor
         self._pull_resolver = pull_resolver
         # Factory invoked lazily when the first dnsr group appears via
         # dynamic register-instance. Returns the created PullResolver
@@ -139,36 +127,16 @@ class InstanceManager:
         self._states: dict[str, _InstanceState] = {
             cfg.name: _InstanceState(cfg=cfg) for cfg in configs
         }
-        self._monitor_task: asyncio.Task[None] | None = None
-        self._monitor_warned = False
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Load all instances and optionally start the file monitor."""
+        """Load all instances."""
         for cfg in self._configs:
             await self._load_instance(self._states[cfg.name])
 
-        if self._monitor:
-            if not self._monitor_warned:
-                log.warning(
-                    "instance monitor: --monitor enabled; this may conflict "
-                    "with explicit shorewall-nft start/reload hooks"
-                )
-                self._monitor_warned = True
-            self._monitor_task = asyncio.create_task(
-                self._watch_loop(), name="shorewalld.instance_monitor"
-            )
-
     async def shutdown(self) -> None:
-        """Cancel the file monitor if running."""
-        if self._monitor_task is not None:
-            self._monitor_task.cancel()
-            try:
-                await self._monitor_task
-            except asyncio.CancelledError:
-                pass
-            self._monitor_task = None
+        """No-op — file monitoring removed; instances are updated via control socket."""
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -421,61 +389,3 @@ class InstanceManager:
             len(self._states), len(merged_dns.specs), len(merged_dnsr.groups),
         )
 
-    async def _watch_loop(self) -> None:
-        """Watch all instance allowlist files for changes."""
-        paths = [str(state.cfg.allowlist_path) for state in self._states.values()]
-        log.info(
-            "instance monitor: watching %d path(s) for changes", len(paths)
-        )
-        try:
-            await self._watch_with_watchfiles(paths)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.debug(
-                "instance monitor: watchfiles unavailable, falling back to polling"
-            )
-            await self._watch_with_polling()
-
-    async def _watch_with_watchfiles(self, paths: list[str]) -> None:
-        """File watching via watchfiles (if installed)."""
-        import watchfiles  # type: ignore[import-not-found]
-
-        async for changes in watchfiles.awatch(*paths):
-            changed_paths = {change[1] for change in changes}
-            for state in self._states.values():
-                if str(state.cfg.allowlist_path) in changed_paths:
-                    log.debug(
-                        "instance monitor: %s changed, reloading",
-                        state.cfg.allowlist_path,
-                    )
-                    await self._load_instance(state)
-
-    async def _watch_with_polling(self) -> None:
-        """Polling fallback when watchfiles is not available (5 s interval)."""
-        # Build initial mtime map.
-        mtimes: dict[str, float] = {}
-        for state in self._states.values():
-            p = state.cfg.allowlist_path
-            try:
-                mtimes[state.cfg.name] = p.stat().st_mtime
-            except OSError:
-                mtimes[state.cfg.name] = 0.0
-
-        while True:
-            try:
-                await asyncio.sleep(5.0)
-            except asyncio.CancelledError:
-                return
-            for state in self._states.values():
-                p = state.cfg.allowlist_path
-                try:
-                    mtime = p.stat().st_mtime
-                except OSError:
-                    continue
-                if mtime != mtimes.get(state.cfg.name, 0.0):
-                    mtimes[state.cfg.name] = mtime
-                    log.debug(
-                        "instance monitor: %s changed (poll), reloading", p
-                    )
-                    await self._load_instance(state)

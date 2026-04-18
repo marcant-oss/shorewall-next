@@ -165,9 +165,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--state-flush", action="store_true",
         help="Delete the state file on start (fresh boot).")
-    p.add_argument(
-        "--reload-poll-interval", type=float, default=2.0, metavar="SECS",
-        help="Reload monitor poll interval (default: 2s).")
     # ── Multi-instance support ────────────────────────────────────────
     p.add_argument(
         "--instance", action="append", default=[], dest="instances",
@@ -176,11 +173,6 @@ def build_parser() -> argparse.ArgumentParser:
              "Repeat for multiple instances. Format: [netns:]<dir>. "
              "Omitting netns (or the colon) means root netns. "
              "Deprecated --allowlist-file is an alias for --instance <file>.")
-    p.add_argument(
-        "--monitor", action="store_true", default=False,
-        help="Watch instance config dirs with inotify and reload on change. "
-             "Optional — breaks the explicit shorewall-nft start/reload hook "
-             "flow.")
     p.add_argument(
         "--control-socket", default=None, metavar="PATH",
         help="Unix socket path for the control API (refresh-iplist, "
@@ -237,7 +229,6 @@ def _merge_conf_defaults(
     take("peer_auth_key_file", defaults.peer_secret_file)
     take("peer_heartbeat_interval", defaults.peer_heartbeat_interval)
     take("state_dir", defaults.state_dir)
-    take("reload_poll_interval", defaults.reload_poll_interval)
     take("log_level", defaults.log_level)
     take("log_target", defaults.log_target)
     take("log_format", defaults.log_format)
@@ -264,9 +255,6 @@ def _merge_conf_defaults(
     # (so --instance on the CLI always wins; conf-file extends).
     if defaults.instances and not args.instances:
         args.instances = list(defaults.instances)
-
-    if "monitor" not in explicit and defaults.monitor is True:
-        args.monitor = True
 
     take("control_socket", defaults.control_socket)
     take("control_socket_netns", defaults.control_socket_netns)
@@ -391,9 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         state_enabled=not args.no_state,
         state_no_load=args.no_state_load,
         state_flush=args.state_flush,
-        reload_poll_interval=args.reload_poll_interval,
         instances=list(args.instances),
-        monitor=args.monitor,
         control_socket=args.control_socket,
         control_socket_netns=args.control_socket_netns,
         iplist_configs=iplist_cfgs,
