@@ -50,7 +50,7 @@ The filter expression is any valid nft match. Common patterns:
 In a second terminal:
 
 ```bash
-sudo /usr/local/bin/run-netns exec shorewall-next-sim-bug \
+ip netns exec shorewall-next-sim-bug \
     nft monitor trace
 ```
 
@@ -81,7 +81,7 @@ The last line gives you:
 Which rules in this chain are hot?
 
 ```bash
-sudo /usr/local/bin/run-netns exec shorewall-next-sim-bug \
+ip netns exec shorewall-next-sim-bug \
     nft list counters table inet shorewall | grep -B1 'packets [1-9]'
 ```
 
@@ -168,7 +168,7 @@ yourself:
 shorewall-nft debug /etc/shorewall --netns shorewall-next-sim-bug
 
 # In another terminal:
-sudo /usr/local/bin/run-netns exec shorewall-next-sim-bug nft insert rule \
+ip netns exec shorewall-next-sim-bug nft insert rule \
     inet shorewall input \
     ip saddr 192.168.1.100 tcp dport 22 \
     meta nftrace set 1

@@ -5,50 +5,31 @@ description: Install the shorewall-nft test tooling, distro package reference, t
 
 # Test tooling setup
 
-## One-shot install
+## Running tests
 
-From a freshly cloned checkout:
-
-```bash
-sudo tools/install-test-tooling.sh
-```
-
-The installer is idempotent and does all of the following:
-
-1. Installs [`tools/run-netns`](../../tools/run-netns) to
-   `/usr/local/bin/run-netns` (root:root, 0755)
-2. Creates a system group `netns-test` if it does not exist
-3. Installs [`tools/sudoers.d-shorewall-nft`](../../tools/sudoers.d-shorewall-nft)
-   to `/etc/sudoers.d/shorewall-nft-tests` (validated via `visudo -c`)
-4. Adds the invoking user (`$SUDO_USER`) to the `netns-test` group
-5. Runs a smoke test: `run-netns list` as root
-
-Log out and back in for the group membership to take effect.
-
-Verify:
+Tests run as **root** via `tools/run-tests.sh`. No helper binaries,
+sudoers rules, or group membership needed.
 
 ```bash
-groups | grep netns-test
-sudo /usr/local/bin/run-netns list
+# Bootstrap a remote host once:
+tools/setup-remote-test-host.sh root@<host>
+
+# Run the full suite via systemd-run (survives SSH disconnect):
+ssh root@<host> systemd-run --unit=shorewall-pytest --collect \
+  --property=StandardOutput=file:/tmp/pytest.log \
+  --property=StandardError=file:/tmp/pytest.log \
+  /root/shorewall-nft/tools/run-tests.sh \
+    packages/shorewall-nft/tests/ \
+    packages/shorewalld/tests/ \
+    packages/shorewall-nft-simlab/tests/ -v
+
+# Follow: systemctl is-active shorewall-pytest; tail -f /tmp/pytest.log
 ```
 
-Both should succeed without prompting for a password.
-
-### Options
-
-```bash
-# Install but add a different user
-sudo tools/install-test-tooling.sh --user alice
-
-# Install without adding anyone to the group
-sudo tools/install-test-tooling.sh --no-user
-
-# Uninstall (removes wrapper + sudoers file; keeps the group intact)
-sudo tools/install-test-tooling.sh --uninstall
-
-# Show help
-tools/install-test-tooling.sh --help
-```
+`tools/run-tests.sh` uses `unshare --mount --net` to create a private
+network + mount namespace before pytest starts. nft rules, sysctl
+changes, and `ip netns add` bind-mounts inside tests are invisible to
+the host. Loopback (`lo`) is brought up automatically.
 
 ## Python environment
 
@@ -76,7 +57,7 @@ Runtime dependencies for testing, by distro:
 
     ```bash
     sudo apt install python3 python3-venv python3-pip \
-                     nftables iproute2 sudo \
+                     nftables iproute2 util-linux \
                      python3-nftables  # optional, for libnftables bindings
     ```
 
@@ -84,7 +65,7 @@ Runtime dependencies for testing, by distro:
 
     ```bash
     sudo dnf install python3 python3-pip \
-                     nftables iproute sudo \
+                     nftables iproute util-linux \
                      python3-nftables  # optional
     ```
 
@@ -92,19 +73,18 @@ Runtime dependencies for testing, by distro:
 
     ```bash
     sudo pacman -S python python-pip \
-                   nftables iproute2 sudo
+                   nftables iproute2 util-linux
     ```
 
 === "Alpine"
 
     ```bash
-    sudo apk add python3 py3-pip nftables iproute2 sudo
+    sudo apk add python3 py3-pip nftables iproute2 util-linux
     ```
 
-**`python3-nftables` is required** — without it, all namespace-entering
-operations (`--netns`, capability probing, start/stop/status inside a netns)
-fall back to spawning `sudo run-netns exec` subprocesses instead of using
-in-process `setns()` + libnftables. On production root systems, install it:
+**`python3-nftables` is recommended** — without it, operations like
+`shorewall-nft status --netns NS` use `ip netns exec` subprocesses
+for libnftables calls. On production root systems, install it:
 
 === "Debian / Ubuntu"
 
@@ -176,33 +156,26 @@ are the dependencies each package type will declare:
 - `python3-pytest` (≥ 8.0)
 - `python3-pytest-cov`
 - `python3-scapy` (for `simulate`, `connstate` tests)
-- `sudo` (for `run-netns`)
+- `util-linux` (`unshare` for test namespace isolation)
 
 **Doc extras:**
 
 - `python3-mkdocs-material`
 - `pandoc`
 
-The installer `tools/install-test-tooling.sh` is **not** intended to
-run from a distro package — distro packages should provide the
-`run-netns` wrapper + sudoers snippet via their own `postinst` /
-`%post` scriptlets, honoring `/etc/group` conventions.
+`tools/run-tests.sh` is the only test entry-point — it handles
+namespace isolation automatically. No sudoers rules, helper binaries,
+or group membership needed.
 
 ## Troubleshooting
-
-### `sudo: a password is required`
-
-You're not in the `netns-test` group yet (group changes apply on
-login). Log out and back in, or `newgrp netns-test` in the current
-shell.
 
 ### `ip: Peer netns reference is invalid`
 
 Something left a stale netns behind. Clean up:
 
 ```bash
-sudo /usr/local/bin/run-netns list
-sudo /usr/local/bin/run-netns delete <stale-name>
+ip netns list
+ip netns delete <stale-name>
 ```
 
 Project-owned namespaces are prefixed `shorewall-next-sim-*` — you

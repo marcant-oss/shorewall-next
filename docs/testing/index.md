@@ -20,17 +20,19 @@ git clone <repo> shorewall-nft && cd shorewall-nft
 # 2. Create a virtualenv and install shorewall-nft + dev deps
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev,simulate]"
+pip install -e "packages/shorewall-nft[dev,simulate]" \
+            -e "packages/shorewalld[dev]" \
+            -e "packages/shorewall-nft-simlab[dev]"
 
-# 3. Install the netns test tooling (one-shot, idempotent)
-sudo tools/install-test-tooling.sh
-
-# 4. Log out and back in so your group membership takes effect
-# (the installer adds you to the 'netns-test' group)
-
-# 5. Run the full test suite
-pytest tests/ -v
+# 3. Run the full test suite (must run as root on a dedicated host)
+sudo tools/run-tests.sh packages/shorewall-nft/tests/ \
+                        packages/shorewalld/tests/ \
+                        packages/shorewall-nft-simlab/tests/ -v
 ```
+
+`tools/run-tests.sh` creates a private network + mount namespace via
+`unshare --mount --net` before invoking pytest. No sudoers rules,
+helper binaries, or group membership needed beyond root access.
 
 If everything is green, you're ready to hack.
 
@@ -48,11 +50,10 @@ If everything is green, you're ready to hack.
 | Tool | Purpose | Shipped in | Required? |
 |------|---------|------------|-----------|
 | `pytest` | Unit + integration tests | pip dep (`[dev]`) | always |
-| `run-netns` | `ip netns` wrapper with NOPASSWD sudo | [`tools/run-netns`](../../tools/run-netns) | for netns tests |
-| `/etc/sudoers.d/shorewall-nft-tests` | sudoers rule for the wrapper | [`tools/sudoers.d-shorewall-nft`](../../tools/sudoers.d-shorewall-nft) | for netns tests |
-| `install-test-tooling.sh` | one-shot installer for the two above | [`tools/install-test-tooling.sh`](../../tools/install-test-tooling.sh) | run once |
+| `run-tests.sh` | Isolated test runner (`unshare --mount --net`) | [`tools/run-tests.sh`](../../tools/run-tests.sh) | for netns tests |
 | `nft` | kernel nftables binary | system (`nftables` package) | always |
 | `ip` | iproute2 for netns + interface setup | system (`iproute2`) | for netns tests |
+| `unshare` | private namespace for tests | system (`util-linux`) | for netns tests |
 | `scapy` | Packet crafting for connection-state tests | pip dep (`[simulate]`) | optional |
 | `pandoc` | DocBook → Markdown conversion | system (`pandoc`) | doc build only |
 | `mkdocs-material` | Docs site generator | pip dep (optional) | doc preview only |
@@ -135,7 +136,7 @@ In a second terminal:
 
 ```bash
 # Send a test packet from the trace-matched source
-sudo /usr/local/bin/run-netns exec shorewall-next-sim-bug \
+ip netns exec shorewall-next-sim-bug \
     nft monitor trace
 # (separate terminal) generate traffic with ping, curl, etc.
 ```
@@ -148,7 +149,7 @@ rules carry `comment "rules:38: OrgAdmin/ACCEPT net $FW"` annotations.
 
 ```bash
 # Which rule(s) matched?
-sudo /usr/local/bin/run-netns exec shorewall-next-sim-bug \
+ip netns exec shorewall-next-sim-bug \
     nft list counters table inet shorewall | grep -B1 'packets [1-9]'
 ```
 
@@ -196,34 +197,25 @@ your fix works. Commit.
 Before you ship the fix, add a unit test that would have caught the
 bug. See [Test suite](test-suite.md) for patterns.
 
-## Why run-netns
+## Test isolation
 
-Modern Linux network namespaces let you run an entire firewall
-ruleset in isolation — separate routing table, interfaces, and
-nftables state, with zero risk to the host. Almost every test in this
-project uses one or more netns via the thin wrapper at
-[`tools/run-netns`](../../tools/run-netns):
+`tools/run-tests.sh` uses `unshare --mount --net` to create a
+**private network + mount namespace** before pytest starts:
 
-```sh
-#!/bin/sh
-exec /sbin/ip netns "$@"
-```
+- All nft rules, sysctl changes, and `ip netns add` bind-mounts are
+  invisible to the host kernel.
+- Individual tests spin up their own nested network namespaces via
+  `ip netns add/exec/delete` — these are also fully isolated.
+- Loopback (`lo`) is brought up automatically so UDP-based tests work.
 
-Why the wrapper? **Auditable sudo access.** Granting `NOPASSWD` on
-`ip netns` via sudo would also grant it on `ip route`, `ip link`, and
-every other `ip` subcommand, which is a huge attack surface. The
-wrapper gates exactly one capability and is referenced by absolute
-path in the sudoers rule, so no PATH shenanigans.
-
-Install the wrapper + sudoers rule in one step with
-`sudo tools/install-test-tooling.sh` (see [Setup](setup.md)).
+Tests run as **root** — no sudoers rules, helper binaries, or group
+membership required.
 
 ## Security note
 
-The test tooling grants `netns-test` group members root-level
-namespace creation. **Only install this on development and CI
-machines.** It is not for production firewall hosts — an unprivileged
-user can create a network namespace, bind-mount filesystems, and
-create interfaces with arbitrary addresses, which is a local
-privilege vector. The installer warns about this; the sudoers file
-includes the same warning.
+Tests must run as root on a **dedicated test host**, not on a
+production firewall. The private namespace completely isolates test
+nft rules and namespace state from the host, but root access on a
+firewall node is itself a risk. See [Setup](setup.md) and
+[`tools/setup-remote-test-host.sh`](../../tools/setup-remote-test-host.sh)
+for the recommended remote-host workflow.
