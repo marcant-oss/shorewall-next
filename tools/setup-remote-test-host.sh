@@ -77,8 +77,7 @@ ssh "$REMOTE" 'cd /root/shorewall-nft && \
         -e "packages/shorewall-nft[dev]" \
         -e "packages/shorewalld[dev]" \
         -e "packages/shorewall-nft-simlab[dev]" && \
-    .venv/bin/shorewall-nft --version && \
-    .venv/bin/shorewalld --version'
+    .venv/bin/shorewall-nft --version'
 
 info "verify libnftables Python bindings (required for production setns path)"
 ssh "$REMOTE" 'python3 -c "

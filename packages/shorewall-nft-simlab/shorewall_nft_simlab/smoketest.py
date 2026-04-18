@@ -282,21 +282,19 @@ def _apply_sysctls(ns_name: str | None = None) -> list[str]:
     # Also set forwarding inside the FW netns if given, so the netns
     # kernel sees forwarded packets from its own perspective.
     if ns_name:
-        _fwd_paths = [
+        import subprocess
+        for path, value in [
             ("/proc/sys/net/ipv4/ip_forward",          "1"),
             ("/proc/sys/net/ipv6/conf/all/forwarding", "1"),
-        ]
-        from shorewall_nft.nft.netlink import _in_netns
-        try:
-            with _in_netns(ns_name):
-                for path, value in _fwd_paths:
-                    try:
-                        open(path, "w").write(value + "\n")
-                        applied.append(f"[{ns_name}] {path} → {value}")
-                    except OSError as e:
-                        applied.append(f"[{ns_name}] {path}: FAILED ({e})")
-        except OSError:
-            pass
+        ]:
+            r = subprocess.run(
+                ["ip", "netns", "exec", ns_name, "sh", "-c", f"echo {value} > {path}"],
+                capture_output=True, timeout=5,
+            )
+            if r.returncode == 0:
+                applied.append(f"[{ns_name}] {path} → {value}")
+            else:
+                applied.append(f"[{ns_name}] {path}: FAILED")
     return applied
 
 
@@ -959,14 +957,20 @@ def _flowtable_state(ns_name: str) -> str | None:
     fast-path is engaged at the end of a run — non-zero entry
     count proves at least one flow took the bypass.
 
-    Implementation: uses NftInterface.cmd() via libnftables + setns.
+    Implementation: subprocess via ip-netns-exec, safe from the event loop.
     Single call at the end of the run, not in the hot path.
     """
-    from shorewall_nft.nft.netlink import NftError, NftInterface
+    import json
+    import subprocess
     try:
-        nft = NftInterface()
-        data = nft.cmd("list flowtables", netns=ns_name)
-    except (NftError, Exception):
+        r = subprocess.run(
+            ["ip", "netns", "exec", ns_name, "nft", "-j", "list", "flowtables"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return None
+        data = json.loads(r.stdout)
+    except Exception:
         return None
     flowtables = [
         x.get("flowtable") for x in data.get("nftables", [])
