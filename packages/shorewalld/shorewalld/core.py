@@ -645,7 +645,12 @@ class Daemon:
                     config_dir=dir_path,
                     allowlist_path=allowlist_path,
                 )
-                n = await mgr.register(cfg)
+                dns_payload = None
+                if "dns" in req or "dnsr" in req:
+                    dns_payload = {
+                        k: req[k] for k in ("dns", "dnsr") if k in req
+                    }
+                n = await mgr.register(cfg, dns_payload=dns_payload)
                 return {"ok": True, "name": cfg.name, "qnames": n}
 
             async def _handle_deregister_instance(req: dict) -> dict:

@@ -564,6 +564,66 @@ def read_compiled_dnsr_allowlist(path: Path) -> DnsrRegistry:
     return registry
 
 
+def registry_to_payload(
+    dns_reg: "DnsSetRegistry | None",
+    dnsr_reg: "DnsrRegistry | None",
+) -> dict:
+    """Serialize DNS registries to a JSON-safe dict for the control socket.
+
+    The returned dict is suitable for merging directly into a
+    ``register-instance`` request payload.  Keys: ``"dns"`` and/or
+    ``"dnsr"``.  Use :func:`payload_to_registries` on the daemon side.
+    """
+    import dataclasses
+    result: dict = {}
+    if dns_reg is not None:
+        result["dns"] = {
+            "specs": {k: dataclasses.asdict(v) for k, v in dns_reg.specs.items()},
+            "default_ttl_floor": dns_reg.default_ttl_floor,
+            "default_ttl_ceil": dns_reg.default_ttl_ceil,
+            "default_size": dns_reg.default_size,
+        }
+    if dnsr_reg is not None:
+        result["dnsr"] = {
+            "groups": {k: dataclasses.asdict(v) for k, v in dnsr_reg.groups.items()},
+            "default_ttl_floor": dnsr_reg.default_ttl_floor,
+            "default_ttl_ceil": dnsr_reg.default_ttl_ceil,
+            "default_size": dnsr_reg.default_size,
+        }
+    return result
+
+
+def payload_to_registries(
+    d: dict,
+) -> "tuple[DnsSetRegistry, DnsrRegistry | None]":
+    """Deserialize DNS registries from a control-socket payload dict.
+
+    Counterpart to :func:`registry_to_payload`.  Returns a
+    ``(DnsSetRegistry, DnsrRegistry | None)`` pair.
+    """
+    dns_d = d.get("dns") or {}
+    dns_reg = DnsSetRegistry(
+        default_ttl_floor=dns_d.get("default_ttl_floor", DEFAULT_TTL_FLOOR),
+        default_ttl_ceil=dns_d.get("default_ttl_ceil", DEFAULT_TTL_CEIL),
+        default_size=dns_d.get("default_size", DEFAULT_SET_SIZE),
+    )
+    for spec_dict in dns_d.get("specs", {}).values():
+        dns_reg.add_spec(DnsSetSpec(**spec_dict))
+
+    dnsr_d = d.get("dnsr")
+    dnsr_reg: "DnsrRegistry | None" = None
+    if dnsr_d is not None:
+        dnsr_reg = DnsrRegistry(
+            default_ttl_floor=dnsr_d.get("default_ttl_floor", DEFAULT_TTL_FLOOR),
+            default_ttl_ceil=dnsr_d.get("default_ttl_ceil", DEFAULT_TTL_CEIL),
+            default_size=dnsr_d.get("default_size", DEFAULT_SET_SIZE),
+        )
+        for group_dict in dnsr_d.get("groups", {}).values():
+            dnsr_reg.groups[group_dict["primary_qname"]] = DnsrGroup(**group_dict)
+
+    return dns_reg, dnsr_reg
+
+
 def parse_dnsnames_file(
     lines: list[str] | list["object"],
     default_ttl_floor: int = DEFAULT_TTL_FLOOR,
