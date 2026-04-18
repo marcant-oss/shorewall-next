@@ -30,6 +30,7 @@ classifiers = [
     "Topic :: System :: Networking :: Firewalls",
 ]
 dependencies = [
+    "aiohttp>=3.9",
     "click>=8.0",
     "pyroute2>=0.7",
     "protobuf>=4.25",

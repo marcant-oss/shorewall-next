@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **shorewalld: IP-list sets** — new `iplist/` subsystem fetches public
+  prefix lists from cloud providers (AWS, Azure, GCP, Cloudflare, GitHub),
+  PeeringDB IX route servers, and hardcoded RFC bogons, and writes them into
+  nft `flags interval` sets. Diff-based: only changed prefixes are written per
+  refresh cycle. Configured via `IPLIST_<NAME>_PROVIDER/FILTERS/SET_V4/…`
+  keys in `shorewalld.conf`. Supports filter dimensions per provider
+  (AWS: `service`+`region` globs; Azure: `tag` globs; GitHub: `group`; etc.).
+  Bogon provider is fully offline.
+
+- **shorewalld: control socket** — optional Unix socket (`--control-socket`,
+  `CONTROL_SOCKET=`) with a line-oriented JSON protocol. Commands:
+  `ping`, `refresh-iplist [--name N]`, `iplist-status`,
+  `reload-instance [--name N]`, `instance-status`. Socket is always
+  `root:root 0660`. Bind inside a named netns via `--control-socket-netns`.
+
+- **shorewalld ctl** — new subcommand; thin client for the control socket.
+
+- **shorewalld iplist** — new subcommand; explore providers, list available
+  filter dimension values (live fetch), preview prefix output.
+
+- **shorewalld: multi-instance (`--instance`)** — replaces `--allowlist-file`.
+  Format: `[netns:]<shorewall-dir>`. Repeat for multiple instances. Each
+  instance reads its DNS allowlist from `<dir>/dnsnames.compiled`.
+  `--allowlist-file` still works with a deprecation warning.
+
+- **shorewalld: `--monitor`** — inotify watching on instance config dirs;
+  reloads `dnsnames.compiled` on atomic replace. Falls back to 5 s polling
+  when `watchfiles` is not installed. Off by default (conflicts with explicit
+  reload-hook approach).
+
+- **shorewalld: sysconfig/defaults** — systemd units now read
+  `EnvironmentFile=-/etc/sysconfig/shorewalld` (RPM) /
+  `EnvironmentFile=-/etc/default/shorewalld` (Debian) and pass
+  `$SHOREWALLD_ARGS` to `ExecStart`. `ExecReload=kill -USR1 $MAINPID`
+  triggers an immediate IP-list refresh. Template at
+  `packaging/sysconfig/shorewalld`.
+
+- **shorewalld: SIGUSR1** — refreshes all IP-list sets immediately.
+
+- **shorewalld: `aiohttp>=3.9`** — added as a hard dependency (was optional).
+
 ## [1.5.5] — 2026-04-18 — fix CI integration tests: preserve PATH under sudo
 
 ### Changes

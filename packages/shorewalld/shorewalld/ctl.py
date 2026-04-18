@@ -1,0 +1,144 @@
+"""``shorewalld ctl`` — control socket client CLI.
+
+Connects to a running shorewalld control socket and sends a command.
+
+Usage::
+
+    shorewalld ctl --socket /run/shorewalld/control.sock ping
+    shorewalld ctl --socket /run/shorewalld/control.sock refresh-iplist
+    shorewalld ctl --socket /run/shorewalld/control.sock refresh-iplist --name aws_ec2_eu
+    shorewalld ctl --socket /run/shorewalld/control.sock iplist-status
+    shorewalld ctl --socket /run/shorewalld/control.sock reload-instance
+    shorewalld ctl --socket /run/shorewalld/control.sock reload-instance --name fw
+    shorewalld ctl --socket /run/shorewalld/control.sock instance-status
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import socket
+import sys
+from typing import Any
+
+
+def _build_ctl_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="shorewalld ctl",
+        description="Send a command to a running shorewalld control socket",
+    )
+    p.add_argument(
+        "--socket", default="/run/shorewalld/control.sock",
+        metavar="PATH",
+        help="Path to the shorewalld control socket "
+             "(default: /run/shorewalld/control.sock)",
+    )
+    sub = p.add_subparsers(dest="command", metavar="COMMAND")
+    sub.required = True
+
+    sub.add_parser("ping", help="Check if shorewalld is alive")
+
+    ri = sub.add_parser(
+        "refresh-iplist", help="Trigger an immediate IP list refresh"
+    )
+    ri.add_argument(
+        "--name", default=None, metavar="NAME",
+        help="Refresh only this named list (default: all)",
+    )
+
+    sub.add_parser("iplist-status", help="Show IP list status")
+
+    rl = sub.add_parser(
+        "reload-instance",
+        help="Reload the DNS allowlist for one or all instances",
+    )
+    rl.add_argument(
+        "--name", default=None, metavar="NAME",
+        help="Reload only this instance (default: all)",
+    )
+
+    sub.add_parser("instance-status", help="Show instance status")
+
+    return p
+
+
+def _build_request(args: argparse.Namespace) -> dict:
+    """Translate parsed args into a JSON request dict."""
+    cmd = args.command
+    req: dict[str, Any] = {"cmd": cmd}
+
+    if cmd == "refresh-iplist" and args.name:
+        req["name"] = args.name
+    elif cmd == "reload-instance" and args.name:
+        req["name"] = args.name
+
+    return req
+
+
+def _send(socket_path: str, request: dict) -> dict:
+    """Send *request* over the control socket and return the response."""
+    payload = json.dumps(request, separators=(",", ":")).encode() + b"\n"
+
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    except OSError as e:
+        raise SystemExit(f"ctl: cannot create socket: {e}") from e
+
+    try:
+        sock.connect(socket_path)
+    except FileNotFoundError:
+        raise SystemExit(
+            f"ctl: control socket not found: {socket_path}\n"
+            f"Is shorewalld running with --control-socket?"
+        ) from None
+    except PermissionError:
+        raise SystemExit(
+            f"ctl: permission denied: {socket_path}"
+        ) from None
+    except OSError as e:
+        raise SystemExit(f"ctl: connect to {socket_path}: {e}") from e
+
+    try:
+        sock.settimeout(15.0)
+        sock.sendall(payload)
+        # Read until newline.
+        buf = b""
+        while b"\n" not in buf:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    except OSError as e:
+        raise SystemExit(f"ctl: I/O error: {e}") from e
+    finally:
+        sock.close()
+
+    line = buf.split(b"\n", 1)[0]
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"ctl: invalid JSON response: {e}; got {line!r}") from e
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for ``shorewalld ctl``."""
+    parser = _build_ctl_parser()
+    args = parser.parse_args(argv)
+
+    request = _build_request(args)
+
+    try:
+        response = _send(args.socket, request)
+    except SystemExit as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    # Pretty-print the response.
+    print(json.dumps(response, indent=2))
+
+    if not response.get("ok", False):
+        error = response.get("error", "command failed")
+        print(f"ctl: error: {error}", file=sys.stderr)
+        return 1
+
+    return 0

@@ -1,7 +1,7 @@
 # shorewalld — monitoring + DNS-set API daemon
 
 `shorewalld` is the long-running companion process to `shorewall-nft`.
-It serves two jobs:
+It serves three jobs:
 
 1. **Prometheus exporter** — scrapes per-rule packet/byte counters out
    of every `inet shorewall` table on the box, across multiple network
@@ -10,9 +10,12 @@ It serves two jobs:
    `pdns_recursor` and populates nft sets named `dns_<qname>_v4` /
    `dns_<qname>_v6` from DNS responses, so firewall rules can filter
    on hostname without runtime resolution.
+3. **IP-list sets** *(opt-in)* — periodically fetches public prefix
+   lists from cloud providers, CDNs, IX route servers, and RFC bogon
+   definitions, and writes them into nft `flags interval` sets so
+   firewall rules can match on cloud service, ASN, or IX membership.
 
-Both jobs are off by default for the second one. Running `shorewalld`
-with no flags starts a pure exporter bound to `:9748`.
+Running `shorewalld` with no flags starts a pure exporter bound to `:9748`.
 
 ## Configuration file
 
@@ -40,7 +43,22 @@ NETNS=fw,rns1,rns2
 SCRAPE_INTERVAL=30
 REPROBE_INTERVAL=300
 
-ALLOWLIST_FILE=/var/lib/shorewalld/dns-allowlist.tsv
+# Multi-instance (repeat INSTANCE= for each directory)
+INSTANCE=fw:/etc/shorewall
+INSTANCE=rns1:/etc/shorewall-rns1
+MONITOR=no                     # set yes to enable inotify watching
+
+# Control socket
+CONTROL_SOCKET=/run/shorewalld/control.sock
+# CONTROL_SOCKET_NETNS=fw      # optional: bind inside netns
+
+# IP-list sets (one block per set; see "IP-list sets" section)
+IPLIST_BOGON_PROVIDER=bogon
+IPLIST_BOGON_SET_V4=bogon_v4
+IPLIST_BOGON_SET_V6=bogon_v6
+
+# Legacy — use INSTANCE= instead
+# ALLOWLIST_FILE=/var/lib/shorewalld/dns-allowlist.tsv
 LISTEN_API=/run/shorewalld/dnstap.sock
 PBDNS_SOCKET=/run/shorewalld/pbdns.sock
 PBDNS_TCP=127.0.0.1:9999       # pdns protobufServer() is TCP-only
@@ -102,18 +120,28 @@ main firewall compiler can still install on a minimal box.
 ```
 shorewalld [OPTIONS]
 
-  --listen-prom HOST:PORT     Prometheus scrape endpoint (default :9748)
-  --listen-api PATH           Unix socket for the dnstap consumer (off
-                              by default; set e.g. /run/shorewalld/dnstap.sock
-                              to enable)
-  --netns SPEC                Namespace selection:
-                                 (empty)        → daemon's own netns
-                                 auto           → walk /run/netns/
-                                 fw,rns1,rns2   → explicit comma list
-  --scrape-interval SECS      Per-netns ruleset cache TTL (default 30)
-  --reprobe-interval SECS     How often to re-check which netns have a
-                              loaded inet shorewall table (default 300)
-  --log-level LEVEL           debug, info, warning, error
+  --listen-prom HOST:PORT          Prometheus scrape endpoint (default :9748)
+  --listen-api PATH                Unix socket for the dnstap consumer
+  --netns SPEC                     Namespace selection:
+                                      (empty)       → daemon's own netns
+                                      auto          → walk /run/netns/
+                                      fw,rns1,rns2  → explicit comma list
+  --instance [NETNS:]DIR           shorewall-nft config directory (repeat
+                                   for multiple instances). Replaces
+                                   --allowlist-file.
+  --monitor                        Watch instance dirs with inotify; reload
+                                   dnsnames.compiled on change.
+  --control-socket PATH            Unix socket for the control API
+                                   (refresh-iplist, reload-instance, …)
+  --control-socket-netns NETNS     Bind the control socket inside this netns
+  --scrape-interval SECS           Per-netns ruleset cache TTL (default 30)
+  --reprobe-interval SECS          How often to re-check netns tables (default 300)
+  --log-level LEVEL                debug, info, warning, error
+
+Subcommands:
+  shorewalld tap [OPTIONS]         Live dnstap inspection (see below)
+  shorewalld ctl [OPTIONS] CMD     Control socket client
+  shorewalld iplist [OPTIONS] CMD  IP-list provider explorer
 ```
 
 ## Metrics
@@ -266,6 +294,382 @@ the recursor sends to a client is seen — including cache hits — with
 the TTL already clamped to the remaining cache lifetime. This is the
 correct event: `RESOLVER_QUERY`/`RESOLVER_RESPONSE` would miss cache
 hits entirely and produce stale/doubled updates.
+
+## Multi-instance operation (`--instance`)
+
+A single `shorewalld` process can manage multiple independent
+`shorewall-nft` config directories — one per network namespace. Each
+directory is called an *instance*.
+
+```sh
+shorewalld \
+    --instance fw:/etc/shorewall \
+    --instance rns1:/etc/shorewall-rns1 \
+    --instance /etc/shorewall6          # root ns, colon optional
+```
+
+Format: `[netns:]<dir>`. Omitting the netns (or the colon entirely)
+means the daemon's own (root) namespace. The instance name is derived
+from the netns name, or from the directory basename when no netns is
+given.
+
+For each instance shorewalld expects a compiled DNS allowlist at
+`<dir>/dnsnames.compiled` — the file produced by `shorewall-nft start`.
+On startup (and on every explicit reload), shorewalld reads that file
+and updates its in-memory DNS tracker.
+
+`--instance` replaces the legacy `--allowlist-file` flag.
+`--allowlist-file <path>` is still accepted but logs a deprecation
+warning and is treated as `--instance <path>`.
+
+### Instance reload
+
+```sh
+# Reload all instances (re-read dnsnames.compiled from every dir).
+shorewalld ctl reload-instance
+
+# Reload a single instance by name.
+shorewalld ctl reload-instance --name fw
+```
+
+Typically called from the post-start hook of `shorewall-nft.service`
+so the DNS tracker always reflects the current compiled config:
+
+```ini
+# /etc/systemd/system/shorewall-nft.service.d/shorewalld-notify.conf
+[Service]
+ExecStartPost=-/usr/bin/shorewalld ctl \
+    --socket /run/shorewalld/control.sock \
+    reload-instance --name fw
+```
+
+### File-watching (`--monitor`)
+
+`--monitor` (or `MONITOR=yes` in `shorewalld.conf`) enables inotify
+watching on every instance's `dnsnames.compiled` file. When the file
+is atomically replaced by `shorewall-nft start`, shorewalld detects
+the write and reloads the instance immediately — no hook needed.
+
+**Caution:** `--monitor` conflicts with the explicit reload-hook
+approach because both paths fire independently on a `shorewall-nft
+start`. Use one or the other, not both. For most deployments the
+explicit hook (`ExecStartPost`) is safer because it serialises the
+reload.
+
+```
+# shorewalld.conf
+MONITOR=yes
+```
+
+Uses `watchfiles` if installed, otherwise falls back to 5-second polling.
+
+---
+
+## IP-list sets
+
+shorewalld can periodically fetch public prefix lists and write them
+into nft `flags interval` sets. The sets are populated in every
+network namespace that has a loaded `inet shorewall` table, diffed
+against the current kernel state so only deltas are written.
+
+### Declaring the sets (compiler side)
+
+The operator declares the nft sets in their shorewall-nft config (the
+same way `dns_*` sets are declared). shorewalld populates them; it
+never creates or destroys sets.
+
+Example set declaration in a shorewall-nft `nft-extras` snippet:
+
+```nft
+set cloud_aws_ec2_eu_v4 {
+    type ipv4_addr
+    flags interval
+    comment "AWS EC2 eu-* — managed by shorewalld"
+}
+set cloud_cf_v4 {
+    type ipv4_addr
+    flags interval
+    comment "Cloudflare CDN — managed by shorewalld"
+}
+set bogon_v4 {
+    type ipv4_addr
+    flags interval
+    comment "RFC bogons — managed by shorewalld"
+}
+```
+
+### Configuration
+
+In `shorewalld.conf`, one block per set. Each block is identified by a
+unique name (the middle part of the key: `IPLIST_<NAME>_…`).
+
+```ini
+# AWS EC2, EU regions only
+IPLIST_AWS_EC2_EU_PROVIDER=aws
+IPLIST_AWS_EC2_EU_FILTERS=service:EC2,region:eu-*
+IPLIST_AWS_EC2_EU_SET_V4=cloud_aws_ec2_eu_v4
+IPLIST_AWS_EC2_EU_REFRESH=3600
+
+# Cloudflare (no filters — one global range)
+IPLIST_CF_PROVIDER=cloudflare
+IPLIST_CF_SET_V4=cloud_cf_v4
+IPLIST_CF_SET_V6=cloud_cf_v6
+IPLIST_CF_REFRESH=3600
+
+# Azure Active Directory
+IPLIST_AZURE_AD_PROVIDER=azure
+IPLIST_AZURE_AD_FILTERS=tag:AzureActiveDirectory
+IPLIST_AZURE_AD_SET_V4=cloud_azure_ad_v4
+IPLIST_AZURE_AD_REFRESH=3600
+
+# GCP europe-west3 and global
+IPLIST_GCP_EU_PROVIDER=gcp
+IPLIST_GCP_EU_FILTERS=scope:europe-west3,scope:global
+IPLIST_GCP_EU_SET_V4=cloud_gcp_eu_v4
+IPLIST_GCP_EU_REFRESH=3600
+
+# GitHub Actions runners
+IPLIST_GH_ACTIONS_PROVIDER=github
+IPLIST_GH_ACTIONS_FILTERS=group:actions
+IPLIST_GH_ACTIONS_SET_V4=cloud_github_v4
+IPLIST_GH_ACTIONS_REFRESH=3600
+
+# RFC bogons (offline, no HTTP)
+IPLIST_BOGON_PROVIDER=bogon
+IPLIST_BOGON_SET_V4=bogon_v4
+IPLIST_BOGON_SET_V6=bogon_v6
+IPLIST_BOGON_REFRESH=86400
+
+# DE-CIX Frankfurt peering prefixes
+IPLIST_DECIX_PROVIDER=peeringdb
+IPLIST_DECIX_FILTERS=ix:DE-CIX Frankfurt
+IPLIST_DECIX_SET_V4=ix_decix_v4
+IPLIST_DECIX_SET_V6=ix_decix_v6
+IPLIST_DECIX_REFRESH=86400
+```
+
+Keys per block:
+
+| Key | Required | Description |
+|---|---|---|
+| `PROVIDER` | yes | Provider name (see below) |
+| `FILTERS` | no | Comma-separated `dimension:value` pairs |
+| `SET_V4` | no | nft set name for IPv4 prefixes |
+| `SET_V6` | no | nft set name for IPv6 prefixes |
+| `REFRESH` | no | Refresh interval in seconds (default 3600) |
+| `MAX_PREFIXES` | no | Safety cap — skip write if exceeded (default 100 000) |
+
+### Providers and filters
+
+#### `aws` — AWS ip-ranges.json
+
+Source: `https://ip-ranges.amazonaws.com/ip-ranges.json`
+
+| Dimension | Values | Example |
+|---|---|---|
+| `service` | `EC2`, `S3`, `CLOUDFRONT`, `ROUTE53`, `GLOBALACCELERATOR`, `API_GATEWAY`, `AMAZON` (all), … | `service:EC2` |
+| `region` | `eu-central-1`, `us-east-1`, `GLOBAL`, … — **glob patterns supported** | `region:eu-*` |
+
+#### `azure` — Azure Service Tags
+
+Source: Azure Service Tags weekly JSON (Microsoft CDN).
+
+| Dimension | Values | Example |
+|---|---|---|
+| `tag` | `AzureCloud`, `Storage`, `Sql`, `AzureActiveDirectory`, `ActionGroup`, `AzureDevOps`, `AppService`, `AzureMonitor`, … (~200 tags) — **glob + region suffix** (`Storage.WestEurope`) | `tag:AzureActiveDirectory` |
+| `url` | Override the source URL (Microsoft rotates it weekly) | `url:https://…` |
+
+#### `gcp` — Google Cloud
+
+Source: `https://www.gstatic.com/ipranges/cloud.json`
+
+| Dimension | Values | Example |
+|---|---|---|
+| `service` | `Google Cloud` (coarse) | `service:Google Cloud` |
+| `scope` | Region name or `global` | `scope:europe-west3` |
+
+#### `cloudflare`
+
+Sources: `https://www.cloudflare.com/ips-v4` and `ips-v6`
+
+No filter dimensions. Both URLs are fetched and combined.
+
+#### `github` — GitHub meta API
+
+Source: `https://api.github.com/meta`
+
+| Dimension | Values |
+|---|---|
+| `group` | `actions`, `api`, `copilot`, `dependabot`, `git`, `hooks`, `packages`, `pages`, `web` — **glob supported** |
+
+#### `bogon` — RFC special-use ranges
+
+No HTTP fetch — fully offline. Hardcoded from RFCs 1122, 1918, 6598,
+5737, 3927, 2544, 4291, 6052, 3849, 4193.
+
+| Dimension | Values |
+|---|---|
+| `type` | `bogon` (v4+v6, default), `ipv4_only`, `ipv6_only` |
+
+IPv4: `0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16
+172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 198.18.0.0/15
+198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4
+255.255.255.255/32`
+
+IPv6: `::/128 ::1/128 ::ffff:0:0/96 64:ff9b::/96 100::/64 2001::/32
+2001:2::/48 2001:db8::/32 2002::/16 fc00::/7 fe80::/10 ff00::/8`
+
+#### `peeringdb` — PeeringDB IX prefixes
+
+Source: `https://www.peeringdb.com/api/ixpfx`
+
+| Dimension | Values | Example |
+|---|---|---|
+| `ix` | Internet Exchange name (case-insensitive substring) | `ix:DE-CIX Frankfurt` |
+| `asn` | Numeric ASN | `asn:1299` |
+
+### Exploring available filters
+
+```sh
+# List all providers and their filter dimensions (no network).
+shorewalld iplist providers
+
+# Show available values for a filter dimension (live fetch).
+shorewalld iplist filters aws --dimension service
+shorewalld iplist filters aws --dimension region
+shorewalld iplist filters azure --dimension tag
+shorewalld iplist filters github --dimension group
+shorewalld iplist filters peeringdb --dimension ix
+
+# Preview what a filter configuration would yield.
+shorewalld iplist show aws --filters service:EC2,region:eu-* --family v4
+```
+
+### Manual refresh
+
+```sh
+# Immediate full refresh (all lists) via SIGUSR1.
+kill -USR1 $(pidof shorewalld)
+systemctl kill --signal=USR1 shorewalld
+
+# Selective refresh via control socket.
+shorewalld ctl --socket /run/shorewalld/control.sock refresh-iplist
+shorewalld ctl --socket /run/shorewalld/control.sock refresh-iplist --name aws_ec2_eu
+
+# Status of all lists.
+shorewalld ctl --socket /run/shorewalld/control.sock iplist-status
+```
+
+### Metrics
+
+```
+shorewalld_iplist_prefixes_total{name,family}        # gauge — current prefix count
+shorewalld_iplist_last_refresh_timestamp{name}       # gauge — unix timestamp
+shorewalld_iplist_fetch_duration_seconds{name}       # summary
+shorewalld_iplist_fetch_errors_total{name,reason}    # counter
+shorewalld_iplist_updates_total{name,op}             # counter — op=add|remove
+```
+
+### Log output
+
+Every refresh logs one `INFO` line:
+
+```
+iplist aws_ec2_eu: refresh complete — 312 v4 + 0 v6 prefixes
+  (+5 added, -2 removed) across 3 netns [2.1s, ETag hit]
+```
+
+Level guide:
+
+| Situation | Level |
+|---|---|
+| Refresh complete (delta or no-op) | `INFO` / `DEBUG` |
+| Filter matched 0 prefixes | `WARNING` (rate-limited) |
+| HTTP error, entering backoff | `WARNING` |
+| max_prefixes exceeded, write skipped | `ERROR` |
+
+---
+
+## Control socket (`--control-socket`)
+
+An optional Unix socket for operator control commands. Line-oriented
+JSON protocol.
+
+```ini
+# shorewalld.conf
+CONTROL_SOCKET=/run/shorewalld/control.sock
+CONTROL_SOCKET_NETNS=fw        # optional: bind inside netns "fw"
+```
+
+Or via CLI: `--control-socket /run/shorewalld/control.sock`.
+
+The socket is always created with `root:root 0660`. Only root can
+connect by default; add the socket to a group via a drop-in if needed.
+
+### `shorewalld ctl` — control client
+
+```sh
+shorewalld ctl --socket PATH <command> [options]
+
+Commands:
+  ping                         Verify the daemon is alive.
+  refresh-iplist [--name N]    Force immediate IP-list refresh.
+  iplist-status                Show status of all IP-list configs.
+  reload-instance [--name N]   Reload DNS allowlist from disk.
+  instance-status              Show status of all instances.
+```
+
+The `--socket` flag defaults to `/run/shorewalld/control.sock`.
+
+Example:
+
+```sh
+$ shorewalld ctl ping
+{"ok": true, "version": "1"}
+
+$ shorewalld ctl iplist-status
+[
+  {"name": "aws_ec2_eu", "prefixes_v4": 312, "prefixes_v6": 0,
+   "last_refresh": "2026-04-18T14:23:01Z", "status": "ok"},
+  {"name": "bogon", "prefixes_v4": 15, "prefixes_v6": 12,
+   "last_refresh": "2026-04-18T14:20:00Z", "status": "ok"}
+]
+```
+
+---
+
+## sysconfig / defaults file
+
+The systemd units read an optional `EnvironmentFile` before starting
+the daemon. This is the standard way to pass multi-value flags (like
+multiple `--instance`) that can't easily go in `shorewalld.conf`.
+
+Locations (first present wins):
+
+- RPM-based distros: `/etc/sysconfig/shorewalld`
+- Debian-based distros: `/etc/default/shorewalld`
+
+The file sets a single shell variable:
+
+```bash
+# /etc/sysconfig/shorewalld   (or /etc/default/shorewalld)
+SHOREWALLD_ARGS="--instance fw:/etc/shorewall \
+                 --instance rns1:/etc/shorewall-rns1 \
+                 --control-socket /run/shorewalld/control.sock"
+```
+
+`$SHOREWALLD_ARGS` is appended to `ExecStart` in the systemd unit.
+All existing `shorewalld.conf` knobs still work alongside it —
+the two files serve different purposes: `shorewalld.conf` for
+scalar settings, `SHOREWALLD_ARGS` for flags that repeat or that
+are awkward in KEY=VALUE form.
+
+A template is installed at `packaging/sysconfig/shorewalld`.
+
+`systemctl reload shorewalld` sends `SIGUSR1` (refreshes all IP
+lists without restarting the daemon).
+
+---
 
 ## systemd units
 

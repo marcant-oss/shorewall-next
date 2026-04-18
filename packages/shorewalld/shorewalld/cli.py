@@ -168,6 +168,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--reload-poll-interval", type=float, default=2.0, metavar="SECS",
         help="Reload monitor poll interval (default: 2s).")
+    # ── Multi-instance support ────────────────────────────────────────
+    p.add_argument(
+        "--instance", action="append", default=[], dest="instances",
+        metavar="[NETNS:]DIR",
+        help="shorewall-nft config directory for one instance. "
+             "Repeat for multiple instances. Format: [netns:]<dir>. "
+             "Omitting netns (or the colon) means root netns. "
+             "Deprecated --allowlist-file is an alias for --instance <file>.")
+    p.add_argument(
+        "--monitor", action="store_true", default=False,
+        help="Watch instance config dirs with inotify and reload on change. "
+             "Optional — breaks the explicit shorewall-nft start/reload hook "
+             "flow.")
+    p.add_argument(
+        "--control-socket", default=None, metavar="PATH",
+        help="Unix socket path for the control API (refresh-iplist, "
+             "reload-instance, status). Off by default.")
+    p.add_argument(
+        "--control-socket-netns", default=None, metavar="NETNS",
+        help="Bind the control socket inside this named netns.")
     for sub in SUBSYSTEMS:
         p.add_argument(
             f"--log-level-{sub}", default=None, metavar="LEVEL",
@@ -238,21 +258,42 @@ def _merge_conf_defaults(
 
     if "no_state" not in explicit and defaults.state_enabled is False:
         args.no_state = True
+
+    # Multi-instance / control / iplist settings from config file.
+    # For instances: config-file specs are *appended* to the CLI list
+    # (so --instance on the CLI always wins; conf-file extends).
+    if defaults.instances and not args.instances:
+        args.instances = list(defaults.instances)
+
+    if "monitor" not in explicit and defaults.monitor is True:
+        args.monitor = True
+
+    take("control_socket", defaults.control_socket)
+    take("control_socket_netns", defaults.control_socket_netns)
+
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     """shorewalld entry point. Returns exit code.
 
-    Recognises a ``tap`` subcommand that invokes the operator-facing
-    tap CLI (``shorewalld tap --socket /run/foo.sock``). Everything
-    else is parsed as the daemon arguments.
+    Recognises subcommands that dispatch to their own CLIs:
+    * ``tap``    — operator tap CLI
+    * ``ctl``    — control socket client
+    * ``iplist`` — IP list provider query CLI
+    Everything else is parsed as the daemon arguments.
     """
     if argv is None:
         argv = sys.argv[1:]
     if argv and argv[0] == "tap":
         from .tap import main as tap_main
         return tap_main(argv[1:])
+    if argv and argv[0] == "ctl":
+        from .ctl import main as ctl_main
+        return ctl_main(argv[1:])
+    if argv and argv[0] == "iplist":
+        from .iplist_cli import main as iplist_main
+        return iplist_main(argv[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -286,6 +327,18 @@ def main(argv: list[str] | None = None) -> int:
 
     peer_bind_host, peer_bind_port = _parse_listen_addr(args.peer_bind)
 
+    # Handle --allowlist-file deprecation: treat it as --instance <path>.
+    # Done after config-file merge so the config-file ALLOWLIST_FILE
+    # also gets the deprecation path.
+    if args.allowlist_file and not args.instances:
+        import warnings
+        warnings.warn(
+            "--allowlist-file is deprecated; use --instance <path>",
+            DeprecationWarning,
+            stacklevel=1,
+        )
+        args.instances = [str(args.allowlist_file)]
+
     # Imported lazily so --help works without prometheus_client installed.
     from .core import Daemon
 
@@ -297,6 +350,20 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(
                 f"--socket-mode/SOCKET_MODE must be octal, "
                 f"got {args.socket_mode!r}")
+
+    # Parse IPLIST_* config lines into IpListConfig objects.
+    iplist_cfgs: list = []
+    if defaults.iplist_configs:
+        try:
+            from .iplist.protocol import parse_iplist_configs
+            raw_iplist = {}
+            for line in defaults.iplist_configs:
+                if "=" in line:
+                    k, _, v = line.partition("=")
+                    raw_iplist[k.strip()] = v.strip()
+            iplist_cfgs = parse_iplist_configs(raw_iplist)
+        except Exception as e:
+            parser.error(f"IPLIST_* config parse error: {e}")
 
     daemon = Daemon(
         prom_host=prom_host,
@@ -325,6 +392,11 @@ def main(argv: list[str] | None = None) -> int:
         state_no_load=args.no_state_load,
         state_flush=args.state_flush,
         reload_poll_interval=args.reload_poll_interval,
+        instances=list(args.instances),
+        monitor=args.monitor,
+        control_socket=args.control_socket,
+        control_socket_netns=args.control_socket_netns,
+        iplist_configs=iplist_cfgs,
     )
     try:
         return asyncio.run(daemon.run())

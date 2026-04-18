@@ -14,7 +14,10 @@ Type=simple
 # cleaner, but we keep it simple with a fixed port; operators that
 # want multi-instance scraping should use per-instance NetworkNamespacePath
 # drop-ins to bind inside the target netns and pick distinct ports.
-ExecStart=/usr/bin/shorewalld --listen-prom :9748 --netns %i
+EnvironmentFile=-/etc/sysconfig/shorewalld
+EnvironmentFile=-/etc/default/shorewalld
+ExecStart=/usr/bin/shorewalld --listen-prom :9748 --netns %i $SHOREWALLD_ARGS
+ExecReload=/bin/kill -USR1 $MAINPID
 Restart=on-failure
 RestartSec=5s
 
