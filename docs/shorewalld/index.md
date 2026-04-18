@@ -322,7 +322,55 @@ and updates its in-memory DNS tracker.
 `--allowlist-file <path>` is still accepted but logs a deprecation
 warning and is treated as `--instance <path>`.
 
-### Instance reload
+### Dynamic registration from `shorewall-nft start` (recommended)
+
+Since v1.6, `shorewall-nft start` / `restart` / `reload` contact the
+shorewalld control socket and register the instance after applying
+the ruleset. `shorewall-nft stop` deregisters it. No systemd hook is
+required — the firewall CLI is the source of truth for what should
+be tracked.
+
+```
+shorewall-nft start
+  … Writing DNS name allowlist            ✓  (12 tap, 3 pull-resolver)
+  … Registering instance 'fw' with shorewalld  ✓  (15 name(s))
+```
+
+The instance name precedence is:
+
+1. `--instance-name NAME` (CLI) or `SHOREWALLD_INSTANCE_NAME` (env)
+2. `INSTANCE_NAME=…` in `shorewall.conf`
+3. `--netns` value, if set
+4. basename of the config directory (deterministic fallback)
+
+The register payload carries the full instance config as JSON:
+
+```json
+{
+  "cmd": "register-instance",
+  "name": "fw",
+  "netns": "",
+  "config_dir": "/etc/shorewall46",
+  "allowlist_path": "/etc/shorewall46/dnsnames.compiled"
+}
+```
+
+**Error handling.** Socket missing or permission denied → warning,
+`shorewall-nft start` continues. Any other registration failure
+**with DNS/`dnsr:` sets present** → hard abort (sets would otherwise
+go unpopulated). Deregistration is always non-fatal; removed names
+age out via their per-element TTL.
+
+**Dynamic-only daemon.** You don't have to pre-declare
+`--instance fw:/etc/shorewall46` on the shorewalld side. If only
+`--control-socket` is configured, shorewalld starts its
+`InstanceManager` with an empty list and accepts `register-instance`
+from any `shorewall-nft start` that runs later.
+
+### Manual reload (legacy hook path)
+
+Still supported if you prefer an explicit post-start hook instead of
+the built-in registration:
 
 ```sh
 # Reload all instances (re-read dnsnames.compiled from every dir).
@@ -331,9 +379,6 @@ shorewalld ctl reload-instance
 # Reload a single instance by name.
 shorewalld ctl reload-instance --name fw
 ```
-
-Typically called from the post-start hook of `shorewall-nft.service`
-so the DNS tracker always reflects the current compiled config:
 
 ```ini
 # /etc/systemd/system/shorewall-nft.service.d/shorewalld-notify.conf
@@ -350,11 +395,10 @@ watching on every instance's `dnsnames.compiled` file. When the file
 is atomically replaced by `shorewall-nft start`, shorewalld detects
 the write and reloads the instance immediately — no hook needed.
 
-**Caution:** `--monitor` conflicts with the explicit reload-hook
-approach because both paths fire independently on a `shorewall-nft
-start`. Use one or the other, not both. For most deployments the
-explicit hook (`ExecStartPost`) is safer because it serialises the
-reload.
+**Caution:** `--monitor` conflicts with the dynamic-registration
+path and the explicit reload-hook approach because all three fire
+independently on a `shorewall-nft start`. Use only one. For new
+deployments, prefer dynamic registration (built-in since v1.6).
 
 ```
 # shorewalld.conf
@@ -612,12 +656,18 @@ connect by default; add the socket to a group via a drop-in if needed.
 shorewalld ctl --socket PATH <command> [options]
 
 Commands:
-  ping                         Verify the daemon is alive.
-  refresh-iplist [--name N]    Force immediate IP-list refresh.
-  iplist-status                Show status of all IP-list configs.
-  reload-instance [--name N]   Reload DNS allowlist from disk.
-  instance-status              Show status of all instances.
-  refresh-dns [--hostname N]   Force immediate re-resolve of dnsr: groups.
+  ping                                      Verify the daemon is alive.
+  refresh-iplist [--name N]                 Force immediate IP-list refresh.
+  iplist-status                             Show status of all IP-list configs.
+  reload-instance [--name N]                Reload DNS allowlist from disk.
+  register-instance --config-dir PATH       Dynamically register a
+      [--netns N] [--name N] [--allowlist-path PATH]
+                                            shorewall-nft instance.
+  deregister-instance --name N              Deregister a dynamically
+      [--config-dir PATH] [--netns N]       registered instance.
+  instance-status                           Show status of all instances.
+  refresh-dns [--hostname N]                Force immediate re-resolve
+                                            of dnsr: groups.
 ```
 
 The `--socket` flag defaults to `/run/shorewalld/control.sock`.

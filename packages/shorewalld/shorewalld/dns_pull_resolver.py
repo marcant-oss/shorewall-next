@@ -139,6 +139,30 @@ class PullResolver:
         log.info("pull_resolver: refresh triggered (%d group(s))", count)
         return count
 
+    async def update_registry(self, dnsr_registry: DnsrRegistry) -> None:
+        """Replace active groups with those from *dnsr_registry*.
+
+        Preserves the scheduled next_at for unchanged groups (avoids a
+        thundering-herd re-resolve on every shorewall-nft reload). New
+        groups are scheduled for immediate resolve. Removed groups are
+        dropped. Asyncio single-threaded — no lock needed.
+        """
+        now = time.monotonic()
+        old_by_name = {e.primary_qname: e for e in self._heap}
+        new_heap: list[_Entry] = []
+        for group in dnsr_registry.iter_sorted():
+            old = old_by_name.get(group.primary_qname)
+            new_heap.append(_Entry(
+                next_at=old.next_at if old else now,
+                primary_qname=group.primary_qname,
+                group=group,
+            ))
+        heapq.heapify(new_heap)
+        self._heap = new_heap
+        self._wake.set()
+        log.info(
+            "pull_resolver: registry updated (%d group(s))", len(new_heap))
+
     @property
     def group_count(self) -> int:
         return len(self._heap)

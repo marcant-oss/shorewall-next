@@ -11,6 +11,8 @@ Usage::
     shorewalld ctl --socket /run/shorewalld/control.sock reload-instance
     shorewalld ctl --socket /run/shorewalld/control.sock reload-instance --name fw
     shorewalld ctl --socket /run/shorewalld/control.sock instance-status
+    shorewalld ctl --socket /run/shorewalld/control.sock register-instance --config-dir /etc/shorewall
+    shorewalld ctl --socket /run/shorewalld/control.sock deregister-instance --name shorewall
 """
 
 from __future__ import annotations
@@ -68,6 +70,44 @@ def _build_ctl_parser() -> argparse.ArgumentParser:
         help="Refresh only this primary hostname (default: all groups)",
     )
 
+    ri = sub.add_parser(
+        "register-instance",
+        help="Dynamically register a shorewall-nft instance",
+    )
+    ri.add_argument(
+        "--config-dir", required=True, metavar="PATH",
+        help="Shorewall config directory containing dnsnames.compiled",
+    )
+    ri.add_argument(
+        "--netns", default="", metavar="NAME",
+        help="Network namespace (default: root ns)",
+    )
+    ri.add_argument(
+        "--name", default=None, metavar="NAME",
+        help="Explicit instance name (default: netns or config_dir basename)",
+    )
+    ri.add_argument(
+        "--allowlist-path", default=None, metavar="PATH",
+        help="Path to dnsnames.compiled (default: <config-dir>/dnsnames.compiled)",
+    )
+
+    di = sub.add_parser(
+        "deregister-instance",
+        help="Deregister a dynamically registered shorewall-nft instance",
+    )
+    di.add_argument(
+        "--name", default=None, metavar="NAME",
+        help="Instance name (derived from --netns or --config-dir basename if omitted)",
+    )
+    di.add_argument(
+        "--config-dir", default=None, metavar="PATH",
+        help="Shorewall config directory (used to derive --name when not given)",
+    )
+    di.add_argument(
+        "--netns", default="", metavar="NAME",
+        help="Network namespace (used to derive --name when not given)",
+    )
+
     return p
 
 
@@ -82,6 +122,21 @@ def _build_request(args: argparse.Namespace) -> dict:
         req["name"] = args.name
     elif cmd == "refresh-dns" and args.hostname:
         req["hostname"] = args.hostname
+    elif cmd == "register-instance":
+        req["config_dir"] = args.config_dir
+        if args.netns:
+            req["netns"] = args.netns
+        if args.name:
+            req["name"] = args.name
+        if args.allowlist_path:
+            req["allowlist_path"] = args.allowlist_path
+    elif cmd == "deregister-instance":
+        if args.name:
+            req["name"] = args.name
+        if args.config_dir:
+            req["config_dir"] = args.config_dir
+        if args.netns:
+            req["netns"] = args.netns
 
     return req
 

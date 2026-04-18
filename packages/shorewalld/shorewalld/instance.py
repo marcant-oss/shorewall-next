@@ -8,6 +8,12 @@ Each instance tracks one compiled allowlist
 (``config_dir/dnsnames.compiled``) and reloads it into the DNS-set
 tracker when the file changes.
 
+Instances can be registered dynamically via the control socket
+(``register-instance`` / ``deregister-instance``). Dynamically registered
+instances are **not** monitored by :class:`InstanceManager`'s file watcher
+— they are updated explicitly via the control socket from the
+``shorewall-nft`` lifecycle commands.
+
 File-watching uses ``watchfiles`` if available, otherwise falls back to
 polling every 5 s.
 """
@@ -17,11 +23,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from shorewall_nft.nft.dns_sets import DnsSetRegistry, DnsrRegistry
+
+    from .dns_pull_resolver import PullResolver
     from .dns_set_tracker import DnsSetTracker
     from .worker_router import WorkerRouter
 
@@ -80,6 +89,8 @@ class _InstanceState:
     last_loaded_ts: float = 0.0
     last_n_qnames: int = 0
     error: str | None = None
+    last_dns_registry: "DnsSetRegistry | None" = field(default=None, repr=False)
+    last_dnsr_registry: "DnsrRegistry | None" = field(default=None, repr=False)
 
 
 class InstanceManager:
@@ -89,20 +100,31 @@ class InstanceManager:
 
     * Load the compiled allowlist for each instance on start.
     * Optionally watch for changes and reload automatically.
-    * Expose a control-server handler for explicit reloads.
+    * Expose control-server handlers for explicit reload / register /
+      deregister.
+
+    Writer model: :meth:`_load_instance` reads an instance's allowlist
+    from disk into the per-instance cache, then calls
+    :meth:`_apply_merged` which is the *sole* writer of the merged state
+    into ``DnsSetTracker`` and ``PullResolver``. This matters because
+    ``DnsSetTracker.load_registry()`` is destructive — any name not in
+    the passed registry is evicted. Merging all instance caches before
+    the single write keeps multi-instance setups correct.
     """
 
     def __init__(
         self,
         configs: list[InstanceConfig],
-        tracker: DnsSetTracker,
-        router: WorkerRouter,
+        tracker: "DnsSetTracker",
+        router: "WorkerRouter",
         monitor: bool = False,
+        pull_resolver: "PullResolver | None" = None,
     ) -> None:
         self._configs = configs
         self._tracker = tracker
         self._router = router
         self._monitor = monitor
+        self._pull_resolver = pull_resolver
         self._states: dict[str, _InstanceState] = {
             cfg.name: _InstanceState(cfg=cfg) for cfg in configs
         }
@@ -140,7 +162,7 @@ class InstanceManager:
     # ── Public API ─────────────────────────────────────────────────────
 
     async def reload(self, name: str | None = None) -> None:
-        """Reload one or all instances.
+        """Reload one or all instances from disk.
 
         *name* = ``None`` reloads all instances.
         """
@@ -153,6 +175,42 @@ class InstanceManager:
                 log.warning("instance: reload: unknown instance %r", name)
                 return
             await self._load_instance(state)
+
+    async def register(self, config: InstanceConfig) -> int:
+        """Dynamically add or refresh an instance.
+
+        If the instance name is unknown, it is added to the managed set.
+        If it already exists, its config is updated in place. In both
+        cases the allowlist is re-read from disk and the merged state is
+        applied to the tracker and pull resolver.
+
+        Returns the number of DNS qnames loaded for this instance.
+        """
+        if config.name not in self._states:
+            self._states[config.name] = _InstanceState(cfg=config)
+            log.info(
+                "instance: registering new instance %r (%s, netns=%r)",
+                config.name, config.config_dir, config.netns,
+            )
+        else:
+            self._states[config.name].cfg = config
+            log.info("instance: re-registering instance %r", config.name)
+        await self._load_instance(self._states[config.name])
+        return self._states[config.name].last_n_qnames
+
+    async def deregister(self, name: str) -> None:
+        """Remove an instance and recompute the merged tracker/pull_resolver.
+
+        Names exclusive to this instance are evicted from the tracker;
+        names shared with other instances remain active. DNSR groups
+        from this instance are removed from the pull resolver.
+        """
+        if name not in self._states:
+            log.warning("instance: deregister: unknown instance %r", name)
+            return
+        del self._states[name]
+        log.info("instance: deregistered %r", name)
+        await self._apply_merged()
 
     def status(self) -> list[dict]:
         """Return a status list for the control server."""
@@ -172,28 +230,35 @@ class InstanceManager:
     # ── Internal ───────────────────────────────────────────────────────
 
     async def _load_instance(self, state: _InstanceState) -> None:
-        """Read and apply the compiled allowlist for one instance."""
-        cfg = state.cfg
-        path = cfg.allowlist_path
+        """Read compiled allowlist into the per-instance cache, then merge."""
         try:
-            from shorewall_nft.nft.dns_sets import read_compiled_allowlist
+            from shorewall_nft.nft.dns_sets import (
+                read_compiled_allowlist,
+                read_compiled_dnsr_allowlist,
+            )
         except ImportError:
             log.error(
                 "instance %s: shorewall_nft not installed — "
                 "cannot read allowlist",
-                cfg.name,
+                state.cfg.name,
             )
             state.error = "shorewall_nft not installed"
             return
 
+        cfg = state.cfg
+        path = cfg.allowlist_path
+
         try:
-            registry = read_compiled_allowlist(path)
+            state.last_dns_registry = read_compiled_allowlist(path)
         except FileNotFoundError:
             log.warning(
                 "instance %s: allowlist %s not found (skipping)",
                 cfg.name, path,
             )
+            state.last_dns_registry = None
+            state.last_dnsr_registry = None
             state.error = f"allowlist not found: {path}"
+            await self._apply_merged()
             return
         except Exception as e:
             log.error(
@@ -204,21 +269,68 @@ class InstanceManager:
             return
 
         try:
-            self._tracker.load_registry(registry)
+            state.last_dnsr_registry = read_compiled_dnsr_allowlist(path)
+        except FileNotFoundError:
+            state.last_dnsr_registry = None
         except Exception as e:
-            log.error(
-                "instance %s: failed to load registry: %s",
-                cfg.name, e,
-            )
-            state.error = str(e)
-            return
+            log.warning(
+                "instance %s: dnsr section read failed: %s", cfg.name, e)
+            state.last_dnsr_registry = None
 
-        n_qnames = sum(1 for _ in registry.iter_sorted())
+        n_dns = sum(1 for _ in state.last_dns_registry.iter_sorted())
+        n_dnsr = (
+            len(state.last_dnsr_registry.groups)
+            if state.last_dnsr_registry is not None else 0
+        )
         state.last_loaded_ts = time.time()
-        state.last_n_qnames = n_qnames
+        state.last_n_qnames = n_dns
         state.error = None
         log.info(
-            "instance %s: reloaded allowlist (%d qnames)", cfg.name, n_qnames
+            "instance %s: cached allowlist (%d dns, %d dnsr)",
+            cfg.name, n_dns, n_dnsr,
+        )
+        await self._apply_merged()
+
+    async def _apply_merged(self) -> None:
+        """Merge all instance caches and write to tracker + pull_resolver.
+
+        This is the ONLY place that writes to the tracker / pull_resolver.
+        ``tracker.load_registry()`` is destructive (evicts names not in
+        the passed registry), so we must merge across all instances
+        before calling it — otherwise multi-instance setups would have
+        each instance evict the others' names.
+        """
+        from shorewall_nft.nft.dns_sets import DnsSetRegistry, DnsrRegistry
+
+        from .dns_set_tracker import FAMILY_V4, FAMILY_V6
+
+        merged_dns = DnsSetRegistry()
+        merged_dnsr = DnsrRegistry()
+        for state in self._states.values():
+            if state.last_dns_registry is not None:
+                for spec in state.last_dns_registry.iter_sorted():
+                    merged_dns.add_spec(spec)
+            if state.last_dnsr_registry is not None:
+                for group in state.last_dnsr_registry.iter_sorted():
+                    merged_dnsr.groups[group.primary_qname] = group
+
+        self._tracker.load_registry(merged_dns)
+
+        # Re-wire dnsr secondary aliases after the tracker reload —
+        # load_registry() rebuilds set_ids and clears aliases.
+        for group in merged_dnsr.iter_sorted():
+            for alias in group.qnames[1:]:  # primary is qnames[0]
+                self._tracker.add_qname_alias(
+                    alias, group.primary_qname, FAMILY_V4)
+                self._tracker.add_qname_alias(
+                    alias, group.primary_qname, FAMILY_V6)
+
+        if self._pull_resolver is not None:
+            await self._pull_resolver.update_registry(merged_dnsr)
+
+        log.info(
+            "instance: merged %d instance(s) → %d dns, %d dnsr",
+            len(self._states), len(merged_dns.specs), len(merged_dnsr.groups),
         )
 
     async def _watch_loop(self) -> None:
