@@ -61,6 +61,11 @@ class Daemon:
         state_no_load: bool = False,
         state_flush: bool = False,
         reload_poll_interval: float = 2.0,
+        instances: list[str] | None = None,
+        monitor: bool = False,
+        control_socket: str | None = None,
+        control_socket_netns: str | None = None,
+        iplist_configs: list[Any] | None = None,
     ) -> None:
         self.prom_host = prom_host
         self.prom_port = prom_port
@@ -88,6 +93,13 @@ class Daemon:
         self.state_flush = state_flush
         self.reload_poll_interval = reload_poll_interval
 
+        # New multi-instance / iplist / control settings.
+        self.instances: list[str] = instances or []
+        self.monitor = monitor
+        self.control_socket = control_socket
+        self.control_socket_netns = control_socket_netns
+        self.iplist_configs: list[Any] = iplist_configs or []
+
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
         self._cleanup_registered = False
@@ -112,6 +124,12 @@ class Daemon:
         self._reload_monitor: Any | None = None
         self._pbdns_server: Any | None = None
         self._peer_link: Any | None = None
+
+        # New subsystems.
+        self._iplist_tracker: Any | None = None
+        self._iplist_task: asyncio.Task[None] | None = None
+        self._instance_manager: Any | None = None
+        self._control_server: Any | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────
 
@@ -159,12 +177,43 @@ class Daemon:
         # (pbdns / peer link / state / reload monitor) layers on top.
         # Started BEFORE the dnstap server so the DnstapServer can
         # pick up the tracker bridge for its routing path.
-        if self.allowlist_file is not None:
+        #
+        # When --instance specs are given without --allowlist-file,
+        # bootstrap the pipeline from the first instance's allowlist
+        # path so the tracker is available for the InstanceManager.
+        bootstrap_allowlist = self.allowlist_file
+        if bootstrap_allowlist is None and self.instances:
+            from .instance import parse_instance_spec
+            first_spec = parse_instance_spec(self.instances[0])
+            if first_spec.allowlist_path.exists():
+                bootstrap_allowlist = first_spec.allowlist_path
+
+        if bootstrap_allowlist is not None:
+            _orig = self.allowlist_file
+            self.allowlist_file = bootstrap_allowlist
             await self._start_dns_pipeline(netns_list)
+            self.allowlist_file = _orig
+
+        # Multi-instance manager: layers on the DNS pipeline.
+        # When --instance is used, the InstanceManager takes over
+        # allowlist management from the reload monitor.
+        if self.instances and self._tracker is not None:
+            await self._start_instance_manager()
+
+        # IP-list tracker (fetches cloud prefix lists into nft sets).
+        if self.iplist_configs:
+            await self._start_iplist_tracker(netns_list)
 
         # Optional dnstap consumer (Phase 4). Off by default.
         if self.api_socket:
             await self._start_dnstap_server(netns_list)
+
+        # Control socket server.
+        if self.control_socket:
+            await self._start_control_server()
+
+        # Install SIGUSR1 handler for manual iplist refresh.
+        self._install_sigusr1()
 
         try:
             await self._stop_event.wait()
@@ -335,6 +384,127 @@ class Daemon:
             "on" if self._state_store else "off",
         )
 
+    async def _start_iplist_tracker(self, netns_list: list[str]) -> None:
+        """Start the IP-list tracker for cloud prefix sets."""
+        assert self._nft is not None
+        assert self._profile_builder is not None
+        from .iplist.tracker import IpListTracker
+
+        profiles = self._profile_builder.profiles
+        self._iplist_tracker = IpListTracker(
+            configs=self.iplist_configs,
+            nft=self._nft,
+            profiles=profiles,
+            registry=self._registry,
+        )
+        self._iplist_task = asyncio.create_task(
+            self._iplist_tracker.run(),
+            name="shorewalld.iplist",
+        )
+        log.info(
+            "iplist tracker: started with %d list(s)",
+            len(self.iplist_configs),
+        )
+
+    async def _start_instance_manager(self) -> None:
+        """Start the multi-instance allowlist manager."""
+        assert self._tracker is not None
+        assert self._router is not None
+        from .instance import InstanceManager, parse_instance_spec
+
+        configs = [parse_instance_spec(spec) for spec in self.instances]
+        self._instance_manager = InstanceManager(
+            configs=configs,
+            tracker=self._tracker,
+            router=self._router,
+            monitor=self.monitor,
+        )
+        try:
+            await self._instance_manager.start()
+        except Exception:
+            log.exception("instance manager start failed")
+            self._instance_manager = None
+
+    async def _start_control_server(self) -> None:
+        """Bind the control Unix socket and register handlers."""
+        assert self.control_socket is not None
+        from .control import ControlServer
+
+        self._control_server = ControlServer(
+            socket_path=self.control_socket,
+            netns=self.control_socket_netns,
+            socket_mode=self.socket_mode,
+        )
+
+        # Register iplist handlers if the tracker is running.
+        if self._iplist_tracker is not None:
+            tracker = self._iplist_tracker
+
+            async def _handle_refresh_iplist(req: dict) -> dict:
+                name = req.get("name")
+                if name:
+                    await tracker.refresh_one(name)
+                else:
+                    await tracker.refresh_all()
+                return {"ok": True}
+
+            async def _handle_iplist_status(_req: dict) -> dict:
+                return {"ok": True, "lists": tracker.status()}
+
+            self._control_server.register_handler(
+                "refresh-iplist", _handle_refresh_iplist
+            )
+            self._control_server.register_handler(
+                "iplist-status", _handle_iplist_status
+            )
+
+        # Register instance handlers if the manager is running.
+        if self._instance_manager is not None:
+            mgr = self._instance_manager
+
+            async def _handle_reload_instance(req: dict) -> dict:
+                name = req.get("name")
+                await mgr.reload(name)
+                return {"ok": True}
+
+            async def _handle_instance_status(_req: dict) -> dict:
+                return {"ok": True, "instances": mgr.status()}
+
+            self._control_server.register_handler(
+                "reload-instance", _handle_reload_instance
+            )
+            self._control_server.register_handler(
+                "instance-status", _handle_instance_status
+            )
+
+        try:
+            await self._control_server.start()
+        except Exception:
+            log.exception(
+                "control server failed to start on %s", self.control_socket
+            )
+            self._control_server = None
+
+    def _install_sigusr1(self) -> None:
+        """Install a SIGUSR1 handler that triggers iplist refresh_all."""
+        if self._loop is None:
+            return
+        loop = self._loop
+        tracker = self._iplist_tracker
+
+        def _handler() -> None:
+            log.info("shorewalld caught SIGUSR1 — triggering iplist refresh")
+            if tracker is not None:
+                loop.create_task(
+                    tracker.refresh_all(),
+                    name="shorewalld.iplist.sigusr1_refresh",
+                )
+
+        try:
+            loop.add_signal_handler(signal.SIGUSR1, _handler)
+        except (ValueError, OSError, NotImplementedError):
+            pass
+
     def _start_prom_server(self) -> None:
         """Stand up a prometheus_client-backed HTTP scrape endpoint.
 
@@ -461,6 +631,32 @@ class Daemon:
         """
         if self._shutdown_done:
             return
+
+        # Control server: close before tearing down subsystems it references.
+        if self._control_server is not None:
+            try:
+                await self._control_server.shutdown()
+            except Exception:
+                log.exception("control server shutdown failed")
+            self._control_server = None
+
+        # IP-list tracker.
+        if self._iplist_task is not None:
+            self._iplist_task.cancel()
+            try:
+                await self._iplist_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._iplist_task = None
+            self._iplist_tracker = None
+
+        # Instance manager.
+        if self._instance_manager is not None:
+            try:
+                await self._instance_manager.shutdown()
+            except Exception:
+                log.exception("instance manager shutdown failed")
+            self._instance_manager = None
 
         # Peer link: stop sending heartbeats and close the UDP socket.
         if self._peer_link is not None:

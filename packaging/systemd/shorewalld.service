@@ -10,9 +10,13 @@ Wants=network.target
 Type=simple
 # Default config: scrape every netns under /run/netns plus own ns,
 # Prometheus on :9748, dnstap endpoint OFF.
-# Override on the command line or via
-# /etc/systemd/system/shorewalld.service.d/override.conf.
-ExecStart=/usr/bin/shorewalld --listen-prom :9748 --netns auto
+# Override on the command line, via
+# /etc/systemd/system/shorewalld.service.d/override.conf, or by
+# setting SHOREWALLD_ARGS in one of the EnvironmentFiles below.
+EnvironmentFile=-/etc/sysconfig/shorewalld
+EnvironmentFile=-/etc/default/shorewalld
+ExecStart=/usr/bin/shorewalld --listen-prom :9748 --netns auto $SHOREWALLD_ARGS
+ExecReload=/bin/kill -USR1 $MAINPID
 Restart=on-failure
 RestartSec=5s
 

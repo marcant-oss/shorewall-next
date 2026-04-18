@@ -1,0 +1,20 @@
+# shorewalld extra arguments
+#
+# This file is sourced by shorewalld.service and shorewalld@.service via
+# EnvironmentFile.  Set SHOREWALLD_ARGS to pass additional flags to
+# shorewalld without modifying the unit file.
+#
+# Examples:
+#
+#   Enable multi-instance config management with the control socket:
+#   SHOREWALLD_ARGS="--instance fw:/etc/shorewall --control-socket /run/shorewalld/control.sock"
+#
+#   Enable IP-list tracker with a control socket:
+#   SHOREWALLD_ARGS="--control-socket /run/shorewalld/control.sock"
+#
+#   Watch allowlist for changes automatically (conflicts with explicit reload hooks):
+#   SHOREWALLD_ARGS="--instance fw:/etc/shorewall --monitor"
+#
+# See `shorewalld --help` for the full list of options.
+#
+#SHOREWALLD_ARGS=""
