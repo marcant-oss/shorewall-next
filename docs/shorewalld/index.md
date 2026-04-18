@@ -782,10 +782,15 @@ lists without restarting the daemon).
 Two units ship under `packaging/systemd/`:
 
 - **`shorewalld.service`** — single process serving all namespaces
-  (`--netns auto`). Recommended for most deployments.
+  (`--netns auto`). Recommended for most deployments. No hard ordering
+  dependency on `shorewall-nft.service`; shorewalld discovers nft tables
+  at each scrape interval and gracefully skips namespaces whose tables
+  are not yet loaded.
 - **`shorewalld@.service`** — templated, one instance per netns
   (`systemctl enable shorewalld@rns1`). Use this if you want per-netns
-  process isolation or distinct Prometheus ports per netns.
+  process isolation or distinct Prometheus ports per netns. Carries
+  `After=shorewall-nft@%i.service` so the per-instance daemon starts
+  only once the corresponding firewall ruleset is present.
 
 Both require `CAP_NET_ADMIN` + `CAP_SYS_PTRACE` for the setns hop and
 create `/run/shorewalld` via `RuntimeDirectory=`.
