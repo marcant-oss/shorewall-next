@@ -50,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **shorewalld: `aiohttp>=3.9`** — added as a hard dependency (was optional).
 
+- **packaging: `python3-aiohttp`** — added to RPM `Requires` (both Fedora and
+  AlmaLinux 10 profiles) and Debian `Depends` to reflect the promoted
+  hard dependency.
+
+- **packaging: sysconfig/defaults** — `.rpm` installs `packaging/sysconfig/shorewalld`
+  to `/etc/sysconfig/shorewalld` (`%config(noreplace)`); `.deb` installs it
+  to `/etc/default/shorewalld`. File ships empty/commented so the daemon
+  starts with defaults until the operator enables a line.
+
 ## [1.5.5] — 2026-04-18 — fix CI integration tests: preserve PATH under sudo
 
 ### Changes

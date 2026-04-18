@@ -67,6 +67,7 @@ Requires:       iproute
 Requires:       python3-nftables
 Recommends:     ipset
 # shorewalld deps
+Requires:       python3-aiohttp >= 3.9
 Requires:       python3-protobuf >= 4.25
 Requires:       python3-prometheus_client >= 0.20
 Requires:       python3-dns >= 2.4
@@ -93,6 +94,7 @@ Requires:       iproute
 Requires:       python3-nftables
 Recommends:     ipset
 # shorewalld deps — AL10 AppStream ships python3-protobuf 3.19.6 (no newer version).
+Requires:       python3-aiohttp >= 3.9
 Requires:       python3-protobuf >= 3.19
 Requires:       python3-prometheus_client >= 0.20
 Requires:       python3-dns >= 2.6

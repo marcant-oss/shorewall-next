@@ -20,6 +20,7 @@ Depends:
  ${misc:Depends},
  ${python3:Depends},
  python3 (>= 3.11),
+ python3-aiohttp (>= 3.9),
  python3-click (>= 8.0),
  python3-pyroute2 (>= 0.7),
  python3-nftables,

@@ -105,6 +105,10 @@ install -Dm644 tools/completions/shorewall-nft.fish \
 install -Dm755 tools/run-tests.sh \
     %{buildroot}%{_datadir}/%{name}-tests/run-tests.sh
 
+# shorewalld sysconfig defaults
+install -Dm644 packaging/sysconfig/shorewalld \
+    %{buildroot}%{_sysconfdir}/sysconfig/shorewalld
+
 # shorewalld persistent state directory
 install -d %{buildroot}%{_sharedstatedir}/shorewalld
 
@@ -141,6 +145,7 @@ fi
 %{_unitdir}/shorewall-nft@.service
 %{_unitdir}/shorewalld.service
 %{_unitdir}/shorewalld@.service
+%config(noreplace) %{_sysconfdir}/sysconfig/shorewalld
 %dir %{_sharedstatedir}/shorewalld
 %{_mandir}/man8/shorewall-nft.8*
 %{_mandir}/man8/shorewalld.8*

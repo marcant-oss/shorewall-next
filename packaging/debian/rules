@@ -29,6 +29,9 @@ override_dh_auto_install:
 	    mv debian/shorewall-nft/usr/local/bin/* debian/shorewall-nft/usr/bin/ && \
 	    rm -rf debian/shorewall-nft/usr/local; \
 	fi
+	# shorewalld defaults file
+	install -D -m 0644 packaging/sysconfig/shorewalld \
+	    debian/shorewall-nft/etc/default/shorewalld
 	# shorewalld persistent state directory
 	install -d debian/shorewall-nft/var/lib/shorewalld
 	# Shell completions, man pages, systemd units.
