@@ -6,9 +6,9 @@ No variable interpolation, no nesting — keep it boring. CLI flags
 always override config file values, so an operator can temporarily
 flip a knob without editing the file.
 
-The canonical location is ``/etc/shorewall/shorewalld.conf``; the
-daemon falls back to ``/etc/shorewalld.conf`` for distributions that
-don't ship ``/etc/shorewall``.
+The canonical location is ``/etc/shorewalld.conf``; the daemon falls
+back to ``/etc/shorewall/shorewalld.conf`` for sites that co-locate
+shorewalld config with the shorewall-nft config directory.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ from pathlib import Path
 _MULTI_VALUE_KEYS = frozenset({"INSTANCE"})
 
 DEFAULT_CONFIG_PATHS = (
-    Path("/etc/shorewall/shorewalld.conf"),
     Path("/etc/shorewalld.conf"),
+    Path("/etc/shorewall/shorewalld.conf"),
 )
 
 

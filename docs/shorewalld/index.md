@@ -23,8 +23,8 @@ Operator settings live in `shorewalld.conf`, searched at these
 locations in order (first hit wins):
 
 1. `--config-file PATH` on the CLI
-2. `/etc/shorewall/shorewalld.conf`
-3. `/etc/shorewalld.conf`
+2. `/etc/shorewalld.conf`
+3. `/etc/shorewall/shorewalld.conf`
 
 A missing file is a silent no-op; the daemon falls back entirely
 to CLI flags + built-in defaults. **Precedence** is always:
