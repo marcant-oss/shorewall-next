@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.5] — 2026-04-18 — fix CI integration tests: preserve PATH under sudo
+
+### Changes
+
+- fix: preserve PATH for sudo in CI integration tests
+
+
 ## [1.5.4] — 2026-04-18 — fix shellcheck warnings + CI integration test runner
 
 ### Changes
