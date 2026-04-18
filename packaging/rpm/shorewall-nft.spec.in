@@ -163,6 +163,12 @@ fi
 %changelog
 @@CHANGELOG_ENTRY@@
 
+* Sun Apr 19 2026 André Valentin <avalentin@marcant.net> - 1.7.0-1
+- Release 1.7.0: shorewalld inline DNS registry, full Prometheus coverage,
+  --monitor removal, /etc/shorewalld.conf primary config, shorewalld fixes,
+  dnstap_bridge hot-path micro-optimisations.
+- See CHANGELOG.md for full details.
+
 * Sat Apr 18 2026 André Valentin <avalentin@marcant.net> - 1.6.0-1
 - Release 1.6.0: dns: multi-host, dnsr: pull-resolver hardening (7 fixes),
   lifecycle instance registration, shorewalld IP-list sets + control socket,
