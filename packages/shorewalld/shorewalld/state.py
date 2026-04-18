@@ -74,6 +74,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .dns_set_tracker import DnsSetTracker
 from .exporter import CollectorBase, _MetricFamily
@@ -410,6 +411,118 @@ class StateStore:
             path.unlink()
         except FileNotFoundError:
             pass
+
+
+INSTANCES_FILE_VERSION = 1
+_INSTANCES_FILENAME = "instances.json"
+
+_log_inst = get_logger("state.instances")
+
+
+class InstanceCache:
+    """Persist dynamically registered instance configs to disk.
+
+    Stored alongside the DNS-set state as ``<state_dir>/instances.json``.
+    Atomic write (tmp+rename) prevents truncation on crash.
+
+    ``__init__`` pre-populates the in-memory dict from the file so that
+    ``update()`` / ``remove()`` calls before ``load()`` never overwrite
+    entries that were cached in a previous run.
+    """
+
+    def __init__(self, state_dir: Path) -> None:
+        self._path = state_dir / _INSTANCES_FILENAME
+        self._instances: dict[str, dict] = self._read_raw()
+
+    # ── I/O ──────────────────────────────────────────────────────────
+
+    def _read_raw(self) -> "dict[str, dict]":
+        """Read the file silently; return empty dict on any error."""
+        if not self._path.exists():
+            return {}
+        try:
+            doc = json.loads(self._path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if doc.get("version") != INSTANCES_FILE_VERSION:
+            return {}
+        result: dict[str, dict] = {}
+        for entry in doc.get("instances") or []:
+            name = entry.get("name")
+            if isinstance(name, str) and name:
+                result[name] = entry
+        return result
+
+    def load(self) -> "list[tuple[str, str, str, str, dict | None]]":
+        """Return cached instances as raw tuples with warnings on errors.
+
+        Each tuple is ``(name, netns, config_dir, allowlist_path,
+        dns_payload_or_None)``. Also syncs the in-memory dict so
+        subsequent ``update()`` calls preserve all cached entries.
+        Never raises — returns ``[]`` on any error.
+        """
+        if not self._path.exists():
+            return []
+        try:
+            text = self._path.read_text()
+            doc = json.loads(text)
+        except (OSError, json.JSONDecodeError) as e:
+            _log_inst.warning("instance cache load failed: %s", e)
+            return []
+        if doc.get("version") != INSTANCES_FILE_VERSION:
+            _log_inst.warning(
+                "instance cache version %r unsupported — ignoring",
+                doc.get("version"),
+            )
+            return []
+        result = []
+        for entry in doc.get("instances") or []:
+            try:
+                name = entry["name"]
+                netns = entry.get("netns") or ""
+                config_dir = entry["config_dir"]
+                allowlist_path = entry["allowlist_path"]
+                dns_payload = entry.get("dns_payload")
+                self._instances[name] = entry  # keep in-memory dict fresh
+                result.append((name, netns, config_dir, allowlist_path, dns_payload))
+            except (KeyError, TypeError) as e:
+                _log_inst.warning(
+                    "instance cache: skipping malformed entry: %s", e)
+        _log_inst.info("instance cache: loaded %d entry(ies)", len(result))
+        return result
+
+    def update(self, config: "Any", dns_payload: "dict | None" = None) -> None:
+        """Add or update one instance and persist to disk atomically."""
+        entry: dict = {
+            "name": config.name,
+            "netns": config.netns,
+            "config_dir": str(config.config_dir),
+            "allowlist_path": str(config.allowlist_path),
+        }
+        if dns_payload is not None:
+            entry["dns_payload"] = dns_payload
+        self._instances[config.name] = entry
+        self._save()
+
+    def remove(self, name: str) -> None:
+        """Remove one instance and persist to disk atomically."""
+        self._instances.pop(name, None)
+        self._save()
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        doc = {
+            "version": INSTANCES_FILE_VERSION,
+            "saved_at": round(time.time(), 3),
+            "instances": list(self._instances.values()),
+        }
+        text = json.dumps(doc, separators=(",", ":"))
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        try:
+            tmp.write_text(text)
+            os.replace(tmp, self._path)
+        except OSError as e:
+            _log_inst.warning("instance cache save failed: %s", e)
 
 
 class StateMetricsCollector(CollectorBase):
