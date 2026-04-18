@@ -276,14 +276,20 @@ class Daemon:
             dnsr_registry = None
 
         if dnsr_registry and dnsr_registry.groups:
+            pull_count = 0
             for group in dnsr_registry.iter_sorted():
                 for secondary in group.qnames[1:]:
                     for family in (FAMILY_V4, FAMILY_V6):
                         self._tracker.add_qname_alias(
                             secondary, group.primary_qname, family)
+                if group.pull_enabled:
+                    pull_count += 1
             log.info(
-                "dns pipeline: loaded %d pull-resolver group(s)",
+                "dns pipeline: loaded %d dns-set group(s) "
+                "(%d pull, %d tap-only)",
                 len(dnsr_registry.groups),
+                pull_count,
+                len(dnsr_registry.groups) - pull_count,
             )
 
         loop = asyncio.get_running_loop()
@@ -410,27 +416,12 @@ class Daemon:
                     self._peer_link = None
 
         # Pull resolver — active DNS resolution for dnsr: groups.
+        # Created eagerly iff groups are known at bootstrap; otherwise
+        # InstanceManager may create it lazily when the first dnsr group
+        # arrives via register-instance (see _ensure_pull_resolver).
+        self._pull_resolver_netns = netns_list[0] if netns_list else ""
         if dnsr_registry and dnsr_registry.groups:
-            from .dns_pull_resolver import PullResolver
-            self._pull_resolver = PullResolver(
-                dnsr_registry,
-                self._tracker,
-                self._set_writer,
-                default_netns=netns_list[0] if netns_list else "",
-            )
-            await self._pull_resolver.start()
-            # Register control-socket handler for manual refresh.
-            if self._control_server is not None:
-                async def _handle_refresh_dns(req: dict) -> dict:
-                    hostname = req.get("hostname")
-                    n = await self._pull_resolver.refresh(hostname)
-                    return {"ok": True, "rescheduled": n}
-                self._control_server.register_handler(
-                    "refresh-dns", _handle_refresh_dns)
-            log.info(
-                "dns pipeline: pull resolver started (%d group(s))",
-                dnsr_registry and len(dnsr_registry.groups),
-            )
+            await self._ensure_pull_resolver(dnsr_registry)
 
         log.info(
             "dns pipeline: ready "
@@ -440,6 +431,60 @@ class Daemon:
             "on" if self._state_store else "off",
             "on" if self._pull_resolver else "off",
         )
+
+    async def _ensure_pull_resolver(self, dnsr_registry: Any) -> Any | None:
+        """Create the PullResolver on first use, or return the existing one.
+
+        Called both at bootstrap (from :meth:`_start_dns_pipeline` when
+        the initial allowlist already contains a ``dnsr:`` group) and
+        lazily from :class:`InstanceManager` when a dynamically
+        registered instance brings the first one. Idempotent.
+
+        Tap-only groups (``pull_enabled=False``, created by multi-host
+        ``dns:`` tokens) do not trigger creation — their secondaries
+        are wired via ``tracker.add_qname_alias`` alone.
+        """
+        if self._pull_resolver is not None:
+            return self._pull_resolver
+        if self._tracker is None or self._set_writer is None:
+            return None
+        if not dnsr_registry:
+            return None
+        pull_groups = [
+            g for g in dnsr_registry.groups.values() if g.pull_enabled
+        ]
+        if not pull_groups:
+            return None
+        from .dns_pull_resolver import PullResolver
+        self._pull_resolver = PullResolver(
+            dnsr_registry,
+            self._tracker,
+            self._set_writer,
+            default_netns=self._pull_resolver_netns,
+        )
+        await self._pull_resolver.start()
+        # Wire the refresh-dns control handler now if the control server
+        # is up; otherwise _start_control_server does it later.
+        self._register_refresh_dns_handler()
+        log.info(
+            "dns pipeline: pull resolver started (%d group(s))",
+            len(pull_groups),
+        )
+        return self._pull_resolver
+
+    def _register_refresh_dns_handler(self) -> None:
+        """Register the refresh-dns handler if both server and resolver exist."""
+        if self._control_server is None or self._pull_resolver is None:
+            return
+        resolver = self._pull_resolver
+
+        async def _handle_refresh_dns(req: dict) -> dict:
+            hostname = req.get("hostname")
+            n = await resolver.refresh(hostname)
+            return {"ok": True, "rescheduled": n}
+
+        self._control_server.register_handler(
+            "refresh-dns", _handle_refresh_dns)
 
     async def _start_iplist_tracker(self, netns_list: list[str]) -> None:
         """Start the IP-list tracker for cloud prefix sets."""
@@ -476,6 +521,7 @@ class Daemon:
             router=self._router,
             monitor=self.monitor,
             pull_resolver=self._pull_resolver,
+            pull_resolver_factory=self._ensure_pull_resolver,
         )
         try:
             await self._instance_manager.start()
@@ -589,6 +635,11 @@ class Daemon:
                 "control server failed to start on %s", self.control_socket
             )
             self._control_server = None
+            return
+
+        # Now that the control server is up, register handlers for
+        # subsystems that came online before it.
+        self._register_refresh_dns_handler()
 
     def _install_sigusr1(self) -> None:
         """Install a SIGUSR1 handler that triggers iplist refresh_all."""

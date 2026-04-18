@@ -612,9 +612,10 @@ def _rewrite_dns_spec(
     spec: str,
     registry: DnsSetRegistry,
     family: str,
+    dnsr_registry: DnsrRegistry | None = None,
 ) -> str:
-    """Replace any ``dns:hostname`` token in ``spec`` with the
-    compiled set-reference sentinel ``+dns_<sanitised>_<family>``.
+    """Replace any ``dns:hostname[,hostname…]`` token in ``spec`` with
+    the compiled set-reference sentinel ``+dns_<sanitised>_<family>``.
 
     Supports every negation shape Shorewall accepts:
 
@@ -625,14 +626,22 @@ def _rewrite_dns_spec(
     * ``<dns:host>`` / ``net:<dns:host>`` — ipv6 angle brackets (rare
       but grammatically valid)
 
+    Multi-host ``dns:host1,host2,…`` is supported: the first hostname
+    is the primary (its set is what the rule references); the rest
+    are registered as tap-alias secondaries so shorewalld's tap
+    pipeline routes their DNS answers into the primary's set.  This
+    mirrors ``dnsr:`` multi-host semantics but without active pull
+    resolution — ``dnsr_registry`` records the group with
+    ``pull_enabled=False``.
+
     The zone prefix (if any) and negation marker (wherever it sat)
     are preserved verbatim on the rewritten sentinel so
     ``_parse_zone_spec`` and ``_add_rule`` downstream handle it
     with their existing codepaths.
 
-    Side-effect: registers the canonicalised hostname with
+    Side-effect: registers the canonicalised hostname(s) with
     ``registry`` so the emitter later produces matching set
-    declarations. Invalid hostnames are left untouched — the
+    declarations.  Invalid hostnames are left untouched — the
     caller's existing parser will reject them with a syntactic
     error further down the line.
     """
@@ -641,10 +650,10 @@ def _rewrite_dns_spec(
     sentinel_negate = ""
 
     if body.startswith("dns:"):
-        host = body[4:]
+        host_str = body[4:]
     elif body.startswith("!dns:"):
         sentinel_negate = "!"
-        host = body[5:]
+        host_str = body[5:]
     else:
         # ``zone:[!]dns:hostname`` — split off the zone prefix at the
         # first colon. What follows is either ``dns:host`` or
@@ -655,22 +664,42 @@ def _rewrite_dns_spec(
         prefix = body[: colon + 1]
         rest = body[colon + 1:]
         if rest.startswith("dns:"):
-            host = rest[4:]
+            host_str = rest[4:]
         elif rest.startswith("!dns:"):
             sentinel_negate = "!"
-            host = rest[5:]
+            host_str = rest[5:]
         else:
             return spec
 
     # Strip any ipv6 angle brackets — grammatically legal for DNS
     # tokens even though they're nonsensical.
-    host = host.rstrip(">").lstrip("<")
-    if not is_valid_hostname(host):
+    host_str = host_str.rstrip(">").lstrip("<")
+    raw_hosts = [h.strip() for h in host_str.split(",") if h.strip()]
+    if not raw_hosts:
         return spec
+    for h in raw_hosts:
+        if not is_valid_hostname(h):
+            return spec
 
-    qn = canonical_qname(host)
-    registry.add_from_rule(qn)
-    set_name = qname_to_set_name(qn, family)
+    qnames = [canonical_qname(h) for h in raw_hosts]
+    primary = qnames[0]
+
+    # Primary always materialises the nft set; secondaries only enter
+    # the allowlist so the tap filter forwards them through a tracker
+    # alias into the primary's set.
+    registry.add_from_rule(primary, declare_set=True)
+    for qn in qnames[1:]:
+        registry.add_from_rule(qn, declare_set=False)
+
+    # Multi-host dns: needs the same tap-alias plumbing as dnsr: so
+    # the daemon installs add_qname_alias for the secondaries. Record
+    # the group in dnsr_registry with pull_enabled=False — same data
+    # shape, no active resolution. Single-host dns: is a pure set
+    # reference and doesn't need an alias entry.
+    if len(qnames) > 1 and dnsr_registry is not None:
+        dnsr_registry.add_from_rule(primary, qnames, pull_enabled=False)
+
+    set_name = qname_to_set_name(primary, family)
     return f"{prefix}{sentinel_negate}+{set_name}"
 
 
@@ -744,10 +773,12 @@ def _rewrite_dnsr_spec(
     qnames = [canonical_qname(h) for h in raw_hosts]
     primary = qnames[0]
 
-    # Declare the set via the normal dns_registry path (emitter already
-    # handles dns_registry → set declarations).
-    for qn in qnames:
-        dns_registry.add_from_rule(qn)
+    # Primary materialises the nft set; secondaries only enter the
+    # allowlist so the tap filter passes their answers through the
+    # tracker alias into the primary's set.
+    dns_registry.add_from_rule(primary, declare_set=True)
+    for qn in qnames[1:]:
+        dns_registry.add_from_rule(qn, declare_set=False)
 
     # Record the full pull-resolver group (primary + secondaries).
     dnsr_registry.add_from_rule(primary, qnames)
@@ -782,19 +813,22 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
             for family in ("v4", "v6"):
                 new_cols = list(cols)
                 src = _rewrite_dns_spec(
-                    source_spec_raw, ir.dns_registry, family)
+                    source_spec_raw, ir.dns_registry, family,
+                    ir.dnsr_registry)
                 src = _rewrite_dnsr_spec(
                     src, ir.dns_registry, ir.dnsr_registry, family)
                 new_cols[1] = src
                 if len(new_cols) > 2:
                     dst = _rewrite_dns_spec(
-                        dest_spec_raw, ir.dns_registry, family)
+                        dest_spec_raw, ir.dns_registry, family,
+                        ir.dnsr_registry)
                     dst = _rewrite_dnsr_spec(
                         dst, ir.dns_registry, ir.dnsr_registry, family)
                     new_cols[2] = dst
                 elif _dst_has_dns or _dst_has_dnsr:
                     dst = _rewrite_dns_spec(
-                        dest_spec_raw, ir.dns_registry, family)
+                        dest_spec_raw, ir.dns_registry, family,
+                        ir.dnsr_registry)
                     dst = _rewrite_dnsr_spec(
                         dst, ir.dns_registry, ir.dnsr_registry, family)
                     new_cols.append(dst)

@@ -82,6 +82,52 @@ class TestRewriteDnsSpec:
         assert "github.com" in reg.specs
         assert "GitHub.Com" not in reg.specs
 
+    def test_multi_host_uses_primary_set(self):
+        from shorewall_nft.nft.dns_sets import DnsrRegistry
+        reg = DnsSetRegistry()
+        dnsr_reg = DnsrRegistry()
+        out = _rewrite_dns_spec(
+            "dns:github.com,microsoft.com", reg, "v4", dnsr_reg)
+        assert out == "+dns_github_com_v4"
+
+    def test_multi_host_secondary_is_tap_only(self):
+        from shorewall_nft.nft.dns_sets import DnsrRegistry
+        reg = DnsSetRegistry()
+        dnsr_reg = DnsrRegistry()
+        _rewrite_dns_spec(
+            "dns:github.com,microsoft.com", reg, "v4", dnsr_reg)
+        # Primary declares its nft set, secondary does not.
+        assert reg.specs["github.com"].declare_set is True
+        assert reg.specs["microsoft.com"].declare_set is False
+        # Group recorded in dnsr_registry with pull_enabled=False so
+        # the daemon installs the tap alias but does not actively
+        # resolve.
+        assert "github.com" in dnsr_reg.groups
+        group = dnsr_reg.groups["github.com"]
+        assert group.qnames == ["github.com", "microsoft.com"]
+        assert group.pull_enabled is False
+
+    def test_multi_host_single_creates_no_group(self):
+        from shorewall_nft.nft.dns_sets import DnsrRegistry
+        reg = DnsSetRegistry()
+        dnsr_reg = DnsrRegistry()
+        _rewrite_dns_spec("dns:github.com", reg, "v4", dnsr_reg)
+        # Single-host dns: is a pure set reference — no alias needed.
+        assert dnsr_reg.groups == {}
+
+    def test_multi_host_dnsr_promotes_group(self):
+        """dns: + dnsr: on the same primary → pull_enabled wins."""
+        from shorewall_nft.compiler.ir import _rewrite_dnsr_spec
+        from shorewall_nft.nft.dns_sets import DnsrRegistry
+        reg = DnsSetRegistry()
+        dnsr_reg = DnsrRegistry()
+        _rewrite_dns_spec(
+            "dns:github.com,microsoft.com", reg, "v4", dnsr_reg)
+        assert dnsr_reg.groups["github.com"].pull_enabled is False
+        # A later dnsr: reference promotes the group.
+        _rewrite_dnsr_spec("dnsr:github.com", reg, dnsr_reg, "v4")
+        assert dnsr_reg.groups["github.com"].pull_enabled is True
+
 
 class TestBuildIrDnsRules:
     def test_single_rule_becomes_two_family_rules(self, minimal_config):

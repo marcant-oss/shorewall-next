@@ -25,7 +25,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 if TYPE_CHECKING:
     from shorewall_nft.nft.dns_sets import DnsSetRegistry, DnsrRegistry
@@ -33,6 +33,12 @@ if TYPE_CHECKING:
     from .dns_pull_resolver import PullResolver
     from .dns_set_tracker import DnsSetTracker
     from .worker_router import WorkerRouter
+
+    PullResolverFactory = Callable[
+        ["DnsrRegistry"], Awaitable["PullResolver | None"]
+    ]
+else:
+    PullResolverFactory = object  # runtime placeholder
 
 log = logging.getLogger("shorewalld.instance")
 
@@ -119,12 +125,17 @@ class InstanceManager:
         router: "WorkerRouter",
         monitor: bool = False,
         pull_resolver: "PullResolver | None" = None,
+        pull_resolver_factory: "PullResolverFactory | None" = None,
     ) -> None:
         self._configs = configs
         self._tracker = tracker
         self._router = router
         self._monitor = monitor
         self._pull_resolver = pull_resolver
+        # Factory invoked lazily when the first dnsr group appears via
+        # dynamic register-instance. Returns the created PullResolver
+        # or None if prerequisites aren't met.
+        self._pull_resolver_factory = pull_resolver_factory
         self._states: dict[str, _InstanceState] = {
             cfg.name: _InstanceState(cfg=cfg) for cfg in configs
         }
@@ -311,8 +322,22 @@ class InstanceManager:
                 for spec in state.last_dns_registry.iter_sorted():
                     merged_dns.add_spec(spec)
             if state.last_dnsr_registry is not None:
+                # Merge via add_from_rule so duplicate primaries across
+                # instances combine their qnames and OR their
+                # pull_enabled flags correctly.
                 for group in state.last_dnsr_registry.iter_sorted():
-                    merged_dnsr.groups[group.primary_qname] = group
+                    merged = merged_dnsr.add_from_rule(
+                        group.primary_qname,
+                        group.qnames,
+                        pull_enabled=group.pull_enabled,
+                    )
+                    # Preserve per-group TTL/size overrides from the
+                    # source registry (add_from_rule only uses defaults).
+                    merged.ttl_floor = group.ttl_floor
+                    merged.ttl_ceil = group.ttl_ceil
+                    merged.size = group.size
+                    if group.comment and not merged.comment:
+                        merged.comment = group.comment
 
         self._tracker.load_registry(merged_dns)
 
@@ -324,6 +349,17 @@ class InstanceManager:
                     alias, group.primary_qname, FAMILY_V4)
                 self._tracker.add_qname_alias(
                     alias, group.primary_qname, FAMILY_V6)
+
+        # Lazily create the pull resolver the first time we see a
+        # pull-enabled group — a daemon that booted without any may
+        # get its first one via dynamic register-instance. Tap-only
+        # groups (multi-host ``dns:``) don't need a pull resolver.
+        if (
+            self._pull_resolver is None
+            and self._pull_resolver_factory is not None
+            and any(g.pull_enabled for g in merged_dnsr.groups.values())
+        ):
+            self._pull_resolver = await self._pull_resolver_factory(merged_dnsr)
 
         if self._pull_resolver is not None:
             await self._pull_resolver.update_registry(merged_dnsr)

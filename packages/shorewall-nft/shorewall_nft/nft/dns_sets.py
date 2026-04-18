@@ -25,6 +25,7 @@ means the ruleset references a set the daemon never populates.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,6 +63,11 @@ class DnsSetSpec:
     A ``dnsnames`` file line produces one ``DnsSetSpec``; hostnames
     that appear only in ``rules`` (no explicit entry) fall back to the
     global defaults from ``shorewall.conf``.
+
+    ``declare_set`` is True for any hostname the emitter should
+    materialise as an nft set, False for ``dnsr:`` secondaries that
+    only need to be in the allowlist so the tap filter passes them
+    through to the primary's set via tracker alias.
     """
 
     qname: str                  # canonical lower-case form, no trailing dot
@@ -69,6 +75,7 @@ class DnsSetSpec:
     ttl_ceil: int = DEFAULT_TTL_CEIL
     size: int = DEFAULT_SET_SIZE
     comment: str = ""
+    declare_set: bool = True
 
 
 @dataclass
@@ -89,12 +96,20 @@ class DnsSetRegistry:
     default_ttl_ceil: int = DEFAULT_TTL_CEIL
     default_size: int = DEFAULT_SET_SIZE
 
-    def add_from_rule(self, qname: str) -> DnsSetSpec:
+    def add_from_rule(
+        self, qname: str, *, declare_set: bool = True,
+    ) -> DnsSetSpec:
         """Register a hostname seen in ``rules``.
 
         Creates a default-filled spec if none exists yet; leaves an
         existing one untouched so per-name overrides from ``dnsnames``
         always win over rule-origin discovery.
+
+        ``declare_set=False`` marks the entry as a tap-filter-only
+        allowlist entry (``dnsr:`` secondary). A subsequent call with
+        ``declare_set=True`` promotes it so the emitter materialises
+        the set — explicit ``dns:`` references always win over a
+        secondary-only registration.
         """
         qn = canonical_qname(qname)
         if qn not in self.specs:
@@ -103,6 +118,13 @@ class DnsSetRegistry:
                 ttl_floor=self.default_ttl_floor,
                 ttl_ceil=self.default_ttl_ceil,
                 size=self.default_size,
+                declare_set=declare_set,
+            )
+        elif declare_set and not self.specs[qn].declare_set:
+            # Promote: was a secondary-only entry, now also referenced
+            # as a primary → emit the set.
+            self.specs[qn] = dataclasses.replace(
+                self.specs[qn], declare_set=True,
             )
         return self.specs[qn]
 
@@ -145,16 +167,20 @@ def canonical_qname(qname: str) -> str:
 
 @dataclass
 class DnsrGroup:
-    """A pull-resolver group: one or more hostnames share one nft set.
+    """A DNS-set alias group: one or more hostnames share one nft set.
 
-    The nft set is the same ``dns_<primary>_v4/v6`` pair produced by
-    ``dns:`` rules — ``dnsr:`` is purely an activation flag telling
-    shorewalld to also resolve the listed hostnames actively, in addition
-    to (or instead of) relying on dnstap/pbdns frames.
+    Covers two related concepts with the same data shape:
 
-    All IPs from all ``qnames`` land in the primary's set so the firewall
-    rule need only reference one set.  The tap pipeline is also wired to
-    populate the same set for any frame whose qname is in ``qnames``.
+    * ``dnsr:host1,host2,…`` (``pull_enabled=True``): shorewalld actively
+      resolves every hostname on a TTL-driven schedule AND the tap
+      pipeline routes any matching dnstap/pbdns frame into the primary's
+      set via a tracker alias.
+    * ``dns:host1,host2,…`` with multiple hosts (``pull_enabled=False``):
+      tap-only aliasing — the primary's set absorbs every secondary's
+      answer but shorewalld does not actively resolve.
+
+    Single-host ``dns:host`` does not create a group at all (no alias
+    needed).
     """
     primary_qname: str           # determines the set name (dns_<primary>_v4/v6)
     qnames: list[str]            # all hostnames (primary first, then secondaries)
@@ -162,6 +188,7 @@ class DnsrGroup:
     ttl_ceil: int = DEFAULT_TTL_CEIL
     size: int = DEFAULT_SET_SIZE
     comment: str = ""
+    pull_enabled: bool = True
 
 
 @dataclass
@@ -178,8 +205,22 @@ class DnsrRegistry:
     default_ttl_ceil: int = DEFAULT_TTL_CEIL
     default_size: int = DEFAULT_SET_SIZE
 
-    def add_from_rule(self, primary: str, qnames: list[str]) -> DnsrGroup:
-        """Register or extend a group from a ``dnsr:`` rule token."""
+    def add_from_rule(
+        self,
+        primary: str,
+        qnames: list[str],
+        *,
+        pull_enabled: bool = True,
+    ) -> DnsrGroup:
+        """Register or extend a group from a ``dns:`` / ``dnsr:`` token.
+
+        ``pull_enabled=True`` (default) marks the group as a
+        pull-resolver target; ``False`` records only the tap-alias
+        relationship (used by multi-host ``dns:``). If a group is
+        referenced once as ``dnsr:`` and once as ``dns:``, the
+        pull-enabled flag wins — a later ``dns:`` reference never
+        demotes an active pull group.
+        """
         pqn = canonical_qname(primary)
         if pqn not in self.groups:
             self.groups[pqn] = DnsrGroup(
@@ -189,6 +230,7 @@ class DnsrRegistry:
                 ttl_floor=self.default_ttl_floor,
                 ttl_ceil=self.default_ttl_ceil,
                 size=self.default_size,
+                pull_enabled=pull_enabled,
             )
         else:
             existing = self.groups[pqn]
@@ -198,6 +240,8 @@ class DnsrRegistry:
                 if cq not in seen:
                     existing.qnames.append(cq)
                     seen.add(cq)
+            if pull_enabled and not existing.pull_enabled:
+                existing.pull_enabled = True
         return self.groups[pqn]
 
     def iter_sorted(self) -> list[DnsrGroup]:
@@ -333,6 +377,10 @@ def emit_dns_set_declarations(
     lines.append(f"{indent}# DNS-managed sets (populated by shorewalld")
     lines.append(f"{indent}# from dnstap/pbdns frames; see dnsnames.compiled)")
     for spec in registry.iter_sorted():
+        # Secondaries of dnsr: groups live in the allowlist for the tap
+        # filter but share the primary's nft set — skip declaration.
+        if not spec.declare_set:
+            continue
         v4_name, v6_name = qname_to_set_name(spec.qname, "v4"), \
             qname_to_set_name(spec.qname, "v6")
         for name, nft_type in ((v4_name, "ipv4_addr"), (v6_name, "ipv6_addr")):
@@ -363,7 +411,7 @@ ALLOWLIST_HEADER = (
 
 _DNSR_SECTION_HEADER = (
     "\n[dnsr]\n"
-    "# primary_qname\tttl_floor\tttl_ceil\tsize\tqnames\tcomment\n"
+    "# primary_qname\tttl_floor\tttl_ceil\tsize\tqnames\tpull\tcomment\n"
 )
 
 
@@ -404,9 +452,11 @@ def write_compiled_allowlist(
         for group in dnsr_registry.iter_sorted():
             comment = group.comment.replace("\t", " ").replace("\n", " ")
             qnames_str = ",".join(group.qnames)
+            pull = "1" if group.pull_enabled else "0"
             parts.append(
                 f"{group.primary_qname}\t{group.ttl_floor}\t"
-                f"{group.ttl_ceil}\t{group.size}\t{qnames_str}\t{comment}\n")
+                f"{group.ttl_ceil}\t{group.size}\t{qnames_str}\t"
+                f"{pull}\t{comment}\n")
     tmp.write_text("".join(parts))
     tmp.replace(path)
 
@@ -487,7 +537,19 @@ def read_compiled_dnsr_allowlist(path: Path) -> DnsrRegistry:
             continue
         qnames_str = cols[4]
         qnames = [canonical_qname(q) for q in qnames_str.split(",") if q.strip()]
-        comment = cols[5] if len(cols) > 5 else ""
+        # New format: pull column before comment. Older files without
+        # the pull column default to pull_enabled=True (legacy dnsr:
+        # groups all had active pull).
+        pull_enabled = True
+        comment = ""
+        if len(cols) > 5:
+            pull_col = cols[5].strip()
+            if pull_col in ("0", "1"):
+                pull_enabled = pull_col == "1"
+                comment = cols[6] if len(cols) > 6 else ""
+            else:
+                # Legacy: column 5 is the comment.
+                comment = pull_col
         if not qnames:
             qnames = [primary]
         registry.groups[primary] = DnsrGroup(
@@ -497,6 +559,7 @@ def read_compiled_dnsr_allowlist(path: Path) -> DnsrRegistry:
             ttl_ceil=ttl_ceil,
             size=size,
             comment=comment,
+            pull_enabled=pull_enabled,
         )
     return registry
 

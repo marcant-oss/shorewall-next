@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`dns:` multi-host** — `dns:host1,host2,…` is now accepted in
+  SOURCE/DEST rule columns with the same semantics as `dnsr:`
+  multi-host: the first hostname's nft set (`dns_<primary>_v4/v6`)
+  absorbs every listed hostname via tracker aliases, so a single
+  rule can gate traffic for a group of related names. Unlike
+  `dnsr:`, no active pull is scheduled — the group is tap-only.
+  Single-host `dns:github.com` is unchanged.
+
+### Fixed
+
+- **`dnsr:` pull-resolver — handler registration ordering** — the
+  `refresh-dns` control-socket handler was registered inside
+  `_start_dns_pipeline`, which runs before the control server is
+  up; the registration was a silent no-op and `shorewalld ctl
+  refresh-dns` fell through with "unknown command". The handler
+  is now wired from `_start_control_server` (and re-wired when the
+  PullResolver is created lazily later).
+- **`dnsr:` pull-resolver — lazy creation** — a daemon booted
+  without any `dnsr:` groups never created a PullResolver, so a
+  later `register-instance` that brought the first group populated
+  the tracker aliases but never actively resolved. `InstanceManager`
+  now gets a factory and creates the resolver on demand.
+- **`dnsr:` pull-resolver — in-flight race** — `refresh()` and
+  `update_registry()` replaced the heap while a group was
+  mid-resolve, which could silently drop refresh signals and push
+  stale duplicate entries back on completion. The resolver now
+  tracks `_primaries` (source of truth) + `_in_flight` +
+  `_refresh_pending`; in-flight groups re-queue correctly and
+  entries for removed groups are dropped on pop.
+- **`dnsr:` pull-resolver — serial startup** — due groups were
+  resolved one at a time, so N groups took N × resolve-duration
+  before all sets were populated. Bounded-concurrency
+  `asyncio.Semaphore` (default 8) parallelises the startup burst.
+- **`dnsr:` pull-resolver — thundering herd** — ±10% jitter on
+  `next_at` so many groups with identical TTLs don't all re-resolve
+  on the same tick.
+- **`dnsr:` pull-resolver — log spam** — NXDOMAIN and DNS-exception
+  log lines now go through `logsetup.RateLimiter`, keyed per
+  `(qname, rdtype)`, so a persistently-missing hostname no longer
+  emits every `min_retry` seconds.
+- **`dnsr:` pull-resolver — DNS timeout** — explicit 3 s `lifetime`
+  / `timeout` on the `dns.asyncresolver.Resolver` so a slow upstream
+  can't stall a worker indefinitely. Configurable via the
+  `dns_timeout=` constructor kwarg.
+- **`dnsr:` compiler — dead nft set declarations** — secondary
+  hostnames in a `dnsr:host1,host2,…` group were registered in the
+  DNS registry with the same default as primaries, causing the
+  emitter to declare `dns_<secondary>_v4/v6` sets that are never
+  written to (all IPs land in the primary's set via tracker alias).
+  New `DnsSetSpec.declare_set` flag: secondaries register with
+  `declare_set=False`; the emitter skips them. A later `dns:` or
+  `dnsr:` rule that uses the same hostname as a primary promotes
+  the spec to `declare_set=True` so the set does get declared.
+
 - **Lifecycle → shorewalld instance registration** — `shorewall-nft
   start` / `restart` / `reload` now contact the shorewalld control
   socket and register (or re-register) the instance; `stop`
