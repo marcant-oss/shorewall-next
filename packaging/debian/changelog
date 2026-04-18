@@ -1,3 +1,11 @@
+shorewall-nft (1.5.1-1) unstable; urgency=medium
+
+  * Release 1.5.1: remove run-netns: native ip-netns + unshare test isolation.
+  * See CHANGELOG.md for full details.
+
+ -- shorewall-nft maintainers <shorewall-nft@example.com>  Sa, 18 Apr 2026 06:45:38 +0000
+
+
 shorewall-nft (1.5.0-1) unstable; urgency=medium
 
   * Release 1.5.0: in-process netns, CLI unification, subprocess cleanup.
