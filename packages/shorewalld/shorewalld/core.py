@@ -121,6 +121,7 @@ class Daemon:
         self._peer_link: Any | None = None
 
         self._pull_resolver: Any | None = None
+        self._pull_resolver_netns: str = ""
 
         # New subsystems.
         self._iplist_tracker: Any | None = None
