@@ -196,6 +196,12 @@ class Daemon:
             await self._start_dns_pipeline(netns_list)
             self.allowlist_file = _orig
 
+        # When only a control socket is configured and no allowlist was
+        # available to bootstrap from, seed an empty pipeline so the
+        # InstanceManager starts and register-instance is available.
+        if self._tracker is None and self.control_socket:
+            await self._start_empty_dns_pipeline(netns_list)
+
         # Multi-instance manager: layers on the DNS pipeline.
         # When --instance is used, the InstanceManager takes over
         # allowlist management from the reload monitor.  It is also
@@ -507,6 +513,49 @@ class Daemon:
             "iplist tracker: started with %d list(s)",
             len(self.iplist_configs),
         )
+
+    async def _start_empty_dns_pipeline(self, netns_list: list[str]) -> None:
+        """Bootstrap a minimal empty DNS pipeline for the control-socket path.
+
+        Called when a control socket is configured but no allowlist is
+        available at start time.  The InstanceManager will populate the
+        tracker via register-instance on first shorewall-nft start.
+        """
+        assert self._nft is not None
+        from .dns_set_tracker import DnsSetTracker
+        from .dnstap_bridge import TrackerBridge
+        from .setwriter import SetWriter
+        from .worker_router import WorkerRouter
+
+        try:
+            from shorewall_nft.nft.dns_sets import DnsSetRegistry
+        except ImportError:
+            log.error(
+                "dns pipeline: shorewall_nft not installed — "
+                "cannot initialise empty pipeline"
+            )
+            return
+
+        self._tracker = DnsSetTracker()
+        self._tracker.load_registry(DnsSetRegistry())
+
+        loop = asyncio.get_running_loop()
+        self._router = WorkerRouter(tracker=self._tracker, loop=loop)
+        for netns in netns_list:
+            try:
+                await self._router.add_netns(netns)
+            except Exception:
+                log.exception("router: failed to add netns %r", netns)
+
+        self._set_writer = SetWriter(self._tracker, self._router, loop=loop)
+        await self._set_writer.start()
+
+        self._tracker_bridge = TrackerBridge(
+            self._tracker, self._set_writer,
+            default_netns=netns_list[0] if netns_list else "",
+        )
+
+        log.info("dns pipeline: empty pipeline ready for dynamic registration")
 
     async def _start_instance_manager(self) -> None:
         """Start the multi-instance allowlist manager."""
