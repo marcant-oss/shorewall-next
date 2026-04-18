@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shorewalld"
-version = "1.5.4"
+version = "1.5.5"
 description = "Prometheus exporter and DNS-based dynamic set daemon for shorewall-nft"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -1,3 +1,11 @@
+shorewall-nft (1.5.5-1) unstable; urgency=medium
+
+  * Release 1.5.5: fix CI integration tests: preserve PATH under sudo.
+  * See CHANGELOG.md for full details.
+
+ -- André Valentin <avalentin@marcant.net>  Sa, 18 Apr 2026 07:03:19 +0000
+
+
 shorewall-nft (1.5.4-1) unstable; urgency=medium
 
   * Release 1.5.4: fix shellcheck warnings + CI integration test runner.
