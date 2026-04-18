@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-04-18 — remove run-netns: native ip-netns + unshare test isolation
+
+### Changes
+
+- docs: add hw-offload roadmap notes
+- docs: update testing docs — remove run-netns references, document unshare isolation
+- chore: remove run-netns from packaging, CI, and docs
+- refactor: replace run-netns with native ip-netns + isolated test wrapper
+
+
 ## [1.5.0] — 2026-04-18 — in-process netns, CLI unification, subprocess cleanup
 
 ### Changes
