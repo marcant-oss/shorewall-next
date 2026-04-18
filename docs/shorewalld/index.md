@@ -664,7 +664,10 @@ the two files serve different purposes: `shorewalld.conf` for
 scalar settings, `SHOREWALLD_ARGS` for flags that repeat or that
 are awkward in KEY=VALUE form.
 
-A template is installed at `packaging/sysconfig/shorewalld`.
+The file is deployed automatically by the `.deb` and `.rpm` packages
+(empty/commented-out, so the daemon starts with defaults until the
+operator enables a line). The source template lives at
+`packaging/sysconfig/shorewalld`.
 
 `systemctl reload shorewalld` sends `SIGUSR1` (refreshes all IP
 lists without restarting the daemon).
