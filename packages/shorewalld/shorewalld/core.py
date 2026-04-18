@@ -560,14 +560,22 @@ class Daemon:
         assert self._tracker is not None
         assert self._router is not None
         from .instance import InstanceManager, parse_instance_spec
+        from .state import DEFAULT_STATE_DIR, InstanceCache
 
         configs = [parse_instance_spec(spec) for spec in self.instances]
+
+        cache = None
+        if self.state_enabled:
+            state_dir = self.state_dir or Path(DEFAULT_STATE_DIR)
+            cache = InstanceCache(state_dir)
+
         self._instance_manager = InstanceManager(
             configs=configs,
             tracker=self._tracker,
             router=self._router,
             pull_resolver=self._pull_resolver,
             pull_resolver_factory=self._ensure_pull_resolver,
+            cache=cache,
         )
         try:
             await self._instance_manager.start()

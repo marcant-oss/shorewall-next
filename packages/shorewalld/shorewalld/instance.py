@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from .dns_pull_resolver import PullResolver
     from .dns_set_tracker import DnsSetTracker
+    from .state import InstanceCache
     from .worker_router import WorkerRouter
 
     PullResolverFactory = Callable[
@@ -115,6 +116,7 @@ class InstanceManager:
         router: "WorkerRouter",
         pull_resolver: "PullResolver | None" = None,
         pull_resolver_factory: "PullResolverFactory | None" = None,
+        cache: "InstanceCache | None" = None,
     ) -> None:
         self._configs = configs
         self._tracker = tracker
@@ -124,6 +126,12 @@ class InstanceManager:
         # dynamic register-instance. Returns the created PullResolver
         # or None if prerequisites aren't met.
         self._pull_resolver_factory = pull_resolver_factory
+        self._cache = cache
+        # Names from the initial CLI config — never written to the cache
+        # since they survive restart via CLI flags.
+        self._static_names: frozenset[str] = frozenset(
+            cfg.name for cfg in configs
+        )
         self._states: dict[str, _InstanceState] = {
             cfg.name: _InstanceState(cfg=cfg) for cfg in configs
         }
@@ -131,7 +139,8 @@ class InstanceManager:
     # ── Lifecycle ─────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Load all instances."""
+        """Load all instances, restoring cached dynamic ones first."""
+        await self._restore_from_cache()
         for cfg in self._configs:
             await self._load_instance(self._states[cfg.name])
 
@@ -186,6 +195,8 @@ class InstanceManager:
             await self._load_instance_from_payload(state, dns_payload)
         else:
             await self._load_instance(state)
+        if self._cache is not None and config.name not in self._static_names:
+            self._cache.update(config, dns_payload)
         return state.last_n_qnames
 
     async def deregister(self, name: str) -> None:
@@ -200,6 +211,8 @@ class InstanceManager:
             return
         del self._states[name]
         log.info("instance: deregistered %r", name)
+        if self._cache is not None:
+            self._cache.remove(name)
         await self._apply_merged()
 
     def status(self) -> list[dict]:
@@ -218,6 +231,39 @@ class InstanceManager:
         return result
 
     # ── Internal ───────────────────────────────────────────────────────
+
+    async def _restore_from_cache(self) -> None:
+        """Re-register dynamic instances saved from a previous run."""
+        if self._cache is None:
+            return
+        restored = 0
+        for name, netns, config_dir_s, allowlist_path_s, dns_payload in (
+            self._cache.load()
+        ):
+            if name in self._static_names:
+                log.debug(
+                    "instance cache: skipping static instance %r", name)
+                continue
+            if name in self._states:
+                log.debug(
+                    "instance cache: instance %r already registered", name)
+                continue
+            cfg = InstanceConfig(
+                name=name,
+                netns=netns,
+                config_dir=Path(config_dir_s),
+                allowlist_path=Path(allowlist_path_s),
+            )
+            self._states[name] = _InstanceState(cfg=cfg)
+            state = self._states[name]
+            log.info("instance: restoring cached instance %r", name)
+            if dns_payload is not None:
+                await self._load_instance_from_payload(state, dns_payload)
+            else:
+                await self._load_instance(state)
+            restored += 1
+        if restored:
+            log.info("instance cache: restored %d dynamic instance(s)", restored)
 
     async def _load_instance_from_payload(
         self, state: _InstanceState, payload: dict,
