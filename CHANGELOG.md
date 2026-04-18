@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.4] — 2026-04-18 — fix shellcheck warnings + CI integration test runner
+
+### Changes
+
+- fix: resolve shellcheck warnings + drop pytest-timeout from CI
+
+
 ## [1.5.3] — 2026-04-18 — fix ruff lint + CI test runner venv fallback
 
 ### Changes
