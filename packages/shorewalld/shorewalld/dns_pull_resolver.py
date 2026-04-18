@@ -39,7 +39,6 @@ from dataclasses import dataclass, field
 import dns.asyncresolver
 import dns.exception
 import dns.resolver
-
 from shorewall_nft.nft.dns_sets import DnsrGroup, DnsrRegistry
 
 from .dns_set_tracker import FAMILY_V4, FAMILY_V6, DnsSetTracker, Proposal
