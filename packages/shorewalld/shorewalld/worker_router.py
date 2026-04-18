@@ -243,6 +243,15 @@ class ParentWorker:
                 "worker recv failed: %s", e,
                 extra={"netns": self.netns or "(own)"},
             )
+            # Remove the reader and drop the transport so the dead fd
+            # doesn't keep firing this callback in a tight loop.
+            if self._transport is not None:
+                try:
+                    self._loop.remove_reader(self._transport.fileno)
+                except (ValueError, OSError):
+                    pass
+                self._transport.close()
+                self._transport = None
             self._fail_all_pending(e)
             return
         try:

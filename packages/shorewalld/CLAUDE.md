@@ -100,3 +100,6 @@ Key decisions recorded here to avoid re-debating them:
    populate within one TTL. Target host: `192.0.2.83`.
 2. **Flame graph for scrape hot path** — `py-spy record --format
    flamegraph` during a load test; save artifact locally (not committed).
+
+## Testing and Developement
+Use project venv: /home/avalentin/projects/marcant-fw/shorewall/.venv

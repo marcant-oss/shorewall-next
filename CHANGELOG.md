@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **shorewalld — worker EOF caused log-flood and hung batch futures** —
+  when a forked nft-worker exited, the parent received a zero-byte read
+  on the SEQPACKET socket (EOF). The transport returned an empty
+  `memoryview`, `decode_reply` raised `WireError("reply shorter than
+  header: 0")`, but the asyncio reader was never removed, so the dead
+  fd kept firing in a tight loop producing a wall of identical warnings.
+  Pending batch futures were never resolved (they eventually hit the
+  1-second ack-timeout). Fixed: `recv_into` now raises `OSError` on
+  `n == 0`; `_drain_replies` removes the reader and closes the transport
+  before calling `_fail_all_pending` on any `OSError`.
+
 - **shorewalld — `register-instance` unavailable on control-socket-only
   startup** — when shorewalld was started with only `--control-socket`
   (no `--allowlist-file`, no `--instance`), the DNS pipeline was never
