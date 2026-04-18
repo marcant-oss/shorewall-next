@@ -222,7 +222,7 @@ def decode_dnstap_frame(buf: bytes) -> tuple[int, bytes] | None:
     message = frame.message
     if not message.HasField("response_message"):
         return None
-    return int(message.type), bytes(message.response_message)
+    return int(message.type), message.response_message
 
 
 # ── DNS wire parse (via dnspython) ──────────────────────────────────

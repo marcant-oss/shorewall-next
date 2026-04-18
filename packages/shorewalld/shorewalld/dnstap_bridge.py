@@ -166,20 +166,21 @@ class TrackerBridge:
                 )
 
     def _submit(self, proposal: Proposal, *, family: int) -> None:
-        with self._lock:
-            self.metrics.proposals_total += 1
         ok = self._writer.submit(
             netns=self._default_netns,
             family=family,
             proposal=proposal,
         )
-        if not ok:
-            with self._lock:
+        with self._lock:
+            self.metrics.proposals_total += 1
+            if not ok:
                 self.metrics.submit_dropped_queue_full_total += 1
 
 
 def _coerce_ip4(rr: bytes | str) -> bytes | None:
-    if isinstance(rr, (bytes, bytearray, memoryview)) and len(rr) == 4:
+    if isinstance(rr, bytes) and len(rr) == 4:
+        return rr
+    if isinstance(rr, (bytearray, memoryview)) and len(rr) == 4:
         return bytes(rr)
     if isinstance(rr, str):
         import socket
@@ -191,7 +192,9 @@ def _coerce_ip4(rr: bytes | str) -> bytes | None:
 
 
 def _coerce_ip6(rr: bytes | str) -> bytes | None:
-    if isinstance(rr, (bytes, bytearray, memoryview)) and len(rr) == 16:
+    if isinstance(rr, bytes) and len(rr) == 16:
+        return rr
+    if isinstance(rr, (bytearray, memoryview)) and len(rr) == 16:
         return bytes(rr)
     if isinstance(rr, str):
         import socket
