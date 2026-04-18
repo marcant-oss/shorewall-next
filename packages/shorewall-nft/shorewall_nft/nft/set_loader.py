@@ -125,15 +125,7 @@ class SetLoader:
         """Remove all elements from a set."""
         cmd = f"flush set {self.family} {self.table} {set_name}"
         try:
-            if self.netns:
-                import subprocess
-                subprocess.run(
-                    ["sudo", "/usr/local/bin/run-netns", "exec", self.netns,
-                     self.nft._nft_bin, cmd],
-                    check=True, capture_output=True, text=True
-                )
-            else:
-                self.nft.cmd(cmd)
+            self.nft.cmd(cmd, netns=self.netns)
         except (NftError, Exception):
             pass  # Set might not exist yet
 
@@ -143,15 +135,7 @@ class SetLoader:
         cmd = (f"add set {self.family} {self.table} {name} "
                f"{{ type {set_type}; {flags_str}}}")
         try:
-            if self.netns:
-                import subprocess
-                subprocess.run(
-                    ["sudo", "/usr/local/bin/run-netns", "exec", self.netns,
-                     self.nft._nft_bin, cmd],
-                    check=True, capture_output=True, text=True
-                )
-            else:
-                self.nft.cmd(cmd)
+            self.nft.cmd(cmd, netns=self.netns)
         except (NftError, Exception):
             pass  # Set might already exist
 
@@ -163,15 +147,7 @@ class SetLoader:
             elem_str = ", ".join(chunk)
             cmd = f"add element {self.family} {self.table} {set_name} {{ {elem_str} }}"
             try:
-                if self.netns:
-                    import subprocess
-                    subprocess.run(
-                        ["sudo", "/usr/local/bin/run-netns", "exec", self.netns,
-                         self.nft._nft_bin, cmd],
-                        check=True, capture_output=True, text=True
-                    )
-                else:
-                    self.nft.cmd(cmd)
+                self.nft.cmd(cmd, netns=self.netns)
             except (NftError, Exception):
                 # Log but don't fail — some elements might be duplicates
                 pass
