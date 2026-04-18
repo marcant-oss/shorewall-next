@@ -31,7 +31,6 @@ from dataclasses import dataclass
 
 from shorewall_nft.nft.dns_sets import canonical_qname
 
-from .exporter import CollectorBase, _MetricFamily
 from .dns_set_tracker import (
     FAMILY_V4,
     FAMILY_V6,
@@ -39,6 +38,7 @@ from .dns_set_tracker import (
     Proposal,
 )
 from .dns_wire import extract_qname
+from .exporter import CollectorBase, _MetricFamily
 from .logsetup import get_logger
 from .setwriter import SetWriter
 

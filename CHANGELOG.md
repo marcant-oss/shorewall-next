@@ -7,17 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **shorewalld: hot-path micro-optimisations in `dnstap_bridge`** —
-  `_submit()` now acquires `_lock` once instead of twice (proposals counter
-  and queue-full counter combined); eliminates a redundant lock acquire per
-  IP proposal under concurrent decoder threads. `_coerce_ip4/6()` skip the
-  `bytes()` copy when the input is already an immutable `bytes` object (the
-  common path from the pbdns decoder). `_decode_dnstap_frame()` drops the
-  redundant `bytes()` wrapper on the protobuf `response_message` field.
-
-## [1.7.0] — 2026-04-18 — shorewalld: inline DNS registry, full Prometheus coverage, --monitor removal
+## [1.7.0] — 2026-04-19 — shorewalld: inline DNS registry, full Prometheus coverage, --monitor removal, dnstap_bridge perf
 
 ### Added
 
@@ -37,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path.
 
 ### Changed
+
+- **shorewalld: hot-path micro-optimisations in `dnstap_bridge`** —
+  `_submit()` now acquires `_lock` once instead of twice (proposals counter
+  and queue-full counter combined); eliminates a redundant lock acquire per
+  IP proposal under concurrent decoder threads. `_coerce_ip4/6()` skip the
+  `bytes()` copy when the input is already an immutable `bytes` object (the
+  common path from the pbdns decoder). `_decode_dnstap_frame()` drops the
+  redundant `bytes()` wrapper on the protobuf `response_message` field.
 
 - **`/etc/shorewalld.conf` is now the primary config location** — search
   order changed to `/etc/shorewalld.conf` first, then

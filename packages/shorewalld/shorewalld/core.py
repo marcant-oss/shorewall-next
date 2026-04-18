@@ -310,9 +310,9 @@ class Daemon:
         )
 
         assert self._registry is not None
+        from .dnstap_bridge import BridgeMetricsCollector
         from .setwriter import SetWriterMetricsCollector
         from .worker_router import WorkerRouterMetricsCollector
-        from .dnstap_bridge import BridgeMetricsCollector
         self._registry.add(SetWriterMetricsCollector(self._set_writer))
         self._registry.add(WorkerRouterMetricsCollector(self._router))
         self._registry.add(BridgeMetricsCollector(self._tracker_bridge))
@@ -545,9 +545,9 @@ class Daemon:
         )
 
         assert self._registry is not None
+        from .dnstap_bridge import BridgeMetricsCollector
         from .setwriter import SetWriterMetricsCollector
         from .worker_router import WorkerRouterMetricsCollector
-        from .dnstap_bridge import BridgeMetricsCollector
         self._registry.add(SetWriterMetricsCollector(self._set_writer))
         self._registry.add(WorkerRouterMetricsCollector(self._router))
         self._registry.add(BridgeMetricsCollector(self._tracker_bridge))
