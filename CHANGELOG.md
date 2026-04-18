@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-04-18 — in-process netns, CLI unification, subprocess cleanup
+
+### Changes
+
+- fix: use subprocess for cross-namespace nft operations
+- refactor: replace remaining subprocess/run-netns calls with libnftables API
+- refactor: unify CLI options + drop nft -v version probe
+- feat: in-process netns path, start progress output, python3-nftables required
+- nft/capabilities.py: NAT-Probe-Fix — masquerade braucht nat-chain
+
+
 ## [1.4.3] — 2026-04-17 — RPM spec generator + AlmaLinux 10 build
 
 ### Added

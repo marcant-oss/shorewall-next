@@ -1,3 +1,11 @@
+shorewall-nft (1.5.0-1) unstable; urgency=medium
+
+  * Release 1.5.0: in-process netns, CLI unification, subprocess cleanup.
+  * See CHANGELOG.md for full details.
+
+ -- shorewall-nft maintainers <shorewall-nft@example.com>  Sa, 18 Apr 2026 06:22:55 +0000
+
+
 shorewall-nft (1.4.3-1) unstable; urgency=medium
 
   * Release 1.4.3: auto-generated RPM spec + AlmaLinux 10 build target.
