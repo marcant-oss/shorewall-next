@@ -23,7 +23,6 @@ import time
 from unittest.mock import AsyncMock, patch
 
 import dns.resolver
-import pytest
 
 from shorewalld.dns_pull_resolver import (
     DEFAULT_RESOLVE_FRACTION,

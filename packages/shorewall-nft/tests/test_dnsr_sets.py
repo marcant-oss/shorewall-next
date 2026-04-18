@@ -23,11 +23,8 @@ from shorewall_nft.compiler.ir import (
 from shorewall_nft.config.parser import ConfigLine, ShorewalConfig
 from shorewall_nft.nft.dns_sets import (
     DnsSetRegistry,
-    DnsrGroup,
     DnsrRegistry,
-    canonical_qname,
     is_dnsr_token,
-    qname_to_set_name,
     read_compiled_allowlist,
     read_compiled_dnsr_allowlist,
     write_compiled_allowlist,

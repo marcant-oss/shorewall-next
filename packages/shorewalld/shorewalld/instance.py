@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 if TYPE_CHECKING:
-    from shorewall_nft.nft.dns_sets import DnsSetRegistry, DnsrRegistry
+    from shorewall_nft.nft.dns_sets import DnsrRegistry, DnsSetRegistry
 
     from .dns_pull_resolver import PullResolver
     from .dns_set_tracker import DnsSetTracker
@@ -311,7 +311,7 @@ class InstanceManager:
         before calling it — otherwise multi-instance setups would have
         each instance evict the others' names.
         """
-        from shorewall_nft.nft.dns_sets import DnsSetRegistry, DnsrRegistry
+        from shorewall_nft.nft.dns_sets import DnsrRegistry, DnsSetRegistry
 
         from .dns_set_tracker import FAMILY_V4, FAMILY_V6
 
