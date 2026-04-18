@@ -36,21 +36,18 @@ future Debian/RPM/Arch packaging.
 |------|---------|--------|--------|------|--------|
 | `nft` | nftables userspace | `nftables` | `nftables` | `nftables` | `nftables` |
 | `ip` | iproute2 — needed for netns, interfaces | `iproute2` | `iproute` | `iproute2` | `iproute2` |
-| libnftables Python bindings | In-process `setns(2)` + libnftables path for all namespace-entering operations (`start`, `stop`, `status`, `debug`, `capabilities`, `--netns`). Without it every netns call forks `sudo run-netns exec` as a subprocess. | `python3-nftables` | `python3-nftables` | `nftables` (includes bindings) | `py3-nftables` |
+| libnftables Python bindings | In-process `setns(2)` + libnftables path for same-namespace operations. Without it every netns call forks `ip netns exec` as a subprocess. | `python3-nftables` | `python3-nftables` | `nftables` (includes bindings) | `py3-nftables` |
 
 ## System binaries (optional at runtime)
 
 | Tool | Purpose | Debian | Fedora | Arch | Alpine |
 |------|---------|--------|--------|------|--------|
 | `ipset` | Legacy ipset loading from `init` scripts | `ipset` | `ipset` | `ipset` | `ipset` |
-| `sudo` | For `run-netns` subprocess fallback when libnftables is absent | `sudo` | `sudo` | `sudo` | `sudo` |
-
 ## System binaries (test only)
 
 | Tool | Purpose | Debian | Fedora | Arch | Alpine |
 |------|---------|--------|--------|------|--------|
-| `sudo` | NOPASSWD entry for `run-netns` | `sudo` | `sudo` | `sudo` | `sudo` |
-| `visudo` | Validates sudoers snippet in the installer | `sudo` | `sudo` | `sudo` | `sudo` |
+| `unshare` | Isolate test network + mount namespace | `util-linux` | `util-linux` | `util-linux` | `util-linux` |
 | `tcpdump` | Ad-hoc netns packet capture for debugging | `tcpdump` | `tcpdump` | `tcpdump` | `tcpdump` |
 
 ## Documentation tooling (optional)
@@ -157,7 +154,7 @@ depends=(
 optdepends=(
     'ipset: legacy ipset support'
     'python-scapy: simulate and connstate tests'
-    'sudo: run-netns wrapper for tests'
+    'util-linux: unshare for isolated test namespace'
 )
 ```
 

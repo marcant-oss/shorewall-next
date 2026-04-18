@@ -129,22 +129,20 @@ packages/shorewall-nft-simlab/
 
 ### Test-Setup / Tooling
 
-**Symptom:** `run-netns` fehlt, sudoers nicht gesetzt, Venv bricht ab
+**Test-Setup:** Tests laufen als root via `tools/run-tests.sh` (kein run-netns, kein sudoers).
 
 ```
 tools/
-  install-test-tooling.sh     Lokal: run-netns + sudoers installieren
-  setup-remote-test-host.sh   Remote: Repo-Sync + alle 3 Pakete + Tooling
-  run-netns                   Wrapper um sudo ip netns
-  sudoers.d-shorewall-nft     NOPASSWD-Regel für netns-test-Gruppe
+  run-tests.sh                Tests in isoliertem Namespace (unshare --mount --net)
+  setup-remote-test-host.sh   Remote: Repo-Sync + alle 3 Pakete installieren
 
   # Venv auf dem Testhost:
   pip install -e packages/shorewall-nft[dev] \
               -e packages/shorewalld[dev] \
               -e packages/shorewall-nft-simlab[dev]
 
-  # Tests:
-  pytest packages/shorewall-nft/tests/ -q
+  # Tests (isoliert, kein Crash des Hosts möglich):
+  tools/run-tests.sh packages/shorewall-nft/tests/ -q
   pytest packages/shorewalld/tests/ -q
   pytest packages/shorewall-nft-simlab/tests/ -q
 ```
