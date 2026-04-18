@@ -174,7 +174,7 @@ pytest tests/ --ignore=tests/test_cli_integration.py \
 
 This covers 180+ tests in under 10s without needing the netns
 tooling. The two excluded files are CI-friendly too if the runner
-has sudo + `run-netns` installed.
+running as root via `tools/run-tests.sh`.
 
 ## Machine-readable index
 

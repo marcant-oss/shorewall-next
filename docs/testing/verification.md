@@ -224,9 +224,7 @@ The failing trace excerpt is saved to
 ### Requirements
 
 - `scapy` installed: `pip install -e ".[simulate]"`
-- `run-netns` tooling installed (see [Setup](setup.md))
-- Sufficient capabilities: the test user must be in the
-  `netns-test` group
+- Tests run as root via `tools/run-tests.sh` (see [Setup](setup.md))
 
 ## Connection-state tests
 
@@ -291,4 +289,4 @@ Wire this into CI after every merge.
 
 - [Test suite](test-suite.md) — pytest inventory
 - [Debugging firewall rules](debugging.md) — when verification fails
-- [Setup](setup.md) — install scapy and run-netns
+- [Setup](setup.md) — install scapy and test tooling

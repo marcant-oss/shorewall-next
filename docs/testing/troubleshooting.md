@@ -9,23 +9,18 @@ Quick index of the most frequent test failures, diagnostics, and fixes.
 
 ## Setup failures
 
-### `sudo: a password is required`
+### `unshare: unshare failed: Operation not permitted`
 
-Your user is not in the `netns-test` group (or the group change
-hasn't taken effect yet).
+The test host kernel does not allow unprivileged user namespaces, or
+you are not running as root. `tools/run-tests.sh` requires root.
 
 ```bash
-# Check current groups
-groups | tr ' ' '\n' | grep netns-test
-
-# If missing, add:
-sudo usermod -aG netns-test $USER
-
-# Then log out and back in (or open a new terminal with newgrp)
-newgrp netns-test
+# Verify you are root:
+id
+# Should show uid=0(root)
 ```
 
-### `install-test-tooling.sh: ip binary not found`
+### `ip: command not found`
 
 Your system is missing `iproute2`. Install it:
 
@@ -59,15 +54,16 @@ pip install -e ".[simulate]"
 A stale namespace with the same name is still around.
 
 ```bash
-sudo /usr/local/bin/run-netns list | grep shorewall-next-sim
-sudo /usr/local/bin/run-netns delete <stale-name>
+ip netns list | grep shorewall-next-sim
+ip netns delete <stale-name>
 ```
 
 ### Tests pass locally but fail in CI
 
 CI often runs without `/etc/shorewall` — the production-config tests
 skip there. If tests **fail** rather than skip, check that the CI
-base image has `nftables`, `iproute2`, and sudo configured.
+base image has `nftables`, `iproute2`, and `util-linux` (`unshare`)
+installed, and that the integration job runs with `sudo tools/run-tests.sh`.
 
 ### `nft: Could not process rule: Operation not supported`
 
@@ -90,8 +86,8 @@ to an earlier fatal error in the signal handler), restore manually:
 # Saved original path was printed at debug start:
 #   "Saved current ruleset to /tmp/shorewall-next-sim-debug-saved-XXXX.nft"
 
-sudo /usr/local/bin/run-netns exec <ns> nft flush ruleset
-sudo /usr/local/bin/run-netns exec <ns> \
+ip netns exec <ns> nft flush ruleset
+ip netns exec <ns> \
     nft -f /tmp/shorewall-next-sim-debug-saved-XXXX.nft
 ```
 
