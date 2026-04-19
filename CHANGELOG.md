@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **shorewalld: empty nft sets after `shorewall-nft restart`** — the tracker's
+  `(ip, deadline)` dedup cache survived firewall restarts unchanged. Because
+  the kernel sets were freshly empty but the tracker still held non-expired
+  deadlines, the next DNS resolve pass fell into the `DEDUP` path and never
+  emitted `add element` commands. The fresh nft sets stayed empty until the
+  cached TTL (up to 1 h) elapsed. Every control-socket `register-instance`
+  is now treated as an explicit restart signal: the tracker's element cache
+  for the instance's qnames is dropped, the forked nft worker is respawned
+  (fresh libnftables handle inside the possibly-recreated netns table), and
+  the pull resolver is poked so the sets repopulate within ~1 s. File-based
+  `reload-instance` is unchanged (it assumes the table is intact).
+
+- **shorewalld: silent writes lost after dynamically adding a qname** —
+  forked nft workers inherit a copy-on-write snapshot of the `DnsSetTracker`
+  at fork time. qnames added later via `register-instance` were invisible
+  to the already-running child, which acked every batch but silently dropped
+  ops for the unknown set_ids. `DnsSetTracker.load_registry()` now reports
+  whether new set_ids were allocated, and `InstanceManager._apply_merged()`
+  respawns any affected forked worker so it re-forks with the updated
+  tracker.
+
+### Changed
+
+- **shorewalld: info-level per-resolve logging** — `PullResolver` now emits
+  one info line per group resolve with the submitted IP count and the next
+  resolve deadline, making empty-set problems self-diagnosing. A rate-limited
+  warning fires when `set_id_for()` returns None during submit. The nft worker
+  warns when a batch contains ops but the generated script is empty (all
+  set_ids unknown — the symptom of a stale worker snapshot).
+
 ## [1.7.0] — 2026-04-19 — shorewalld: inline DNS registry, full Prometheus coverage, --monitor removal, dnstap_bridge perf
 
 ### Added
