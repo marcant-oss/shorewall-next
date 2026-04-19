@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **shorewall-nft: implicit loopback accept in base input/output chains**
+  — classic Shorewall (shorewall-perl) emits an unconditional
+  `-A INPUT -i lo -j ACCEPT` / `-A OUTPUT -o lo -j ACCEPT`, so local
+  services bound to loopback (e.g. `pdns-recursor` listening on
+  `127.0.0.1` or an Anycast IP on `lo`, firewall-originated mgmt
+  traffic via `lo`) work out of the box. The shorewall-nft emitter
+  was missing the equivalent rule on the running ruleset — it only
+  appeared in the `shorewall_stopped` table — so any lo-bound flow
+  required an explicit `$FW $FW ACCEPT` policy to survive the base
+  chain's `policy drop`. Migrations from classic Shorewall broke
+  silently. The base `input` chain now carries `iifname lo accept`
+  and the base `output` chain carries `oifname lo accept`, placed
+  after FASTACCEPT and before NDP/dispatch.
+
 ## [1.8.0] — 2026-04-19 — shorewalld: Prometheus deep-dive, worker /proc delegation, seed handshake, AlmaLinux 10
 
 ### Fixed
