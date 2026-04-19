@@ -110,3 +110,11 @@ Source of truth: `docs/reference/dependencies.md`. Tests run as root via
   jumps to raw chains, NDP gets routed into chains with
   `ct state invalid drop` before the normal output chain can
   accept it. Fixed in commit `d5720c4a7`.
+- **Implicit loopback accept** — classic Shorewall emits
+  `-A INPUT -i lo -j ACCEPT` / `-A OUTPUT -o lo -j ACCEPT`
+  unconditionally; shorewall-nft must mirror this on the running
+  ruleset (not only the stopped chains). Without it, local services
+  on `lo` (pdns-recursor on `127.0.0.1`, Anycast IPs on `lo`,
+  firewall-originated mgmt) require an explicit `$FW $FW ACCEPT`
+  policy or they hit `policy drop`. Emitted in `_create_base_chains`
+  after FASTACCEPT and before NDP.

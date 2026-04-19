@@ -447,6 +447,19 @@ def _create_base_chains(ir: FirewallIR) -> None:
                 matches=[Match(field="ct state", value="established,related")],
                 verdict=Verdict.ACCEPT,
             ))
+        # Loopback always passes — classic Shorewall emits an implicit
+        # `-i lo -j ACCEPT` / `-o lo -j ACCEPT` so local services (e.g.
+        # pdns-recursor bound to 127.0.0.1 or an Anycast IP on lo, the
+        # firewall's own loopback-originated mgmt traffic) work without
+        # an explicit `$FW $FW ACCEPT` policy entry.  Forward chain is
+        # excluded — you don't forward on lo.
+        if hook in (Hook.INPUT, Hook.OUTPUT):
+            field = "iifname" if hook == Hook.INPUT else "oifname"
+            chain.rules.append(Rule(
+                matches=[Match(field=field, value="lo")],
+                verdict=Verdict.ACCEPT,
+                comment="loopback",
+            ))
         # ICMPv6 NDP essentials — MUST be accepted in input/output
         # base chains before dispatch so the kernel can resolve
         # neighbors and receive router advertisements.
