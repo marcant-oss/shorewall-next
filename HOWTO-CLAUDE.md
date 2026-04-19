@@ -129,14 +129,18 @@ packages/shorewall-nft-simlab/
 
 ### Test-Setup / Tooling
 
-**Test-Setup:** Tests laufen als root via `tools/run-tests.sh` (kein run-netns, kein sudoers).
+**Projekt-Venv liegt im Repo-Root: `.venv/` (Python 3.13).**
+Ein einziges Venv für alle drei Pakete — keine Per-Package-Venvs anlegen.
+
+**Tests:** laufen als root via `tools/run-tests.sh` (kein run-netns, kein sudoers).
 
 ```
 tools/
   run-tests.sh                Tests in isoliertem Namespace (unshare --mount --net)
   setup-remote-test-host.sh   Remote: Repo-Sync + alle 3 Pakete installieren
 
-  # Venv auf dem Testhost:
+  # Einmalige Bootstrap-Installation ins Repo-Venv:
+  source .venv/bin/activate
   pip install -e packages/shorewall-nft[dev] \
               -e packages/shorewalld[dev] \
               -e packages/shorewall-nft-simlab[dev]
@@ -183,7 +187,7 @@ docs/
   shorewall-nft/              7 Dateien: merge-config, plugins, debug, optimizer, config-hash, config-dirs, plugin-dev
   shorewalld/index.md         Daemon-Referenz (Metriken, DNS-Sets, HA, tap)
   testing/                    9 Dateien: Setup, Suite, Simlab, Debugging, Verification
-  cli/commands.md             36 Befehle (v1.4.0)
+  cli/commands.md             CLI-Referenz aller shorewall-nft-Befehle
   concepts/ features/         Shorewall config-language Referenz
 ```
 

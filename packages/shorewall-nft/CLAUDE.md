@@ -3,6 +3,9 @@
 Compiler + emitter + config parser + runtime CLI.
 Python package: `shorewall_nft`. Entry point: `shorewall-nft`.
 
+**Development: use the repo-root venv at `../../.venv/` (Python 3.13).**
+No per-package venv. See root `CLAUDE.md` for bootstrap.
+
 ## Key directories
 
 - `shorewall_nft/compiler/` — config → IR (`build_ir()` in `ir.py`),
@@ -25,24 +28,20 @@ Python package: `shorewall_nft`. Entry point: `shorewall-nft`.
 - `tests/` — pytest; `test_emitter_features.py` covers 1.1-era knobs
   (flowtable, vmap dispatch, ct zone tag, concat-map DNAT, ct mask).
 
-## Release checklist (before next tag)
+## Release-blocker invariants
 
-1. Version bump in `pyproject.toml` and `shorewall_nft/__init__.py`.
-   Keep in sync with `packages/shorewalld/pyproject.toml` and
-   `packages/shorewall-nft-simlab/pyproject.toml`.
-2. **CHANGELOG.md** entry closed and dated.
-3. **`/etc/shorewall46` precedence note** — when both `/etc/shorewall`
-   and `/etc/shorewall46` exist, the latter wins. Backward-incompatible;
-   worth a release-notes line every time.
-4. **`?FAMILY` directive** — shorewall-nft extension; a merged
-   `/etc/shorewall46` config will crash stock upstream Shorewall. Keep
-   the README warning.
-5. **Example plugin configs** under `examples/plugins/` — in sync with
-   `plugins/builtin/*.py`.
-6. **`generate-systemd --netns` template** — honours `/etc/shorewall46`
-   as default when present.
-7. **Packaging** — `python -m build`, verify wheel includes
-   `plugins/builtin/` and `data/macros/`.
+Release mechanics (version bump sync, tag, CHANGELOG) live in the root
+`CLAUDE.md`. Shorewall-nft-specific things that must hold at every tag:
+
+- **`/etc/shorewall46` precedence** — when both `/etc/shorewall` and
+  `/etc/shorewall46` exist, the latter wins. Backward-incompatible with
+  classic Shorewall; worth a release-notes line every time.
+- **`?FAMILY` directive** — shorewall-nft extension; a merged
+  `/etc/shorewall46` config will crash stock upstream Shorewall.
+- **Examples in sync** — `examples/plugins/` matches `plugins/builtin/*.py`.
+- **`generate-systemd --netns`** honours `/etc/shorewall46` as default.
+- **Wheel contents** — `python -m build` wheel must include
+  `plugins/builtin/` and `data/macros/`.
 
 Deeper open items (not release-blockers):
 
@@ -54,42 +53,9 @@ Deeper open items (not release-blockers):
 
 ## Packaging deps
 
-Source of truth: `docs/reference/dependencies.md`.
-
-**Required runtime:**
-- python3 ≥ 3.11 (stdlib `tomllib`, PEP 604 unions)
-- python3-click ≥ 8.0 (modern group handling, `show_default` semantics)
-- python3-pyroute2 ≥ 0.9 (stable nft state reading API)
-- `nft`, `ip` binaries (nftables, iproute2)
-
-**Recommended:**
-- python3-nftables — libnftables bindings; subprocess fallback exists but slower
-- ipset — legacy init-script ipset loading
-
-**Optional (Suggests):**
-- python3-scapy — only for `simulate` and `connstate` verification tools
-
-**Kernel floor:** Linux ≥ 5.8.
-Required (usually auto-loaded): nf_tables, nf_tables_inet,
-nft_counter, nft_ct, nft_limit, nft_log, nft_nat, nft_reject_inet,
-nft_set_hash, nft_set_rbtree.
-Soft: nft_objref, nft_connlimit, nft_numgen, nft_flow_offload, nft_synproxy.
-
-**Distro package name conventions:**
-
-| Distro | Base     | Test subpkg           | Doc subpkg          |
-|--------|----------|-----------------------|---------------------|
-| Debian | shorewall-nft | shorewall-nft-tests | shorewall-nft-doc |
-| Fedora | shorewall-nft | shorewall-nft-tests | shorewall-nft-doc |
-| Arch   | shorewall-nft (all-in-one) | — | — |
-| Alpine | shorewall-nft | shorewall-nft-tests | shorewall-nft-doc |
-
-The `shorewall-nft-tests` package does not need extra tooling.
-Tests run as root via `tools/run-tests.sh` which creates a private
-network + mount namespace (`unshare --mount --net`) before pytest starts.
-No sudoers rules, no helper binary, no `netns-test` group needed.
-
-pytest ≥ 8.0 (modern fixture scoping used in `test_cli_integration.py`).
+Source of truth: `docs/reference/dependencies.md`. Tests run as root via
+`tools/run-tests.sh` (unshare --mount --net — no sudoers, no
+`netns-test` group, no helper binary).
 
 ## Open items (compiler/emitter)
 

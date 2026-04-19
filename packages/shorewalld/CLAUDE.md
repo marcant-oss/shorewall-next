@@ -3,15 +3,33 @@
 Prometheus exporter + DNS-based dynamic nft-set daemon for shorewall-nft.
 Python package: `shorewalld`. Entry point: `shorewalld`.
 
+**Development: use the repo-root venv at `../../.venv/` (Python 3.13).**
+No per-package venv. See root `CLAUDE.md` for bootstrap.
+
 ## Key modules
 
-- `cli.py` — Click entry point; wires all subsystems.
+- `cli.py`, `ctl.py`, `iplist_cli.py` — Click entry points (`shorewalld`,
+  `shorewalld-ctl`, `shorewalld-iplist`).
 - `core.py` — `Daemon.run()`: asyncio event loop, subsystem lifecycle.
-- `exporter.py` — Prometheus metrics scraper (`NftScraper`).
+- `config.py` — `shorewalld.conf` + allowlist loader.
+- `control.py` — control unix socket (`register-instance`,
+  `reload-instance`, status queries from `shorewall-nft`).
+- `instance.py` — `InstanceManager`: per-netns allowlist state,
+  register-resync wiring.
+- `exporter.py` — Prometheus metrics scraper (`NftScraper`,
+  `LinkCollector`, `CtCollector`).
 - `discover.py` — netns auto-discovery (`/run/netns/`).
-- `dnstap.py` — FrameStream unix socket server + frame decoder.
+- `dnstap.py` + `framestream.py` — FrameStream unix socket server +
+  frame decoder.
 - `pbdns.py` — PowerDNS protobuf stream server.
-- `worker_router.py` — persistent-fork `WorkerRouter` for GIL-bound decode.
+- `dns_pull_resolver.py` — periodic forward-resolve fallback
+  (per-`(qname, netns)` scheduling).
+- `dns_wire.py` — DNS wire-format parsing (qname / RR extraction).
+- `worker_router.py` — persistent-fork `WorkerRouter` for per-netns
+  nft writes (`LocalWorker` for default netns, `ParentWorker` for
+  named netns with auto-respawn).
+- `nft_worker.py` — forked-child entry point; builds nft script from
+  batched proposals.
 - `worker_transport.py` + `batch_codec.py` — IPC framing between router
   and workers.
 - `dns_set_tracker.py` — `(set_name, ip) → expiry` LRU + proposal/verdict.
@@ -19,7 +37,9 @@ Python package: `shorewalld`. Entry point: `shorewalld`.
 - `dnstap_bridge.py` — routes dnstap answers through tracker or direct-nft.
 - `state.py` — persistent set state across daemon restarts.
 - `peer.py` — HA peer-link UDP (snapshot + incremental sync).
+- `sockperms.py` — unix-socket permission helpers.
 - `tap.py` + `logsetup.py` — live trace output + rate-limited logging.
+- `iplist/` — static IP-list backend.
 - `proto/` — hand-compiled protobuf (`dnstap_pb2.py`, `peer_pb2.py`,
   `dnsmessage_pb2.py`).
 
@@ -167,13 +187,7 @@ Key decisions recorded here to avoid re-debating them:
 
 ## Open items
 
-1. **dnstap smoke harness on the test VM** — script modelled on
-   `tools/setup-remote-test-host.sh` that installs `pdns-recursor`,
-   drops in `packaging/pdns-recursor/shorewalld.lua.template`,
-   starts `shorewalld` + recursor, drives with `dig`, asserts nft sets
-   populate within one TTL. Target host: `192.0.2.83`.
-2. **Flame graph for scrape hot path** — `py-spy record --format
+1. **Flame graph for scrape hot path** — `py-spy record --format
    flamegraph` during a load test; save artifact locally (not committed).
-
-## Testing and Developement
-Use project venv: /home/avalentin/projects/marcant-fw/shorewall/.venv
+   (The dnstap smoke harness is shipped as
+   `tools/setup-shorewalld-dnstap-smoke.sh`; target host 192.0.2.83.)
