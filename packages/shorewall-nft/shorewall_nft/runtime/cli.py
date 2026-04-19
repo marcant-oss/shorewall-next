@@ -467,6 +467,27 @@ def cli(ctx, q, verbose, override_json, override_per_file):
 DEFAULT_SHOREWALLD_SOCKET = "/run/shorewalld/control.sock"
 
 
+def _detect_current_netns() -> str | None:
+    """Return the named netns the process is running in, or None for root ns.
+
+    Compares /proc/self/ns/net inode against /run/netns/ entries.  Used when
+    shorewall-nft runs inside a netns via JoinsNamespaceOf (no --netns flag)
+    so the shorewalld registration carries the correct netns name.
+    """
+    import os as _os
+    try:
+        self_ino = _os.stat("/proc/self/ns/net").st_ino
+        for entry in _os.scandir("/run/netns"):
+            try:
+                if _os.stat(entry.path).st_ino == self_ino:
+                    return entry.name
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return None
+
+
 def _resolve_instance_name(
     cli_name: str | None,
     settings: dict | None,
@@ -717,11 +738,15 @@ def start(directory, netns, shorewalld_socket, instance_name,
     )
     _instance = _resolve_instance_name(
         instance_name, getattr(ir, "settings", None), netns, cfg_primary)
+    # When running inside a named netns via JoinsNamespaceOf (no --netns
+    # flag), detect the current netns so shorewalld receives the correct
+    # netns name in the registration payload.
+    _reg_netns = netns or _detect_current_netns()
     with prog.step(
         f"Registering instance {_instance!r} with shorewalld"
     ) as s:
         _try_notify_shorewalld(
-            s, "register", _instance, cfg_primary, netns,
+            s, "register", _instance, cfg_primary, _reg_netns,
             shorewalld_socket, _has_dns,
             dns_reg=_dns_reg, dnsr_reg=_dnsr_reg)
 
@@ -883,8 +908,9 @@ def stop(directory, netns, shorewalld_socket, instance_name,
     _settings = getattr(ir, "settings", None) if ir is not None else None
     _instance = _resolve_instance_name(
         instance_name, _settings, netns, primary_cfg_dir)
+    _reg_netns = netns or _detect_current_netns()
     _try_notify_shorewalld(
-        None, "deregister", _instance, primary_cfg_dir, netns,
+        None, "deregister", _instance, primary_cfg_dir, _reg_netns,
         shorewalld_socket, _has_dns)
 
     if stopped_script is None:
@@ -914,8 +940,9 @@ def _apply_and_register(
     click.echo(f"Shorewall-nft {verb} ({len(ir.chains)} chains).")
     _instance = _resolve_instance_name(
         instance_name, getattr(ir, "settings", None), netns, cfg_primary)
+    _reg_netns = netns or _detect_current_netns()
     _try_notify_shorewalld(
-        None, "register", _instance, cfg_primary, netns,
+        None, "register", _instance, cfg_primary, _reg_netns,
         shorewalld_socket, _has_dns,
         dns_reg=_dns_reg, dnsr_reg=_dnsr_reg)
 

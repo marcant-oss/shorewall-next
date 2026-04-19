@@ -26,11 +26,11 @@ ReadWritePaths=/run/shorewalld /var/lib/shorewalld /var/log
 PrivateTmp=yes
 
 # Capabilities:
-#   CAP_NET_ADMIN  — setns + nft list table from other namespaces
-#   CAP_SYS_PTRACE — needed to enter other netns via setns(2)
+#   CAP_NET_ADMIN  — nft writes inside netns
+#   CAP_SYS_ADMIN  — setns(2) into named network namespaces
 #   CAP_NET_RAW    — conservative, not strictly required
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
 
 # Create the dnstap socket dir with the right mode up front. The
 # daemon will unlink/rebind the socket on start.
