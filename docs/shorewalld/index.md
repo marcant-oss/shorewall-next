@@ -754,6 +754,19 @@ Commands:
 
 The `--socket` flag defaults to `/run/shorewalld/control.sock`.
 
+**Concurrency.** Multiple clients may connect in parallel; each connection
+has its own session and processes one request at a time. Mutating commands
+that share state are serialised inside the daemon:
+
+- `register-instance`, `reload-instance`, `deregister-instance` serialise
+  on a single `InstanceManager` lock (they all drive the same destructive
+  `tracker.load_registry` + register-resync sequence).
+- `refresh-iplist` serialises per list against the background refresh loop.
+
+Read-only commands (`ping`, `iplist-status`, `instance-status`,
+`request-seed`) are not serialised and stay responsive during a long
+reload.
+
 `register-instance` automatically retries up to 10 times when the control
 socket is not yet available (daemon still starting).  The initial wait is
 `--retry-delay` seconds (default `1.0`); each subsequent wait is multiplied

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **shorewalld: parallel control-socket clients could interleave mutating
+  commands** — `register-instance`, `reload-instance`, and
+  `deregister-instance` share one write path (`InstanceManager._apply_merged`
+  is the sole writer of the merged registry into the tracker and pull
+  resolver). Two concurrent clients hitting those commands could interleave
+  at the `await` points inside `_apply_merged` /
+  `_resync_instance_after_register` and leave the tracker or a forked nft
+  worker inconsistent. `refresh-iplist` had the analogous race against the
+  background list loop over the shared `_ListState`. Fix: an `asyncio.Lock`
+  in `InstanceManager` serialises register/reload/deregister, and a
+  per-list `asyncio.Lock` in `IpListTracker` serialises `_do_refresh`.
+  Read-only commands (`ping`, `*-status`, `request-seed`) remain
+  unserialised.
+
 - **shorewalld: dns set elements ageing out between pull cycles** — the
   pull resolver fires every ~`ttl_floor × 0.8` seconds with a clamped TTL
   (default 300 s), but the Linux nft kernel does **not** reset an existing

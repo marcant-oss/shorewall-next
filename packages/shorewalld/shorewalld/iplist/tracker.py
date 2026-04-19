@@ -175,6 +175,12 @@ class IpListTracker:
         self._states: dict[str, _ListState] = {
             cfg.name: _ListState(cfg=cfg) for cfg in configs
         }
+        # Per-list lock serialises _do_refresh so concurrent control-socket
+        # refresh_one/refresh_all calls (and the background _list_loop) don't
+        # interleave fetch → diff → apply against the same state.
+        self._list_locks: dict[str, asyncio.Lock] = {
+            cfg.name: asyncio.Lock() for cfg in configs
+        }
         self._metrics = IpListMetrics()
         self._rate_limiter = get_rate_limiter()
         self._stop_event = asyncio.Event()
@@ -277,6 +283,10 @@ class IpListTracker:
 
     async def _do_refresh(self, state: _ListState) -> None:
         """Fetch, extract, diff, and write one list."""
+        async with self._list_locks[state.cfg.name]:
+            await self._do_refresh_locked(state)
+
+    async def _do_refresh_locked(self, state: _ListState) -> None:
         import aiohttp
 
         cfg = state.cfg
