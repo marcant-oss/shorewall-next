@@ -443,6 +443,25 @@ does **not** trigger this — it assumes the nft table is unchanged
 and only the allowlist moved. Use `register-instance` when the
 firewall itself was restarted.
 
+**Element refresh requires explicit `expires`.** Every `add element`
+emitted by the worker carries both `timeout T` *and* `expires T`. The
+Linux nft kernel does not reset the countdown on an existing element
+when the same `timeout` is re-applied — it treats the redundant `add`
+as a no-op and lets the original deadline run out. Setting `expires`
+explicitly populates `NFTA_SET_ELEM_EXPIRATION` which the kernel always
+honours, so a refresh genuinely refreshes. Without this, `dns_*_v4/v6`
+sets emptied between pull cycles even though the daemon's
+`worker_batches_applied_total` kept climbing. Verified on kernel 6.12 /
+nft 1.1.1.
+
+**Worker auto-respawn.** The forked nft worker is monitored by the
+parent's reply pump. On EOF (worker crash, OOM, briefly absent target
+netns during an `ip netns del/add` cycle, etc.) the parent reaps the
+dead child, tears down the transport, and re-forks via
+`_auto_respawn()` with exponential backoff: 0 → 1 → 2 → … → 30 s. The
+backoff resets to zero once the new child survives 30 s. The
+respawn-restart count appears as `shorewalld_worker_restarts_total`.
+
 **Dynamic-only daemon.** You don't have to pre-declare
 `--instance fw:/etc/shorewall46` on the shorewalld side. If only
 `--control-socket` is configured, shorewalld starts its

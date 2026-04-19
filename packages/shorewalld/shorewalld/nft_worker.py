@@ -211,6 +211,15 @@ def build_nft_script(
     form lets the Parent-worker integration hook the
     ``DnsSetTracker.name_for`` lookup directly without materialising
     a copy of the mapping.
+
+    The emitted ``add element`` line carries both ``timeout`` AND
+    ``expires`` set to the same TTL.  Without an explicit ``expires``
+    the kernel does NOT reset the remaining countdown for an element
+    that already exists with the same ``timeout`` — the second
+    ``add`` is silently a no-op and the element ages out on its
+    original deadline.  Specifying ``expires`` populates
+    ``NFTA_SET_ELEM_EXPIRATION``, which the kernel always honours, so
+    a refresh genuinely refreshes the kernel-side deadline.
     """
     if not ops:
         return ""
@@ -228,10 +237,13 @@ def build_nft_script(
             # the 20k-fps decode path.
             elem = socket.inet_ntop(socket.AF_INET6, op.ip_bytes)
         if op.op_kind == BATCH_OP_ADD:
-            timeout = f" timeout {op.ttl}s" if op.ttl else ""
+            if op.ttl:
+                ttl_attrs = f" timeout {op.ttl}s expires {op.ttl}s"
+            else:
+                ttl_attrs = ""
             lines.append(
                 f"add element {family} {table} {name} "
-                f"{{ {elem}{timeout} }}")
+                f"{{ {elem}{ttl_attrs} }}")
         elif op.op_kind == BATCH_OP_DEL:
             lines.append(
                 f"delete element {family} {table} {name} "
