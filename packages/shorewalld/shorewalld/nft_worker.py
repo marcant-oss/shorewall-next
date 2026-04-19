@@ -310,6 +310,12 @@ def worker_main_loop(
             script = build_nft_script(ops, set_name_lookup)
             if script:
                 nft.cmd(script)
+            elif ops:
+                log.warning(
+                    "nft-worker: batch %d: all %d op(s) had unknown set_ids"
+                    " — tracker snapshot may be stale (worker needs respawn?)",
+                    header.batch_id, len(ops),
+                )
             transport.send(encode_reply_into(
                 reply_buf, status=REPLY_OK,
                 batch_id=header.batch_id, applied=len(ops)))

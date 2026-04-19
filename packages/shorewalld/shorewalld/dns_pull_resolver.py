@@ -363,6 +363,8 @@ class PullResolver:
 
         min_ttl = group.ttl_ceil
         has_results = False
+        submitted = 0
+        skipped_no_set_id = 0
 
         for qname, result in zip(group.qnames, results):
             if isinstance(result, Exception):
@@ -379,12 +381,14 @@ class PullResolver:
                 # All qnames in the group feed the primary's set.
                 set_id = self._tracker.set_id_for(group.primary_qname, family)
                 if set_id is None:
+                    skipped_no_set_id += 1
                     continue
                 prop = Proposal(set_id=set_id, ip_bytes=ip_bytes, ttl=ttl)
                 for netns in self._netns_for(group.primary_qname):
                     self._writer.submit(
                         netns=netns, family=family, proposal=prop)
                 self.metrics.entries_submitted_total += 1
+                submitted += 1
 
         self.metrics.resolves_total += 1
         if not has_results:
@@ -401,9 +405,16 @@ class PullResolver:
         if self._jitter > 0 and wait > 0:
             wait += random.uniform(-self._jitter * wait, self._jitter * wait)
             wait = max(1.0, wait)
-        log.debug(
-            "pull_resolver: group %s resolved, next in %.1fs",
-            group.primary_qname, wait)
+        if skipped_no_set_id:
+            self._rate_limiter.warn(
+                log, ("no_set_id", group.primary_qname),
+                "pull_resolver: group %s: %d ip(s) skipped — set_id missing "
+                "(tracker not yet loaded?)",
+                group.primary_qname, skipped_no_set_id,
+            )
+        log.info(
+            "pull_resolver: group %s → %d ip(s) submitted, next in %.0fs",
+            group.primary_qname, submitted, wait)
         return time.monotonic() + wait
 
     async def _resolve_qname(
