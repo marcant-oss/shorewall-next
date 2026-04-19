@@ -15,11 +15,13 @@ from shorewalld.exporter import (
     NftCollector,
     NftScraper,
     ShorewalldRegistry,
+    _CT_STAT_FIELDS,
     _extract_qdisc_row,
     _format_tc_handle,
     _LINK_STAT_FIELDS,
     _MetricFamily,
     _QDISC_FIELDS,
+    _sum_ct_stats_cpu,
 )
 from shorewall_nft.nft.netlink import NftError
 
@@ -444,3 +446,75 @@ def test_qdisc_fields_cover_expected_metrics():
     assert "shorewall_nft_qdisc_qlen" in metric_names
     assert "shorewall_nft_qdisc_backlog_bytes" in metric_names
     assert "shorewall_nft_qdisc_rate_bps" in metric_names
+
+
+# ── _sum_ct_stats_cpu ────────────────────────────────────────────────
+
+
+class _FakeCtStatsRow:
+    """Imitates one per-CPU nfct_stats_cpu message for unit testing."""
+
+    def __init__(self, attrs: dict[str, int]):
+        self._attrs = attrs
+
+    def get_attr(self, key: str) -> Any:
+        return self._attrs.get(key)
+
+
+def test_sum_ct_stats_cpu_sums_across_rows():
+    # Typical three-CPU machine where CPU 0 absorbs most of the work.
+    rows = [
+        _FakeCtStatsRow({
+            "CTA_STATS_FOUND": 1000,
+            "CTA_STATS_INVALID": 5,
+            "CTA_STATS_INSERT_FAILED": 2,
+            "CTA_STATS_DROP": 1,
+            "CTA_STATS_EARLY_DROP": 0,
+            "CTA_STATS_ERROR": 3,
+            "CTA_STATS_SEARCH_RESTART": 0,
+            "CTA_STATS_IGNORE": 7,
+        }),
+        _FakeCtStatsRow({
+            "CTA_STATS_FOUND": 500, "CTA_STATS_INVALID": 1,
+            "CTA_STATS_DROP": 4,
+        }),
+        _FakeCtStatsRow({
+            "CTA_STATS_FOUND": 250, "CTA_STATS_DROP": 0,
+            "CTA_STATS_SEARCH_RESTART": 12,
+        }),
+    ]
+    totals = _sum_ct_stats_cpu(rows)
+    assert totals["CTA_STATS_FOUND"] == 1750
+    assert totals["CTA_STATS_INVALID"] == 6
+    assert totals["CTA_STATS_INSERT_FAILED"] == 2
+    assert totals["CTA_STATS_DROP"] == 5
+    assert totals["CTA_STATS_EARLY_DROP"] == 0
+    assert totals["CTA_STATS_ERROR"] == 3
+    assert totals["CTA_STATS_SEARCH_RESTART"] == 12
+    assert totals["CTA_STATS_IGNORE"] == 7
+
+
+def test_sum_ct_stats_cpu_handles_empty_and_missing_attrs():
+    # Empty input → all zeros, keys still present.
+    totals = _sum_ct_stats_cpu([])
+    assert set(totals.keys()) == {attr for attr, _n, _h in _CT_STAT_FIELDS}
+    assert all(v == 0 for v in totals.values())
+
+    # Row without get_attr is silently skipped (not every pyroute2
+    # version wraps every message type uniformly).
+    class _Bare:
+        pass
+    totals2 = _sum_ct_stats_cpu([_Bare()])
+    assert all(v == 0 for v in totals2.values())
+
+
+def test_ct_stat_fields_cover_critical_counters():
+    metric_names = {name for _a, name, _h in _CT_STAT_FIELDS}
+    # Operators alert on these specifically — don't let a refactor drop them.
+    required = {
+        "shorewall_nft_ct_drop_total",
+        "shorewall_nft_ct_early_drop_total",
+        "shorewall_nft_ct_insert_failed_total",
+        "shorewall_nft_ct_invalid_total",
+    }
+    assert required.issubset(metric_names)
