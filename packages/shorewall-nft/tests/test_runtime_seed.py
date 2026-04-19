@@ -18,9 +18,7 @@ import os
 import socket
 import tempfile
 import threading
-from pathlib import Path
 
-import pytest
 
 from shorewall_nft.nft.dns_sets import inject_seed_elements, qname_to_set_name
 from shorewall_nft.runtime.seed import SeedResult, request_seeds_from_shorewalld
