@@ -163,7 +163,8 @@ def test_seed_dnstap_new_data_during_wait():
 
     resp = asyncio.run(_run())
     assert resp["ok"] is True
-    assert resp["timeout_hit"] is True
+    # Data arrived mid-wait before the deadline → not a timeout.
+    assert resp["timeout_hit"] is False
     dns = resp["seeds"]["dns"]
     assert "github.com" in dns
     assert any(e["ip"] == "1.2.3.4" for e in dns["github.com"]["v4"])

@@ -157,21 +157,31 @@ class SeedCoordinator:
                     source, sum(len(v) for v in data.values()))
 
         # Step 3: if passive sources active, poll tracker until deadline.
+        # Skip if active sources (pull/peer/tracker) already covered every
+        # requested qname — no value in waiting for dnstap in that case.
         dnstap_waited = False
         timeout_hit = False
         if passive_active:
-            dnstap_waited = True
-            timeout_hit = True
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                await asyncio.sleep(min(_PASSIVE_POLL_INTERVAL, remaining))
-                if self._tracker is not None and qnames:
-                    snap = self._tracker_snapshot(qnames)
-                    if snap:
-                        _merge(merged, snap)
-                        sources.add("tracker")
+            _covered = {k[0] for k in merged}
+            _all_covered = bool(qnames) and _covered >= set(qnames)
+            if not _all_covered:
+                dnstap_waited = True
+                timeout_hit = True
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    await asyncio.sleep(min(_PASSIVE_POLL_INTERVAL, remaining))
+                    if self._tracker is not None and qnames:
+                        snap = self._tracker_snapshot(qnames)
+                        if snap:
+                            _merge(merged, snap)
+                            sources.add("tracker")
+                    # Stop early once every qname has at least one entry.
+                    _covered = {k[0] for k in merged}
+                    if _covered >= set(qnames):
+                        timeout_hit = False
+                        break
 
         # Step 4: IP-list snapshot — synchronous.
         iplist_data: dict[str, list[str]] = {}
