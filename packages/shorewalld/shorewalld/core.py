@@ -780,6 +780,12 @@ class Daemon:
         outer = self
 
         class _Adapter:
+            def describe(self):
+                # Empty so prometheus_client skips the name-conflict check
+                # during register() and does not call collect() from the
+                # event-loop thread (which would deadlock read_file_sync).
+                return []
+
             def collect(self):
                 assert outer._registry is not None
                 return outer._registry.to_prom_families()
