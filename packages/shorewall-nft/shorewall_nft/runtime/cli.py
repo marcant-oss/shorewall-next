@@ -219,12 +219,17 @@ class _Step:
     def __init__(self) -> None:
         self._detail: list[str] = []
         self._warnings: list[str] = []
+        self._notes: list[str] = []
 
     def info(self, msg: str) -> None:
         self._detail.append(msg)
 
     def warn(self, msg: str) -> None:
         self._warnings.append(msg)
+
+    def note(self, msg: str) -> None:
+        """Plain indented sub-line, not prefixed with 'warn:'."""
+        self._notes.append(msg)
 
     @property
     def has_warnings(self) -> bool:
@@ -285,17 +290,25 @@ class _Progress:
                     sys.stdout.flush()
                     for w in s._warnings:
                         click.secho(f"    \u26a0  {w}", fg="yellow")
+                    for n in s._notes:
+                        click.secho(f"      {n}", dim=True)
                 else:
                     click.echo(f"  \u26a0 {label}{suffix}")
                     for w in s._warnings:
                         click.echo(f"    warn: {w}")
+                    for n in s._notes:
+                        click.echo(f"      {n}")
             else:
                 if self._tty:
                     marker = click.style("\u2713", fg="green", bold=True)
                     sys.stdout.write(f"\r  {marker} {label}{suffix}\n")
                     sys.stdout.flush()
+                    for n in s._notes:
+                        click.secho(f"      {n}", dim=True)
                 else:
                     click.echo(f"  \u2713 {label}{suffix}")
+                    for n in s._notes:
+                        click.echo(f"      {n}")
 
     def done(self, msg: str) -> None:
         if self._tty:
@@ -959,6 +972,14 @@ def start(directory, netns, shorewalld_socket, instance_name,
                                f"in {_seed_res.elapsed_ms}ms")
                         if _seed_res.timeout_hit:
                             s.warn("timeout hit — partial seed data")
+                        for _qn, _fams in sorted(_seed_res.dns.items()):
+                            _n4 = len(_fams.get("v4") or [])
+                            _n6 = len(_fams.get("v6") or [])
+                            _ttls = [e["ttl"] for f in _fams.values()
+                                     for e in f if e.get("ttl")]
+                            _ttl_info = (f"  ttl {min(_ttls)}–{max(_ttls)}s"
+                                         if _ttls else "")
+                            s.note(f"{_qn}: {_n4}\u00d7v4  {_n6}\u00d7v6{_ttl_info}")
                     elif _seed_res is None:
                         s.warn("seed request failed, sets start empty")
                     else:
