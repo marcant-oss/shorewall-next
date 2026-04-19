@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **shorewalld: protobuf 3.19 compatibility on AlmaLinux 10** — the
+  generated `*_pb2.py` files import
+  `google.protobuf.internal.builder` which was added in protobuf 3.20.
+  AlmaLinux 10 AppStream caps at 3.19.6, causing an `ImportError` at
+  daemon startup.  `proto/__init__.py` now detects the missing module
+  and injects `proto/_builder_compat.py` as a `sys.modules` shim;
+  the compat module re-implements `BuildMessageAndEnumDescriptors` /
+  `BuildTopDescriptorsAndMessages` via `message_factory.MessageFactory`
+  (present in protobuf 3.x).  The generated pb2 files are unchanged.
+
 ### Added
 
 - **shorewalld: dnstap two-pass filter + pbdns zero-copy RR storage**

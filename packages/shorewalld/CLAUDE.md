@@ -55,7 +55,13 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
 - `tap.py` + `logsetup.py` — live trace output + rate-limited logging.
 - `iplist/` — static IP-list backend.
 - `proto/` — hand-compiled protobuf (`dnstap_pb2.py`, `peer_pb2.py`,
-  `dnsmessage_pb2.py`).
+  `dnsmessage_pb2.py`).  `__init__.py` injects `_builder_compat.py`
+  into `sys.modules['google.protobuf.internal.builder']` when the real
+  module is absent (protobuf < 3.20, e.g. AlmaLinux 10 ships 3.19.6).
+  `_builder_compat.py` re-implements `BuildMessageAndEnumDescriptors` /
+  `BuildTopDescriptorsAndMessages` via `message_factory.MessageFactory`
+  which exists in protobuf 3.x.  Do **not** modify the generated
+  `*_pb2.py` files to work around this — the shim is transparent.
 
 Config: `shorewalld.conf` — searched at `/etc/shorewall/shorewalld.conf`
 then `/etc/shorewalld.conf`. CLI flags always override.
