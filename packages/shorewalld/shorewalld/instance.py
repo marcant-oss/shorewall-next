@@ -414,7 +414,22 @@ class InstanceManager:
                         if ns not in targets:
                             targets.append(ns)
 
-        self._tracker.load_registry(merged_dns)
+        new_names = self._tracker.load_registry(merged_dns)
+
+        # Forked nft workers snapshot the tracker at fork time (copy-on-write).
+        # If new qnames were just added they are invisible to any already-running
+        # forked worker, which would silently drop writes for those set_ids.
+        # Respawn all running forked workers so they re-fork with the updated
+        # tracker.  The LocalWorker (empty-netns, in-process) reads the tracker
+        # live on every dispatch and does not need respawning.
+        if new_names:
+            for netns in set(
+                ns
+                for targets in qname_netns.values()
+                for ns in targets
+                if ns  # skip the default (empty) netns — LocalWorker is live
+            ):
+                await self._router.respawn_netns(netns)
 
         # Re-wire dnsr secondary aliases after the tracker reload —
         # load_registry() rebuilds set_ids and clears aliases.
