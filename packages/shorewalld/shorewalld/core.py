@@ -688,6 +688,21 @@ class Daemon:
                 "deregister-instance", _handle_deregister_instance
             )
 
+        # Seed coordinator — answers request-seed commands from shorewall-nft.
+        if self._tracker is not None:
+            from .seed import SeedCoordinator, SeedMetricsCollector
+            _seed = SeedCoordinator(
+                tracker=self._tracker,
+                pull_resolver=self._pull_resolver,
+                peer_link=self._peer_link,
+                iplist_tracker=self._iplist_tracker,
+                dnstap_active=self._dnstap_server is not None,
+                pbdns_active=self._pbdns_server is not None,
+            )
+            self._control_server.register_handler("request-seed", _seed.handle)
+            if self._registry is not None:
+                self._registry.add(SeedMetricsCollector(_seed))
+
         try:
             await self._control_server.start()
         except Exception:
