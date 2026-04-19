@@ -786,6 +786,121 @@ $ shorewalld ctl iplist-status
 ]
 ```
 
+### Seed handshake (`request-seed`)
+
+When `shorewall-nft start` or `restart` recreates the `inet shorewall`
+table, all `dns_*` sets start empty. Without a seed, clients see
+blackholes for up to the first DNS poll interval (default 10 s).
+
+The seed handshake fixes this: before loading the nft script,
+`shorewall-nft` sends a `request-seed` command to shorewalld, receives
+live IP addresses from the daemon's in-memory state, and injects them
+as `elements = { … }` blocks directly into the initial nft transaction.
+DNS sets are populated **from second 0**.
+
+#### Sources consulted by the coordinator
+
+| Source | What it contributes |
+|---|---|
+| **tracker snapshot** | All IPs currently held in the in-process DNS tracker (fastest, always consulted) |
+| **pull resolver** | On-demand re-resolve of every configured group (active DNS query) |
+| **peer link** | Snapshot request to the HA peer; IPs the peer holds but this node hasn't seen yet |
+| **IP-list sets** | Current prefixes from every configured IP-list provider |
+
+When the same (qname, family, IP) tuple appears from more than one
+source, the **higher TTL wins** (max-TTL merge).
+
+#### Passive-wait mode
+
+If dnstap or pbdns is active, `shorewall-nft` can optionally wait until
+the deadline for IPs that arrive through the tap pipeline (not cached
+yet). Set `wait_for_passive=true` (the default) to enable. The
+coordinator polls the tracker every 250 ms until the deadline, capturing
+any IPs committed during the window. Disable with `--no-seed-wait-passive`
+if the dnstap pipeline is idle at startup and the extra wait is
+undesirable.
+
+#### Wire format
+
+Request:
+
+```json
+{
+  "cmd": "request-seed",
+  "netns": "fw",
+  "name": "fw",
+  "timeout_ms": 10000,
+  "qnames": ["github.com", "api.example.com"],
+  "iplist_sets": ["aws_ec2_v4", "bogon_v4"],
+  "wait_for_passive": true
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "elapsed_ms": 320,
+  "complete": true,
+  "timeout_hit": false,
+  "dnstap_waited": false,
+  "sources_contributed": ["tracker", "pull"],
+  "seeds": {
+    "dns": {
+      "github.com": {
+        "v4": [{"ip": "140.82.121.4", "ttl": 58}],
+        "v6": []
+      }
+    },
+    "iplist": {
+      "aws_ec2_v4": ["52.94.0.0/22", "54.240.0.0/18"]
+    }
+  }
+}
+```
+
+TTL values in the response are **remaining seconds** (deadline − now).
+`shorewall-nft` injects them as `timeout Xs expires Xs` in the nft
+element syntax so the kernel countdown matches the daemon's live state.
+
+`complete: false` means the request timed out before all active sources
+finished; a partial seed was still returned and injected.
+
+#### Configuration
+
+Three `shorewall.conf` keys control the behaviour (all optional):
+
+| Key | Default | Description |
+|---|---|---|
+| `SHOREWALLD_SEED_ENABLED` | `yes` | Set to `no` to disable the handshake entirely |
+| `SHOREWALLD_SEED_TIMEOUT` | `10s` | Wall-clock budget for the seed request. Accepts `Ns` (seconds) or an integer in milliseconds. |
+| `SHOREWALLD_SEED_WAIT_PASSIVE` | `yes` | Whether to hold the full timeout waiting for tap-pipeline IPs |
+
+Corresponding CLI flags on `shorewall-nft start` / `restart`:
+
+```
+--seed / --no-seed                  Override SHOREWALLD_SEED_ENABLED
+--seed-timeout DURATION             Override SHOREWALLD_SEED_TIMEOUT
+--seed-wait-passive / --no-seed-wait-passive   Override SHOREWALLD_SEED_WAIT_PASSIVE
+```
+
+Precedence: CLI flag > `SHOREWALLD_SEED_*` env var > `shorewall.conf`
+key > built-in default.
+
+The seed step is **non-fatal** by design: if shorewalld is unreachable,
+the socket is missing, or the response is malformed, `shorewall-nft`
+logs a warning and continues without a seed. The firewall still loads;
+DNS sets start empty and fill in as normal via pull/tap.
+
+#### Metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewalld_seed_requests_total` | Counter | Total `request-seed` calls received |
+| `shorewalld_seed_timeout_hit_total` | Counter | Requests where the deadline was reached before all sources finished |
+| `shorewalld_seed_entries_served_total{source}` | Counter | IP entries returned, labelled by source (`tracker`, `pull`, `peer`, `iplist`) |
+
 ---
 
 ## sysconfig / defaults file

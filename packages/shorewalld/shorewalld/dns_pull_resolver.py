@@ -254,6 +254,37 @@ class PullResolver:
             len(new_primaries),
         )
 
+    async def resolve_now(
+        self, primary_qname: str
+    ) -> list[tuple[int, bytes, int]]:
+        """Resolve one group immediately; return ``[(family, ip_bytes, ttl), …]``.
+
+        Does **not** submit to SetWriter — the caller (SeedCoordinator)
+        merges the results.  Respects the concurrency semaphore so a seed
+        request does not hammer the upstream resolver concurrently with
+        normal pull cycles.
+
+        Returns an empty list if *primary_qname* is not a known pull group
+        (tap-only groups are silently skipped).
+        """
+        group = self._primaries.get(primary_qname)
+        if group is None:
+            return []
+        async with self._sem:
+            tasks = [
+                self._resolve_qname(q, group.ttl_floor, group.ttl_ceil)
+                for q in group.qnames
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        out: list[tuple[int, bytes, int]] = []
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            for ip_bytes, ttl in result:
+                family = FAMILY_V4 if len(ip_bytes) == 4 else FAMILY_V6
+                out.append((family, ip_bytes, ttl))
+        return out
+
     @property
     def group_count(self) -> int:
         return len(self._primaries)

@@ -679,6 +679,96 @@ def parse_dnsnames_file(
     return specs
 
 
+def inject_seed_elements(
+    script: str,
+    dns_seeds: dict,
+    *,
+    dns_registry: "DnsSetRegistry | None" = None,
+    dnsr_registry: "DnsrRegistry | None" = None,
+) -> tuple[str, int]:
+    """Inject pre-warmed IP addresses as initial elements into DNS set declarations.
+
+    Scans *script* for ``set <name> { … size N; }`` blocks and appends an
+    ``elements = { … }`` line after the ``size`` line so the sets are
+    pre-populated when the initial ``nft -f`` transaction runs.
+
+    *dns_seeds* maps ``qname → {"v4": [{"ip": "1.2.3.4", "ttl": 60}, …], "v6": […]}``.
+    Elements with ``ttl <= 0`` are silently omitted.
+
+    Returns ``(modified_script, total_elements_injected)``.  The script is
+    returned unchanged when *dns_seeds* is empty or no matching set blocks are
+    found.
+    """
+    if not dns_seeds:
+        return script, 0
+
+    import re as _re
+
+    # Build set_name → formatted element strings.
+    set_to_elems: dict[str, list[str]] = {}
+    for qname, data in dns_seeds.items():
+        for family, suffix in (("v4", "v4"), ("v6", "v6")):
+            set_name = qname_to_set_name(qname, family)
+            items = data.get(family) or []
+            formatted = [
+                f"{e['ip']} timeout {e['ttl']}s expires {e['ttl']}s"
+                for e in items
+                if isinstance(e, dict) and int(e.get("ttl") or 0) > 0
+            ]
+            if formatted:
+                set_to_elems[set_name] = formatted
+
+    if not set_to_elems:
+        return script, 0
+
+    _SET_OPEN = _re.compile(r"^(\s*)set\s+(\S+)\s*\{")
+    _SIZE_LINE = _re.compile(r"^(\s*)size\s+\d+\s*;")
+
+    lines = script.splitlines(keepends=True)
+    out: list[str] = []
+    current_set: str | None = None
+    in_set = False
+    depth = 0
+    injected_for_current = False
+    total_injected = 0
+
+    for line in lines:
+        if not in_set:
+            m = _SET_OPEN.match(line)
+            if m:
+                current_set = m.group(2)
+                in_set = True
+                depth = 1
+                injected_for_current = False
+            out.append(line)
+            continue
+
+        # Inside a set block — check for the size line to inject after it.
+        size_m = _SIZE_LINE.match(line)
+        if size_m and not injected_for_current:
+            out.append(line)
+            elems = set_to_elems.get(current_set or "", [])
+            if elems:
+                indent = size_m.group(1)
+                elems_str = ", ".join(elems)
+                out.append(f"{indent}elements = {{ {elems_str}, }}\n")
+                total_injected += len(elems)
+            injected_for_current = True
+            depth += line.count("{") - line.count("}")
+            if depth <= 0:
+                in_set = False
+                current_set = None
+            continue
+
+        depth += line.count("{") - line.count("}")
+        out.append(line)
+        if depth <= 0:
+            in_set = False
+            current_set = None
+
+    return "".join(out), total_injected
+
+
 def _int_or_default(value: str, default: int) -> int:
     v = value.strip()
     if not v or v == "-":

@@ -432,6 +432,34 @@ class DnsSetTracker:
                 allowlist_generation=self._allowlist_generation,
             )
 
+    # ── seed support ─────────────────────────────────────────────────
+
+    def snapshot_qnames(
+        self, qnames: Iterable[str]
+    ) -> list[tuple[str, int, bytes, int]]:
+        """Return live entries for *qnames* as ``(qname, family, ip_bytes, ttl_remaining)``.
+
+        ``ttl_remaining`` is in whole seconds; entries whose deadline has
+        already passed are omitted.  Used read-only by SeedCoordinator —
+        does not mutate any state.
+        """
+        now = self._clock()
+        out: list[tuple[str, int, bytes, int]] = []
+        with self._lock:
+            for qname in qnames:
+                for family in (FAMILY_V4, FAMILY_V6):
+                    set_id = self._by_name.get((qname, family))
+                    if set_id is None:
+                        continue
+                    state = self._states.get(set_id)
+                    if state is None:
+                        continue
+                    for ip_bytes, deadline in state.elements.items():
+                        remaining = deadline - now
+                        if remaining > 0:
+                            out.append((qname, family, ip_bytes, int(remaining)))
+        return out
+
     # ── state-file persistence support ───────────────────────────────
 
     def export_state(self) -> list[tuple[str, int, bytes, float]]:

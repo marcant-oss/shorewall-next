@@ -14,6 +14,7 @@ nft-native extensions: verify, trace, counters, generate-sysctl,
 from __future__ import annotations
 
 import contextlib
+import os
 import sys
 from pathlib import Path
 
@@ -660,6 +661,172 @@ def _try_notify_shorewalld(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Seed-handshake helpers
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _parse_seed_duration_ms(s: str) -> int:
+    """Parse a duration string (``10s``, ``5000``) to milliseconds."""
+    s = s.strip()
+    if s.endswith("s"):
+        try:
+            return max(1, int(float(s[:-1]) * 1000))
+        except ValueError:
+            return 10_000
+    try:
+        return max(1, int(s))
+    except ValueError:
+        return 10_000
+
+
+def _resolve_seed_config(
+    cli_enabled: bool | None,
+    cli_timeout: str | None,
+    cli_wait_passive: bool | None,
+    settings: dict | None,
+) -> tuple[bool, int, bool]:
+    """Resolve seed config to ``(enabled, timeout_ms, wait_passive)``.
+
+    Precedence: CLI flag → environment variable → shorewall.conf → default.
+    """
+    # enabled
+    if cli_enabled is not None:
+        enabled = cli_enabled
+    else:
+        env = os.environ.get("SHOREWALLD_SEED_ENABLED", "").strip().lower()
+        if env in ("yes", "1", "true", "no", "0", "false"):
+            enabled = env in ("yes", "1", "true")
+        elif settings:
+            cv = str(settings.get("SHOREWALLD_SEED_ENABLED", "")).strip().lower()
+            enabled = cv not in ("no", "0", "false")
+        else:
+            enabled = True
+
+    # timeout_ms
+    if cli_timeout:
+        timeout_ms = _parse_seed_duration_ms(cli_timeout)
+    else:
+        env = os.environ.get("SHOREWALLD_SEED_TIMEOUT", "").strip()
+        if env:
+            timeout_ms = _parse_seed_duration_ms(env)
+        elif settings:
+            cv = str(settings.get("SHOREWALLD_SEED_TIMEOUT", "")).strip()
+            timeout_ms = _parse_seed_duration_ms(cv) if cv else 10_000
+        else:
+            timeout_ms = 10_000
+
+    # wait_passive
+    if cli_wait_passive is not None:
+        wait_passive = cli_wait_passive
+    else:
+        env = os.environ.get("SHOREWALLD_SEED_WAIT_PASSIVE", "").strip().lower()
+        if env in ("yes", "1", "true", "no", "0", "false"):
+            wait_passive = env in ("yes", "1", "true")
+        elif settings:
+            cv = str(settings.get("SHOREWALLD_SEED_WAIT_PASSIVE", "")).strip().lower()
+            wait_passive = cv not in ("no", "0", "false")
+        else:
+            wait_passive = True
+
+    return enabled, timeout_ms, wait_passive
+
+
+def _extract_seed_qnames(dns_reg: object | None, dnsr_reg: object | None) -> list[str]:
+    """Collect primary qnames from DNS and DNSR registries for a seed request."""
+    seen: set[str] = set()
+    result: list[str] = []
+    if dns_reg is not None:
+        for spec in dns_reg.iter_sorted():  # type: ignore[union-attr]
+            if getattr(spec, "declare_set", True) and spec.qname not in seen:
+                seen.add(spec.qname)
+                result.append(spec.qname)
+    if dnsr_reg is not None:
+        for group in dnsr_reg.iter_sorted():  # type: ignore[union-attr]
+            if group.primary_qname not in seen:
+                seen.add(group.primary_qname)
+                result.append(group.primary_qname)
+    return result
+
+
+def _do_seed_request(
+    prog: "_Progress | None",
+    script: str,
+    ir: object,
+    netns: str | None,
+    instance_name: str | None,
+    cfg_primary: Path,
+    shorewalld_socket: str,
+    seed_enabled: bool,
+    seed_timeout: str | None,
+    seed_wait_passive: bool | None,
+) -> str:
+    """Request a seed from shorewalld and inject elements into *script*.
+
+    Returns the (possibly modified) script.  On any failure the original
+    script is returned unchanged and a warning is emitted.
+    """
+    if not seed_enabled:
+        return script
+
+    _dns_reg = getattr(ir, "dns_registry", None)
+    _dnsr_reg = getattr(ir, "dnsr_registry", None)
+    _settings = getattr(ir, "settings", None)
+
+    _enabled, _timeout_ms, _wait_passive = _resolve_seed_config(
+        None, seed_timeout, seed_wait_passive, _settings)
+    if not _enabled:
+        return script
+
+    _qnames = _extract_seed_qnames(_dns_reg, _dnsr_reg)
+    if not _qnames:
+        return script
+
+    _reg_netns = netns or _detect_current_netns()
+    _instance = _resolve_instance_name(
+        instance_name, _settings, _reg_netns, cfg_primary)
+
+    try:
+        from shorewall_nft.nft.dns_sets import inject_seed_elements
+        from shorewall_nft.runtime.seed import request_seeds_from_shorewalld
+        seed_result = request_seeds_from_shorewalld(
+            socket_path=shorewalld_socket,
+            netns=_reg_netns or "",
+            name=_instance,
+            qnames=_qnames,
+            iplist_sets=[],
+            timeout_ms=_timeout_ms,
+            wait_for_passive=_wait_passive,
+        )
+        if seed_result is not None and seed_result.dns:
+            script, n = inject_seed_elements(script, seed_result.dns)
+            srcs = ",".join(seed_result.sources_contributed) or "-"
+            msg = (
+                f"Seed: {n} element(s) from [{srcs}] "
+                f"in {seed_result.elapsed_ms}ms"
+            )
+            if seed_result.timeout_hit:
+                msg += " (timeout hit — partial data)"
+            if prog is not None:
+                click.echo(f"  {msg}")
+            else:
+                click.echo(msg)
+        elif seed_result is None:
+            _w = "seed request failed — sets will start empty"
+            if prog is not None:
+                click.echo(f"  warn: {_w}", err=True)
+            else:
+                click.echo(f"warn: {_w}", err=True)
+    except Exception as exc:
+        _w = f"seed error: {exc}"
+        if prog is not None:
+            click.echo(f"  warn: {_w}", err=True)
+        else:
+            click.echo(f"warn: {_w}", err=True)
+
+    return script
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Shorewall-compatible commands
 # ──────────────────────────────────────────────────────────────────────
 
@@ -683,8 +850,31 @@ def _try_notify_shorewalld(
          "(default: INSTANCE_NAME from shorewall.conf, then netns, "
          "then config_dir basename).",
 )
+@click.option(
+    "--seed/--no-seed",
+    "seed",
+    default=None,
+    envvar="SHOREWALLD_SEED_ENABLED",
+    help="Request a seed from shorewalld to pre-populate DNS sets "
+         "(default: Yes if shorewall.conf SHOREWALLD_SEED_ENABLED not set).",
+)
+@click.option(
+    "--seed-timeout",
+    default=None,
+    envvar="SHOREWALLD_SEED_TIMEOUT",
+    metavar="DURATION",
+    help="Seed request timeout, e.g. '10s' or '10000' (ms). Default: 10s.",
+)
+@click.option(
+    "--seed-wait-passive/--no-seed-wait-passive",
+    "seed_wait_passive",
+    default=None,
+    help="Wait the full timeout for passive sources (dnstap/pbdns) to warm up "
+         "(default: Yes).",
+)
 @config_options
 def start(directory, netns, shorewalld_socket, instance_name,
+          seed, seed_timeout, seed_wait_passive,
           config_dir, config_dir_v4, config_dir_v6,
           no_auto_v4, no_auto_v6):
     """Compile and apply firewall rules (like shorewall start)."""
@@ -723,6 +913,50 @@ def start(directory, netns, shorewalld_socket, instance_name,
                 s.info(f"{n_ok} available")
         except Exception as exc:
             s.warn(f"probe failed ({exc}) — attempting load anyway")
+
+    # ── Step 2b: request seed from shorewalld ────────────────────────
+    _seed_enabled_raw, _seed_timeout_ms, _seed_wait_passive_raw = _resolve_seed_config(
+        seed, seed_timeout, seed_wait_passive,
+        getattr(ir, "settings", None),
+    )
+    if _seed_enabled_raw:
+        _seed_qnames = _extract_seed_qnames(
+            getattr(ir, "dns_registry", None),
+            getattr(ir, "dnsr_registry", None),
+        )
+        if _seed_qnames:
+            with prog.step(
+                f"Requesting seed ({len(_seed_qnames)} qname(s))"
+            ) as s:
+                try:
+                    from shorewall_nft.nft.dns_sets import inject_seed_elements
+                    from shorewall_nft.runtime.seed import request_seeds_from_shorewalld
+                    _reg_netns_seed = netns or _detect_current_netns()
+                    _inst_seed = _resolve_instance_name(
+                        instance_name, getattr(ir, "settings", None),
+                        _reg_netns_seed, cfg_primary)
+                    _seed_res = request_seeds_from_shorewalld(
+                        socket_path=shorewalld_socket,
+                        netns=_reg_netns_seed or "",
+                        name=_inst_seed,
+                        qnames=_seed_qnames,
+                        iplist_sets=[],
+                        timeout_ms=_seed_timeout_ms,
+                        wait_for_passive=_seed_wait_passive_raw,
+                    )
+                    if _seed_res is not None and _seed_res.dns:
+                        script, _n_inj = inject_seed_elements(script, _seed_res.dns)
+                        _srcs = ",".join(_seed_res.sources_contributed) or "-"
+                        s.info(f"{_n_inj} elements from [{_srcs}] "
+                               f"in {_seed_res.elapsed_ms}ms")
+                        if _seed_res.timeout_hit:
+                            s.warn("timeout hit — partial seed data")
+                    elif _seed_res is None:
+                        s.warn("seed request failed, sets start empty")
+                    else:
+                        s.info("no seed data available")
+                except Exception as _seed_exc:
+                    s.warn(f"seed skipped ({_seed_exc})")
 
     # ── Step 3: apply ruleset — this is the real gate ─────────────────
     with prog.step("Applying ruleset") as s:
@@ -923,20 +1157,65 @@ def _apply_and_register(
     directory, netns, shorewalld_socket, instance_name,
     config_dir, config_dir_v4, config_dir_v6,
     no_auto_v4, no_auto_v6,
+    *,
+    do_seed: bool = False,
+    seed_timeout: str | None = None,
+    seed_wait_passive: bool | None = None,
 ) -> None:
     """Shared body for ``restart`` / ``reload``: compile, apply, update
     the DNS allowlist, and re-register the instance with shorewalld."""
     (ir, script, _), (cfg_primary, _, _) = _compile_from_cli(
         directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
-    from shorewall_nft.netns.apply import apply_nft
-    apply_nft(script, netns=netns)
 
     _dns_reg = getattr(ir, "dns_registry", None)
     _dnsr_reg = getattr(ir, "dnsr_registry", None)
     _has_dns = bool(
         (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups)
     )
+
+    # Seed injection: only for restart (table is recreated), not reload.
+    if do_seed:
+        _seed_enabled, _seed_timeout_ms, _seed_wait_passive = _resolve_seed_config(
+            None, seed_timeout, seed_wait_passive,
+            getattr(ir, "settings", None),
+        )
+        if _seed_enabled:
+            _seed_qnames = _extract_seed_qnames(_dns_reg, _dnsr_reg)
+            if _seed_qnames:
+                try:
+                    from shorewall_nft.nft.dns_sets import inject_seed_elements
+                    from shorewall_nft.runtime.seed import request_seeds_from_shorewalld
+                    _reg_netns_seed = netns or _detect_current_netns()
+                    _inst_seed = _resolve_instance_name(
+                        instance_name, getattr(ir, "settings", None),
+                        _reg_netns_seed, cfg_primary)
+                    _seed_res = request_seeds_from_shorewalld(
+                        socket_path=shorewalld_socket,
+                        netns=_reg_netns_seed or "",
+                        name=_inst_seed,
+                        qnames=_seed_qnames,
+                        iplist_sets=[],
+                        timeout_ms=_seed_timeout_ms,
+                        wait_for_passive=_seed_wait_passive,
+                    )
+                    if _seed_res is not None and _seed_res.dns:
+                        script, _n_inj = inject_seed_elements(script, _seed_res.dns)
+                        _srcs = ",".join(_seed_res.sources_contributed) or "-"
+                        click.echo(
+                            f"Seed: {_n_inj} element(s) from [{_srcs}] "
+                            f"in {_seed_res.elapsed_ms}ms"
+                            + (" (timeout)" if _seed_res.timeout_hit else "")
+                        )
+                    elif _seed_res is None:
+                        click.echo(
+                            "warn: seed request failed — sets start empty",
+                            err=True)
+                except Exception as _seed_exc:
+                    click.echo(f"warn: seed skipped ({_seed_exc})", err=True)
+
+    from shorewall_nft.netns.apply import apply_nft
+    apply_nft(script, netns=netns)
 
     click.echo(f"Shorewall-nft {verb} ({len(ir.chains)} chains).")
     _reg_netns = netns or _detect_current_netns()
@@ -968,8 +1247,29 @@ def _apply_and_register(
          "(default: INSTANCE_NAME from shorewall.conf, then netns, "
          "then config_dir basename).",
 )
+@click.option(
+    "--seed/--no-seed",
+    "seed",
+    default=None,
+    envvar="SHOREWALLD_SEED_ENABLED",
+    help="Request a seed from shorewalld to pre-populate DNS sets.",
+)
+@click.option(
+    "--seed-timeout",
+    default=None,
+    envvar="SHOREWALLD_SEED_TIMEOUT",
+    metavar="DURATION",
+    help="Seed request timeout, e.g. '10s' or '10000' (ms). Default: 10s.",
+)
+@click.option(
+    "--seed-wait-passive/--no-seed-wait-passive",
+    "seed_wait_passive",
+    default=None,
+    help="Wait the full timeout for passive sources (dnstap/pbdns) to warm up.",
+)
 @config_options
 def restart(directory, netns, shorewalld_socket, instance_name,
+            seed, seed_timeout, seed_wait_passive,
             config_dir, config_dir_v4, config_dir_v6,
             no_auto_v4, no_auto_v6):
     """Recompile and atomically replace the ruleset."""
@@ -978,6 +1278,9 @@ def restart(directory, netns, shorewalld_socket, instance_name,
         directory, netns, shorewalld_socket, instance_name,
         config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6,
+        do_seed=True,
+        seed_timeout=seed_timeout,
+        seed_wait_passive=seed_wait_passive,
     )
 
 
