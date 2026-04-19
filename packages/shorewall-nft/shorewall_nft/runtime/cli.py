@@ -736,12 +736,13 @@ def start(directory, netns, shorewalld_socket, instance_name,
     _has_dns = bool(
         (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups)
     )
-    _instance = _resolve_instance_name(
-        instance_name, getattr(ir, "settings", None), netns, cfg_primary)
     # When running inside a named netns via JoinsNamespaceOf (no --netns
     # flag), detect the current netns so shorewalld receives the correct
-    # netns name in the registration payload.
+    # netns name in the registration payload and so it is used as the
+    # default instance name.
     _reg_netns = netns or _detect_current_netns()
+    _instance = _resolve_instance_name(
+        instance_name, getattr(ir, "settings", None), _reg_netns, cfg_primary)
     with prog.step(
         f"Registering instance {_instance!r} with shorewalld"
     ) as s:
@@ -906,9 +907,9 @@ def stop(directory, netns, shorewalld_socket, instance_name,
         except OSError:
             pass
     _settings = getattr(ir, "settings", None) if ir is not None else None
-    _instance = _resolve_instance_name(
-        instance_name, _settings, netns, primary_cfg_dir)
     _reg_netns = netns or _detect_current_netns()
+    _instance = _resolve_instance_name(
+        instance_name, _settings, _reg_netns, primary_cfg_dir)
     _try_notify_shorewalld(
         None, "deregister", _instance, primary_cfg_dir, _reg_netns,
         shorewalld_socket, _has_dns)
@@ -938,9 +939,9 @@ def _apply_and_register(
     )
 
     click.echo(f"Shorewall-nft {verb} ({len(ir.chains)} chains).")
-    _instance = _resolve_instance_name(
-        instance_name, getattr(ir, "settings", None), netns, cfg_primary)
     _reg_netns = netns or _detect_current_netns()
+    _instance = _resolve_instance_name(
+        instance_name, getattr(ir, "settings", None), _reg_netns, cfg_primary)
     _try_notify_shorewalld(
         None, "register", _instance, cfg_primary, _reg_netns,
         shorewalld_socket, _has_dns,
