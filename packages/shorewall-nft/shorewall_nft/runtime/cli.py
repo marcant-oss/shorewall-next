@@ -800,16 +800,24 @@ def _do_seed_request(
         if seed_result is not None and seed_result.dns:
             script, n = inject_seed_elements(script, seed_result.dns)
             srcs = ",".join(seed_result.sources_contributed) or "-"
-            msg = (
-                f"Seed: {n} element(s) from [{srcs}] "
-                f"in {seed_result.elapsed_ms}ms"
-            )
-            if seed_result.timeout_hit:
-                msg += " (timeout hit — partial data)"
-            if prog is not None:
-                click.echo(f"  {msg}")
-            else:
-                click.echo(msg)
+            n_iplist = sum(len(v) for v in seed_result.iplist.values())
+            parts = [f"{n} DNS"]
+            if n_iplist:
+                parts.append(f"{n_iplist} iplist")
+            summary = " + ".join(parts)
+            flag = " (partial)" if seed_result.timeout_hit else ""
+            prefix = "  " if prog is not None else ""
+            click.echo(f"{prefix}Seed: {summary} in {seed_result.elapsed_ms}ms [{srcs}]{flag}")
+            # per-qname detail
+            for qname, fams in sorted(seed_result.dns.items()):
+                n4 = len(fams.get("v4") or [])
+                n6 = len(fams.get("v6") or [])
+                ttls = [e["ttl"] for f in fams.values() for e in f if e.get("ttl")]
+                ttl_info = f"  ttl {min(ttls)}–{max(ttls)}s" if ttls else ""
+                click.echo(f"{prefix}  {qname}: {n4}×v4  {n6}×v6{ttl_info}")
+            # per-iplist-set detail
+            for sname, prefixes in sorted(seed_result.iplist.items()):
+                click.echo(f"{prefix}  {sname}: {len(prefixes)} prefixes")
         elif seed_result is None:
             _w = "seed request failed — sets will start empty"
             if prog is not None:
