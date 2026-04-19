@@ -410,7 +410,7 @@ class DecodeWorkerPool:
         for idx in range(self._n_workers):
             t = threading.Thread(
                 target=self._loop_worker,
-                name=f"dnstap-decode-{idx}", daemon=True)
+                name=f"shwd-dnsdec-{idx}", daemon=True)
             t.start()
             self._threads.append(t)
 
@@ -599,10 +599,13 @@ class DnstapServer:
         """
         tasks = []
         if self._server is not None:
-            tasks.append(asyncio.create_task(self._server.serve_forever()))
+            tasks.append(asyncio.create_task(
+                self._server.serve_forever(),
+                name="shorewalld.dnstap.unix"))
         if self._tcp_server is not None:
-            tasks.append(
-                asyncio.create_task(self._tcp_server.serve_forever()))
+            tasks.append(asyncio.create_task(
+                self._tcp_server.serve_forever(),
+                name="shorewalld.dnstap.tcp"))
         if not tasks:
             return
         await asyncio.gather(*tasks, return_exceptions=True)

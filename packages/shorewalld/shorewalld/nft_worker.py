@@ -87,9 +87,9 @@ if TYPE_CHECKING:
 
 log = get_logger("worker")
 
-# libc prototype for PR_SET_PDEATHSIG / PR_SET_NAME. Linux-specific.
+# libc prototype for PR_SET_PDEATHSIG. Linux-specific.
+# PR_SET_NAME is handled by ``proctitle.set_proc_name``.
 _PR_SET_PDEATHSIG = 1
-_PR_SET_NAME = 15
 
 # Table / family the workers write to. Shorewall-nft ships one
 # inet table called "shorewall"; the worker's job is to push DNS set
@@ -106,19 +106,15 @@ _REPLY_BUF_SIZE = 2048
 
 
 def _set_proc_name(netns_name: str) -> None:
-    """Set the process name visible in ps/top via prctl(PR_SET_NAME).
+    """Label the forked nft-worker process for ps/top.
 
-    Name format: ``shorewalld/<netns>`` (truncated to 15 chars, the
-    kernel limit for PR_SET_NAME).  Fails silently — cosmetic only.
+    Name format: ``shwd/<netns>`` (truncated to 15 chars by prctl).  The
+    5-char ``shwd/`` prefix leaves 10 chars for the netns name — long
+    enough for typical names like ``recursor-v6`` where the old
+    ``shorewalld/`` prefix would have truncated to ``shorewalld/recu``.
     """
-    name = f"shorewalld/{netns_name}" if netns_name else "shorewalld/root"
-    name_bytes = name[:15].encode() + b"\x00"
-    try:
-        libc_name = ctypes.util.find_library("c") or "libc.so.6"
-        libc = ctypes.CDLL(libc_name, use_errno=True)
-        libc.prctl(_PR_SET_NAME, name_bytes, 0, 0, 0)
-    except OSError:
-        log.debug("prctl PR_SET_NAME failed — continuing")
+    from .proctitle import set_proc_name
+    set_proc_name(f"shwd/{netns_name}" if netns_name else "shwd/nft")
 
 
 def _install_pdeathsig(sig: int = signal.SIGTERM) -> None:

@@ -274,14 +274,24 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     if argv and argv[0] == "tap":
+        from .proctitle import set_proc_name
+        set_proc_name("shwd-tap")
         from .tap import main as tap_main
         return tap_main(argv[1:])
     if argv and argv[0] == "ctl":
+        from .proctitle import set_proc_name
+        set_proc_name("shwd-ctl")
         from .ctl import main as ctl_main
         return ctl_main(argv[1:])
     if argv and argv[0] == "iplist":
+        from .proctitle import set_proc_name
+        set_proc_name("shwd-iplist")
         from .iplist_cli import main as iplist_main
         return iplist_main(argv[1:])
+    # Main daemon — pin the comm deterministically regardless of how
+    # we were launched (entry-point wrapper vs ``python -m shorewalld``).
+    from .proctitle import set_proc_name
+    set_proc_name("shorewalld")
     parser = build_parser()
     args = parser.parse_args(argv)
 

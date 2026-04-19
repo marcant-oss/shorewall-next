@@ -354,7 +354,7 @@ class PeerLink:
         except OSError as e:
             log.debug("failed to set IP_PMTUDISC_DO: %s", e)
         self._heartbeat_task = self._loop.create_task(
-            self._heartbeat_loop())
+            self._heartbeat_loop(), name="shorewalld.peer.heartbeat")
         log.info(
             "peer link started",
             extra={
