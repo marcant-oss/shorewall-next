@@ -37,6 +37,7 @@ whole pipeline without needing real fork()/setns()/CAP_SYS_ADMIN.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import os
 import signal
 import time
@@ -45,6 +46,7 @@ from typing import Callable
 
 from .batch_codec import (
     CTRL_SHUTDOWN,
+    MAGIC_REPLY,
     REPLY_OK,
     REPLY_SHUTDOWN,
     BatchBuilder,
@@ -60,6 +62,20 @@ from .nft_worker import (
     build_nft_script,
     nft_worker_entrypoint,
     worker_main_loop,
+)
+from .read_codec import (
+    MAGIC_READ_RESP,
+    READ_KIND_COUNT_LINES,
+    READ_KIND_FILE,
+    READ_STATUS_NOT_FOUND,
+    READ_STATUS_OK,
+    READ_STATUS_TOO_LARGE,
+    ReadResponse,
+    ReadWireError,
+    decode_line_count,
+    decode_read_response,
+    encode_read_request,
+    peek_magic,
 )
 from .worker_transport import WorkerTransport
 
@@ -124,7 +140,7 @@ class ParentWorker:
         self,
         *,
         netns: str,
-        tracker: DnsSetTracker,
+        tracker: DnsSetTracker | None,
         loop: asyncio.AbstractEventLoop,
     ) -> None:
         self.netns = netns
@@ -133,7 +149,9 @@ class ParentWorker:
         self._transport: WorkerTransport | None = None
         self._child_pid: int | None = None
         self._pending: dict[int, _PendingBatch] = {}
+        self._pending_reads: dict[int, asyncio.Future[ReadResponse]] = {}
         self._next_batch_id = 1
+        self._next_read_id = 1
         self.metrics = WorkerMetrics()
         # Ack-timeout enforcement task; lazy-started on first
         # dispatch so idle workers don't burn a task slot.
@@ -188,11 +206,18 @@ class ParentWorker:
             # Child: close parent's end, run the worker entrypoint.
             # The tracker is inherited copy-on-write; build the lookup
             # closure here so the worker can resolve set_id → name
-            # without any IPC round-trip.
+            # without any IPC round-trip. ``tracker`` may be ``None``
+            # when the router was created before the DNS-set pipeline
+            # bootstrapped (read-only scrape workers); the closure
+            # returns ``None`` in that case and the worker silently
+            # skips set ops — the parent respawns workers once a real
+            # tracker attaches.
             parent_t.close()
             from shorewall_nft.nft.dns_sets import qname_to_set_name
 
             def _lookup(key: tuple[int, int]) -> str | None:
+                if tracker is None:
+                    return None
                 entry = tracker.name_for(key[0])
                 if entry is None:
                     return None
@@ -264,7 +289,12 @@ class ParentWorker:
         return await fut
 
     def _drain_replies(self) -> None:
-        """Called from the event loop whenever the SEQPACKET fd is readable."""
+        """Called from the event loop whenever the SEQPACKET fd is readable.
+
+        Dispatches on the reply datagram's magic: ``MAGIC_REPLY``
+        → batch ack (existing code path), ``MAGIC_READ_RESP`` → read-RPC
+        response (resolves a ``_pending_reads`` future).
+        """
         if self._transport is None:
             return
         try:
@@ -279,6 +309,43 @@ class ParentWorker:
             self._fail_all_pending(e)
             self._schedule_respawn()
             return
+
+        try:
+            magic = peek_magic(view)
+        except ReadWireError as e:
+            self.metrics.ipc_errors_total += 1
+            log.warning(
+                "worker reply wire error: %s", e,
+                extra={"netns": self.netns or "(own)"})
+            return
+
+        if magic == MAGIC_READ_RESP:
+            try:
+                resp = decode_read_response(view)
+            except ReadWireError as e:
+                self.metrics.ipc_errors_total += 1
+                log.warning(
+                    "worker read-resp decode failed: %s", e,
+                    extra={"netns": self.netns or "(own)"})
+                return
+            fut = self._pending_reads.pop(resp.req_id, None)
+            if fut is None:
+                log.debug(
+                    "worker read-resp for unknown req_id=%d",
+                    resp.req_id,
+                )
+                return
+            if not fut.done():
+                fut.set_result(resp)
+            return
+
+        if magic != MAGIC_REPLY:
+            self.metrics.ipc_errors_total += 1
+            log.warning(
+                "worker: unknown reply magic 0x%08x — dropping", magic,
+                extra={"netns": self.netns or "(own)"})
+            return
+
         try:
             reply = decode_reply(view)
         except Exception as e:  # noqa: BLE001
@@ -309,12 +376,87 @@ class ParentWorker:
                     WorkerBatchError(reply.error or "worker reported error"))
 
     def _fail_all_pending(self, exc: BaseException) -> None:
-        """Resolve every outstanding batch with an error — used on
+        """Resolve every outstanding batch/read with an error — used on
         transport loss before respawn takes over."""
         for pending in self._pending.values():
             if not pending.future.done():
                 pending.future.set_exception(exc)
         self._pending.clear()
+        for fut in self._pending_reads.values():
+            if not fut.done():
+                fut.set_exception(exc)
+        self._pending_reads.clear()
+
+    # ── Read-RPC dispatch ─────────────────────────────────────────────
+
+    def _alloc_read_id(self) -> int:
+        rid = self._next_read_id
+        self._next_read_id = (self._next_read_id + 1) & 0xFFFFFFFFFFFF
+        if self._next_read_id == 0:
+            self._next_read_id = 1
+        return rid
+
+    async def _dispatch_read(self, kind: int, path: str) -> ReadResponse:
+        """Send a read-RPC and await the reply.
+
+        Called from the event loop only. For scrape-thread callers,
+        :class:`WorkerRouter` wraps this via ``run_coroutine_threadsafe``.
+        """
+        if hasattr(self, "_local"):
+            return await self._local._dispatch_read(kind, path)
+        if self._stopped:
+            raise RuntimeError("ParentWorker stopped")
+        if self._transport is None:
+            self._schedule_respawn()
+            raise RuntimeError(
+                "ParentWorker transport lost; respawn scheduled")
+
+        req_id = self._alloc_read_id()
+        fut: asyncio.Future[ReadResponse] = self._loop.create_future()
+        self._pending_reads[req_id] = fut
+        try:
+            payload = encode_read_request(
+                kind=kind, req_id=req_id, path=path)
+            self._transport.send(payload)
+        except OSError as e:
+            self._pending_reads.pop(req_id, None)
+            self.metrics.ipc_errors_total += 1
+            if not fut.done():
+                fut.set_exception(e)
+            raise
+        return await fut
+
+    async def read_file(self, path: str) -> bytes | None:
+        """Read a file in the worker's netns. ``None`` when missing."""
+        resp = await self._dispatch_read(READ_KIND_FILE, path)
+        if resp.status == READ_STATUS_OK:
+            return resp.data
+        if resp.status == READ_STATUS_NOT_FOUND:
+            return None
+        if resp.status == READ_STATUS_TOO_LARGE:
+            log.warning(
+                "worker read_file(%s): file exceeds payload cap, "
+                "returning None; use count_lines instead", path,
+                extra={"netns": self.netns or "(own)"})
+            return None
+        log.warning(
+            "worker read_file(%s) error: %s", path,
+            resp.data.decode("utf-8", errors="replace"),
+            extra={"netns": self.netns or "(own)"})
+        return None
+
+    async def count_lines(self, path: str) -> int | None:
+        """Count lines in a file in the worker's netns. ``None`` on error."""
+        resp = await self._dispatch_read(READ_KIND_COUNT_LINES, path)
+        if resp.status == READ_STATUS_OK:
+            return decode_line_count(resp.data)
+        if resp.status == READ_STATUS_NOT_FOUND:
+            return None
+        log.warning(
+            "worker count_lines(%s) error: %s", path,
+            resp.data.decode("utf-8", errors="replace"),
+            extra={"netns": self.netns or "(own)"})
+        return None
 
     def _tear_down_transport(self) -> None:
         """Close the parent-side socket and reap the dead child.
@@ -508,7 +650,7 @@ class LocalWorker:
     def __init__(
         self,
         *,
-        tracker: DnsSetTracker,
+        tracker: DnsSetTracker | None,
         loop: asyncio.AbstractEventLoop,
     ) -> None:
         self._tracker = tracker
@@ -538,6 +680,8 @@ class LocalWorker:
         tracker = self._tracker
 
         def lookup(key: tuple[int, int]) -> str | None:
+            if tracker is None:
+                return None
             entry = tracker.name_for(key[0])
             if entry is None:
                 return None
@@ -565,6 +709,26 @@ class LocalWorker:
         LocalWorker._batch_id_counter += 1
         return LocalWorker._batch_id_counter
 
+    # ── Read-RPC (in-process, default netns) ───────────────────────────
+
+    async def _dispatch_read(self, kind: int, path: str) -> ReadResponse:
+        """Serve a read-RPC without any IPC hop.
+
+        LocalWorker is always the daemon's own netns, so a direct
+        ``open()`` already sees the right ``/proc``. Runs on the
+        default thread pool to keep the event loop unblocked during
+        a large file read (e.g. ``/proc/net/ipv6_route`` on a BGP
+        full-table box).
+        """
+        def _do() -> ReadResponse:
+            from .nft_worker import _handle_read
+            status, data = _handle_read(kind, path)
+            return ReadResponse(
+                magic=MAGIC_READ_RESP, version=1,
+                status=status, req_id=0, data=data,
+            )
+        return await self._loop.run_in_executor(None, _do)
+
     async def shutdown(self) -> None:
         if self._executor is not None:
             self._executor.shutdown(wait=True)
@@ -581,16 +745,30 @@ class LocalWorker:
 class WorkerRouter:
     """One :class:`ParentWorker` per managed netns.
 
-    Created by the :class:`Daemon` during startup after the
-    DnsSetTracker has loaded the compiled allowlist. Handles
-    dispatch() routing based on the batch's target netns — the
-    SetWriter tells us which netns the batch belongs to via a
-    per-call argument.
+    Created by the :class:`Daemon` at startup. The router is live
+    before the DNS-set pipeline bootstraps so that the Prometheus
+    exporter can route ``/proc`` reads through netns-pinned workers
+    even when the daemon is managing no set-writing pipeline at all.
+
+    ``tracker`` is ``None`` until the DNS-set pipeline calls
+    :meth:`attach_tracker` (typically during ``_start_dns_pipeline``).
+    Workers forked before that point cannot resolve set-name lookups
+    and will silently skip set-mutating batches until a respawn; read
+    RPCs work regardless of tracker state.
     """
 
-    tracker: DnsSetTracker
     loop: asyncio.AbstractEventLoop
+    tracker: DnsSetTracker | None = None
     _workers: dict[str, ParentWorker] = field(default_factory=dict)
+
+    def attach_tracker(self, tracker: DnsSetTracker) -> None:
+        """Point the router at a freshly-created ``DnsSetTracker``.
+
+        Existing forked workers captured the previous tracker
+        (probably ``None``) at fork time; those must be respawned
+        (``respawn_netns``) to pick up the new lookup closure.
+        """
+        self.tracker = tracker
 
     async def add_netns(self, netns: str) -> ParentWorker:
         """Spawn a worker for ``netns`` (idempotent)."""
@@ -649,6 +827,70 @@ class WorkerRouter:
             worker = await self.add_netns(netns)
         return await worker.dispatch(builder)
 
+    # ── Read-RPC surface (async + scrape-thread sync wrappers) ────────
+
+    async def read_file(self, netns: str, path: str) -> bytes | None:
+        """Read a file inside ``netns``. Spawns a worker if needed.
+
+        For ``netns=""`` the :class:`LocalWorker` serves the read from
+        the daemon's own netns (no fork, no IPC). For named netns the
+        request goes through a forked worker already pinned there via
+        ``setns(2)`` at fork time.
+        """
+        worker = self._workers.get(netns)
+        if worker is None:
+            worker = await self.add_netns(netns)
+        return await worker.read_file(path)
+
+    async def count_lines(self, netns: str, path: str) -> int | None:
+        """Line-count a file inside ``netns`` (cheap for huge files)."""
+        worker = self._workers.get(netns)
+        if worker is None:
+            worker = await self.add_netns(netns)
+        return await worker.count_lines(path)
+
+    def read_file_sync(
+        self, netns: str, path: str, *, timeout: float = 5.0,
+    ) -> bytes | None:
+        """Blocking variant callable from a non-loop thread.
+
+        The Prometheus scrape handler runs on a thread that is not the
+        asyncio event loop; this wrapper schedules the async
+        :meth:`read_file` on the daemon's loop via
+        :func:`asyncio.run_coroutine_threadsafe` and waits for the
+        reply. ``timeout`` elapses → return ``None`` so the collector
+        simply skips the sample rather than stalling the whole scrape.
+        """
+        fut = asyncio.run_coroutine_threadsafe(
+            self.read_file(netns, path), self.loop)
+        try:
+            return fut.result(timeout=timeout)
+        except (concurrent.futures.TimeoutError,
+                concurrent.futures.CancelledError):
+            fut.cancel()
+            return None
+        except Exception as e:  # noqa: BLE001
+            log.debug(
+                "read_file_sync(%r, %r) failed: %s", netns, path, e)
+            return None
+
+    def count_lines_sync(
+        self, netns: str, path: str, *, timeout: float = 5.0,
+    ) -> int | None:
+        """Blocking variant of :meth:`count_lines` for scrape threads."""
+        fut = asyncio.run_coroutine_threadsafe(
+            self.count_lines(netns, path), self.loop)
+        try:
+            return fut.result(timeout=timeout)
+        except (concurrent.futures.TimeoutError,
+                concurrent.futures.CancelledError):
+            fut.cancel()
+            return None
+        except Exception as e:  # noqa: BLE001
+            log.debug(
+                "count_lines_sync(%r, %r) failed: %s", netns, path, e)
+            return None
+
     async def shutdown(self) -> None:
         for worker in list(self._workers.values()):
             try:
@@ -676,7 +918,7 @@ class WorkerAckTimeout(RuntimeError):
 
 
 def inproc_worker_pair(
-    tracker: DnsSetTracker,
+    tracker: DnsSetTracker | None,
     loop: asyncio.AbstractEventLoop,
     set_name_lookup: Callable[[tuple[int, int]], str | None],
     apply_cb: Callable[[str], None] | None = None,

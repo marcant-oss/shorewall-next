@@ -148,8 +148,15 @@ class Daemon:
         self._nft = NftInterface()
         self._registry = ShorewalldRegistry()
         self._scraper = NftScraper(self._nft, ttl_s=self.scrape_interval)
+        # Create the worker router early (tracker attaches later
+        # during DNS-pipeline bootstrap) so the exporter's /proc-reading
+        # collectors can delegate their reads to netns-pinned workers
+        # from the first scrape onwards. Workers are forked lazily on
+        # first use (scrape or SetWriter dispatch).
+        from .worker_router import WorkerRouter
+        self._router = WorkerRouter(loop=self._loop)
         self._profile_builder = ProfileBuilder(
-            self._nft, self._registry, self._scraper)
+            self._nft, self._registry, self._scraper, self._router)
 
         netns_list = resolve_netns_list(self.netns_spec)
         self._profile_builder.build(netns_list)
@@ -250,7 +257,6 @@ class Daemon:
         from .dnstap_bridge import TrackerBridge
         from .setwriter import SetWriter
         from .state import StateConfig, StateStore
-        from .worker_router import WorkerRouter
 
         try:
             registry = read_compiled_allowlist(self.allowlist_file)
@@ -294,7 +300,21 @@ class Daemon:
             )
 
         loop = asyncio.get_running_loop()
-        self._router = WorkerRouter(tracker=self._tracker, loop=loop)
+        # Router was created early in run() so the exporter could start
+        # using it; here we just attach the freshly-built tracker so
+        # newly spawned workers get the right set-name lookup closure.
+        # Any workers already forked for read-only scrape traffic must
+        # be respawned so their captured (None) tracker gets replaced.
+        assert self._router is not None
+        already_spawned = list(self._router.iter_workers())
+        self._router.attach_tracker(self._tracker)
+        for worker in already_spawned:
+            try:
+                await self._router.respawn_netns(worker.netns)
+            except Exception:
+                log.exception(
+                    "router: tracker-attach respawn failed for %r",
+                    worker.netns)
         for netns in netns_list:
             try:
                 await self._router.add_netns(netns)
@@ -515,7 +535,6 @@ class Daemon:
         from .dns_set_tracker import DnsSetTracker
         from .dnstap_bridge import TrackerBridge
         from .setwriter import SetWriter
-        from .worker_router import WorkerRouter
 
         try:
             from shorewall_nft.nft.dns_sets import DnsSetRegistry
@@ -530,7 +549,20 @@ class Daemon:
         self._tracker.load_registry(DnsSetRegistry())
 
         loop = asyncio.get_running_loop()
-        self._router = WorkerRouter(tracker=self._tracker, loop=loop)
+        # Router was pre-created in run(); attach the empty tracker now
+        # and respawn any scrape-only workers so the lookup closure
+        # picks up the new (empty) tracker. Real content is injected
+        # later by the InstanceManager.
+        assert self._router is not None
+        already_spawned = list(self._router.iter_workers())
+        self._router.attach_tracker(self._tracker)
+        for worker in already_spawned:
+            try:
+                await self._router.respawn_netns(worker.netns)
+            except Exception:
+                log.exception(
+                    "router: tracker-attach respawn failed for %r",
+                    worker.netns)
         # Do NOT pre-start workers here. Workers for non-empty netns fork
         # a child process that inherits a copy of the tracker. If we fork
         # now the tracker is still empty; set-name lookups in the child

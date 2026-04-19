@@ -26,12 +26,16 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
   (per-`(qname, netns)` scheduling).
 - `dns_wire.py` — DNS wire-format parsing (qname / RR extraction).
 - `worker_router.py` — persistent-fork `WorkerRouter` for per-netns
-  nft writes (`LocalWorker` for default netns, `ParentWorker` for
-  named netns with auto-respawn).
-- `nft_worker.py` — forked-child entry point; builds nft script from
-  batched proposals.
-- `worker_transport.py` + `batch_codec.py` — IPC framing between router
-  and workers.
+  nft writes AND `/proc`-file reads (`LocalWorker` for default netns,
+  `ParentWorker` for named netns with auto-respawn). Sync wrappers
+  `read_file_sync` / `count_lines_sync` bridge the scrape thread to
+  the asyncio loop via `run_coroutine_threadsafe`.
+- `nft_worker.py` — forked-child entry point; dispatches on datagram
+  magic to build an nft script from batched proposals (`MAGIC_REQUEST`)
+  or to serve `/proc` reads via `_handle_read` (`MAGIC_READ_REQ`).
+- `worker_transport.py` + `batch_codec.py` + `read_codec.py` — IPC
+  framing between router and workers (set-mutation batches vs file
+  reads; one SEQPACKET pair carries both).
 - `dns_set_tracker.py` — `(set_name, ip) → expiry` LRU + proposal/verdict.
 - `setwriter.py` — coalescing `SetWriter` (batched netlink writes).
 - `dnstap_bridge.py` — routes dnstap answers through tracker or direct-nft.
@@ -67,9 +71,16 @@ Every code path here is hot. Target: 20 000 DNS answers/s across dnstap
   `queue.Queue`. SetWriter + nft mutations on the single asyncio event
   loop (libnftables is not thread-safe). Sockets are asyncio readers.
   No thread-pools for IO, no asyncio for CPU-bound work.
-- **Zero-fork.** Never shell out. libnftables in-process via
-  `NftInterface`, pyroute2 for link stats, direct `/proc` reads for ct
-  counters.
+- **Zero-fork for new work; one persistent fork per netns.** Never
+  shell out. libnftables in-process via `NftInterface`, pyroute2 for
+  link / qdisc / neighbour / address dumps (pyroute2 forks internally
+  to bind each netlink socket to the target netns). `/proc` and
+  `/sys` reads run inside the already-forked nft worker that owns
+  the target netns — see the file-read RPC under `read_codec.py` and
+  the "Read RPC: netns-pinned /proc reads" section below. The scrape
+  thread itself never calls `setns(2)`. `ConntrackStatsCollector` is
+  the lone remaining direct `_in_netns()` hop (needs a bound
+  `NFCTSocket` the worker protocol does not yet proxy).
 - **Bounded everything.** Every queue, cache, retry counter has an
   explicit cap. Drops are counted as metrics. Growing RSS is not
   acceptable.
@@ -161,6 +172,61 @@ schedules `_auto_respawn()`. Backoff: 0 → 1 → 2 → … → 30 s; resets aft
 kills, and the "named netns is briefly absent during ip-netns-del/add"
 window. Without this, `dispatch()` would fail forever with
 `ParentWorker not started or already stopped` once the worker died.
+
+## Read RPC: netns-pinned /proc reads
+
+The nft worker now serves a second RPC family in parallel with batch
+set-mutations. Collectors that scrape `/proc/net/*` or
+`/proc/sys/net/netfilter/*` no longer `setns(2)` themselves — they
+route the read through the worker that is already pinned to the
+target netns. The scrape thread stays in the default netns; no
+thread-level `setns` race window, no `CAP_SYS_ADMIN` requirement on
+the scrape path.
+
+Two message kinds (`read_codec.py`):
+
+- `READ_KIND_FILE` → worker `open(path).read(MAX_FILE_BYTES + 1)`,
+  reply carries raw bytes. `TOO_LARGE` returned if file exceeds
+  60 KiB — callers fall back to `count_lines`.
+- `READ_KIND_COUNT_LINES` → worker streams line by line, reply
+  carries an 8-byte big-endian u64. Used for `/proc/net/route` and
+  `/proc/net/ipv6_route` (would otherwise blow the 64 KiB datagram
+  cap on a full-BGP v6 table).
+
+Wire format: 18-byte request header + UTF-8 path; 20-byte response
+header + payload. Dispatched by peeking the first four bytes of each
+datagram (`SWNF` = batch, `SWRR` = read) — keeps the decoder
+branch-free and makes ``strace`` output human-readable.
+
+Dispatch is asymmetric per worker type:
+
+- **Default netns (`netns=""`)** → `LocalWorker._dispatch_read`: no
+  fork, no IPC. Runs `_handle_read` on the default thread pool via
+  `loop.run_in_executor(None, ...)` — keeps a potentially long read
+  (a full-BGP `/proc/net/ipv6_route` line-count is ~100 ms of work)
+  off the event-loop thread.
+- **Named netns** → `ParentWorker._dispatch_read`: allocates a
+  `req_id`, sends the request through the shared SEQPACKET pair,
+  awaits the reply via a dedicated `_pending_reads` dict keyed on
+  `req_id`. `_drain_replies` peeks the reply magic and routes to
+  either the batch or the read pending table.
+
+Scrape-thread adapter: `WorkerRouter.read_file_sync` /
+`count_lines_sync` wrap the async path in
+`asyncio.run_coroutine_threadsafe(..., self.loop).result(timeout=5.0)`.
+Timeout → the collector returns `None` and skips the sample rather
+than stalling the whole scrape. Exceptions are logged at DEBUG and
+swallowed — no scrape should ever fail because a single file read
+hiccuped.
+
+**Tracker attach ordering**: `WorkerRouter` is created early in
+`Daemon.run()` with `tracker=None` so collectors can delegate reads
+from the first scrape onwards. When the DNS-set pipeline bootstraps
+later it calls `router.attach_tracker(tracker)` and *respawns* any
+workers that were already forked for scrape-only traffic, because
+the set-name lookup closure was captured at fork time with the
+(None) tracker reference and will not otherwise see the newly-
+attached tracker.
 
 ## DNS architecture (shipped v1.4.0)
 

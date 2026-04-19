@@ -205,11 +205,19 @@ canonical "ring buffer too small / IRQ coalescing wrong" signal;
 | `shorewall_nft_iface_tx_heartbeat_errors_total` | Counter | `netns,iface` |  |
 | `shorewall_nft_iface_tx_window_errors_total` | Counter | `netns,iface` |  |
 
-**Oper state**
+**Oper state, carrier transitions, MTU**
 
 | Metric | Type | Labels |
 |---|---|---|
 | `shorewall_nft_iface_oper_state` | Gauge | `netns,iface` — 1=UP, 0=DOWN, 0.5=UNKNOWN |
+| `shorewall_nft_iface_carrier_changes_total` | Counter | `netns,iface` — cumulative link up↔down transitions |
+| `shorewall_nft_iface_mtu` | Gauge | `netns,iface` — current link MTU in bytes |
+
+`carrier_changes_total` is the authoritative kernel counter for physical-
+layer flap: a jump without a simultaneous VRRP transition points at a
+cable/SFP/switch-port problem, a jump *with* a VRRP transition is the
+expected signature of a failover drill. `iface_mtu` catches
+jumbo-negotiation regressions after an LACP reconfigure.
 
 ### Qdisc metrics (one per netns, always emitted)
 
@@ -243,12 +251,24 @@ bps/pps and on older kernels.
 
 ### Conntrack metrics (one per netns)
 
-**Table occupancy** — sourced from `/proc/sys/net/netfilter/`:
+**Table occupancy + hash load + FIB size** — sourced from
+`/proc/sys/net/netfilter/` and `/proc/net/{route,ipv6_route}`, all
+reads delegated to the netns-pinned nft worker so the scrape thread
+never runs `setns(2)` itself (see
+[Architecture → netns-pinned reads](#architecture--netns-pinned-reads)).
 
 | Metric | Type | Labels |
 |---|---|---|
 | `shorewall_nft_ct_count` | Gauge | `netns` — current conntrack entries |
 | `shorewall_nft_ct_max` | Gauge | `netns` — `nf_conntrack_max` sysctl |
+| `shorewall_nft_ct_buckets` | Gauge | `netns` — hash bucket count (`nf_conntrack_buckets`) |
+| `shorewall_nft_fib_routes` | Gauge | `netns,family` — line count of `/proc/net/route` (v4) / `/proc/net/ipv6_route` (v6) |
+
+`count / buckets` is the mean conntrack hash-chain length: above 4 the
+lookup cost pushes perceptibly; above 16 it dominates forwarding
+latency — raise `nf_conntrack_buckets`. `fib_routes{family="ipv4"}`
+collapsing on a BGP-speaking router is the canonical "session went
+away" signal, cheaper to alert on than watching bird's state file.
 
 **Engine counters** — sourced from `CTNETLINK IPCTNL_MSG_CT_GET_STATS_CPU`
 via `NFCTSocket.stat()`. Per-CPU rows are summed into one value per
@@ -274,6 +294,195 @@ climbing simultaneously is the conntrack-table-pressure signature —
 raise `nf_conntrack_max` or tune `nf_conntrack_tcp_timeout_*`.
 `invalid` climbing in isolation usually means bogus traffic or a
 state-machine mismatch (one-way traffic, asymmetric routing).
+
+### Protocol-stack metrics — IP / ICMP / UDP (per netns, per family)
+
+Sourced from `/proc/net/snmp` + `/proc/net/snmp6`, delegated to the
+netns-pinned nft worker. On a firewall these are the first-class SRE
+signal for forwarding quality: `ip_forwarded_total` is the raw
+forwarding rate, `ip_out_no_routes_total` counts packets dropped
+because nothing matched the FIB — a non-zero slope here usually
+means a dead static route or a disappeared BGP session.
+
+Every metric carries `netns` plus a `family` label (`ipv4` or `ipv6`)
+so one alerting rule covers both stacks:
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewall_nft_ip_forwarded_total` | Counter | Packets forwarded to another interface |
+| `shorewall_nft_ip_out_no_routes_total` | Counter | Packets dropped: no route to destination |
+| `shorewall_nft_ip_in_discards_total` | Counter | Input packets discarded (resource shortage etc.) |
+| `shorewall_nft_ip_in_hdr_errors_total` | Counter | Input packets with header errors |
+| `shorewall_nft_ip_in_addr_errors_total` | Counter | Input packets with invalid destination |
+| `shorewall_nft_ip_in_delivers_total` | Counter | Packets delivered to upper layers |
+| `shorewall_nft_ip_out_requests_total` | Counter | Output packets requested by upper layers |
+| `shorewall_nft_ip_reasm_fails_total` | Counter | IP reassembly failures |
+| `shorewall_nft_icmp_in_msgs_total` | Counter | ICMP messages received |
+| `shorewall_nft_icmp_out_msgs_total` | Counter | ICMP messages sent |
+| `shorewall_nft_icmp_in_dest_unreachs_total` | Counter | ICMP destination-unreachable received |
+| `shorewall_nft_icmp_out_dest_unreachs_total` | Counter | ICMP destination-unreachable sent |
+| `shorewall_nft_icmp_in_time_excds_total` | Counter | ICMP time-exceeded received |
+| `shorewall_nft_icmp_out_time_excds_total` | Counter | ICMP time-exceeded sent |
+| `shorewall_nft_icmp_in_redirects_total` | Counter | ICMP redirects received |
+| `shorewall_nft_icmp_in_echos_total` | Counter | ICMP echo requests received |
+| `shorewall_nft_icmp_in_echo_reps_total` | Counter | ICMP echo replies received |
+| `shorewall_nft_udp_in_datagrams_total` | Counter | UDP datagrams received |
+| `shorewall_nft_udp_no_ports_total` | Counter | UDP datagrams to closed port |
+| `shorewall_nft_udp_in_errors_total` | Counter | UDP datagrams received with errors |
+| `shorewall_nft_udp_out_datagrams_total` | Counter | UDP datagrams sent |
+| `shorewall_nft_udp_rcvbuf_errors_total` | Counter | UDP dropped: receive buffer full |
+| `shorewall_nft_udp_sndbuf_errors_total` | Counter | UDP dropped: send buffer full |
+| `shorewall_nft_udp_in_csum_errors_total` | Counter | UDP datagrams with bad checksum |
+
+### TCP stack metrics (per netns, kernel-wide v4+v6)
+
+The kernel keeps one TCP MIB across both address families, so these
+metrics carry only a `netns` label (no `family` split):
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewall_nft_tcp_curr_estab` | Gauge | Current connections in ESTABLISHED / CLOSE_WAIT |
+| `shorewall_nft_tcp_active_opens_total` | Counter | Active (local-initiated) connection opens |
+| `shorewall_nft_tcp_passive_opens_total` | Counter | Passive (remote-initiated) opens |
+| `shorewall_nft_tcp_attempt_fails_total` | Counter | Connection attempts that failed |
+| `shorewall_nft_tcp_estab_resets_total` | Counter | Resets from ESTABLISHED / CLOSE_WAIT |
+| `shorewall_nft_tcp_retrans_segs_total` | Counter | Retransmitted segments |
+| `shorewall_nft_tcp_in_segs_total` | Counter | Segments received |
+| `shorewall_nft_tcp_out_segs_total` | Counter | Segments sent |
+| `shorewall_nft_tcp_in_errs_total` | Counter | Segments received with errors |
+| `shorewall_nft_tcp_out_rsts_total` | Counter | Segments sent with RST |
+| `shorewall_nft_tcp_in_csum_errors_total` | Counter | Segments with bad checksum |
+
+### TCP extensions (`TcpExt`, per netns)
+
+Sourced from `/proc/net/netstat`. `listen_overflows` +
+`backlog_drop` are the canonical SYN-flood / accept-queue signals;
+`timeouts` + `syn_retrans` track wire-level packet loss ahead of any
+application-layer alarm.
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewall_nft_tcpext_listen_overflows_total` | Counter | SYN arrived with a full accept queue |
+| `shorewall_nft_tcpext_listen_drops_total` | Counter | SYNs dropped (all resource shortages) |
+| `shorewall_nft_tcpext_backlog_drop_total` | Counter | Packets dropped: socket backlog full |
+| `shorewall_nft_tcpext_timeouts_total` | Counter | Retransmission timeouts fired |
+| `shorewall_nft_tcpext_syn_retrans_total` | Counter | SYN retransmissions |
+| `shorewall_nft_tcpext_prune_called_total` | Counter | Socket memory pruning invocations |
+| `shorewall_nft_tcpext_ofo_drop_total` | Counter | Out-of-order packets dropped |
+| `shorewall_nft_tcpext_abort_on_data_total` | Counter | Connections aborted while data was pending |
+| `shorewall_nft_tcpext_abort_on_memory_total` | Counter | Connections aborted due to memory pressure |
+| `shorewall_nft_tcpext_retrans_fail_total` | Counter | Retransmission attempts that failed at send |
+
+### Socket counts (`/proc/net/sockstat{,6}`, per netns)
+
+TCP buckets get a `family` label split (v4/v6 inuse counters exist on
+both stacks); kernel-wide or v4-only buckets (TCP `orphan`/`tw`/
+`alloc`/`mem`, UDP `mem`, the `sockets_used` total) carry no family
+label. `mem_pages` fields are in kernel pages — convert to bytes by
+multiplying with `/proc/sys/vm/page_size` if you need byte units.
+
+| Metric | Type | Labels |
+|---|---|---|
+| `shorewall_nft_sockstat_tcp_inuse` | Gauge | `netns,family` |
+| `shorewall_nft_sockstat_tcp_orphan` | Gauge | `netns` (v4 only) |
+| `shorewall_nft_sockstat_tcp_tw` | Gauge | `netns` — TIME_WAIT sockets |
+| `shorewall_nft_sockstat_tcp_alloc` | Gauge | `netns` — allocated TCP sockets |
+| `shorewall_nft_sockstat_tcp_mem_pages` | Gauge | `netns` — TCP memory in kernel pages |
+| `shorewall_nft_sockstat_udp_inuse` | Gauge | `netns,family` |
+| `shorewall_nft_sockstat_udp_mem_pages` | Gauge | `netns` — UDP memory in kernel pages |
+| `shorewall_nft_sockstat_udplite_inuse` | Gauge | `netns,family` |
+| `shorewall_nft_sockstat_raw_inuse` | Gauge | `netns,family` |
+| `shorewall_nft_sockstat_frag_inuse` | Gauge | `netns,family` — IP reassembly queues |
+| `shorewall_nft_sockstat_frag_memory_bytes` | Gauge | `netns,family` — IP reassembly memory (bytes) |
+| `shorewall_nft_sockstat_sockets_used` | Gauge | `netns` — kernel-wide socket count |
+
+### Per-CPU softirq (`/proc/net/softnet_stat`, per netns, per CPU)
+
+One row per CPU in the file becomes one sample per CPU in each
+metric family — label `cpu` is the zero-based kernel CPU index as a
+string. On a firewall with uneven IRQ distribution this is the
+*only* way to see that one CPU is dropping packets at line rate
+while the others idle.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `shorewall_nft_softnet_processed_total` | Counter | `netns,cpu` | Packets processed by softirq on this CPU |
+| `shorewall_nft_softnet_dropped_total` | Counter | `netns,cpu` | Packets dropped: CPU input_pkt_queue full |
+| `shorewall_nft_softnet_time_squeeze_total` | Counter | `netns,cpu` | NAPI polls cut short by budget/time |
+| `shorewall_nft_softnet_received_rps_total` | Counter | `netns,cpu` | Packets received via an RPS IPI |
+| `shorewall_nft_softnet_flow_limit_total` | Counter | `netns,cpu` | Packets dropped by flow-limit filter |
+
+### Neighbour (ARP/ND) + address counts (per netns)
+
+Sourced from `RTM_GETNEIGH` / `RTM_GETADDR` via pyroute2 — one dump
+per scrape per netns. Count per `(iface, family, state)` (neighbour
+cache) respectively `(iface, family)` (addresses). A spike in
+`neigh_count{state="failed"}` is the gateway-down signal; an address
+disappearing during a VRRP flap drops `addrs` for the relevant
+interface from N+1 to N.
+
+| Metric | Type | Labels |
+|---|---|---|
+| `shorewall_nft_neigh_count` | Gauge | `netns,iface,family,state` — state ∈ {reachable, stale, failed, incomplete, delay, probe, permanent, noarp, none} |
+| `shorewall_nft_addrs` | Gauge | `netns,iface,family` — number of configured addresses |
+
+### Flowtable descriptors (per netns with a loaded ruleset)
+
+Extracted from the same `list table inet shorewall` snapshot that
+drives the rule/counter/set metrics — zero extra netlink round-trips.
+Live flow counts per flowtable are **not** emitted: libnftables'
+JSON view of a flowtable carries only its definition, not the
+transient flow entries. Alert on `flowtable_devices == 0` (interface
+detached) and on an absent `flowtable_exists` sample (flowtable
+disappeared after a faulty reload).
+
+| Metric | Type | Labels |
+|---|---|---|
+| `shorewall_nft_flowtable_devices` | Gauge | `netns,name` — attached interfaces |
+| `shorewall_nft_flowtable_exists` | Gauge | `netns,name,hook` — always 1 for every configured flowtable |
+
+### Architecture: netns-pinned reads
+
+The Prometheus scrape thread never calls `setns(2)` directly. Every
+`/proc` / `/sys` read performed by a collector is delegated to the
+nft-worker process that is already pinned to the target netns via
+`setns(CLONE_NEWNET)` at fork time:
+
+```
+Prometheus scrape thread
+   └─ CtCollector / SnmpCollector / NetstatCollector /
+      SockstatCollector / SoftnetCollector
+         └─ WorkerRouter.read_file_sync / count_lines_sync
+              └─ run_coroutine_threadsafe → asyncio loop
+                   └─ ParentWorker (netns-pinned child)
+                        └─ open(path).read()          # READ_KIND_FILE
+                           or sum(1 for _ in f)       # READ_KIND_COUNT_LINES
+                              ↩ SEQPACKET reply ↩
+```
+
+Wire protocol sits alongside the existing SetWriter batch codec:
+two extra magics (`SWRR` request, `SWRS` response) dispatched by the
+worker main loop, one SEQPACKET round-trip per file read, response
+capped at 60 KiB (`/proc/net/ipv6_route` on a full-BGP box would
+exceed that — callers use `count_lines` for line-count metrics
+instead, which ships an 8-byte integer regardless of file size).
+
+For the daemon's own netns (`netns=""`) the in-process `LocalWorker`
+short-circuits to a direct `open()` on the default thread pool —
+no fork, no IPC — while keeping the same async API.
+
+Two collectors stay on the legacy `_in_netns()` setns hop because
+they touch netlink sockets the worker protocol does not yet proxy:
+
+* `ConntrackStatsCollector` — opens a fresh `NFCTSocket` per scrape
+  bound to the target netns.
+* `NeighbourCollector` / `AddressCollector` / `LinkCollector` /
+  `QdiscCollector` — use pyroute2's `IPRoute(netns=…)` which forks
+  internally to bind the socket in the target netns.
+
+These remain safe under concurrent scrapes because Linux `setns(2)`
+is per-thread, not per-process: the scrape thread's brief
+name-space hop does not leak into the asyncio event-loop thread.
 
 ### dnstap pipeline metrics (only when `--listen-api` is set)
 

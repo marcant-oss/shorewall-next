@@ -21,15 +21,45 @@ from shorewalld.discover import (
     resolve_netns_list,
 )
 from shorewalld.exporter import (
+    AddressCollector,
     ConntrackStatsCollector,
     CtCollector,
+    FlowtableCollector,
     LinkCollector,
+    NeighbourCollector,
+    NetstatCollector,
     NftCollector,
     NftScraper,
     QdiscCollector,
     ShorewalldRegistry,
+    SnmpCollector,
+    SockstatCollector,
+    SoftnetCollector,
 )
 from shorewall_nft.nft.netlink import NftError
+
+# Number of collectors ProfileBuilder.build() registers per netns.
+# Kept as a named constant so adding a new always-on collector is a
+# one-line update to both this file and whoever else cares.
+_ALWAYS_ON_PER_NETNS = 10
+# Number of additional collectors added by reprobe() when the table
+# exists: NftCollector + FlowtableCollector.
+_GATED_PER_NETNS = 2
+
+
+class FakeRouter:
+    """Minimal stand-in for WorkerRouter that the router-using
+    collectors can depend on. Returns ``None`` for every read so the
+    collectors simply emit empty metric families in unit tests.
+    """
+
+    def read_file_sync(self, netns: str, path: str, *,
+                       timeout: float = 5.0) -> bytes | None:
+        return None
+
+    def count_lines_sync(self, netns: str, path: str, *,
+                         timeout: float = 5.0) -> int | None:
+        return None
 
 # ── FakeNftInterface ─────────────────────────────────────────────────
 
@@ -115,16 +145,18 @@ def _make_builder(fake: FakeNftInterface) -> tuple[ProfileBuilder,
                                                    ShorewalldRegistry]:
     registry = ShorewalldRegistry()
     scraper = NftScraper(fake, ttl_s=60.0)  # type: ignore[arg-type]
-    builder = ProfileBuilder(fake, registry, scraper)  # type: ignore[arg-type]
+    router = FakeRouter()
+    builder = ProfileBuilder(
+        fake, registry, scraper, router)  # type: ignore[arg-type]
     return builder, registry
 
 
-def test_builder_always_registers_link_qdisc_ctstats_and_ct():
+def test_builder_always_registers_full_collector_bundle():
     fake = FakeNftInterface(present=set())
     builder, registry = _make_builder(fake)
 
     builder.build(["fw", "rns1"])
-    assert len(registry) == 8  # 2 × (Link + Qdisc + CtStats + Ct)
+    assert len(registry) == 2 * _ALWAYS_ON_PER_NETNS
 
     # fw profile should have exactly one of each.
     fw = builder.profiles["fw"]
@@ -132,7 +164,14 @@ def test_builder_always_registers_link_qdisc_ctstats_and_ct():
     assert isinstance(fw.qdisc_collector, QdiscCollector)
     assert isinstance(fw.ct_stats_collector, ConntrackStatsCollector)
     assert isinstance(fw.ct_collector, CtCollector)
+    assert isinstance(fw.snmp_collector, SnmpCollector)
+    assert isinstance(fw.netstat_collector, NetstatCollector)
+    assert isinstance(fw.sockstat_collector, SockstatCollector)
+    assert isinstance(fw.softnet_collector, SoftnetCollector)
+    assert isinstance(fw.neigh_collector, NeighbourCollector)
+    assert isinstance(fw.addr_collector, AddressCollector)
     assert fw.nft_collector is None
+    assert fw.flowtable_collector is None
 
 
 def test_builder_is_idempotent_on_double_build():
@@ -141,8 +180,8 @@ def test_builder_is_idempotent_on_double_build():
 
     builder.build(["fw"])
     builder.build(["fw"])
-    # Still just Link + Qdisc + CtStats + Ct — not double.
-    assert len(registry) == 4
+    # Second build must not duplicate the registration.
+    assert len(registry) == _ALWAYS_ON_PER_NETNS
 
 
 def test_reprobe_adds_nft_collector_when_table_appears():
@@ -160,9 +199,11 @@ def test_reprobe_adds_nft_collector_when_table_appears():
     builder.reprobe()
 
     assert fw.nft_collector is not None
+    assert fw.flowtable_collector is not None
     assert fw.has_table is True
     assert isinstance(fw.nft_collector, NftCollector)
-    assert len(registry) == 5  # Link + Qdisc + CtStats + Ct + Nft
+    assert isinstance(fw.flowtable_collector, FlowtableCollector)
+    assert len(registry) == _ALWAYS_ON_PER_NETNS + _GATED_PER_NETNS
 
 
 def test_reprobe_removes_nft_collector_when_table_vanishes():
@@ -179,8 +220,9 @@ def test_reprobe_removes_nft_collector_when_table_vanishes():
     builder.reprobe()
 
     assert fw.nft_collector is None
+    assert fw.flowtable_collector is None
     assert fw.has_table is False
-    assert len(registry) == 4  # Back to Link + Qdisc + CtStats + Ct
+    assert len(registry) == _ALWAYS_ON_PER_NETNS
 
 
 def test_reprobe_ignores_netns_without_table():
