@@ -196,14 +196,17 @@ def decode_pbdns_frame(
     a_rrs: list[bytes] = []
     aaaa_rrs: list[bytes] = []
     min_ttl = 0
+    # protobuf returns rdata as an immutable ``bytes`` already — no
+    # need to wrap in ``bytes()`` again. Avoids ~2 allocations per
+    # accepted frame on the 20 k fps hot path.
     for rr in msg.response.rrs:
         rtype = rr.type
         if rtype == RRTYPE_A and len(rr.rdata) == 4:
-            a_rrs.append(bytes(rr.rdata))
+            a_rrs.append(rr.rdata)
             if min_ttl == 0 or rr.ttl < min_ttl:
                 min_ttl = rr.ttl
         elif rtype == RRTYPE_AAAA and len(rr.rdata) == 16:
-            aaaa_rrs.append(bytes(rr.rdata))
+            aaaa_rrs.append(rr.rdata)
             if min_ttl == 0 or rr.ttl < min_ttl:
                 min_ttl = rr.ttl
 

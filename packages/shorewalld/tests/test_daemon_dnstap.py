@@ -394,6 +394,101 @@ def test_worker_pool_counts_non_client_response_drops():
     assert metrics.frames_dropped_not_client_response == 1
 
 
+@pytest.mark.skipif(not _HAVE_DNSPYTHON, reason="dnspython not installed")
+def test_worker_pool_two_pass_filter_skips_dnspython_on_reject(monkeypatch):
+    """When an allowlist is set and the qname is not in it, the
+    expensive dnspython parse must not run. This is the whole point
+    of the two-pass filter (CLAUDE.md §Performance doctrine)."""
+    import shorewalld.dnstap as dnstap_mod
+
+    metrics = DnstapMetrics()
+    frame_q: queue.Queue[bytes] = queue.Queue(maxsize=4)
+
+    wire = _build_dns_a_response("blocked.example.", ["10.0.0.1"])
+    frame = _make_dnstap_frame(CLIENT_RESPONSE, wire)
+
+    parse_calls: list[bytes] = []
+    real_parse = dnstap_mod.parse_dns_response
+
+    def tracking_parse(w: bytes):
+        parse_calls.append(w)
+        return real_parse(w)
+
+    monkeypatch.setattr(dnstap_mod, "parse_dns_response", tracking_parse)
+
+    async def driver() -> None:
+        loop = asyncio.get_running_loop()
+        pool = DecodeWorkerPool(
+            frame_q, metrics,
+            on_update=lambda _u: None,
+            loop=loop,
+            qname_filter=QnameFilter(allowlist={"allowed.example"}),
+            n_workers=1)
+        pool.start()
+        try:
+            frame_q.put(frame)
+            for _ in range(50):
+                await asyncio.sleep(0.02)
+                if metrics.frames_dropped_not_allowlisted:
+                    break
+        finally:
+            pool.stop()
+
+    asyncio.run(driver())
+    assert metrics.frames_dropped_not_allowlisted == 1
+    assert metrics.frames_accepted == 0
+    assert parse_calls == []
+
+
+@pytest.mark.skipif(not _HAVE_DNSPYTHON, reason="dnspython not installed")
+def test_worker_pool_two_pass_filter_accepts_allowlisted(monkeypatch):
+    """When the qname is in the allowlist, parse_dns_response runs
+    and the update propagates normally."""
+    import shorewalld.dnstap as dnstap_mod
+
+    metrics = DnstapMetrics()
+    frame_q: queue.Queue[bytes] = queue.Queue(maxsize=4)
+
+    wire = _build_dns_a_response("allowed.example.", ["10.0.0.1"])
+    frame = _make_dnstap_frame(CLIENT_RESPONSE, wire)
+
+    parse_calls: list[bytes] = []
+    real_parse = dnstap_mod.parse_dns_response
+
+    def tracking_parse(w: bytes):
+        parse_calls.append(w)
+        return real_parse(w)
+
+    monkeypatch.setattr(dnstap_mod, "parse_dns_response", tracking_parse)
+
+    received: list[DnsUpdate] = []
+
+    async def driver() -> None:
+        loop = asyncio.get_running_loop()
+        pool = DecodeWorkerPool(
+            frame_q, metrics,
+            on_update=received.append,
+            loop=loop,
+            qname_filter=QnameFilter(allowlist={"allowed.example"}),
+            n_workers=1)
+        pool.start()
+        try:
+            frame_q.put(frame)
+            for _ in range(50):
+                await asyncio.sleep(0.02)
+                if received:
+                    break
+        finally:
+            pool.stop()
+
+    asyncio.run(driver())
+    assert len(received) == 1
+    assert received[0].qname == "allowed.example"
+    assert metrics.frames_accepted == 1
+    assert metrics.frames_dropped_not_allowlisted == 0
+    assert len(parse_calls) == 1
+
+
 def test_worker_pool_counts_decode_errors():
     metrics = DnstapMetrics()
     frame_q: queue.Queue[bytes] = queue.Queue(maxsize=4)

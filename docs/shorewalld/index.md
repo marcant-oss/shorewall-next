@@ -493,6 +493,7 @@ name-space hop does not leak into the asyncio event-loop thread.
 | `shorewalld_dnstap_frames_dropped_queue_full_total` | Counter |
 | `shorewalld_dnstap_frames_dropped_not_client_response_total` | Counter |
 | `shorewalld_dnstap_frames_dropped_not_a_or_aaaa_total` | Counter |
+| `shorewalld_dnstap_frames_dropped_not_allowlisted_total` | Counter |
 | `shorewalld_dnstap_connections` | Gauge |
 | `shorewalld_dnstap_workers_busy` | Gauge |
 | `shorewalld_dnstap_queue_depth` | Gauge |
@@ -501,6 +502,14 @@ name-space hop does not leak into the asyncio event-loop thread.
 Watch `queue_depth / queue_capacity` — if it climbs toward 1.0 the
 decoder is falling behind the recursor and you should increase
 `--scrape-interval`-equivalent tuning or throw hardware at it.
+
+`frames_dropped_not_allowlisted_total` is bumped by the two-pass
+filter: when an allowlist is configured, an answer's qname is checked
+against it before the expensive dnspython parse runs. A large ratio
+of `frames_dropped_not_allowlisted_total` to `frames_accepted_total`
+is healthy — it means the recursor is answering for plenty of names
+the daemon has no interest in, and the cheap filter is saving CPU on
+every one of them.
 
 ### DNS-set pipeline metrics (when DNS pipeline is active)
 
