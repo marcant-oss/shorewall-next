@@ -17,13 +17,11 @@ import asyncio
 import ipaddress
 import json
 import os
-import socket
 import tempfile
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
 
 from shorewalld.dns_set_tracker import FAMILY_V4, FAMILY_V6, DnsSetTracker
 from shorewalld.seed import SeedCoordinator, _merge, _merged_to_response
