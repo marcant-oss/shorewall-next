@@ -1,3 +1,11 @@
+shorewall-nft (1.8.0-1) unstable; urgency=medium
+
+  * Release 1.8.0: shorewalld Prometheus deep-dive, worker /proc delegation,
+    seed handshake, AlmaLinux 10 protobuf compat, startup deadlock fix.
+  * See CHANGELOG.md for full details.
+
+ -- André Valentin <avalentin@marcant.net>  Sat, 19 Apr 2026 00:00:00 +0000
+
 shorewall-nft (1.7.0-1) unstable; urgency=medium
 
   * Release 1.7.0: shorewalld inline DNS registry, full Prometheus coverage,

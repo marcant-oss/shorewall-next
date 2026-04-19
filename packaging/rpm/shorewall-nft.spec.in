@@ -163,6 +163,11 @@ fi
 %changelog
 @@CHANGELOG_ENTRY@@
 
+* Sat Apr 19 2026 André Valentin <avalentin@marcant.net> - 1.8.0-1
+- Release 1.8.0: shorewalld Prometheus deep-dive, worker /proc delegation,
+  seed handshake, AlmaLinux 10 protobuf compat, startup deadlock fix.
+- See CHANGELOG.md for full details.
+
 * Sun Apr 19 2026 André Valentin <avalentin@marcant.net> - 1.7.0-1
 - Release 1.7.0: shorewalld inline DNS registry, full Prometheus coverage,
   --monitor removal, /etc/shorewalld.conf primary config, shorewalld fixes,
