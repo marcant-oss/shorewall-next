@@ -23,11 +23,39 @@ import socket
 from pathlib import Path
 from typing import Any
 
+from shorewall_nft.nft.dns_sets import (
+    DnsSetRegistry,
+    read_compiled_allowlist,
+    read_compiled_dnsr_allowlist,
+)
 from shorewall_nft.nft.netlink import NftInterface
 
+from .control import ControlMetricsCollector, ControlServer
 from .discover import ProfileBuilder, resolve_netns_list
+from .dns_pull_resolver import PullResolver, PullResolverMetricsCollector
+from .dns_set_tracker import (
+    FAMILY_V4,
+    FAMILY_V6,
+    DnsSetMetricsCollector,
+    DnsSetTracker,
+)
 from .dnstap import DnstapMetricsCollector, DnstapServer
+from .dnstap_bridge import BridgeMetricsCollector, TrackerBridge
 from .exporter import NftScraper, ShorewalldRegistry
+from .instance import InstanceConfig, InstanceManager, parse_instance_spec
+from .iplist.tracker import IpListTracker
+from .pbdns import PbdnsMetricsCollector, PbdnsServer
+from .peer import HmacSha256Auth, PeerLink
+from .seed import SeedCoordinator, SeedMetricsCollector
+from .setwriter import SetWriter, SetWriterMetricsCollector
+from .state import (
+    DEFAULT_STATE_DIR,
+    InstanceCache,
+    StateConfig,
+    StateMetricsCollector,
+    StateStore,
+)
+from .worker_router import WorkerRouter, WorkerRouterMetricsCollector
 
 log = logging.getLogger("shorewalld")
 
@@ -153,7 +181,6 @@ class Daemon:
         # collectors can delegate their reads to netns-pinned workers
         # from the first scrape onwards. Workers are forked lazily on
         # first use (scrape or SetWriter dispatch).
-        from .worker_router import WorkerRouter
         self._router = WorkerRouter(loop=self._loop)
         self._profile_builder = ProfileBuilder(
             self._nft, self._registry, self._scraper, self._router)
@@ -188,7 +215,6 @@ class Daemon:
         # path so the tracker is available for the InstanceManager.
         bootstrap_allowlist = self.allowlist_file
         if bootstrap_allowlist is None and self.instances:
-            from .instance import parse_instance_spec
             first_spec = parse_instance_spec(self.instances[0])
             if first_spec.allowlist_path.exists():
                 bootstrap_allowlist = first_spec.allowlist_path
@@ -248,15 +274,6 @@ class Daemon:
         """
         assert self.allowlist_file is not None
         assert self._nft is not None
-        from shorewall_nft.nft.dns_sets import (
-            read_compiled_allowlist,
-            read_compiled_dnsr_allowlist,
-        )
-
-        from .dns_set_tracker import FAMILY_V4, FAMILY_V6, DnsSetTracker
-        from .dnstap_bridge import TrackerBridge
-        from .setwriter import SetWriter
-        from .state import StateConfig, StateStore
 
         try:
             registry = read_compiled_allowlist(self.allowlist_file)
@@ -331,10 +348,6 @@ class Daemon:
         )
 
         assert self._registry is not None
-        from .dns_set_tracker import DnsSetMetricsCollector
-        from .dnstap_bridge import BridgeMetricsCollector
-        from .setwriter import SetWriterMetricsCollector
-        from .worker_router import WorkerRouterMetricsCollector
         self._registry.add(SetWriterMetricsCollector(self._set_writer))
         self._registry.add(WorkerRouterMetricsCollector(self._router))
         self._registry.add(BridgeMetricsCollector(self._tracker_bridge))
@@ -354,7 +367,6 @@ class Daemon:
             except Exception:
                 log.exception("state load failed")
             await self._state_store.start(loop)
-            from .state import StateMetricsCollector
             self._registry.add(StateMetricsCollector(self._state_store))
 
         # PBDNSMessage (PowerDNS recursor protobuf logger) ingress.
@@ -362,7 +374,6 @@ class Daemon:
         # (required for pdns-recursor's Lua protobufServer() which
         # speaks TCP only). Both can be enabled simultaneously.
         if self.pbdns_socket or self.pbdns_tcp:
-            from .pbdns import PbdnsMetricsCollector, PbdnsServer
             tcp_host, tcp_port = None, None
             if self.pbdns_tcp:
                 host, _, port_s = self.pbdns_tcp.rpartition(":")
@@ -399,7 +410,6 @@ class Daemon:
         # HA peer link.
         if (self.peer_host and self.peer_port
                 and self.peer_auth_key_file is not None):
-            from .peer import HmacSha256Auth, PeerLink
             try:
                 auth = HmacSha256Auth.from_file(self.peer_auth_key_file)
             except Exception:
@@ -470,7 +480,6 @@ class Daemon:
         ]
         if not pull_groups:
             return None
-        from .dns_pull_resolver import PullResolver
         self._pull_resolver = PullResolver(
             dnsr_registry,
             self._tracker,
@@ -479,7 +488,6 @@ class Daemon:
         )
         await self._pull_resolver.start()
         if self._registry is not None:
-            from .dns_pull_resolver import PullResolverMetricsCollector
             self._registry.add(PullResolverMetricsCollector(self._pull_resolver))
         # Wire the refresh-dns control handler now if the control server
         # is up; otherwise _start_control_server does it later.
@@ -508,7 +516,6 @@ class Daemon:
         """Start the IP-list tracker for cloud prefix sets."""
         assert self._nft is not None
         assert self._profile_builder is not None
-        from .iplist.tracker import IpListTracker
 
         profiles = self._profile_builder.profiles
         self._iplist_tracker = IpListTracker(
@@ -534,18 +541,6 @@ class Daemon:
         tracker via register-instance on first shorewall-nft start.
         """
         assert self._nft is not None
-        from .dns_set_tracker import DnsSetTracker
-        from .dnstap_bridge import TrackerBridge
-        from .setwriter import SetWriter
-
-        try:
-            from shorewall_nft.nft.dns_sets import DnsSetRegistry
-        except ImportError:
-            log.error(
-                "dns pipeline: shorewall_nft not installed — "
-                "cannot initialise empty pipeline"
-            )
-            return
 
         self._tracker = DnsSetTracker()
         self._tracker.load_registry(DnsSetRegistry())
@@ -565,12 +560,13 @@ class Daemon:
                 log.exception(
                     "router: tracker-attach respawn failed for %r",
                     worker.netns)
-        # Do NOT pre-start workers here. Workers for non-empty netns fork
-        # a child process that inherits a copy of the tracker. If we fork
-        # now the tracker is still empty; set-name lookups in the child
-        # would always return None and ops would be silently dropped.
-        # WorkerRouter.dispatch() spawns workers lazily on first use, by
-        # which time the tracker has been populated by InstanceManager.
+        # INVARIANT (CLAUDE.md §"Lazy spawn rule" / "fork-after-load"):
+        # do NOT pre-start workers here. Workers for non-empty netns fork
+        # a child that inherits a copy of the tracker at fork time. If
+        # we fork before the InstanceManager populates the tracker, the
+        # child's lookup closure captures an empty registry and silently
+        # drops every set-mutating op. WorkerRouter.dispatch() spawns
+        # lazily on first use — by then the allowlist is loaded.
 
         self._set_writer = SetWriter(self._tracker, self._router, loop=loop)
         await self._set_writer.start()
@@ -581,10 +577,6 @@ class Daemon:
         )
 
         assert self._registry is not None
-        from .dns_set_tracker import DnsSetMetricsCollector
-        from .dnstap_bridge import BridgeMetricsCollector
-        from .setwriter import SetWriterMetricsCollector
-        from .worker_router import WorkerRouterMetricsCollector
         self._registry.add(SetWriterMetricsCollector(self._set_writer))
         self._registry.add(WorkerRouterMetricsCollector(self._router))
         self._registry.add(BridgeMetricsCollector(self._tracker_bridge))
@@ -596,8 +588,6 @@ class Daemon:
         """Start the multi-instance allowlist manager."""
         assert self._tracker is not None
         assert self._router is not None
-        from .instance import InstanceManager, parse_instance_spec
-        from .state import DEFAULT_STATE_DIR, InstanceCache
 
         configs = [parse_instance_spec(spec) for spec in self.instances]
 
@@ -623,7 +613,6 @@ class Daemon:
     async def _start_control_server(self) -> None:
         """Bind the control Unix socket and register handlers."""
         assert self.control_socket is not None
-        from .control import ControlServer
 
         self._control_server = ControlServer(
             socket_path=self.control_socket,
@@ -666,9 +655,6 @@ class Daemon:
                 return {"ok": True, "instances": mgr.status()}
 
             async def _handle_register_instance(req: dict) -> dict:
-                from pathlib import Path
-
-                from .instance import InstanceConfig
                 config_dir = req.get("config_dir")
                 netns = req.get("netns") or ""
                 if not config_dir:
@@ -726,7 +712,6 @@ class Daemon:
 
         # Seed coordinator — answers request-seed commands from shorewall-nft.
         if self._tracker is not None:
-            from .seed import SeedCoordinator, SeedMetricsCollector
             _seed = SeedCoordinator(
                 tracker=self._tracker,
                 pull_resolver=self._pull_resolver,
@@ -752,7 +737,6 @@ class Daemon:
         # subsystems that came online before it.
         self._register_refresh_dns_handler()
         if self._registry is not None:
-            from .control import ControlMetricsCollector
             self._registry.add(ControlMetricsCollector(self._control_server))
 
     def _install_sigusr1(self) -> None:

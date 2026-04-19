@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns immutable `bytes` — removing ~40 k avoidable allocations/s
   at 20 k fps.
 
+- **shorewalld: exporter split into `collectors/` subpackage + core
+  import hoist** — 12 concrete Prometheus collectors (nft, flowtable,
+  link, qdisc, conntrack, ct, snmp, netstat, sockstat, softnet,
+  neighbour, address) moved out of the 1 637-LOC `exporter.py` into a
+  `collectors/` subpackage, one module each. `exporter.py` keeps the
+  shared scraper / registry / `_MetricFamily` + histogram
+  infrastructure and re-exports every collector name for back-compat
+  with existing callers. No metric name or label changes.
+  `WorkerRouterMetricsCollector` moved to
+  `collectors/worker_router.py`; the test helper `inproc_worker_pair`
+  moved to `worker_test_helpers.py`. `core.py` now imports every
+  subsystem at module top level (the optional `prometheus_client`
+  import stays deferred), making the module dependency graph visible
+  instead of hidden behind a dozen deferred imports. CLAUDE.md
+  invariants are cross-referenced inline at their enforcement sites:
+  tracker-attach respawn (`worker_router.py`), lazy-spawn /
+  fork-after-load (`core.py`), register-resync rule (`instance.py`),
+  `add element … expires Ts` (`nft_worker.py`).
+
 - **shorewalld: per-DNS-set load metrics + worker dispatch histograms**
   — operator can now see which qnames carry the DNS update load and
   how long each batch takes to land in the kernel.

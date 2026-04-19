@@ -16,8 +16,16 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
   `reload-instance`, status queries from `shorewall-nft`).
 - `instance.py` — `InstanceManager`: per-netns allowlist state,
   register-resync wiring.
-- `exporter.py` — Prometheus metrics scraper (`NftScraper`,
-  `LinkCollector`, `CtCollector`).
+- `exporter.py` — shared Prometheus infrastructure: `NftScraper`,
+  `ShorewalldRegistry`, `CollectorBase`, `Histogram`, `_MetricFamily`.
+  Concrete collectors live under `collectors/`; this module re-exports
+  them for back-compat.
+- `collectors/` — one module per Prometheus collector:
+  `nft.py`, `flowtable.py`, `link.py`, `qdisc.py`, `conntrack.py`
+  (CTNETLINK — lone `_in_netns()` hop), `ct.py`, `snmp.py`,
+  `netstat.py`, `sockstat.py`, `softnet.py`, `neighbour.py`,
+  `address.py`, `worker_router.py` (`WorkerRouterMetricsCollector`).
+  Shared helpers in `_shared.py` (`_AF_NAMES`, `_read_int_via_router`).
 - `discover.py` — netns auto-discovery (`/run/netns/`).
 - `dnstap.py` + `framestream.py` — FrameStream unix socket server +
   frame decoder.
@@ -30,6 +38,8 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
   `ParentWorker` for named netns with auto-respawn). Sync wrappers
   `read_file_sync` / `count_lines_sync` bridge the scrape thread to
   the asyncio loop via `run_coroutine_threadsafe`.
+- `worker_test_helpers.py` — `inproc_worker_pair`, a threaded in-process
+  stand-in for the fork/SEQPACKET path used by unit tests.
 - `nft_worker.py` — forked-child entry point; dispatches on datagram
   magic to build an nft script from batched proposals (`MAGIC_REQUEST`)
   or to serve `/proc` reads via `_handle_read` (`MAGIC_READ_REQ`).

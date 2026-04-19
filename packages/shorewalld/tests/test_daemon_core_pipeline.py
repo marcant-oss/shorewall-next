@@ -206,11 +206,10 @@ def test_daemon_with_allowlist_builds_pipeline(
         monkeypatch.setattr(
             core_mod, "ShorewalldRegistry", lambda: _StubRegistry())
 
-        # Swap the real WorkerRouter for the stub before the daemon
-        # imports it inside _start_dns_pipeline.
-        from shorewalld import worker_router
-        monkeypatch.setattr(
-            worker_router, "WorkerRouter", _stub_router_ctor)
+        # Swap the real WorkerRouter for the stub. Since core.py now
+        # imports WorkerRouter at module top level, patch the
+        # ``core.WorkerRouter`` name the Daemon actually references.
+        monkeypatch.setattr(core_mod, "WorkerRouter", _stub_router_ctor)
 
         state_dir = tmp_path / "state"
         d = Daemon(

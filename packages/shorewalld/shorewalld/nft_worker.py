@@ -251,6 +251,11 @@ def build_nft_script(
             elem = socket.inet_ntop(socket.AF_INET6, op.ip_bytes)
         if op.op_kind == BATCH_OP_ADD:
             if op.ttl:
+                # INVARIANT (CLAUDE.md §"Element refresh requires
+                # explicit expires", docstring above): both keywords
+                # are required. Without ``expires`` the kernel silently
+                # keeps the original deadline on re-add — sets age out
+                # between pull cycles while metrics report success.
                 ttl_attrs = f" timeout {op.ttl}s expires {op.ttl}s"
             else:
                 ttl_attrs = ""

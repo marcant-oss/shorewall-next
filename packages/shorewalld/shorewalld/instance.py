@@ -227,6 +227,15 @@ class InstanceManager:
         Intended for the control-socket ``register-instance`` path only.
         For in-process reloads (where the nft table was NOT recreated) the
         existing ``_apply_merged`` delta logic is sufficient.
+
+        INVARIANT (CLAUDE.md §"Register-resync rule"): every
+        register-instance is treated as an explicit restart signal from
+        shorewall-nft — the ``inet shorewall`` table in the target netns
+        may have just been deleted and recreated. The three steps below
+        (clear_elements → respawn_netns → pull_resolver.refresh) must all
+        run, in order, for every register call. Do NOT migrate this
+        behaviour into ``_apply_merged``: its "new-names ⇒ respawn" path
+        is only safe when the table is known unchanged (reload-instance).
         """
         qnames: list[str] = []
         if state.last_dns_registry is not None:
