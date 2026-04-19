@@ -423,12 +423,19 @@ class InstanceManager:
         # tracker.  The LocalWorker (empty-netns, in-process) reads the tracker
         # live on every dispatch and does not need respawning.
         if new_names:
-            for netns in set(
+            affected_netns = set(
                 ns
                 for targets in qname_netns.values()
                 for ns in targets
                 if ns  # skip the default (empty) netns — LocalWorker is live
-            ):
+            )
+            log.info(
+                "instance: new qnames added to tracker, respawning worker(s)"
+                " for netns %s — allowlist now: %s",
+                ", ".join(sorted(affected_netns)) or "(none)",
+                ", ".join(sorted(merged_dns.specs)),
+            )
+            for netns in affected_netns:
                 await self._router.respawn_netns(netns)
 
         # Re-wire dnsr secondary aliases after the tracker reload —
