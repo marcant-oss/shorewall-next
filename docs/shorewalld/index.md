@@ -415,6 +415,34 @@ The register payload carries the full instance config as JSON:
 go unpopulated). Deregistration is always non-fatal; removed names
 age out via their per-element TTL.
 
+**Register-resync semantics.** Every `register-instance` is treated
+as a potential `shorewall-nft start/restart/reload` signal, i.e. the
+`inet shorewall` table in the target netns may have just been deleted
+and recreated. On each register shorewalld therefore:
+
+1. Drops the tracker's cached `(ip, deadline)` entries for the
+   instance's qnames — otherwise `propose()` would keep returning
+   `DEDUP` against deadlines that describe kernel state that no
+   longer exists, leaving the fresh nft sets empty until the old
+   TTL (up to 1 h) elapsed.
+2. Respawns the forked nft worker for the instance's netns, so the
+   next `add element` runs against a fresh libnftables handle.
+3. Pokes the pull resolver to re-resolve the instance's pull-enabled
+   groups immediately, so the kernel sets repopulate within a second
+   rather than after the next scheduled resolve pass.
+
+Operators see this in the journal as a single summary line:
+
+```
+instance fw: register resync — dropped 11 cached element(s) across
+  4 set(s), respawned worker for netns 'fw'
+```
+
+File-based `reload-instance` (operator-invoked via `shorewalld ctl`)
+does **not** trigger this — it assumes the nft table is unchanged
+and only the allowlist moved. Use `register-instance` when the
+firewall itself was restarted.
+
 **Dynamic-only daemon.** You don't have to pre-declare
 `--instance fw:/etc/shorewall46` on the shorewalld side. If only
 `--control-socket` is configured, shorewalld starts its

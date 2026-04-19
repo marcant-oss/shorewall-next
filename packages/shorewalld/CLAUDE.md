@@ -104,6 +104,27 @@ builds this map from instance configs and passes it to
 single qname shared by two instances in different netns gets submitted
 to both. Falls back to `_default_netns` for qnames not in the map.
 
+**Register-resync rule**: every `register-instance` on the control
+socket is an explicit restart signal from shorewall-nft — the
+`inet shorewall` table in that netns may have just been deleted and
+recreated. `InstanceManager.register()` therefore, after the allowlist
+load, unconditionally:
+
+1. Calls `tracker.clear_elements(set_ids_for_qnames(instance qnames))`
+   so `propose()` doesn't DEDUP against deadlines describing kernel
+   state that no longer exists.
+2. Calls `router.respawn_netns(cfg.netns)` for non-default netns so
+   the worker re-forks with the current tracker + a fresh libnftables
+   handle inside the (possibly just-recreated) table.
+3. Calls `pull_resolver.refresh(primary_qname)` for each pull-enabled
+   group so the kernel sets repopulate within ~1 s instead of waiting
+   for the next scheduled resolve (up to `ttl_floor * 0.8`).
+
+Do NOT extend `_apply_merged` to cover this case — its "new-names ⇒
+respawn" path only exists for operator-invoked `reload-instance` where
+the table is assumed unchanged.  Register and reload have deliberately
+different semantics.
+
 ## DNS architecture (shipped v1.4.0)
 
 Full pipeline shipped: compiler declares `dns_<qname>_v4/v6` sets,
