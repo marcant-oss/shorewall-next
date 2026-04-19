@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-04-19 — shorewalld: Prometheus deep-dive, worker /proc delegation, seed handshake, AlmaLinux 10
+
 ### Fixed
 
 - **shorewalld: protobuf 3.19 compatibility on AlmaLinux 10** — the
@@ -265,6 +267,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whether new set_ids were allocated, and `InstanceManager._apply_merged()`
   respawns any affected forked worker so it re-forks with the updated
   tracker.
+
+- **shorewalld: 110 s startup deadlock in `_start_prom_server`** —
+  `prometheus_client`'s `REGISTRY.register()` calls `collect()` on the
+  adapter if no `describe()` method is present, running it synchronously
+  on the asyncio event-loop thread. Every `read_file_sync()` call inside
+  the Prometheus collectors submits a coroutine via
+  `run_coroutine_threadsafe(...).result(timeout=5s)`, which deadlocks
+  because the event loop is blocked waiting for `.result()` and can never
+  run the submitted coroutine. With ~22 `/proc`-reading collectors the
+  daemon consistently took ~110 s to finish startup and make the control
+  socket available. Fix: `_Adapter.describe()` returns `[]`, telling
+  prometheus_client to skip the name-conflict check and never invoke
+  `collect()` at registration time.
 
 ### Changed
 
