@@ -138,7 +138,8 @@ class SetWriter:
             return
         if self._loop is None:
             self._loop = asyncio.get_running_loop()
-        self._drain_task = self._loop.create_task(self._drain_loop())
+        self._drain_task = self._loop.create_task(
+            self._drain_loop(), name="shorewalld.setwriter")
 
     async def shutdown(self) -> None:
         self._stopping = True

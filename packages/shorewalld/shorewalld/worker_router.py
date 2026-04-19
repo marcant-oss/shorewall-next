@@ -210,7 +210,8 @@ class ParentWorker:
         self._loop.add_reader(
             self._transport.fileno, self._drain_replies)
         self._timeout_task = self._loop.create_task(
-            self._ack_timeout_loop())
+            self._ack_timeout_loop(),
+            name=f"shorewalld.nft.ack:{self.netns or '(own)'}")
 
     # ── Dispatch ──────────────────────────────────────────────────────
 
@@ -358,7 +359,9 @@ class ParentWorker:
             return
         if self._respawn_task is not None and not self._respawn_task.done():
             return
-        self._respawn_task = self._loop.create_task(self._auto_respawn())
+        self._respawn_task = self._loop.create_task(
+            self._auto_respawn(),
+            name=f"shorewalld.nft.respawn:{self.netns or '(own)'}")
 
     async def _auto_respawn(self) -> None:
         """Re-fork the worker child after a transport loss.
@@ -519,7 +522,7 @@ class LocalWorker:
         from shorewall_nft.nft.netlink import NftInterface
         self._executor = ThreadPoolExecutor(
             max_workers=1,
-            thread_name_prefix="shorewalld-nft",
+            thread_name_prefix="shwd-nft",
         )
         self._nft = NftInterface()
 
@@ -703,14 +706,17 @@ def inproc_worker_pair(
     def run():
         worker_main_loop(worker_t, fake_nft, set_name_lookup)
 
-    t = threading.Thread(target=run, daemon=True)
+    t = threading.Thread(
+        target=run, name="shwd-nft-inproc", daemon=True)
     t.start()
 
     pw = ParentWorker(netns="inproc", tracker=tracker, loop=loop)
     pw._transport = parent_t
     pw._child_pid = None
     loop.add_reader(parent_t.fileno, pw._drain_replies)
-    pw._timeout_task = loop.create_task(pw._ack_timeout_loop())
+    pw._timeout_task = loop.create_task(
+        pw._ack_timeout_loop(),
+        name="shorewalld.nft.ack:inproc")
     pw.metrics.spawned_total = 1
     pw.metrics.alive = 1
     pw.metrics.last_spawn_mono = time.monotonic()

@@ -376,7 +376,8 @@ class StateStore:
         if not self._config.enabled:
             return
         self._loop = loop or asyncio.get_running_loop()
-        self._save_task = self._loop.create_task(self._save_loop())
+        self._save_task = self._loop.create_task(
+            self._save_loop(), name="shorewalld.state")
 
     async def stop(self) -> None:
         """Cancel the background task, do one final synchronous save."""
