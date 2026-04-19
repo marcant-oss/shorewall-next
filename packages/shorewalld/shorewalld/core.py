@@ -531,11 +531,12 @@ class Daemon:
 
         loop = asyncio.get_running_loop()
         self._router = WorkerRouter(tracker=self._tracker, loop=loop)
-        for netns in netns_list:
-            try:
-                await self._router.add_netns(netns)
-            except Exception:
-                log.exception("router: failed to add netns %r", netns)
+        # Do NOT pre-start workers here. Workers for non-empty netns fork
+        # a child process that inherits a copy of the tracker. If we fork
+        # now the tracker is still empty; set-name lookups in the child
+        # would always return None and ops would be silently dropped.
+        # WorkerRouter.dispatch() spawns workers lazily on first use, by
+        # which time the tracker has been populated by InstanceManager.
 
         self._set_writer = SetWriter(self._tracker, self._router, loop=loop)
         await self._set_writer.start()

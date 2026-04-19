@@ -310,6 +310,8 @@ def worker_main_loop(
 def nft_worker_entrypoint(
     netns_name: str,
     transport_fd: int,
+    *,
+    lookup=None,
 ) -> int:
     """Post-fork child body.
 
@@ -319,14 +321,19 @@ def nft_worker_entrypoint(
     ``NftInterface`` that is bound to this netns, install pdeathsig,
     and drop into the main loop.
 
+    ``lookup`` is a callable ``(set_id, family) → set_name | None``
+    used by :func:`build_nft_script`.  After ``os.fork()`` the child
+    inherits the parent's ``DnsSetTracker`` copy-on-write, so the
+    caller can pass a closure over the tracker directly — no IPC
+    round-trip needed.  When omitted, ops are silently skipped
+    (standalone debugging mode, see ``__main__`` below).
+
     Exit codes:
         0 — clean shutdown
         2 — netns entry failed (caller may retry on transient errors)
         3 — nft init failed
         1 — transport error at runtime
     """
-    # Configure logging before anything else so diagnostic output
-    # goes wherever the parent's LOG_TARGET points.
     _install_pdeathsig()
     try:
         _enter_netns(netns_name)
@@ -348,14 +355,12 @@ def nft_worker_entrypoint(
     )
     transport = WorkerTransport(sock, recv_buf_size=4096)
 
-    # Placeholder lookup — the parent owns the set name table and
-    # ships updates via control messages. Until Phase 2b wires that
-    # up, tests pass their own lookup dict via
-    # :func:`worker_main_loop` directly.
-    def _lookup(_key: tuple[int, int]) -> str | None:
-        return None
+    if lookup is None:
+        def lookup(_key: tuple[int, int]) -> str | None:  # type: ignore[misc]
+            return None
+
     try:
-        return worker_main_loop(transport, nft, _lookup)
+        return worker_main_loop(transport, nft, lookup)
     finally:
         transport.close()
 

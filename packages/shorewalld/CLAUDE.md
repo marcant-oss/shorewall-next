@@ -67,6 +67,43 @@ Every code path here is hot. Target: 20 000 DNS answers/s across dnstap
 If you're touching daemon code and can't explain which principle your
 change respects, you're probably making it slower.
 
+## nft worker architecture
+
+One `ParentWorker` per managed netns, owned by `WorkerRouter`.
+
+**Default netns (`""`)** → `LocalWorker`: no fork, runs nft via
+`NftInterface` in a dedicated `ThreadPoolExecutor` thread. Looks up
+set names via the live `DnsSetTracker` (direct reference, always
+current).
+
+**Named netns (e.g. `"fw"`)** → `ParentWorker._start_forked()`:
+forks a child, calls `setns(CLONE_NEWNET)`, creates `NftInterface`
+bound to that netns, then loops on `recv_into` (blocking, no timeout).
+The fork inherits a copy-on-write snapshot of the parent's tracker;
+the lookup closure is built from that snapshot and passed to
+`nft_worker_entrypoint`. **Critical: the fork must happen after
+`tracker.load_registry()` has run**, otherwise the child's snapshot
+is empty and all ops are silently dropped.
+
+**Lazy spawn rule**: in `_start_empty_dns_pipeline` workers are NOT
+pre-started. `WorkerRouter.dispatch()` calls `add_netns()` on first
+use, which fires after `InstanceManager` has loaded the allowlist and
+populated the tracker. Do NOT add eager `add_netns` calls back to
+`_start_empty_dns_pipeline` — they break the fork-after-load
+invariant.
+
+**`SO_SNDTIMEO` only** (not `socket.settimeout`): `WorkerTransport`
+applies send timeout via `SO_SNDTIMEO` so the parent times out if
+the worker stops draining, while leaving `SO_RCVTIMEO` unset so
+workers block indefinitely on recv waiting for the first batch.
+
+**Per-group netns routing in `PullResolver`**: `PullResolver._group_netns`
+maps `primary_qname → [netns, ...]`. `InstanceManager._apply_merged()`
+builds this map from instance configs and passes it to
+`PullResolver.update_registry(qname_netns=...)` on every merge. A
+single qname shared by two instances in different netns gets submitted
+to both. Falls back to `_default_netns` for qnames not in the map.
+
 ## DNS architecture (shipped v1.4.0)
 
 Full pipeline shipped: compiler declares `dns_<qname>_v4/v6` sets,
