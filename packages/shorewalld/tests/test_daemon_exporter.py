@@ -15,7 +15,11 @@ from shorewalld.exporter import (
     NftCollector,
     NftScraper,
     ShorewalldRegistry,
+    _extract_qdisc_row,
+    _format_tc_handle,
+    _LINK_STAT_FIELDS,
     _MetricFamily,
+    _QDISC_FIELDS,
 )
 from shorewall_nft.nft.netlink import NftError
 
@@ -303,3 +307,140 @@ def test_registry_isolates_collector_exceptions():
     families = reg.collect()
     packets = _get_family(families, "shorewall_nft_packets_total")
     assert len(packets.samples) == 2  # broken collector didn't tank fw
+
+
+# ── _format_tc_handle ────────────────────────────────────────────────
+
+
+def test_format_tc_handle_reserved_values():
+    # TC_H_ROOT is 0xffffffff; 0 is unspecified (ingress root).
+    assert _format_tc_handle(0xFFFFFFFF) == "root"
+    assert _format_tc_handle(0) == "none"
+
+
+def test_format_tc_handle_major_minor_hex():
+    # handle 0x00010000 → major 1, minor 0 → "1:0"
+    assert _format_tc_handle(0x00010000) == "1:0"
+    # handle 0x0abc1234 → "abc:1234"
+    assert _format_tc_handle(0x0ABC1234) == "abc:1234"
+
+
+# ── _extract_qdisc_row ───────────────────────────────────────────────
+
+
+class _FakeNlaContainer:
+    """Imitates a pyroute2 nested-attr object with .get_attr()."""
+
+    def __init__(self, attrs: dict[str, Any]):
+        self._attrs = attrs
+
+    def get_attr(self, key: str) -> Any:
+        return self._attrs.get(key)
+
+
+class _FakeQdiscMsg:
+    """Imitates a pyroute2 tcmsg for _extract_qdisc_row."""
+
+    def __init__(self, *, index: int, handle: int, parent: int,
+                 attrs: dict[str, Any]):
+        self._fields = {"index": index, "handle": handle, "parent": parent}
+        self._attrs = attrs
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._fields.get(key, default)
+
+    def get_attr(self, key: str) -> Any:
+        return self._attrs.get(key)
+
+
+def test_extract_qdisc_row_prefers_stats2():
+    q = _FakeQdiscMsg(
+        index=3, handle=0x00010000, parent=0xFFFFFFFF,
+        attrs={
+            "TCA_KIND": "fq_codel",
+            "TCA_STATS2": _FakeNlaContainer({
+                "TCA_STATS_BASIC": {"bytes": 1_000_000, "packets": 5000},
+                "TCA_STATS_QUEUE": {
+                    "qlen": 3, "backlog": 1500, "drops": 42,
+                    "requeues": 7, "overlimits": 11},
+            }),
+            # TCA_STATS is legacy; it lacks requeues but carries bps/pps.
+            "TCA_STATS": {"bytes": 999, "packets": 4, "drop": 0,
+                          "overlimits": 0, "bps": 125000, "pps": 800,
+                          "qlen": 0, "backlog": 0},
+        })
+    suffix, stats = _extract_qdisc_row(q, {3: "eth0"})
+
+    assert suffix == ["eth0", "fq_codel", "1:0", "root"]
+    # Counters came from TCA_STATS2 (the higher-fidelity source)
+    assert stats["bytes"] == 1_000_000
+    assert stats["packets"] == 5000
+    assert stats["drops"] == 42
+    assert stats["requeues"] == 7
+    assert stats["overlimits"] == 11
+    assert stats["qlen"] == 3
+    assert stats["backlog"] == 1500
+    # bps/pps only ever come from the legacy flat stats.
+    assert stats["bps"] == 125000
+    assert stats["pps"] == 800
+
+
+def test_extract_qdisc_row_falls_back_to_legacy_stats():
+    # Old kernel / unusual driver path: no TCA_STATS2, only TCA_STATS.
+    q = _FakeQdiscMsg(
+        index=7, handle=0, parent=0,
+        attrs={
+            "TCA_KIND": "pfifo_fast",
+            "TCA_STATS": {"bytes": 500, "packets": 10, "drop": 2,
+                          "overlimits": 1, "qlen": 0, "backlog": 0,
+                          "bps": 0, "pps": 0},
+        })
+    suffix, stats = _extract_qdisc_row(q, {7: "wg0"})
+
+    assert suffix == ["wg0", "pfifo_fast", "none", "none"]
+    assert stats["bytes"] == 500
+    assert stats["packets"] == 10
+    assert stats["drops"] == 2        # legacy singular "drop" → "drops"
+    assert stats["overlimits"] == 1
+    assert stats["requeues"] == 0     # not in legacy stats, stays 0
+
+
+def test_extract_qdisc_row_unknown_ifindex_gets_placeholder():
+    q = _FakeQdiscMsg(
+        index=99, handle=0, parent=0xFFFFFFFF,
+        attrs={"TCA_KIND": "noqueue", "TCA_STATS2": _FakeNlaContainer({
+            "TCA_STATS_BASIC": {"bytes": 0, "packets": 0},
+            "TCA_STATS_QUEUE": {"qlen": 0, "backlog": 0, "drops": 0,
+                                "requeues": 0, "overlimits": 0}})})
+    suffix, _stats = _extract_qdisc_row(q, {})  # empty map
+    assert suffix[0] == "ifindex99"
+
+
+# ── _LINK_STAT_FIELDS coverage ───────────────────────────────────────
+
+
+def test_link_stat_fields_cover_rtnl_link_stats64_struct():
+    # Sanity: every kernel key we emit is unique, every metric name is
+    # unique, and the set covers the expected rtnl_link_stats64 surface.
+    kernel_keys = [k for k, _name, _h in _LINK_STAT_FIELDS]
+    metric_names = [n for _k, n, _h in _LINK_STAT_FIELDS]
+    assert len(set(kernel_keys)) == len(kernel_keys)
+    assert len(set(metric_names)) == len(metric_names)
+    # Key fields that any alerting rule would refer to — don't let a
+    # future refactor silently drop them.
+    required = {
+        "rx_packets", "rx_bytes", "tx_packets", "tx_bytes",
+        "rx_errors", "tx_errors", "rx_dropped", "tx_dropped",
+        "rx_missed_errors", "rx_crc_errors", "tx_carrier_errors",
+        "multicast", "collisions",
+    }
+    assert required.issubset(set(kernel_keys))
+
+
+def test_qdisc_fields_cover_expected_metrics():
+    metric_names = {name for _k, name, _m, _h in _QDISC_FIELDS}
+    assert "shorewall_nft_qdisc_bytes_total" in metric_names
+    assert "shorewall_nft_qdisc_drops_total" in metric_names
+    assert "shorewall_nft_qdisc_qlen" in metric_names
+    assert "shorewall_nft_qdisc_backlog_bytes" in metric_names
+    assert "shorewall_nft_qdisc_rate_bps" in metric_names
