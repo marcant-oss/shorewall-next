@@ -157,7 +157,7 @@ class DnsSetTracker:
 
     # ── allowlist management ─────────────────────────────────────────
 
-    def load_registry(self, registry: DnsSetRegistry) -> None:
+    def load_registry(self, registry: DnsSetRegistry) -> bool:
         """Install (or replace) the compiled allowlist.
 
         Called at startup from the compiled-allowlist file and again
@@ -168,6 +168,11 @@ class DnsSetTracker:
 
         Any prior state for hostnames still in the registry is
         preserved — only removed hostnames lose their cached entries.
+
+        Returns ``True`` if any new set_ids were allocated (i.e. qnames
+        were added that weren't in the previous registry).  Callers that
+        maintain a forked worker whose set-name lookup table was snapshotted
+        at fork time must respawn that worker so it sees the new names.
         """
         with self._lock:
             desired: dict[tuple[str, int], DnsSetSpec] = {}
@@ -187,6 +192,7 @@ class DnsSetTracker:
 
             # Assign/keep set_ids for desired names in deterministic
             # order so the reverse-map is stable across reloads.
+            new_names_added = False
             for key in sorted(desired):
                 if key in self._by_name:
                     existing = self._states.get(self._by_name[key])
@@ -203,7 +209,9 @@ class DnsSetTracker:
                     spec=desired[key],
                     family=key[1],
                 )
+                new_names_added = True
             self._allowlist_generation += 1
+            return new_names_added
 
     def set_id_for(self, qname: str, family: int) -> int | None:
         """Look up the compiled ID for a qname + family, or ``None``

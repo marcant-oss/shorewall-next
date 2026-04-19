@@ -494,6 +494,42 @@ class WorkerRouter:
         self._workers[netns] = worker
         return worker
 
+    async def respawn_netns(self, netns: str) -> None:
+        """Shut down and re-fork the worker for ``netns``.
+
+        Called when new qnames are added to the tracker after the worker
+        was already running.  Forked workers snapshot the tracker at fork
+        time (copy-on-write), so they cannot see set_ids allocated after
+        the fork.  Respawning re-forks with the current tracker state.
+
+        No-op if no worker for ``netns`` is running (it will be spawned
+        fresh on first dispatch, which already has the full tracker).
+        Only meaningful for forked (non-empty netns) workers; the
+        LocalWorker reads the tracker live on every dispatch.
+        """
+        worker = self._workers.pop(netns, None)
+        if worker is None:
+            return
+        try:
+            await worker.shutdown()
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "worker respawn: shutdown error for netns %r: %s", netns, e)
+        worker.metrics.restarts_total += 1
+        new_worker = ParentWorker(
+            netns=netns, tracker=self.tracker, loop=self.loop)
+        new_worker.metrics.spawned_total = worker.metrics.spawned_total
+        new_worker.metrics.restarts_total = worker.metrics.restarts_total
+        try:
+            await new_worker.start()
+        except Exception:
+            raise
+        self._workers[netns] = new_worker
+        log.info(
+            "nft-worker respawned (tracker registry update)",
+            extra={"netns": netns},
+        )
+
     async def dispatch(
         self, netns: str, builder: BatchBuilder
     ) -> int:
