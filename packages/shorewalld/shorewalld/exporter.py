@@ -1,12 +1,18 @@
 """Prometheus collectors for shorewalld.
 
-Three collectors that share a per-netns label:
+Four collectors that share a per-netns label:
 
 * ``NftCollector`` — walks the ``inet shorewall`` ruleset with a single
   libnftables ``list table`` round-trip and emits per-rule packet/byte
   counters + named counter objects + set-element gauges.
 * ``LinkCollector`` — pyroute2 ``IPRoute(netns=...).get_links()`` dump
-  for per-interface RX/TX and oper state.
+  for the full ``IFLA_STATS64`` surface (RX/TX packets/bytes/errors/
+  dropped, multicast, collisions, and the detailed RX/TX sub-counters)
+  plus oper state.
+* ``QdiscCollector`` — pyroute2 ``get_qdiscs()`` dump for per-qdisc
+  bytes/packets/drops/requeues/overlimits + qlen/backlog gauges, plus
+  the rate-estimator bps/pps (populated only for qdiscs configured
+  with ``est``).
 * ``CtCollector`` — reads ``/proc/sys/net/netfilter/nf_conntrack_count``
   from inside the target netns (via ``_in_netns`` setns hop) for the
   connection-tracking table size.
@@ -239,50 +245,106 @@ class NftCollector(CollectorBase):
         return [packets, bytes_, named_pk, named_by, set_el]
 
 
+# Every field kernel ``rtnl_link_stats64`` exposes that we surface as
+# its own prometheus metric. Order is the kernel struct order so the
+# scraped output reads naturally top-to-bottom.
+#
+# ``rx_nohandler`` was added in kernel 4.6 and is not decoded by every
+# pyroute2 version — ``dict.get(key)`` returns ``None`` when absent
+# and we skip the sample instead of emitting a misleading zero.
+_LINK_STAT_FIELDS: list[tuple[str, str, str]] = [
+    # (kernel_key, metric_name, help_text)
+    ("rx_packets", "shorewall_nft_iface_rx_packets_total",
+     "Interface RX packets"),
+    ("rx_bytes", "shorewall_nft_iface_rx_bytes_total",
+     "Interface RX bytes"),
+    ("tx_packets", "shorewall_nft_iface_tx_packets_total",
+     "Interface TX packets"),
+    ("tx_bytes", "shorewall_nft_iface_tx_bytes_total",
+     "Interface TX bytes"),
+    ("rx_errors", "shorewall_nft_iface_rx_errors_total",
+     "Interface RX errors (generic total)"),
+    ("tx_errors", "shorewall_nft_iface_tx_errors_total",
+     "Interface TX errors (generic total)"),
+    ("rx_dropped", "shorewall_nft_iface_rx_dropped_total",
+     "Interface RX dropped packets"),
+    ("tx_dropped", "shorewall_nft_iface_tx_dropped_total",
+     "Interface TX dropped packets"),
+    ("multicast", "shorewall_nft_iface_multicast_total",
+     "Interface multicast packets received"),
+    ("collisions", "shorewall_nft_iface_collisions_total",
+     "Interface collisions"),
+    ("rx_length_errors", "shorewall_nft_iface_rx_length_errors_total",
+     "RX length errors"),
+    ("rx_over_errors", "shorewall_nft_iface_rx_over_errors_total",
+     "RX over errors (frame larger than the NIC buffer)"),
+    ("rx_crc_errors", "shorewall_nft_iface_rx_crc_errors_total",
+     "RX CRC errors (cable/SFP integrity)"),
+    ("rx_frame_errors", "shorewall_nft_iface_rx_frame_errors_total",
+     "RX frame alignment errors"),
+    ("rx_fifo_errors", "shorewall_nft_iface_rx_fifo_errors_total",
+     "RX FIFO errors"),
+    ("rx_missed_errors", "shorewall_nft_iface_rx_missed_errors_total",
+     "RX NIC ring-buffer overruns (packets the driver never saw)"),
+    ("tx_aborted_errors", "shorewall_nft_iface_tx_aborted_errors_total",
+     "TX aborted errors"),
+    ("tx_carrier_errors", "shorewall_nft_iface_tx_carrier_errors_total",
+     "TX carrier-lost errors"),
+    ("tx_fifo_errors", "shorewall_nft_iface_tx_fifo_errors_total",
+     "TX FIFO errors"),
+    ("tx_heartbeat_errors", "shorewall_nft_iface_tx_heartbeat_errors_total",
+     "TX heartbeat errors"),
+    ("tx_window_errors", "shorewall_nft_iface_tx_window_errors_total",
+     "TX window errors"),
+    ("rx_compressed", "shorewall_nft_iface_rx_compressed_total",
+     "RX compressed packets"),
+    ("tx_compressed", "shorewall_nft_iface_tx_compressed_total",
+     "TX compressed packets"),
+    ("rx_nohandler", "shorewall_nft_iface_rx_nohandler_total",
+     "RX packets dropped because no protocol handler was registered"),
+]
+
+
 class LinkCollector(CollectorBase):
-    """Per-interface RX/TX + oper state via pyroute2.
+    """Per-interface ``IFLA_STATS64`` + oper state via pyroute2.
 
     Opens a fresh ``IPRoute(netns=…)`` per scrape because the socket
     must live in the target netns. For ``netns=""`` we use the
     daemon's own netns (no argument).
+
+    One ``get_links()`` dump per scrape feeds every metric in
+    :data:`_LINK_STAT_FIELDS` — no extra netlink round-trips for the
+    expanded counter surface.
     """
 
     def collect(self) -> list[_MetricFamily]:
-        rx_p = _MetricFamily(
-            "shorewall_nft_iface_rx_packets_total",
-            "Interface RX packets",
-            ["netns", "iface"], mtype="counter")
-        rx_b = _MetricFamily(
-            "shorewall_nft_iface_rx_bytes_total",
-            "Interface RX bytes",
-            ["netns", "iface"], mtype="counter")
-        tx_p = _MetricFamily(
-            "shorewall_nft_iface_tx_packets_total",
-            "Interface TX packets",
-            ["netns", "iface"], mtype="counter")
-        tx_b = _MetricFamily(
-            "shorewall_nft_iface_tx_bytes_total",
-            "Interface TX bytes",
-            ["netns", "iface"], mtype="counter")
+        families: dict[str, _MetricFamily] = {
+            name: _MetricFamily(name, help_text, ["netns", "iface"],
+                                mtype="counter")
+            for _, name, help_text in _LINK_STAT_FIELDS
+        }
         oper = _MetricFamily(
             "shorewall_nft_iface_oper_state",
             "Interface operational state (1=UP, 0=DOWN, 0.5=UNKNOWN)",
             ["netns", "iface"])
 
+        def _all() -> list[_MetricFamily]:
+            return [*families.values(), oper]
+
         try:
             from pyroute2 import IPRoute  # type: ignore[import-untyped]
         except ImportError:
-            return [rx_p, rx_b, tx_p, tx_b, oper]
+            return _all()
 
         kwargs = {"netns": self.netns} if self.netns else {}
         try:
             ipr = IPRoute(**kwargs)
         except Exception:
-            return [rx_p, rx_b, tx_p, tx_b, oper]
+            return _all()
         try:
             links = ipr.get_links()
         except Exception:
-            return [rx_p, rx_b, tx_p, tx_b, oper]
+            return _all()
         finally:
             try:
                 ipr.close()
@@ -294,15 +356,190 @@ class LinkCollector(CollectorBase):
         for link in links:
             name = link.get_attr("IFLA_IFNAME") or ""
             stats = link.get_attr("IFLA_STATS64") or link.get_attr("IFLA_STATS")
-            if stats:
-                rx_p.add([self.netns, name], float(stats.get("rx_packets", 0)))
-                rx_b.add([self.netns, name], float(stats.get("rx_bytes", 0)))
-                tx_p.add([self.netns, name], float(stats.get("tx_packets", 0)))
-                tx_b.add([self.netns, name], float(stats.get("tx_bytes", 0)))
+            if isinstance(stats, dict):
+                for kernel_key, metric_name, _help in _LINK_STAT_FIELDS:
+                    val = stats.get(kernel_key)
+                    if val is None:
+                        continue
+                    families[metric_name].add(
+                        [self.netns, name], float(val))
             state = link.get_attr("IFLA_OPERSTATE") or ""
             oper.add([self.netns, name], oper_map.get(state, 0.5))
 
-        return [rx_p, rx_b, tx_p, tx_b, oper]
+        return _all()
+
+
+# ── Qdisc collector ──────────────────────────────────────────────────
+
+
+def _format_tc_handle(raw: int) -> str:
+    """Render a u32 tc handle as ``major:minor`` hex, or a reserved name.
+
+    ``0xffffffff`` is ``TC_H_ROOT`` (used as the parent of a root
+    qdisc). ``0`` means unspecified — typically the ingress/clsact
+    root. Both get a human-readable placeholder instead of an opaque
+    hex blob that would bloat Prometheus labels.
+    """
+    if raw == 0xFFFFFFFF:
+        return "root"
+    if raw == 0:
+        return "none"
+    major = (raw >> 16) & 0xFFFF
+    minor = raw & 0xFFFF
+    return f"{major:x}:{minor:x}"
+
+
+# Qdisc metric families: one per semantic counter/gauge. Counter-typed
+# unless the kernel value is inherently a current depth (qlen/backlog)
+# or an instantaneous rate (bps/pps from the rate estimator).
+_QDISC_LABELS = ["netns", "iface", "kind", "handle", "parent"]
+_QDISC_FIELDS: list[tuple[str, str, str, str]] = [
+    # (bucket_key, metric_name, mtype, help_text)
+    ("bytes", "shorewall_nft_qdisc_bytes_total", "counter",
+     "Qdisc TX bytes"),
+    ("packets", "shorewall_nft_qdisc_packets_total", "counter",
+     "Qdisc TX packets"),
+    ("drops", "shorewall_nft_qdisc_drops_total", "counter",
+     "Qdisc dropped packets (overflow + policing)"),
+    ("requeues", "shorewall_nft_qdisc_requeues_total", "counter",
+     "Qdisc requeued packets (driver pushback)"),
+    ("overlimits", "shorewall_nft_qdisc_overlimits_total", "counter",
+     "Qdisc overlimit events (rate/class ceiling hits)"),
+    ("qlen", "shorewall_nft_qdisc_qlen", "gauge",
+     "Current qdisc queue length in packets"),
+    ("backlog", "shorewall_nft_qdisc_backlog_bytes", "gauge",
+     "Current qdisc backlog in bytes"),
+    ("bps", "shorewall_nft_qdisc_rate_bps", "gauge",
+     "Qdisc rate estimator bytes/s (0 if no estimator configured)"),
+    ("pps", "shorewall_nft_qdisc_rate_pps", "gauge",
+     "Qdisc rate estimator packets/s (0 if no estimator configured)"),
+]
+
+
+def _extract_qdisc_row(qdisc: Any,
+                       idx_to_name: dict[int, str]) -> tuple[list[str],
+                                                             dict[str, int]]:
+    """Parse one pyroute2 qdisc message into (labels, stats-dict).
+
+    Prefers the nested ``TCA_STATS2`` (modern kernels, carries
+    ``requeues``) and fills in ``bps``/``pps`` from legacy
+    ``TCA_STATS`` since the rate estimator only shows up there.
+    Every missing field defaults to ``0`` — callers decide whether
+    to emit it.
+
+    Pure function — no netlink I/O — so the test suite can exercise
+    the attribute shapes without a live socket.
+    """
+    ifindex = qdisc.get("index", 0) if isinstance(qdisc, dict) else \
+        getattr(qdisc, "get", lambda *_a, **_k: 0)("index", 0)
+    # pyroute2's tcmsg supports both ``.get(key)`` and dict subscript.
+    try:
+        handle_raw = qdisc.get("handle", 0)
+        parent_raw = qdisc.get("parent", 0)
+    except AttributeError:
+        handle_raw = parent_raw = 0
+
+    kind = qdisc.get_attr("TCA_KIND") or "unknown"
+    iface = idx_to_name.get(ifindex, f"ifindex{ifindex}")
+    labels_suffix = [
+        iface,
+        kind,
+        _format_tc_handle(int(handle_raw)),
+        _format_tc_handle(int(parent_raw)),
+    ]
+
+    stats: dict[str, int] = {
+        "bytes": 0, "packets": 0, "drops": 0, "requeues": 0,
+        "overlimits": 0, "qlen": 0, "backlog": 0, "bps": 0, "pps": 0,
+    }
+
+    s2 = qdisc.get_attr("TCA_STATS2")
+    if s2 is not None and hasattr(s2, "get_attr"):
+        basic = s2.get_attr("TCA_STATS_BASIC")
+        queue = s2.get_attr("TCA_STATS_QUEUE")
+        if isinstance(basic, dict):
+            stats["bytes"] = int(basic.get("bytes", 0))
+            stats["packets"] = int(basic.get("packets", 0))
+        if isinstance(queue, dict):
+            stats["drops"] = int(queue.get("drops", 0))
+            stats["requeues"] = int(queue.get("requeues", 0))
+            stats["overlimits"] = int(queue.get("overlimits", 0))
+            stats["qlen"] = int(queue.get("qlen", 0))
+            stats["backlog"] = int(queue.get("backlog", 0))
+
+    s1 = qdisc.get_attr("TCA_STATS")
+    if isinstance(s1, dict):
+        if stats["bytes"] == 0:
+            stats["bytes"] = int(s1.get("bytes", 0))
+        if stats["packets"] == 0:
+            stats["packets"] = int(s1.get("packets", 0))
+        # TCA_STATS uses the singular key ``drop``.
+        if stats["drops"] == 0:
+            stats["drops"] = int(s1.get("drop", 0))
+        if stats["overlimits"] == 0:
+            stats["overlimits"] = int(s1.get("overlimits", 0))
+        if stats["qlen"] == 0:
+            stats["qlen"] = int(s1.get("qlen", 0))
+        if stats["backlog"] == 0:
+            stats["backlog"] = int(s1.get("backlog", 0))
+        # bps/pps live only in the legacy flat stats.
+        stats["bps"] = int(s1.get("bps", 0))
+        stats["pps"] = int(s1.get("pps", 0))
+
+    return labels_suffix, stats
+
+
+class QdiscCollector(CollectorBase):
+    """Per-qdisc stats via ``RTM_GETQDISC`` netlink dump.
+
+    Two dumps per scrape per netns: ``get_links()`` to build
+    ``ifindex → ifname``, then ``get_qdiscs()``. Both are cheap (the
+    same pair ``tc -s qdisc`` issues). No forks, no shell-outs.
+    """
+
+    def collect(self) -> list[_MetricFamily]:
+        families: dict[str, _MetricFamily] = {
+            name: _MetricFamily(name, help_text, _QDISC_LABELS, mtype=mtype)
+            for _, name, mtype, help_text in _QDISC_FIELDS
+        }
+
+        def _all() -> list[_MetricFamily]:
+            return list(families.values())
+
+        try:
+            from pyroute2 import IPRoute  # type: ignore[import-untyped]
+        except ImportError:
+            return _all()
+
+        kwargs = {"netns": self.netns} if self.netns else {}
+        try:
+            ipr = IPRoute(**kwargs)
+        except Exception:
+            return _all()
+        try:
+            links = ipr.get_links()
+            qdiscs = ipr.get_qdiscs()
+        except Exception:
+            return _all()
+        finally:
+            try:
+                ipr.close()
+            except Exception:
+                pass
+
+        idx_to_name: dict[int, str] = {}
+        for link in links:
+            ifname = link.get_attr("IFLA_IFNAME")
+            if ifname is not None:
+                idx_to_name[int(link.get("index", 0))] = ifname
+
+        for q in qdiscs:
+            suffix, stats = _extract_qdisc_row(q, idx_to_name)
+            labels = [self.netns, *suffix]
+            for bucket_key, metric_name, _mtype, _help in _QDISC_FIELDS:
+                families[metric_name].add(labels, float(stats[bucket_key]))
+
+        return _all()
 
 
 class CtCollector(CollectorBase):

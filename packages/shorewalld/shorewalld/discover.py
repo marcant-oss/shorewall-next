@@ -7,7 +7,8 @@ without one), and each gets a different collector mix.
 
 Every profile always includes:
 
-* ``LinkCollector`` — per-iface RX/TX via pyroute2
+* ``LinkCollector`` — per-iface RX/TX/errors/dropped via pyroute2
+* ``QdiscCollector`` — per-qdisc bytes/drops/qlen via pyroute2
 * ``CtCollector`` — conntrack table size via ``/proc/sys/net/...``
 
 A profile *conditionally* includes:
@@ -32,6 +33,7 @@ from .exporter import (
     LinkCollector,
     NftCollector,
     NftScraper,
+    QdiscCollector,
     ShorewalldRegistry,
 )
 
@@ -81,6 +83,7 @@ class NetnsProfile:
 
     name: str
     link_collector: LinkCollector
+    qdisc_collector: QdiscCollector
     ct_collector: CtCollector
     nft_collector: NftCollector | None = None
     has_table: bool = False
@@ -123,12 +126,15 @@ class ProfileBuilder:
             if name in self._profiles:
                 continue
             link = LinkCollector(name)
+            qdisc = QdiscCollector(name)
             ct = CtCollector(name)
             profile = NetnsProfile(name=name, link_collector=link,
+                                   qdisc_collector=qdisc,
                                    ct_collector=ct)
             self._registry.add(link)
+            self._registry.add(qdisc)
             self._registry.add(ct)
-            profile.collectors_added_to_registry.extend([link, ct])
+            profile.collectors_added_to_registry.extend([link, qdisc, ct])
             self._profiles[name] = profile
             log.info("shorewalld registered netns profile %r", name)
         return list(self._profiles.values())

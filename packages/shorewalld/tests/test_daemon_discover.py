@@ -25,6 +25,7 @@ from shorewalld.exporter import (
     LinkCollector,
     NftCollector,
     NftScraper,
+    QdiscCollector,
     ShorewalldRegistry,
 )
 from shorewall_nft.nft.netlink import NftError
@@ -117,16 +118,17 @@ def _make_builder(fake: FakeNftInterface) -> tuple[ProfileBuilder,
     return builder, registry
 
 
-def test_builder_always_registers_link_and_ct():
+def test_builder_always_registers_link_qdisc_and_ct():
     fake = FakeNftInterface(present=set())
     builder, registry = _make_builder(fake)
 
     builder.build(["fw", "rns1"])
-    assert len(registry) == 4  # 2 × (Link + Ct)
+    assert len(registry) == 6  # 2 × (Link + Qdisc + Ct)
 
     # fw profile should have exactly one of each.
     fw = builder.profiles["fw"]
     assert isinstance(fw.link_collector, LinkCollector)
+    assert isinstance(fw.qdisc_collector, QdiscCollector)
     assert isinstance(fw.ct_collector, CtCollector)
     assert fw.nft_collector is None
 
@@ -137,7 +139,7 @@ def test_builder_is_idempotent_on_double_build():
 
     builder.build(["fw"])
     builder.build(["fw"])
-    assert len(registry) == 2  # Still just Link + Ct, not 4
+    assert len(registry) == 3  # Still just Link + Qdisc + Ct, not 6
 
 
 def test_reprobe_adds_nft_collector_when_table_appears():
@@ -157,7 +159,7 @@ def test_reprobe_adds_nft_collector_when_table_appears():
     assert fw.nft_collector is not None
     assert fw.has_table is True
     assert isinstance(fw.nft_collector, NftCollector)
-    assert len(registry) == 3  # Link + Ct + Nft
+    assert len(registry) == 4  # Link + Qdisc + Ct + Nft
 
 
 def test_reprobe_removes_nft_collector_when_table_vanishes():
@@ -175,7 +177,7 @@ def test_reprobe_removes_nft_collector_when_table_vanishes():
 
     assert fw.nft_collector is None
     assert fw.has_table is False
-    assert len(registry) == 2  # Back to Link + Ct
+    assert len(registry) == 3  # Back to Link + Qdisc + Ct
 
 
 def test_reprobe_ignores_netns_without_table():
