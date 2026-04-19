@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **shorewalld: per-DNS-set load metrics + worker dispatch histograms**
+  — operator can now see which qnames carry the DNS update load and
+  how long each batch takes to land in the kernel.
+  - `DnsSetMetricsCollector` reads the tracker snapshot (already
+    exposed for seed / peer sync) and emits per-`(set, family)`
+    counters: `shorewalld_dns_set_{adds,refreshes,dedup_hits,
+    dedup_misses,expiries}_total` plus `shorewalld_dns_set_elements`
+    and `shorewalld_dns_set_last_update_age_seconds`. Label `set`
+    is the canonical qname (`cdn_amazon`, not `dns_cdn_amazon_v4`);
+    no `netns` label since the tracker is daemon-global. `rate(adds)
+    + rate(refreshes)` gives updates/s per set; `dedup_hits /
+    (dedup_hits + dedup_misses)` the cache-hit ratio per qname.
+  - `WorkerMetrics` gains two histograms —
+    `shorewalld_worker_batch_latency_seconds` (buckets 1 ms–2.5 s,
+    observed on every reply from both `ParentWorker` and
+    `LocalWorker`) and `shorewalld_worker_batch_size_ops` (buckets
+    1–40 ops). Together they separate "lots of small batches" from
+    "few slow commits" regressions; `histogram_quantile(0.99,
+    rate(…_bucket[5m]))` gives the p99 round-trip per netns.
+  - Transport byte counters previously kept internal in
+    `WorkerTransport.stats` are now exposed as
+    `shorewalld_worker_transport_{send,recv}_bytes_total` and
+    `shorewalld_worker_transport_send_errors_total`, emitted only
+    for forked workers (the default-netns `LocalWorker` has no
+    SEQPACKET hop and would spam zero samples).
+  - Under the hood `TrackerSnapshot` grew a `per_set_names` map so
+    the exporter can resolve `set_id → qname` without grabbing the
+    tracker lock a second time, and `_MetricFamily` learned a third
+    `mtype="histogram"` variant with a tiny `Histogram` helper so
+    future collectors can ship latency distributions without pulling
+    in `prometheus_client.Histogram` (which carries per-bucket
+    Counters and a thread-lock we don't need inside the dispatch
+    path).
+
 - **shorewalld: worker-delegated `/proc` reads for all per-netns
   file-backed collectors** — the Prometheus scrape thread no longer
   calls `setns(2)` itself; every `/proc/net/*` and

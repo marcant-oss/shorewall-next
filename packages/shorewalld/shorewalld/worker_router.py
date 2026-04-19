@@ -54,7 +54,7 @@ from .batch_codec import (
     encode_control,
 )
 from .dns_set_tracker import DnsSetTracker
-from .exporter import CollectorBase, _MetricFamily
+from .exporter import CollectorBase, Histogram, _MetricFamily
 from .logsetup import get_logger
 from .nft_worker import (
     NFT_FAMILY,
@@ -97,6 +97,20 @@ _RESPAWN_HEALTHY_AFTER = 30.0
 # a 5 s cap is three orders of magnitude of slack.
 WORKER_ACK_TIMEOUT = 5.0
 
+# Histogram buckets (seconds). Tuned to the observed full round-trip
+# on a 1600-rule reference ruleset: SetWriter 10 ms coalesce window +
+# SEQPACKET hop + libnftables/netlink commit ≈ 10–30 ms. Buckets span
+# four orders of magnitude so a bad kernel lock contention run (100+ ms)
+# still lands in a meaningful non-+Inf bucket.
+_BATCH_LATENCY_BUCKETS = [
+    0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+]
+
+# Batch-size buckets (ops). ``max_ops`` default is 40 (setwriter.py),
+# and a DNS burst with 1-2 ops at a time is the other end of the
+# spectrum. Seven buckets cover both without wasted resolution.
+_BATCH_SIZE_BUCKETS = [1.0, 2.0, 5.0, 10.0, 20.0, 40.0]
+
 
 @dataclass
 class WorkerMetrics:
@@ -110,6 +124,17 @@ class WorkerMetrics:
     ipc_errors_total: int = 0
     ack_timeout_total: int = 0
     last_spawn_mono: float = 0.0
+    # Distribution of end-to-end dispatch latency (send → reply) in
+    # seconds. Observed on every successful or failed reply, plus the
+    # inline local path (netns="" LocalWorker). Ack timeouts are NOT
+    # observed here — they're tracked separately via ``ack_timeout_total``.
+    batch_latency_hist: Histogram = field(
+        default_factory=lambda: Histogram(_BATCH_LATENCY_BUCKETS))
+    # Distribution of operations per batch, observed at dispatch time.
+    # Together with batch_latency_hist this tells whether slow commits
+    # come from big batches or slow netlink.
+    batch_size_hist: Histogram = field(
+        default_factory=lambda: Histogram(_BATCH_SIZE_BUCKETS))
 
 
 @dataclass
@@ -255,7 +280,17 @@ class ParentWorker:
         Raises on error or timeout.
         """
         if hasattr(self, "_local"):
-            return await self._local.dispatch(builder)
+            # LocalWorker: no reply datagram → latency measured inline
+            # around the executor dispatch. ``builder.count`` is valid
+            # before finish() because BatchBuilder doesn't clear it.
+            op_count = builder.count
+            self.metrics.batch_size_hist.observe(float(op_count))
+            started_at = time.monotonic()
+            try:
+                return await self._local.dispatch(builder)
+            finally:
+                self.metrics.batch_latency_hist.observe(
+                    time.monotonic() - started_at)
 
         if self._stopped:
             raise RuntimeError("ParentWorker stopped")
@@ -270,6 +305,7 @@ class ParentWorker:
         batch_id = self._alloc_batch_id()
         view = builder.finish(batch_id)
         op_count = builder.count
+        self.metrics.batch_size_hist.observe(float(op_count))
         fut: asyncio.Future[int] = self._loop.create_future()
         self._pending[batch_id] = _PendingBatch(
             batch_id=batch_id,
@@ -362,6 +398,11 @@ class ParentWorker:
                 reply.batch_id,
             )
             return
+        # Observe round-trip latency for every completed reply (OK /
+        # SHUTDOWN / ERROR) — all three represent a full dispatch cycle.
+        # Ack-timeouts never reach here and are counted separately.
+        self.metrics.batch_latency_hist.observe(
+            time.monotonic() - pending.sent_at)
         if reply.status == REPLY_OK:
             self.metrics.batches_applied_total += 1
             if not pending.future.done():
@@ -997,6 +1038,26 @@ class WorkerRouterMetricsCollector(CollectorBase):
         ack_to    = _MetricFamily("shorewalld_worker_ack_timeout_total",
                                   "Batches that timed out waiting for worker ack",
                                   ["netns"], mtype="counter")
+        latency   = _MetricFamily(
+            "shorewalld_worker_batch_latency_seconds",
+            "End-to-end batch dispatch latency (send to reply)",
+            ["netns"], mtype="histogram")
+        size_hist = _MetricFamily(
+            "shorewalld_worker_batch_size_ops",
+            "Batch size in ops observed at dispatch",
+            ["netns"], mtype="histogram")
+        tx_bytes  = _MetricFamily(
+            "shorewalld_worker_transport_send_bytes_total",
+            "Bytes sent over the parent→worker SEQPACKET",
+            ["netns"], mtype="counter")
+        rx_bytes  = _MetricFamily(
+            "shorewalld_worker_transport_recv_bytes_total",
+            "Bytes received from the worker over SEQPACKET",
+            ["netns"], mtype="counter")
+        send_err  = _MetricFamily(
+            "shorewalld_worker_transport_send_errors_total",
+            "SEQPACKET send errors (retries counted once per event)",
+            ["netns"], mtype="counter")
 
         for w in self._router.iter_workers():
             ns = w.netns or "(own)"
@@ -1009,5 +1070,19 @@ class WorkerRouterMetricsCollector(CollectorBase):
             failed.add([ns],   float(m.batches_failed_total))
             ipc_err.add([ns],  float(m.ipc_errors_total))
             ack_to.add([ns],   float(m.ack_timeout_total))
+            latency.add_histogram([ns], m.batch_latency_hist)
+            size_hist.add_histogram([ns], m.batch_size_hist)
+            # LocalWorker has no SEQPACKET transport — skip its
+            # byte counters so the metric never emits zero-forever
+            # samples that would drown out the real ones.
+            transport = getattr(w, "_transport", None)
+            if transport is not None:
+                s = transport.stats
+                tx_bytes.add([ns], float(s.send_bytes_total))
+                rx_bytes.add([ns], float(s.recv_bytes_total))
+                send_err.add([ns], float(s.send_errors_total))
 
-        return [spawned, restarts, alive, sent, applied, failed, ipc_err, ack_to]
+        return [
+            spawned, restarts, alive, sent, applied, failed, ipc_err, ack_to,
+            latency, size_hist, tx_bytes, rx_bytes, send_err,
+        ]

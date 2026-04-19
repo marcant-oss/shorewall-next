@@ -331,12 +331,14 @@ class Daemon:
         )
 
         assert self._registry is not None
+        from .dns_set_tracker import DnsSetMetricsCollector
         from .dnstap_bridge import BridgeMetricsCollector
         from .setwriter import SetWriterMetricsCollector
         from .worker_router import WorkerRouterMetricsCollector
         self._registry.add(SetWriterMetricsCollector(self._set_writer))
         self._registry.add(WorkerRouterMetricsCollector(self._router))
         self._registry.add(BridgeMetricsCollector(self._tracker_bridge))
+        self._registry.add(DnsSetMetricsCollector(self._tracker))
 
         # State persistence.
         if self.state_enabled:
@@ -579,12 +581,14 @@ class Daemon:
         )
 
         assert self._registry is not None
+        from .dns_set_tracker import DnsSetMetricsCollector
         from .dnstap_bridge import BridgeMetricsCollector
         from .setwriter import SetWriterMetricsCollector
         from .worker_router import WorkerRouterMetricsCollector
         self._registry.add(SetWriterMetricsCollector(self._set_writer))
         self._registry.add(WorkerRouterMetricsCollector(self._router))
         self._registry.add(BridgeMetricsCollector(self._tracker_bridge))
+        self._registry.add(DnsSetMetricsCollector(self._tracker))
 
         log.info("dns pipeline: empty pipeline ready for dynamic registration")
 

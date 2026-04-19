@@ -540,6 +540,49 @@ decoder is falling behind the recursor and you should increase
 | `shorewalld_worker_batches_failed_total` | Counter | Batches the worker reported as failed |
 | `shorewalld_worker_ipc_errors_total` | Counter | IPC transport errors |
 | `shorewalld_worker_ack_timeout_total` | Counter | Batches that timed out waiting for ACK |
+| `shorewalld_worker_batch_latency_seconds` | Histogram | End-to-end dispatch latency (send → reply), buckets 1 ms–2.5 s |
+| `shorewalld_worker_batch_size_ops` | Histogram | Operations per batch at dispatch, buckets 1–40 ops |
+| `shorewalld_worker_transport_send_bytes_total` | Counter | Bytes pushed down the parent→worker SEQPACKET |
+| `shorewalld_worker_transport_recv_bytes_total` | Counter | Bytes received from the worker over SEQPACKET |
+| `shorewalld_worker_transport_send_errors_total` | Counter | SEQPACKET send errors (one per event) |
+
+Alert recipes:
+`histogram_quantile(0.99, rate(shorewalld_worker_batch_latency_seconds_bucket[5m]))`
+— tail latency per netns. A slow commit shows up here first.
+`rate(shorewalld_worker_transport_send_bytes_total[1m])`
+— absolute wire traffic; combined with `batch_size_ops` this separates
+"lots of small batches" from "few big batches" regressions.
+(Transport byte counters are only emitted for forked workers; the
+default-netns `LocalWorker` has no SEQPACKET hop so its transport
+rows are omitted by design.)
+
+**Per-DNS-set load** (`shorewalld_dns_set_*`, labels `{set, family}`):
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewalld_dns_set_elements` | Gauge | Current live element count for this set |
+| `shorewalld_dns_set_adds_total` | Counter | New IPs inserted (ADD verdicts) |
+| `shorewalld_dns_set_refreshes_total` | Counter | Existing IPs whose TTL was extended (REFRESH verdicts) |
+| `shorewalld_dns_set_dedup_hits_total` | Counter | Proposals skipped — current TTL still covers |
+| `shorewalld_dns_set_dedup_misses_total` | Counter | Proposals that became real writes (ADD + REFRESH combined) |
+| `shorewalld_dns_set_expiries_total` | Counter | Entries evicted because their deadline passed |
+| `shorewalld_dns_set_last_update_age_seconds` | Gauge | Seconds since the last write to this set (omitted if never written) |
+
+`set` is the canonicalised qname (`cdn_amazon`, not `dns_cdn_amazon_v4`);
+`family` is `ipv4` or `ipv6`. The tracker is daemon-global, so these
+metrics do **not** carry a `netns` label — a single qname that routes
+to two namespaces aggregates into one pair of counters. For per-netns
+write volume correlate with `shorewalld_worker_batches_applied_total`.
+
+Typical PromQL:
+`rate(shorewalld_dns_set_adds_total[1m]) + rate(shorewalld_dns_set_refreshes_total[1m])`
+— updates/s per set (what load each qname contributes).
+`shorewalld_dns_set_dedup_hits_total / (shorewalld_dns_set_dedup_hits_total + shorewalld_dns_set_dedup_misses_total)`
+— dedup ratio per set; close to 1.0 means most answers were cache hits.
+`shorewalld_dns_set_last_update_age_seconds > 3600`
+— staleness alarm: DNS pipeline still running but this set hasn't
+been touched for an hour (likely: no clients querying the qname, or
+the TTL is very long).
 
 **Pull resolver** (`shorewalld_pull_resolver_*`):
 
