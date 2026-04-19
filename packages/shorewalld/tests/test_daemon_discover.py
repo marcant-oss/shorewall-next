@@ -21,6 +21,7 @@ from shorewalld.discover import (
     resolve_netns_list,
 )
 from shorewalld.exporter import (
+    ConntrackStatsCollector,
     CtCollector,
     LinkCollector,
     NftCollector,
@@ -118,17 +119,18 @@ def _make_builder(fake: FakeNftInterface) -> tuple[ProfileBuilder,
     return builder, registry
 
 
-def test_builder_always_registers_link_qdisc_and_ct():
+def test_builder_always_registers_link_qdisc_ctstats_and_ct():
     fake = FakeNftInterface(present=set())
     builder, registry = _make_builder(fake)
 
     builder.build(["fw", "rns1"])
-    assert len(registry) == 6  # 2 × (Link + Qdisc + Ct)
+    assert len(registry) == 8  # 2 × (Link + Qdisc + CtStats + Ct)
 
     # fw profile should have exactly one of each.
     fw = builder.profiles["fw"]
     assert isinstance(fw.link_collector, LinkCollector)
     assert isinstance(fw.qdisc_collector, QdiscCollector)
+    assert isinstance(fw.ct_stats_collector, ConntrackStatsCollector)
     assert isinstance(fw.ct_collector, CtCollector)
     assert fw.nft_collector is None
 
@@ -139,7 +141,8 @@ def test_builder_is_idempotent_on_double_build():
 
     builder.build(["fw"])
     builder.build(["fw"])
-    assert len(registry) == 3  # Still just Link + Qdisc + Ct, not 6
+    # Still just Link + Qdisc + CtStats + Ct — not double.
+    assert len(registry) == 4
 
 
 def test_reprobe_adds_nft_collector_when_table_appears():
@@ -159,7 +162,7 @@ def test_reprobe_adds_nft_collector_when_table_appears():
     assert fw.nft_collector is not None
     assert fw.has_table is True
     assert isinstance(fw.nft_collector, NftCollector)
-    assert len(registry) == 4  # Link + Qdisc + Ct + Nft
+    assert len(registry) == 5  # Link + Qdisc + CtStats + Ct + Nft
 
 
 def test_reprobe_removes_nft_collector_when_table_vanishes():
@@ -177,7 +180,7 @@ def test_reprobe_removes_nft_collector_when_table_vanishes():
 
     assert fw.nft_collector is None
     assert fw.has_table is False
-    assert len(registry) == 3  # Back to Link + Qdisc + Ct
+    assert len(registry) == 4  # Back to Link + Qdisc + CtStats + Ct
 
 
 def test_reprobe_ignores_netns_without_table():

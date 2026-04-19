@@ -9,6 +9,8 @@ Every profile always includes:
 
 * ``LinkCollector`` — per-iface RX/TX/errors/dropped via pyroute2
 * ``QdiscCollector`` — per-qdisc bytes/drops/qlen via pyroute2
+* ``ConntrackStatsCollector`` — per-netns conntrack engine counters
+  (drop, early_drop, insert_failed, invalid) via CTNETLINK
 * ``CtCollector`` — conntrack table size via ``/proc/sys/net/...``
 
 A profile *conditionally* includes:
@@ -29,6 +31,7 @@ from pathlib import Path
 from shorewall_nft.nft.netlink import NftError, NftInterface
 
 from .exporter import (
+    ConntrackStatsCollector,
     CtCollector,
     LinkCollector,
     NftCollector,
@@ -84,6 +87,7 @@ class NetnsProfile:
     name: str
     link_collector: LinkCollector
     qdisc_collector: QdiscCollector
+    ct_stats_collector: ConntrackStatsCollector
     ct_collector: CtCollector
     nft_collector: NftCollector | None = None
     has_table: bool = False
@@ -127,14 +131,18 @@ class ProfileBuilder:
                 continue
             link = LinkCollector(name)
             qdisc = QdiscCollector(name)
+            ct_stats = ConntrackStatsCollector(name)
             ct = CtCollector(name)
             profile = NetnsProfile(name=name, link_collector=link,
                                    qdisc_collector=qdisc,
+                                   ct_stats_collector=ct_stats,
                                    ct_collector=ct)
             self._registry.add(link)
             self._registry.add(qdisc)
+            self._registry.add(ct_stats)
             self._registry.add(ct)
-            profile.collectors_added_to_registry.extend([link, qdisc, ct])
+            profile.collectors_added_to_registry.extend(
+                [link, qdisc, ct_stats, ct])
             self._profiles[name] = profile
             log.info("shorewalld registered netns profile %r", name)
         return list(self._profiles.values())
