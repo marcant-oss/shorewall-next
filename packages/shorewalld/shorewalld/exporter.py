@@ -196,13 +196,75 @@ class NftScraper:
 # ── Collector interface ──────────────────────────────────────────────
 
 
+class Histogram:
+    """Tiny lock-free histogram for observe-once-per-event hot paths.
+
+    Not a ``prometheus_client.Histogram`` — those carry per-bucket
+    Counter objects and thread-locks we don't need inside the single-
+    threaded dispatch path. Buckets are cumulative (Prometheus convention):
+    ``bucket_counts[i]`` counts every observation ``<= buckets[i]``;
+    the final entry is the ``+Inf`` bucket and equals :attr:`count`.
+
+    ``buckets`` must be sorted ascending and NOT include ``+Inf``;
+    the class appends its own implicit ``+Inf`` slot.
+    """
+
+    __slots__ = ("buckets", "bucket_counts", "sum_value", "count")
+
+    def __init__(self, buckets: list[float]) -> None:
+        self.buckets = list(buckets)
+        # One extra slot for the implicit +Inf bucket — saves a
+        # conditional in observe() at the cost of one int per histogram.
+        self.bucket_counts: list[int] = [0] * (len(self.buckets) + 1)
+        self.sum_value: float = 0.0
+        self.count: int = 0
+
+    def observe(self, value: float) -> None:
+        self.sum_value += value
+        self.count += 1
+        buckets = self.buckets
+        counts = self.bucket_counts
+        for i, ub in enumerate(buckets):
+            if value <= ub:
+                counts[i] += 1
+        counts[-1] += 1  # +Inf always
+
+    def bucket_samples(self) -> list[tuple[str, float]]:
+        """Cumulative ``(upper_bound, count)`` pairs for Prom export.
+
+        Upper bounds are rendered with ``repr`` for fractional values
+        (so ``0.005`` stays ``"0.005"``, not ``"5e-3"``) and ``+Inf``
+        as the final entry.
+        """
+        out: list[tuple[str, float]] = []
+        for ub, cnt in zip(self.buckets, self.bucket_counts):
+            out.append((_fmt_bucket_bound(ub), float(cnt)))
+        out.append(("+Inf", float(self.bucket_counts[-1])))
+        return out
+
+
+def _fmt_bucket_bound(ub: float) -> str:
+    """Render an upper bound so Prometheus matches human-typed le=…
+
+    ``0.005`` → ``"0.005"`` (not ``"5e-3"``), ``1`` → ``"1"``,
+    ``2.5`` → ``"2.5"``. Matches prometheus_client's own formatter.
+    """
+    if ub == int(ub):
+        return f"{int(ub)}"
+    return f"{ub!r}"
+
+
 class _MetricFamily:
     """Minimal stand-in for prometheus_client.MetricFamily.
 
     Kept lightweight so unit tests can exercise ``CollectorBase``
     subclasses without needing prometheus_client installed. The real
-    server wraps these in ``GaugeMetricFamily``/``CounterMetricFamily``
-    at registration time.
+    server wraps these in ``GaugeMetricFamily`` /
+    ``CounterMetricFamily`` / ``HistogramMetricFamily`` at
+    registration time.
+
+    ``mtype="histogram"`` samples carry a :class:`Histogram` object
+    as their value instead of a float, populated via :meth:`add_histogram`.
     """
 
     __slots__ = ("name", "help_text", "labels", "samples", "mtype")
@@ -213,10 +275,18 @@ class _MetricFamily:
         self.help_text = help_text
         self.labels = labels
         self.mtype = mtype
-        self.samples: list[tuple[list[str], float]] = []
+        # Values are floats for counter/gauge and Histogram for
+        # mtype="histogram". Mixed in one list to keep the merge logic
+        # in ShorewalldRegistry.collect() uniform.
+        self.samples: list[tuple[list[str], Any]] = []
 
     def add(self, label_values: list[str], value: float) -> None:
         self.samples.append((label_values, value))
+
+    def add_histogram(
+        self, label_values: list[str], hist: "Histogram",
+    ) -> None:
+        self.samples.append((label_values, hist))
 
 
 class CollectorBase:
@@ -1539,6 +1609,7 @@ class ShorewalldRegistry:
         from prometheus_client.core import (  # type: ignore[import-untyped]
             CounterMetricFamily,
             GaugeMetricFamily,
+            HistogramMetricFamily,
         )
 
         out = []
@@ -1546,10 +1617,21 @@ class ShorewalldRegistry:
             if fam.mtype == "counter":
                 mf = CounterMetricFamily(
                     fam.name, fam.help_text, labels=fam.labels)
+                for label_values, value in fam.samples:
+                    mf.add_metric(label_values, value)
+            elif fam.mtype == "histogram":
+                mf = HistogramMetricFamily(
+                    fam.name, fam.help_text, labels=fam.labels)
+                for label_values, hist in fam.samples:
+                    mf.add_metric(
+                        label_values,
+                        hist.bucket_samples(),
+                        hist.sum_value,
+                    )
             else:
                 mf = GaugeMetricFamily(
                     fam.name, fam.help_text, labels=fam.labels)
-            for label_values, value in fam.samples:
-                mf.add_metric(label_values, value)
+                for label_values, value in fam.samples:
+                    mf.add_metric(label_values, value)
             out.append(mf)
         return out

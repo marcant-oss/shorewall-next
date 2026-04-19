@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from shorewalld.exporter import (
     CollectorBase,
     CtCollector,
     FlowtableCollector,
+    Histogram,
     NetstatCollector,
     NftCollector,
     NftScraper,
@@ -23,6 +26,7 @@ from shorewalld.exporter import (
     SoftnetCollector,
     _CT_STAT_FIELDS,
     _extract_qdisc_row,
+    _fmt_bucket_bound,
     _format_tc_handle,
     _LINK_STAT_FIELDS,
     _MetricFamily,
@@ -927,3 +931,82 @@ def test_flowtable_collector_empty_on_missing_table():
     families = col.collect()
     for fam in families:
         assert fam.samples == []
+
+
+# ── Histogram helper + _MetricFamily histogram support ───────────────
+
+
+class TestHistogram:
+    def test_cumulative_bucket_counts(self):
+        h = Histogram([0.01, 0.05, 0.1])
+        for v in [0.005, 0.03, 0.07, 0.2]:
+            h.observe(v)
+        # 0.005 falls into every bucket ≤ 0.01
+        # 0.03 into 0.05 and 0.1
+        # 0.07 into 0.1 only
+        # 0.2 into +Inf only
+        assert h.count == 4
+        assert h.sum_value == pytest.approx(0.305)
+        samples = h.bucket_samples()
+        # Bound→count mapping (cumulative)
+        by_bound = {b: c for b, c in samples}
+        assert by_bound["0.01"] == 1.0
+        assert by_bound["0.05"] == 2.0
+        assert by_bound["0.1"] == 3.0
+        assert by_bound["+Inf"] == 4.0
+
+    def test_edge_equal_to_bound_included(self):
+        h = Histogram([1.0])
+        h.observe(1.0)
+        by_bound = dict(h.bucket_samples())
+        # 1.0 <= 1.0 → inside the 1.0 bucket
+        assert by_bound["1"] == 1.0
+
+    def test_fmt_bucket_bound_integer_and_float(self):
+        assert _fmt_bucket_bound(1.0) == "1"
+        assert _fmt_bucket_bound(0.005) == "0.005"
+        assert _fmt_bucket_bound(2.5) == "2.5"
+
+
+def test_metric_family_histogram_samples_carry_histogram_object():
+    h = Histogram([0.01, 0.1])
+    h.observe(0.005)
+    fam = _MetricFamily("x_latency_seconds", "help", ["netns"],
+                        mtype="histogram")
+    fam.add_histogram(["fw"], h)
+    assert len(fam.samples) == 1
+    labels, obj = fam.samples[0]
+    assert labels == ["fw"]
+    assert obj is h
+    assert obj.count == 1
+
+
+def test_registry_renders_histogram_via_prometheus_client():
+    pytest.importorskip("prometheus_client")
+
+    class FakeHistogramCollector(CollectorBase):
+        def __init__(self, hist: Histogram) -> None:
+            super().__init__(netns="fw")
+            self._hist = hist
+
+        def collect(self) -> list[_MetricFamily]:
+            fam = _MetricFamily("x_latency_seconds", "help",
+                                ["netns"], mtype="histogram")
+            fam.add_histogram(["fw"], self._hist)
+            return [fam]
+
+    hist = Histogram([0.01, 0.1, 1.0])
+    for v in [0.005, 0.05, 0.5, 2.0]:
+        hist.observe(v)
+
+    reg = ShorewalldRegistry()
+    reg.add(FakeHistogramCollector(hist))
+    prom_families = reg.to_prom_families()
+    assert len(prom_families) == 1
+    mf = prom_families[0]
+    # prometheus_client expands the histogram into bucket / count / sum
+    # samples; make sure all three are present.
+    names = {s.name for s in mf.samples}
+    assert "x_latency_seconds_bucket" in names
+    assert "x_latency_seconds_count" in names
+    assert "x_latency_seconds_sum" in names

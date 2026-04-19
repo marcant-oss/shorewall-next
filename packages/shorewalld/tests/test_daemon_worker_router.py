@@ -241,6 +241,37 @@ class TestParentWorkerInproc:
         finally:
             event_loop.run_until_complete(pw.shutdown())
 
+    def test_dispatch_records_latency_and_size_histograms(
+        self, tracker_with_allowlist, event_loop
+    ):
+        pw, _w = inproc_worker_pair(
+            tracker_with_allowlist, event_loop,
+            _name_lookup_for(tracker_with_allowlist),
+        )
+        try:
+            sid = tracker_with_allowlist.set_id_for(
+                "github.com", FAMILY_V4)
+            for _ in range(3):
+                event_loop.run_until_complete(
+                    pw.dispatch(_single_op_batch(sid, FAMILY_V4)))
+            # Both histograms observed once per dispatch.
+            assert pw.metrics.batch_latency_hist.count == 3
+            assert pw.metrics.batch_size_hist.count == 3
+            # Every batch had one op — all observations land in the
+            # "<=1" bucket and propagate upwards cumulatively.
+            size_by_bound = dict(
+                pw.metrics.batch_size_hist.bucket_samples())
+            assert size_by_bound["1"] == 3.0
+            assert size_by_bound["+Inf"] == 3.0
+            # Latency is always positive and finite; round-trip through
+            # the inproc thread is well under one second.
+            assert pw.metrics.batch_latency_hist.sum_value > 0.0
+            lat_by_bound = dict(
+                pw.metrics.batch_latency_hist.bucket_samples())
+            assert lat_by_bound["+Inf"] == 3.0
+        finally:
+            event_loop.run_until_complete(pw.shutdown())
+
 
 class TestShutdown:
     def test_shutdown_stops_dispatch(

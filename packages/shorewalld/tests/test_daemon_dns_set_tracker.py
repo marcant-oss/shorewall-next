@@ -14,6 +14,7 @@ import pytest
 from shorewalld.dns_set_tracker import (
     FAMILY_V4,
     FAMILY_V6,
+    DnsSetMetricsCollector,
     DnsSetTracker,
     Proposal,
     Verdict,
@@ -307,6 +308,81 @@ class TestStateExportImport:
         t2.load_registry(reg2)
         installed = t2.import_state(exported, now=1000.0)
         assert installed == 0
+
+
+class TestDnsSetMetricsCollector:
+    """Exporter view of the tracker's per-set metrics."""
+
+    @staticmethod
+    def _family(families, name):
+        for f in families:
+            if f.name == name:
+                return f
+        raise AssertionError(f"no metric family {name!r}")
+
+    def test_emits_per_set_elements_gauge(self, tracker):
+        sid = tracker.set_id_for("github.com", FAMILY_V4)
+        tracker.commit(
+            [Proposal(set_id=sid, ip_bytes=_ip4("1.1.1.1"), ttl=600),
+             Proposal(set_id=sid, ip_bytes=_ip4("2.2.2.2"), ttl=600)],
+            [Verdict.ADD, Verdict.ADD])
+
+        families = DnsSetMetricsCollector(tracker).collect()
+        elements = self._family(families, "shorewalld_dns_set_elements")
+        sample = [s for s in elements.samples
+                  if s[0] == ["github.com", "ipv4"]]
+        assert len(sample) == 1
+        assert sample[0][1] == 2.0
+
+    def test_dedup_split_counters(self, tracker):
+        sid = tracker.set_id_for("github.com", FAMILY_V4)
+        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        tracker.commit([p], [Verdict.ADD])
+        # 3 dedup hits
+        for _ in range(3):
+            tracker.propose(p)
+
+        families = DnsSetMetricsCollector(tracker).collect()
+        hits = self._family(families, "shorewalld_dns_set_dedup_hits_total")
+        miss = self._family(families, "shorewalld_dns_set_dedup_misses_total")
+        hit_by_set = {tuple(lv): v for lv, v in hits.samples}
+        miss_by_set = {tuple(lv): v for lv, v in miss.samples}
+        assert hit_by_set[("github.com", "ipv4")] == 3.0
+        # 1 ADD = 1 dedup_miss
+        assert miss_by_set[("github.com", "ipv4")] == 1.0
+
+    def test_last_update_age_omitted_when_never_written(self, tracker):
+        # github.com has entries below; api.stripe.com is declared but
+        # never touched → should NOT appear in the age gauge.
+        sid = tracker.set_id_for("github.com", FAMILY_V4)
+        tracker.commit(
+            [Proposal(set_id=sid, ip_bytes=_ip4("1.1.1.1"), ttl=600)],
+            [Verdict.ADD])
+        tracker._test_clock.advance(42.0)
+
+        families = DnsSetMetricsCollector(tracker).collect()
+        age = self._family(
+            families, "shorewalld_dns_set_last_update_age_seconds")
+        by_set = {tuple(lv): v for lv, v in age.samples}
+        # github.com v4 observed; api.stripe.com entries missing.
+        assert by_set[("github.com", "ipv4")] == pytest.approx(42.0)
+        assert ("api.stripe.com", "ipv4") not in by_set
+        assert ("api.stripe.com", "ipv6") not in by_set
+
+    def test_emits_both_families_per_qname(self, tracker):
+        sid_v4 = tracker.set_id_for("github.com", FAMILY_V4)
+        sid_v6 = tracker.set_id_for("github.com", FAMILY_V6)
+        tracker.commit(
+            [Proposal(set_id=sid_v4, ip_bytes=_ip4("1.1.1.1"), ttl=600),
+             Proposal(set_id=sid_v6, ip_bytes=b"\x20\x01" + b"\x00"*14,
+                      ttl=600)],
+            [Verdict.ADD, Verdict.ADD])
+
+        families = DnsSetMetricsCollector(tracker).collect()
+        adds = self._family(families, "shorewalld_dns_set_adds_total")
+        by_labels = {tuple(lv): v for lv, v in adds.samples}
+        assert by_labels[("github.com", "ipv4")] == 1.0
+        assert by_labels[("github.com", "ipv6")] == 1.0
 
 
 class TestThreadSafety:

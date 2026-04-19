@@ -51,6 +51,8 @@ from typing import Iterable
 
 from shorewall_nft.nft.dns_sets import DnsSetRegistry, DnsSetSpec
 
+from .exporter import CollectorBase, _MetricFamily
+
 # Family constants — used as wire values in the batch codec too, so
 # they must stay stable. 4 and 6 read obviously in hex dumps.
 FAMILY_V4 = 4
@@ -120,6 +122,7 @@ class TrackerSnapshot:
     copy cost is negligible at Prometheus scrape frequency.
     """
     per_set: dict[tuple[int, int], SetMetrics]
+    per_set_names: dict[int, str]
     totals: SetMetrics
     sets_declared: int
     unknown_qname_total: int
@@ -405,6 +408,7 @@ class DnsSetTracker:
         """
         with self._lock:
             per_set: dict[tuple[int, int], SetMetrics] = {}
+            per_set_names: dict[int, str] = {}
             totals = SetMetrics()
             for set_id, state in self._states.items():
                 m = state.metrics
@@ -418,6 +422,9 @@ class DnsSetTracker:
                     expiries_total=m.expiries_total,
                     last_update_mono=m.last_update_mono,
                 )
+                entry = self._by_id.get(set_id)
+                if entry is not None:
+                    per_set_names[set_id] = entry[0]
                 totals.elements += m.elements
                 totals.adds_total += m.adds_total
                 totals.refreshes_total += m.refreshes_total
@@ -426,6 +433,7 @@ class DnsSetTracker:
                 totals.expiries_total += m.expiries_total
             return TrackerSnapshot(
                 per_set=per_set,
+                per_set_names=per_set_names,
                 totals=totals,
                 sets_declared=len(self._states),
                 unknown_qname_total=self._unknown_qname_total,
@@ -512,3 +520,93 @@ class DnsSetTracker:
                 state.metrics.elements = len(state.elements)
                 installed += 1
         return installed
+
+
+# ── Prometheus collector ─────────────────────────────────────────────
+
+
+class DnsSetMetricsCollector(CollectorBase):
+    """Per-(set, family) metrics for DNS-backed nft sets.
+
+    Reads :class:`DnsSetTracker` state via :meth:`snapshot` — lock-held
+    copy, O(n_sets), safe for the Prometheus scrape thread. Emits one
+    sample per ``(qname, family)`` for each declared set:
+
+    * ``shorewalld_dns_set_elements`` — current live element count
+    * ``shorewalld_dns_set_adds_total`` / ``_refreshes_total`` —
+      real writes split by verdict
+    * ``shorewalld_dns_set_dedup_hits_total`` / ``_misses_total`` —
+      dedup ratio numerator / denominator (misses == adds+refreshes)
+    * ``shorewalld_dns_set_expiries_total`` — entries aged out naturally
+    * ``shorewalld_dns_set_last_update_age_seconds`` — ``now -
+      last_update_mono`` (omitted for sets that never saw a write)
+
+    The tracker is daemon-global (one instance per process) so metrics
+    carry no ``netns`` label — a single qname's totals aggregate all
+    netns it routes to. For per-netns volume breakdown, correlate with
+    ``shorewalld_worker_batches_applied_total`` (labelled by netns).
+    """
+
+    _LABELS = ["set", "family"]
+
+    def __init__(self, tracker: "DnsSetTracker") -> None:
+        super().__init__(netns="")
+        self._tracker = tracker
+        # Share the tracker's clock source so unit tests that inject
+        # a fake monotonic see deterministic age values.
+        self._clock = tracker._clock
+
+    def collect(self) -> list[_MetricFamily]:
+        elements = _MetricFamily(
+            "shorewalld_dns_set_elements",
+            "Current live element count per DNS-backed nft set",
+            self._LABELS)
+        adds = _MetricFamily(
+            "shorewalld_dns_set_adds_total",
+            "ADD verdicts: new IP inserted into the set",
+            self._LABELS, mtype="counter")
+        refreshes = _MetricFamily(
+            "shorewalld_dns_set_refreshes_total",
+            "REFRESH verdicts: existing IP's TTL extended",
+            self._LABELS, mtype="counter")
+        dedup_hits = _MetricFamily(
+            "shorewalld_dns_set_dedup_hits_total",
+            "DEDUP verdicts: proposal skipped, existing TTL still covers",
+            self._LABELS, mtype="counter")
+        dedup_misses = _MetricFamily(
+            "shorewalld_dns_set_dedup_misses_total",
+            "Proposals that became real writes (ADD + REFRESH combined)",
+            self._LABELS, mtype="counter")
+        expiries = _MetricFamily(
+            "shorewalld_dns_set_expiries_total",
+            "Entries evicted from the set because their deadline passed",
+            self._LABELS, mtype="counter")
+        last_age = _MetricFamily(
+            "shorewalld_dns_set_last_update_age_seconds",
+            "Seconds since the last write to this set (omitted if never written)",
+            self._LABELS)
+
+        snap = self._tracker.snapshot()
+        now = self._clock()
+        for (set_id, family), m in snap.per_set.items():
+            qname = snap.per_set_names.get(set_id)
+            if qname is None:
+                # Set was evicted between snapshot build and name lookup
+                # — skip rather than emit an unresolvable set_id.
+                continue
+            fam_label = "ipv4" if family == FAMILY_V4 else (
+                "ipv6" if family == FAMILY_V6 else f"af{family}")
+            labels = [qname, fam_label]
+            elements.add(labels, float(m.elements))
+            adds.add(labels, float(m.adds_total))
+            refreshes.add(labels, float(m.refreshes_total))
+            dedup_hits.add(labels, float(m.dedup_hits_total))
+            dedup_misses.add(labels, float(m.dedup_misses_total))
+            expiries.add(labels, float(m.expiries_total))
+            if m.last_update_mono > 0.0:
+                last_age.add(labels, float(now - m.last_update_mono))
+
+        return [
+            elements, adds, refreshes, dedup_hits, dedup_misses,
+            expiries, last_age,
+        ]
