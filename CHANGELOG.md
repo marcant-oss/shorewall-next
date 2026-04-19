@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **shorewalld: netlink-sourced link, qdisc, and conntrack-engine metrics**
+  — three new Prometheus collectors built on direct pyroute2 API calls,
+  zero forks, one dump per scrape per netns. All carry the usual `netns`
+  label and all work in the root netns without extra configuration.
+  - `LinkCollector` now surfaces the full `IFLA_STATS64` surface (17
+    fields beyond the previous RX/TX packets+bytes): generic and
+    per-subsystem error and drop counters
+    (`rx_errors`, `tx_errors`, `rx_dropped`, `tx_dropped`,
+    `rx_missed_errors`, `rx_fifo_errors`, `rx_crc_errors`,
+    `rx_frame_errors`, `rx_length_errors`, `rx_over_errors`,
+    `rx_nohandler`, `tx_carrier_errors`, `tx_aborted_errors`,
+    `tx_fifo_errors`, `tx_heartbeat_errors`, `tx_window_errors`),
+    plus `multicast`, `collisions`, `rx_compressed`, `tx_compressed`.
+    Same `RTM_GETLINK` dump as before — no extra round-trips.
+  - `QdiscCollector` (new) emits per-qdisc counters and gauges via
+    `RTM_GETQDISC`: `shorewall_nft_qdisc_{bytes,packets,drops,
+    requeues,overlimits}_total` plus `qlen` / `backlog_bytes` gauges,
+    and `rate_bps` / `rate_pps` from the optional `tc … est` rate
+    estimator. Labels `iface,kind,handle,parent` reproduce the
+    structure `tc -s qdisc` prints.
+  - `ConntrackStatsCollector` (new) emits per-netns conntrack engine
+    counters via `CTNETLINK IPCTNL_MSG_CT_GET_STATS_CPU`, summed
+    across CPUs: `shorewall_nft_ct_{found,invalid,ignore,
+    insert_failed,drop,early_drop,error,search_restart}_total`.
+    `insert_failed + drop + early_drop` climbing together is the
+    conntrack-table-pressure signature. Needs `CAP_NET_ADMIN`;
+    unprivileged runs surface the families empty rather than
+    failing the scrape.
+
 ### Fixed
 
 - **shorewalld: parallel control-socket clients could interleave mutating

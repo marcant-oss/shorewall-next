@@ -163,20 +163,117 @@ are opaque.
 
 ### Per-interface metrics (one per netns, always emitted)
 
+Sourced from `RTM_GETLINK` → `IFLA_STATS64` in one netlink dump per
+scrape. All counters are zero for an interface that never flaps; fields
+the running kernel does not populate (e.g. `rx_nohandler` on older
+kernels) are silently skipped rather than reported as zero.
+
+**Traffic**
+
 | Metric | Type | Labels |
 |---|---|---|
 | `shorewall_nft_iface_rx_packets_total` | Counter | `netns,iface` |
 | `shorewall_nft_iface_rx_bytes_total` | Counter | `netns,iface` |
 | `shorewall_nft_iface_tx_packets_total` | Counter | `netns,iface` |
 | `shorewall_nft_iface_tx_bytes_total` | Counter | `netns,iface` |
-| `shorewall_nft_iface_oper_state` | Gauge | `netns,iface` — 1=UP, 0=DOWN, 0.5=UNKNOWN |
+| `shorewall_nft_iface_multicast_total` | Counter | `netns,iface` — RX multicast packets |
+| `shorewall_nft_iface_rx_compressed_total` | Counter | `netns,iface` |
+| `shorewall_nft_iface_tx_compressed_total` | Counter | `netns,iface` |
 
-### Conntrack metrics (one per netns)
+**Error / drop counters** — watch these for cable, NIC, or ring-buffer
+trouble. `rx_missed_errors` climbing under steady traffic is the
+canonical "ring buffer too small / IRQ coalescing wrong" signal;
+`rx_crc_errors` points at cable or SFP integrity.
+
+| Metric | Type | Labels | Source field |
+|---|---|---|---|
+| `shorewall_nft_iface_rx_errors_total` | Counter | `netns,iface` | generic RX error total |
+| `shorewall_nft_iface_tx_errors_total` | Counter | `netns,iface` | generic TX error total |
+| `shorewall_nft_iface_rx_dropped_total` | Counter | `netns,iface` | RX dropped (no buffer, filters) |
+| `shorewall_nft_iface_tx_dropped_total` | Counter | `netns,iface` | TX dropped before transmit |
+| `shorewall_nft_iface_collisions_total` | Counter | `netns,iface` | late collisions (legacy HDX) |
+| `shorewall_nft_iface_rx_length_errors_total` | Counter | `netns,iface` | malformed frame length |
+| `shorewall_nft_iface_rx_over_errors_total` | Counter | `netns,iface` | frame larger than NIC buffer |
+| `shorewall_nft_iface_rx_crc_errors_total` | Counter | `netns,iface` | cable / SFP integrity |
+| `shorewall_nft_iface_rx_frame_errors_total` | Counter | `netns,iface` | frame alignment errors |
+| `shorewall_nft_iface_rx_fifo_errors_total` | Counter | `netns,iface` | RX FIFO overruns |
+| `shorewall_nft_iface_rx_missed_errors_total` | Counter | `netns,iface` | ring-buffer drops the driver never saw |
+| `shorewall_nft_iface_rx_nohandler_total` | Counter | `netns,iface` | no protocol handler registered (kernel 4.6+) |
+| `shorewall_nft_iface_tx_aborted_errors_total` | Counter | `netns,iface` |  |
+| `shorewall_nft_iface_tx_carrier_errors_total` | Counter | `netns,iface` | carrier lost (link flaps, negotiation) |
+| `shorewall_nft_iface_tx_fifo_errors_total` | Counter | `netns,iface` |  |
+| `shorewall_nft_iface_tx_heartbeat_errors_total` | Counter | `netns,iface` |  |
+| `shorewall_nft_iface_tx_window_errors_total` | Counter | `netns,iface` |  |
+
+**Oper state**
 
 | Metric | Type | Labels |
 |---|---|---|
-| `shorewall_nft_ct_count` | Gauge | `netns` |
-| `shorewall_nft_ct_max` | Gauge | `netns` |
+| `shorewall_nft_iface_oper_state` | Gauge | `netns,iface` — 1=UP, 0=DOWN, 0.5=UNKNOWN |
+
+### Qdisc metrics (one per netns, always emitted)
+
+Sourced from `RTM_GETQDISC` via pyroute2. One dump per scrape per
+netns — the same data `tc -s qdisc show` prints — but emitted as
+structured Prometheus metrics rather than text. Every qdisc (root,
+ingress, clsact, per-class) shows up as its own series labelled with
+the interface name, the qdisc `kind` (`fq_codel`, `pfifo_fast`,
+`noqueue`, …), and the tc `major:minor` handle.
+
+Labels: `netns,iface,kind,handle,parent`. `parent="root"` means this
+is a root qdisc (`TC_H_ROOT = 0xffffffff`); `parent="none"` means
+unspecified (typical for ingress/clsact). `handle` and `parent` are
+rendered in tc hex notation (`1:0`, `abc:1234`).
+
+| Metric | Type | Description |
+|---|---|---|
+| `shorewall_nft_qdisc_bytes_total` | Counter | Bytes passed through the qdisc |
+| `shorewall_nft_qdisc_packets_total` | Counter | Packets passed through the qdisc |
+| `shorewall_nft_qdisc_drops_total` | Counter | Packets dropped (overflow + policing) |
+| `shorewall_nft_qdisc_requeues_total` | Counter | Packets requeued after driver pushback |
+| `shorewall_nft_qdisc_overlimits_total` | Counter | Rate/class ceiling hits |
+| `shorewall_nft_qdisc_qlen` | Gauge | Current queue length (packets) |
+| `shorewall_nft_qdisc_backlog_bytes` | Gauge | Current backlog (bytes) |
+| `shorewall_nft_qdisc_rate_bps` | Gauge | Rate-estimator bytes/s (0 unless `tc … est` configured) |
+| `shorewall_nft_qdisc_rate_pps` | Gauge | Rate-estimator packets/s (0 unless `tc … est` configured) |
+
+Counter values come from `TCA_STATS2` when present (kernel 3.18+,
+adds `requeues`), falling back to the legacy flat `TCA_STATS` for
+bps/pps and on older kernels.
+
+### Conntrack metrics (one per netns)
+
+**Table occupancy** — sourced from `/proc/sys/net/netfilter/`:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `shorewall_nft_ct_count` | Gauge | `netns` — current conntrack entries |
+| `shorewall_nft_ct_max` | Gauge | `netns` — `nf_conntrack_max` sysctl |
+
+**Engine counters** — sourced from `CTNETLINK IPCTNL_MSG_CT_GET_STATS_CPU`
+via `NFCTSocket.stat()`. Per-CPU rows are summed into one value per
+netns — the per-CPU identity is never a stable Prometheus label and
+the aggregate is what alerting rules care about. Requires
+`CAP_NET_ADMIN`; the daemon typically runs as root, an unprivileged
+run surfaces the metric families with no samples rather than
+erroring.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `shorewall_nft_ct_found_total` | Counter | `netns` | Lookups that matched an existing entry (most packets) |
+| `shorewall_nft_ct_invalid_total` | Counter | `netns` | Packets whose state could not be tracked — malformed, bad seq |
+| `shorewall_nft_ct_ignore_total` | Counter | `netns` | Packets not subjected to conntrack (e.g. `NOTRACK`) |
+| `shorewall_nft_ct_insert_failed_total` | Counter | `netns` | Insertions that lost a race with a concurrent flow |
+| `shorewall_nft_ct_drop_total` | Counter | `netns` | **Packets dropped because the conntrack table was full** |
+| `shorewall_nft_ct_early_drop_total` | Counter | `netns` | Entries evicted early to make room in a full table |
+| `shorewall_nft_ct_error_total` | Counter | `netns` | ICMP errors referring to untracked flows |
+| `shorewall_nft_ct_search_restart_total` | Counter | `netns` | Hash-chain search restarts (table resize / bucket churn) |
+
+**Operator watch list:** `insert_failed` + `drop` + `early_drop`
+climbing simultaneously is the conntrack-table-pressure signature —
+raise `nf_conntrack_max` or tune `nf_conntrack_tcp_timeout_*`.
+`invalid` climbing in isolation usually means bogus traffic or a
+state-machine mismatch (one-way traffic, asymmetric routing).
 
 ### dnstap pipeline metrics (only when `--listen-api` is set)
 
