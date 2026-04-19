@@ -171,11 +171,26 @@ class ParentWorker:
 
     async def _start_forked(self) -> None:
         parent_t, worker_t = WorkerTransport.pair()
+        tracker = self._tracker
         pid = os.fork()
         if pid == 0:
             # Child: close parent's end, run the worker entrypoint.
+            # The tracker is inherited copy-on-write; build the lookup
+            # closure here so the worker can resolve set_id → name
+            # without any IPC round-trip.
             parent_t.close()
-            rc = nft_worker_entrypoint(self.netns, worker_t.fileno)
+            from shorewall_nft.nft.dns_sets import qname_to_set_name
+
+            def _lookup(key: tuple[int, int]) -> str | None:
+                entry = tracker.name_for(key[0])
+                if entry is None:
+                    return None
+                qname, family = entry
+                return qname_to_set_name(
+                    qname, "v4" if family == 4 else "v6")
+
+            rc = nft_worker_entrypoint(
+                self.netns, worker_t.fileno, lookup=_lookup)
             os._exit(rc)
         worker_t.close()
         self._transport = parent_t

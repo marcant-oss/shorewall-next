@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import os
 import socket
+import struct
 from dataclasses import dataclass
 
 # Tune to cover the largest reply — typically REPLY_HEADER_LEN + error
@@ -51,7 +52,20 @@ DEFAULT_RECV_BUF = 4096
 # respawns it. Must be long enough that a slow nft commit doesn't
 # trip it — libnftables cmd() typically completes in <50 ms per
 # batch, so 2 s leaves three orders of magnitude headroom.
+#
+# Applied via SO_SNDTIMEO only (not socket.settimeout which would also
+# set SO_RCVTIMEO). Workers must block on recv indefinitely — the first
+# batch may arrive tens of seconds after fork, e.g. on a slow pull-
+# resolver startup. Only the send direction needs a bounded timeout.
 DEFAULT_SEND_TIMEOUT = 2.0
+
+
+def _set_sndtimeo(sock: socket.socket, timeout: float) -> None:
+    """Apply SO_SNDTIMEO without touching SO_RCVTIMEO."""
+    secs = int(timeout)
+    usecs = int((timeout - secs) * 1_000_000)
+    tv = struct.pack("@ll", secs, usecs)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, tv)
 
 
 @dataclass
@@ -90,7 +104,7 @@ class WorkerTransport:
     ) -> None:
         self._sock = sock
         if send_timeout is not None:
-            self._sock.settimeout(send_timeout)
+            _set_sndtimeo(self._sock, send_timeout)
         self._recv_buf = bytearray(recv_buf_size)
         self._recv_view = memoryview(self._recv_buf)
         self.stats = TransportStats()

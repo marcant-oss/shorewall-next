@@ -383,11 +383,16 @@ class InstanceManager:
 
         merged_dns = DnsSetRegistry()
         merged_dnsr = DnsrRegistry()
+        # Maps each pull-enabled primary qname to the list of netns that
+        # need it populated.  Built here so PullResolver can submit IPs to
+        # every instance netns that declares the group, not just one.
+        qname_netns: dict[str, list[str]] = {}
         for state in self._states.values():
             if state.last_dns_registry is not None:
                 for spec in state.last_dns_registry.iter_sorted():
                     merged_dns.add_spec(spec)
             if state.last_dnsr_registry is not None:
+                ns = state.cfg.netns
                 # Merge via add_from_rule so duplicate primaries across
                 # instances combine their qnames and OR their
                 # pull_enabled flags correctly.
@@ -404,6 +409,10 @@ class InstanceManager:
                     merged.size = group.size
                     if group.comment and not merged.comment:
                         merged.comment = group.comment
+                    if group.pull_enabled:
+                        targets = qname_netns.setdefault(group.primary_qname, [])
+                        if ns not in targets:
+                            targets.append(ns)
 
         self._tracker.load_registry(merged_dns)
 
@@ -428,7 +437,8 @@ class InstanceManager:
             self._pull_resolver = await self._pull_resolver_factory(merged_dnsr)
 
         if self._pull_resolver is not None:
-            await self._pull_resolver.update_registry(merged_dnsr)
+            await self._pull_resolver.update_registry(
+                merged_dnsr, qname_netns=qname_netns)
 
         log.info(
             "instance: merged %d instance(s) → %d dns, %d dnsr",

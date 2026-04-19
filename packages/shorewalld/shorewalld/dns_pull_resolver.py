@@ -95,7 +95,12 @@ class PullResolver:
     ) -> None:
         self._tracker = tracker
         self._writer = writer
-        self._netns = default_netns
+        self._default_netns = default_netns
+        # Per-group override: primary_qname → [netns, ...].
+        # Set via update_registry(qname_netns=...) by InstanceManager so
+        # each instance's groups write to their own netns.  Falls back to
+        # _default_netns when the mapping has no entry for a group.
+        self._group_netns: dict[str, list[str]] = {}
         self._max_ttl = max_ttl
         self._min_retry = min_retry
         self._jitter = max(0.0, jitter)
@@ -201,7 +206,11 @@ class PullResolver:
         log.info("pull_resolver: refresh triggered (%d group(s))", count)
         return count
 
-    async def update_registry(self, dnsr_registry: DnsrRegistry) -> None:
+    async def update_registry(
+        self,
+        dnsr_registry: DnsrRegistry,
+        qname_netns: dict[str, list[str]] | None = None,
+    ) -> None:
         """Replace active groups with those from *dnsr_registry*.
 
         Preserves existing heap entries' ``next_at`` for unchanged
@@ -211,6 +220,11 @@ class PullResolver:
         silently skipped when popped, and an in-flight resolve for a
         removed primary is not rescheduled. Asyncio single-threaded —
         no lock needed.
+
+        When *qname_netns* is provided it replaces the per-group netns
+        routing table so each group's IPs land in the correct netns.
+        Callers (InstanceManager) pass this on every registry update so
+        the mapping stays in sync with the live instance set.
         """
         new_primaries = {
             g.primary_qname: g
@@ -232,6 +246,8 @@ class PullResolver:
         # Drop refresh-pending markers for primaries that no longer
         # exist so the run loop doesn't re-queue ghost entries.
         self._refresh_pending &= set(new_primaries)
+        if qname_netns is not None:
+            self._group_netns = dict(qname_netns)
         self._wake.set()
         log.info(
             "pull_resolver: registry updated (%d group(s))",
@@ -241,6 +257,10 @@ class PullResolver:
     @property
     def group_count(self) -> int:
         return len(self._primaries)
+
+    def _netns_for(self, primary_qname: str) -> list[str]:
+        """Return the target netns list for *primary_qname*, or [default]."""
+        return self._group_netns.get(primary_qname) or [self._default_netns]
 
     # ── internal loop ────────────────────────────────────────────────────
 
@@ -361,8 +381,9 @@ class PullResolver:
                 if set_id is None:
                     continue
                 prop = Proposal(set_id=set_id, ip_bytes=ip_bytes, ttl=ttl)
-                self._writer.submit(
-                    netns=self._netns, family=family, proposal=prop)
+                for netns in self._netns_for(group.primary_qname):
+                    self._writer.submit(
+                        netns=netns, family=family, proposal=prop)
                 self.metrics.entries_submitted_total += 1
 
         self.metrics.resolves_total += 1
