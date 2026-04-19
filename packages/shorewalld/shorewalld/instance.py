@@ -11,6 +11,7 @@ the control socket (``register-instance`` / ``reload-instance``).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -135,6 +136,11 @@ class InstanceManager:
         self._states: dict[str, _InstanceState] = {
             cfg.name: _InstanceState(cfg=cfg) for cfg in configs
         }
+        # Serialises register/reload/deregister so concurrent control-socket
+        # clients can't interleave inside _apply_merged (destructive
+        # tracker.load_registry) or the register-resync sequence
+        # (clear_elements → respawn_netns → pull_resolver.refresh).
+        self._write_lock = asyncio.Lock()
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -154,15 +160,16 @@ class InstanceManager:
 
         *name* = ``None`` reloads all instances.
         """
-        if name is None:
-            for state in self._states.values():
+        async with self._write_lock:
+            if name is None:
+                for state in self._states.values():
+                    await self._load_instance(state)
+            else:
+                state = self._states.get(name)
+                if state is None:
+                    log.warning("instance: reload: unknown instance %r", name)
+                    return
                 await self._load_instance(state)
-        else:
-            state = self._states.get(name)
-            if state is None:
-                log.warning("instance: reload: unknown instance %r", name)
-                return
-            await self._load_instance(state)
 
     async def register(
         self,
@@ -192,24 +199,25 @@ class InstanceManager:
 
         Returns the number of DNS qnames loaded for this instance.
         """
-        if config.name not in self._states:
-            self._states[config.name] = _InstanceState(cfg=config)
-            log.info(
-                "instance: registering new instance %r (%s, netns=%r)",
-                config.name, config.config_dir, config.netns,
-            )
-        else:
-            self._states[config.name].cfg = config
-            log.info("instance: re-registering instance %r", config.name)
-        state = self._states[config.name]
-        if dns_payload is not None:
-            await self._load_instance_from_payload(state, dns_payload)
-        else:
-            await self._load_instance(state)
-        await self._resync_instance_after_register(state)
-        if self._cache is not None and config.name not in self._static_names:
-            self._cache.update(config, dns_payload)
-        return state.last_n_qnames
+        async with self._write_lock:
+            if config.name not in self._states:
+                self._states[config.name] = _InstanceState(cfg=config)
+                log.info(
+                    "instance: registering new instance %r (%s, netns=%r)",
+                    config.name, config.config_dir, config.netns,
+                )
+            else:
+                self._states[config.name].cfg = config
+                log.info("instance: re-registering instance %r", config.name)
+            state = self._states[config.name]
+            if dns_payload is not None:
+                await self._load_instance_from_payload(state, dns_payload)
+            else:
+                await self._load_instance(state)
+            await self._resync_instance_after_register(state)
+            if self._cache is not None and config.name not in self._static_names:
+                self._cache.update(config, dns_payload)
+            return state.last_n_qnames
 
     async def _resync_instance_after_register(
         self, state: "_InstanceState",
@@ -258,14 +266,15 @@ class InstanceManager:
         names shared with other instances remain active. DNSR groups
         from this instance are removed from the pull resolver.
         """
-        if name not in self._states:
-            log.warning("instance: deregister: unknown instance %r", name)
-            return
-        del self._states[name]
-        log.info("instance: deregistered %r", name)
-        if self._cache is not None:
-            self._cache.remove(name)
-        await self._apply_merged()
+        async with self._write_lock:
+            if name not in self._states:
+                log.warning("instance: deregister: unknown instance %r", name)
+                return
+            del self._states[name]
+            log.info("instance: deregistered %r", name)
+            if self._cache is not None:
+                self._cache.remove(name)
+            await self._apply_merged()
 
     def status(self) -> list[dict]:
         """Return a status list for the control server."""
