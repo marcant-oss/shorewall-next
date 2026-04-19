@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **shorewalld: dnstap two-pass filter + pbdns zero-copy RR storage**
+  — the dnstap decoder now checks the qname against the allowlist
+  *before* the expensive dnspython parse. At a typical ≥95 % drop
+  rate this saves most of the dnspython CPU on the 20 k fps hot
+  path, aligning the code with the "filter before decode"
+  doctrine. New counter
+  `shorewalld_dnstap_frames_dropped_not_allowlisted_total` exposes
+  the filter's miss rate. In parallel, `pbdns.py` drops two redundant
+  `bytes(rr.rdata)` copies per accepted frame — protobuf already
+  returns immutable `bytes` — removing ~40 k avoidable allocations/s
+  at 20 k fps.
+
 - **shorewalld: per-DNS-set load metrics + worker dispatch histograms**
   — operator can now see which qnames carry the DNS update load and
   how long each batch takes to land in the kernel.

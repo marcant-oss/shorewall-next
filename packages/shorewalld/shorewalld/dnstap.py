@@ -45,6 +45,7 @@ from typing import Any
 
 from shorewall_nft.nft.netlink import NftError, NftInterface
 
+from .dns_wire import extract_qname
 from .exporter import CollectorBase, _MetricFamily
 from .framestream import (
     CONTROL_STOP,
@@ -286,6 +287,7 @@ class DnstapMetrics:
         self.frames_dropped_queue_full = 0
         self.frames_dropped_not_client_response = 0
         self.frames_dropped_not_a_or_aaaa = 0
+        self.frames_dropped_not_allowlisted = 0
         self.connections = 0
         self.workers_busy = 0
         self._lock = threading.Lock()
@@ -304,6 +306,8 @@ class DnstapMetrics:
                     self.frames_dropped_not_client_response,
                 "frames_dropped_not_a_or_aaaa":
                     self.frames_dropped_not_a_or_aaaa,
+                "frames_dropped_not_allowlisted":
+                    self.frames_dropped_not_allowlisted,
                 "connections": self.connections,
                 "workers_busy": self.workers_busy,
             }
@@ -455,11 +459,27 @@ class DecodeWorkerPool:
         if msg_type not in RESPONSE_MESSAGE_TYPES:
             self._metrics.inc("frames_dropped_not_client_response")
             return
+
+        # Two-pass filter (CLAUDE.md §Performance doctrine "Filter
+        # before decode"): a cheap qname walk + allowlist check
+        # before dnspython's from_wire(). Typical deployments have
+        # >95 % drop rate against the allowlist, so skipping the
+        # full parse on misses is the single biggest CPU win in
+        # the hot path. When no allowlist is configured every frame
+        # is accepted and the walk would be wasted work — bypass.
+        if self._filter.allowlist is not None:
+            extracted = extract_qname(wire)
+            if extracted is None:
+                self._metrics.inc("frames_decode_error")
+                return
+            qname, _ = extracted
+            if not self._filter.allows(qname):
+                self._metrics.inc("frames_dropped_not_allowlisted")
+                return
+
         upd = parse_dns_response(wire)
         if upd is None:
             self._metrics.inc("frames_dropped_not_a_or_aaaa")
-            return
-        if not self._filter.allows(upd.qname):
             return
         self._metrics.inc("frames_accepted")
         self._loop.call_soon_threadsafe(self._on_update, upd)
@@ -749,6 +769,10 @@ class DnstapMetricsCollector(CollectorBase):
         counter("shorewalld_dnstap_frames_dropped_not_a_or_aaaa_total",
                 "dnstap frames with no A/AAAA answers",
                 snap["frames_dropped_not_a_or_aaaa"])
+        counter("shorewalld_dnstap_frames_dropped_not_allowlisted_total",
+                "dnstap frames whose qname was not in the allowlist "
+                "(rejected by the two-pass filter before dnspython parse)",
+                snap["frames_dropped_not_allowlisted"])
 
         gauge("shorewalld_dnstap_connections",
               "Currently connected dnstap producers (pdns_recursor)",
