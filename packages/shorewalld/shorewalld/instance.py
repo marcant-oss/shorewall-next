@@ -179,6 +179,17 @@ class InstanceManager:
         directly from it — no file I/O.  Without it the legacy file-based
         path is used as a fallback.
 
+        Every explicit registration is treated as a potential
+        ``shorewall-nft start/restart/reload`` signal — the operator just
+        told us their side of the nft table state has changed.  After the
+        allowlist is loaded we therefore:
+
+        1. Respawn the forked worker for the instance's netns so it picks
+           up any fresh libnftables handle / rebuilt table, and
+        2. Drop cached ``(ip, deadline)`` entries for this instance's
+           qnames so ``propose()`` stops DEDUP'ing against deadlines that
+           describe a kernel state that no longer exists.
+
         Returns the number of DNS qnames loaded for this instance.
         """
         if config.name not in self._states:
@@ -195,9 +206,50 @@ class InstanceManager:
             await self._load_instance_from_payload(state, dns_payload)
         else:
             await self._load_instance(state)
+        await self._resync_instance_after_register(state)
         if self._cache is not None and config.name not in self._static_names:
             self._cache.update(config, dns_payload)
         return state.last_n_qnames
+
+    async def _resync_instance_after_register(
+        self, state: "_InstanceState",
+    ) -> None:
+        """Force a clean restart of the write-path for one instance.
+
+        Intended for the control-socket ``register-instance`` path only.
+        For in-process reloads (where the nft table was NOT recreated) the
+        existing ``_apply_merged`` delta logic is sufficient.
+        """
+        qnames: list[str] = []
+        if state.last_dns_registry is not None:
+            qnames.extend(
+                spec.qname for spec in state.last_dns_registry.iter_sorted()
+            )
+        set_ids = self._tracker.set_ids_for_qnames(qnames)
+        dropped = self._tracker.clear_elements(set_ids) if set_ids else 0
+        if state.cfg.netns:
+            # Forked worker: re-fork so it sees the current tracker and
+            # talks to a fresh libnftables handle inside the (possibly
+            # just-recreated) netns table.
+            await self._router.respawn_netns(state.cfg.netns)
+        # Kick the pull resolver so it re-resolves this instance's
+        # pull-enabled groups immediately.  Without this, the cache we
+        # just cleared would stay mirrored in an empty kernel set until
+        # the next scheduled resolve (up to ttl_floor × 0.8 seconds).
+        if (
+            self._pull_resolver is not None
+            and state.last_dnsr_registry is not None
+        ):
+            for group in state.last_dnsr_registry.iter_sorted():
+                if group.pull_enabled:
+                    await self._pull_resolver.refresh(group.primary_qname)
+        log.info(
+            "instance %s: register resync — dropped %d cached element(s) "
+            "across %d set(s)%s",
+            state.cfg.name, dropped, len(set_ids),
+            f", respawned worker for netns {state.cfg.netns!r}"
+            if state.cfg.netns else " (default netns; no worker respawn)",
+        )
 
     async def deregister(self, name: str) -> None:
         """Remove an instance and recompute the merged tracker/pull_resolver.
