@@ -68,6 +68,7 @@ from .batch_codec import (
     BATCH_OP_DEL,
     CTRL_SHUTDOWN,
     CTRL_SNAPSHOT,
+    MAGIC_REQUEST,
     REPLY_ERROR,
     REPLY_OK,
     REPLY_SHUTDOWN,
@@ -79,6 +80,21 @@ from .batch_codec import (
     iter_ops,
 )
 from .logsetup import get_logger
+from .read_codec import (
+    MAGIC_READ_REQ,
+    MAX_FILE_BYTES,
+    READ_KIND_COUNT_LINES,
+    READ_KIND_FILE,
+    READ_STATUS_ERROR,
+    READ_STATUS_NOT_FOUND,
+    READ_STATUS_OK,
+    READ_STATUS_TOO_LARGE,
+    ReadWireError,
+    decode_read_request,
+    encode_line_count,
+    encode_read_response_into,
+    peek_magic,
+)
 from .worker_transport import WorkerTransport
 
 if TYPE_CHECKING:
@@ -98,11 +114,12 @@ _PR_SET_PDEATHSIG = 1
 NFT_FAMILY = "inet"
 NFT_TABLE = "shorewall"
 
-# Reply buffer per worker. Sized for the largest error string we
-# might want to return (1024 bytes covers any libnftables error);
-# allocated once and reused forever to stay zero-alloc in the
-# steady state.
-_REPLY_BUF_SIZE = 2048
+# Reply buffer per worker. Sized for the largest response we might
+# emit: a read-RPC file payload (up to ``MAX_FILE_BYTES`` ≈ 60 KiB)
+# plus its response header. Batch acks are <2 KiB and fit trivially.
+# Allocated once and reused for every reply to stay zero-alloc in
+# the steady state.
+_REPLY_BUF_SIZE = 65536
 
 
 def _set_proc_name(netns_name: str) -> None:
@@ -252,22 +269,63 @@ def build_nft_script(
 # ---------------------------------------------------------------------------
 
 
+def _handle_read(kind: int, path: str) -> tuple[int, bytes]:
+    """Execute a read-RPC in the worker's current netns.
+
+    Returns ``(status, data)`` where ``data`` is an opaque payload:
+
+    * ``READ_KIND_FILE`` + OK → raw file bytes (capped at
+      :data:`MAX_FILE_BYTES`).
+    * ``READ_KIND_COUNT_LINES`` + OK → 8-byte big-endian line count.
+    * non-OK → UTF-8 error string (optional).
+
+    Pure function w.r.t. the worker — never raises, never touches
+    libnftables, never allocates more than one read buffer's worth.
+    """
+    try:
+        if kind == READ_KIND_FILE:
+            with open(path, "rb") as f:
+                data = f.read(MAX_FILE_BYTES + 1)
+            if len(data) > MAX_FILE_BYTES:
+                return READ_STATUS_TOO_LARGE, (
+                    f"file > {MAX_FILE_BYTES} bytes; use count_lines"
+                    .encode("utf-8"))
+            return READ_STATUS_OK, data
+        elif kind == READ_KIND_COUNT_LINES:
+            n = 0
+            with open(path, "rb") as f:
+                for _ in f:
+                    n += 1
+            return READ_STATUS_OK, encode_line_count(n)
+        else:
+            return READ_STATUS_ERROR, (
+                f"unknown read kind: {kind}".encode("utf-8"))
+    except FileNotFoundError:
+        return READ_STATUS_NOT_FOUND, b""
+    except PermissionError as e:
+        return READ_STATUS_NOT_FOUND, str(e).encode("utf-8")
+    except OSError as e:
+        return READ_STATUS_ERROR, str(e).encode("utf-8")
+
+
 def worker_main_loop(
     transport: WorkerTransport,
     nft: "NftInterface",
     set_name_lookup,
 ) -> int:
-    """Serve batches until shutdown or transport error.
+    """Serve batches and read-RPCs until shutdown or transport error.
 
-    Returns the process exit code: 0 on clean shutdown,
-    non-zero on transport error. Designed to be called as the
-    entire child-process body after the fork + setns + nft
-    initialisation.
+    Dispatches on the first four bytes of each incoming datagram:
 
-    ``set_name_lookup`` is a callable ``(set_id, family) -> str | None``
-    that the worker uses to translate batch ops into nft set names.
-    See :class:`~shorewalld.worker_router.ParentWorker`
-    for the production wiring.
+    * :data:`MAGIC_REQUEST` (``"SWNF"``) — batch op, applied via
+      libnftables.
+    * :data:`MAGIC_READ_REQ` (``"SWRR"``) — file read / line count
+      request, served from the worker's current netns. See
+      :mod:`shorewalld.read_codec`.
+
+    Returns the process exit code: 0 on clean shutdown, non-zero on
+    transport error. Designed to be called as the entire child-process
+    body after the fork + setns + nft initialisation.
     """
     reply_buf = bytearray(_REPLY_BUF_SIZE)
     log.info("nft-worker ready: pid=%d", os.getpid())
@@ -280,6 +338,32 @@ def worker_main_loop(
         if not view:
             log.info("worker eof; exiting")
             return 0
+
+        try:
+            magic = peek_magic(view)
+        except ReadWireError as e:
+            log.warning("worker wire error: %s", e)
+            continue
+
+        if magic == MAGIC_READ_REQ:
+            try:
+                req = decode_read_request(view)
+            except ReadWireError as e:
+                log.warning("worker read-rpc decode error: %s", e)
+                continue
+            status, data = _handle_read(req.kind, req.path)
+            try:
+                transport.send(encode_read_response_into(
+                    reply_buf, status=status,
+                    req_id=req.req_id, data=data))
+            except OSError:
+                return 1
+            continue
+
+        if magic != MAGIC_REQUEST:
+            log.warning("worker: unknown magic 0x%08x — dropping", magic)
+            continue
+
         try:
             header = decode_header(view)
         except WireError as e:
@@ -385,7 +469,7 @@ def nft_worker_entrypoint(
         family=socket.AF_UNIX,
         type=socket.SOCK_SEQPACKET,
     )
-    transport = WorkerTransport(sock, recv_buf_size=4096)
+    transport = WorkerTransport(sock)
 
     if lookup is None:
         def lookup(_key: tuple[int, int]) -> str | None:  # type: ignore[misc]

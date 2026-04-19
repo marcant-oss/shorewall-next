@@ -12,18 +12,59 @@ from typing import Any
 
 from shorewalld.exporter import (
     CollectorBase,
+    CtCollector,
+    FlowtableCollector,
+    NetstatCollector,
     NftCollector,
     NftScraper,
     ShorewalldRegistry,
+    SnmpCollector,
+    SockstatCollector,
+    SoftnetCollector,
     _CT_STAT_FIELDS,
     _extract_qdisc_row,
     _format_tc_handle,
     _LINK_STAT_FIELDS,
     _MetricFamily,
     _QDISC_FIELDS,
+    _neigh_state_name,
+    _parse_proc_net_snmp,
+    _parse_proc_net_snmp6,
+    _parse_proc_net_sockstat,
+    _parse_proc_net_softnet_stat,
     _sum_ct_stats_cpu,
 )
 from shorewall_nft.nft.netlink import NftError
+
+
+class FakeRouter:
+    """Stub for ``WorkerRouter`` exposing just the read/count APIs the
+    collectors use. ``files`` maps path → bytes (or None for NOT_FOUND);
+    ``line_counts`` maps path → int (or None for missing). Any path not
+    configured in either mapping returns ``None``.
+    """
+
+    def __init__(
+        self,
+        files: dict[str, bytes | None] | None = None,
+        line_counts: dict[str, int | None] | None = None,
+    ) -> None:
+        self.files = files or {}
+        self.line_counts = line_counts or {}
+        self.read_calls: list[tuple[str, str]] = []
+        self.count_calls: list[tuple[str, str]] = []
+
+    def read_file_sync(
+        self, netns: str, path: str, *, timeout: float = 5.0,
+    ) -> bytes | None:
+        self.read_calls.append((netns, path))
+        return self.files.get(path)
+
+    def count_lines_sync(
+        self, netns: str, path: str, *, timeout: float = 5.0,
+    ) -> int | None:
+        self.count_calls.append((netns, path))
+        return self.line_counts.get(path)
 
 # ── Fake NftInterface (matches the shape exporter.py actually calls) ─
 
@@ -518,3 +559,371 @@ def test_ct_stat_fields_cover_critical_counters():
         "shorewall_nft_ct_invalid_total",
     }
     assert required.issubset(metric_names)
+
+
+# ── /proc/net/snmp parser ────────────────────────────────────────────
+
+
+_SAMPLE_SNMP = (
+    "Ip: Forwarding DefaultTTL InReceives InHdrErrors InAddrErrors "
+    "ForwDatagrams InUnknownProtos InDiscards InDelivers OutRequests "
+    "OutDiscards OutNoRoutes ReasmTimeout ReasmReqds ReasmOKs ReasmFails\n"
+    "Ip: 1 64 1000 1 2 700 0 3 900 850 0 5 0 0 0 4\n"
+    "Icmp: InMsgs InErrors InDestUnreachs InTimeExcds OutMsgs OutDestUnreachs"
+    " OutTimeExcds InRedirects InEchos InEchoReps\n"
+    "Icmp: 50 0 12 3 40 7 2 0 10 8\n"
+    "Tcp: RtoAlgorithm RtoMin ActiveOpens PassiveOpens AttemptFails "
+    "EstabResets CurrEstab InSegs OutSegs RetransSegs InErrs OutRsts\n"
+    "Tcp: 1 200 123 456 7 8 42 9999 8888 77 0 22\n"
+    "Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors\n"
+    "Udp: 5000 120 3 4800 0 0\n"
+)
+
+
+def test_parse_proc_net_snmp_populates_all_blocks():
+    blocks = _parse_proc_net_snmp(_SAMPLE_SNMP)
+    assert set(blocks) == {"Ip", "Icmp", "Tcp", "Udp"}
+    assert blocks["Ip"]["ForwDatagrams"] == 700
+    assert blocks["Ip"]["OutNoRoutes"] == 5
+    assert blocks["Tcp"]["CurrEstab"] == 42
+    assert blocks["Tcp"]["RetransSegs"] == 77
+    assert blocks["Udp"]["NoPorts"] == 120
+
+
+def test_parse_proc_net_snmp_skips_malformed_pairs():
+    broken = "Ip: Forwarding\nIp: 1\nTrash no colon here\nIcmp: InMsgs\nIcmp: 7\n"
+    out = _parse_proc_net_snmp(broken)
+    # The trash line is skipped; Ip + Icmp still parse cleanly.
+    assert out["Ip"]["Forwarding"] == 1
+    assert out["Icmp"]["InMsgs"] == 7
+
+
+# ── /proc/net/snmp6 parser ───────────────────────────────────────────
+
+
+def test_parse_proc_net_snmp6_flat_keys():
+    text = (
+        "Ip6InReceives                   1234\n"
+        "Ip6OutForwDatagrams             42\n"
+        "Icmp6InMsgs                     17\n"
+        "garbage line without a number\n"
+        "Udp6NoPorts                     5\n"
+    )
+    out = _parse_proc_net_snmp6(text)
+    assert out["Ip6InReceives"] == 1234
+    assert out["Ip6OutForwDatagrams"] == 42
+    assert out["Icmp6InMsgs"] == 17
+    assert out["Udp6NoPorts"] == 5
+    assert "garbage" not in out
+
+
+# ── /proc/net/sockstat parser ────────────────────────────────────────
+
+
+def test_parse_proc_net_sockstat_extracts_kv_pairs():
+    text = (
+        "sockets: used 1234\n"
+        "TCP: inuse 42 orphan 0 tw 7 alloc 55 mem 23\n"
+        "UDP: inuse 5 mem 3\n"
+        "FRAG: inuse 0 memory 0\n"
+    )
+    out = _parse_proc_net_sockstat(text)
+    assert out["sockets"]["used"] == 1234
+    assert out["TCP"]["inuse"] == 42
+    assert out["TCP"]["tw"] == 7
+    assert out["UDP"]["mem"] == 3
+    assert out["FRAG"]["memory"] == 0
+
+
+def test_parse_proc_net_sockstat_v6_subset():
+    # sockstat6 only carries the ``inuse`` buckets (+ FRAG memory).
+    text = (
+        "TCP6: inuse 12\n"
+        "UDP6: inuse 3\n"
+        "FRAG6: inuse 0 memory 0\n"
+    )
+    out = _parse_proc_net_sockstat(text)
+    assert out["TCP6"]["inuse"] == 12
+    assert out["UDP6"]["inuse"] == 3
+
+
+# ── /proc/net/softnet_stat parser ────────────────────────────────────
+
+
+def test_parse_proc_net_softnet_stat_hex_decodes_columns():
+    # Two CPUs, 11 columns each (matches the 5.x+ kernel layout).
+    text = (
+        "00000123 00000004 00000002 00000000 00000000 "
+        "00000000 00000000 00000000 00000000 0000000a 0000001f\n"
+        "00000456 00000000 00000005 00000000 00000000 "
+        "00000000 00000000 00000000 00000000 0000000b 00000001\n"
+    )
+    rows = _parse_proc_net_softnet_stat(text)
+    assert len(rows) == 2
+    assert rows[0][0] == 0x123
+    assert rows[0][1] == 4
+    assert rows[0][2] == 2
+    # received_rps is column 9, flow_limit column 10.
+    assert rows[0][9] == 10
+    assert rows[0][10] == 0x1F
+    assert rows[1][0] == 0x456
+
+
+# ── NUD state translation ────────────────────────────────────────────
+
+
+def test_neigh_state_name_decodes_common_masks():
+    # NUD_REACHABLE == 0x02
+    assert _neigh_state_name(0x02) == "reachable"
+    # NUD_FAILED == 0x20
+    assert _neigh_state_name(0x20) == "failed"
+    # NUD_PERMANENT == 0x80 beats NUD_NOARP when both set
+    assert _neigh_state_name(0x80 | 0x40) == "permanent"
+    # Zero → "none" placeholder
+    assert _neigh_state_name(0) == "none"
+
+
+# ── SnmpCollector end-to-end via FakeRouter ──────────────────────────
+
+
+def test_snmp_collector_emits_ip_family_split():
+    snmp = (
+        "Ip: Forwarding DefaultTTL ForwDatagrams OutNoRoutes InDiscards "
+        "InHdrErrors InAddrErrors InDelivers OutRequests ReasmFails\n"
+        "Ip: 1 64 111 22 3 0 0 500 480 0\n"
+        "Tcp: RtoAlgorithm RtoMin ActiveOpens PassiveOpens AttemptFails "
+        "EstabResets CurrEstab InSegs OutSegs RetransSegs InErrs OutRsts\n"
+        "Tcp: 1 200 0 0 0 0 9 0 0 0 0 0\n"
+        "Udp: InDatagrams NoPorts InErrors OutDatagrams "
+        "RcvbufErrors SndbufErrors\n"
+        "Udp: 0 0 0 0 0 0\n"
+        "Icmp: InMsgs OutMsgs InDestUnreachs OutDestUnreachs InTimeExcds "
+        "OutTimeExcds InRedirects InEchos InEchoReps\n"
+        "Icmp: 0 0 0 0 0 0 0 0 0\n"
+    )
+    snmp6 = (
+        "Ip6OutForwDatagrams     999\n"
+        "Ip6OutNoRoutes          33\n"
+    )
+    router = FakeRouter(files={
+        "/proc/net/snmp": snmp.encode(),
+        "/proc/net/snmp6": snmp6.encode(),
+    })
+    col = SnmpCollector("fw", router)
+
+    families = col.collect()
+    fwd = _get_family(families, "shorewall_nft_ip_forwarded_total")
+    no_route = _get_family(families, "shorewall_nft_ip_out_no_routes_total")
+    tcp_estab = _get_family(families, "shorewall_nft_tcp_curr_estab")
+
+    # IPv4 + IPv6 family split.
+    samples = {tuple(lbl): val for lbl, val in fwd.samples}
+    assert samples[("fw", "ipv4")] == 111.0
+    assert samples[("fw", "ipv6")] == 999.0
+
+    samples = {tuple(lbl): val for lbl, val in no_route.samples}
+    assert samples[("fw", "ipv4")] == 22.0
+    assert samples[("fw", "ipv6")] == 33.0
+
+    # TCP has no family label (single counter covers both).
+    assert tcp_estab.samples == [(["fw"], 9.0)]
+
+
+def test_snmp_collector_returns_empty_families_when_router_returns_none():
+    router = FakeRouter()  # no files configured
+    col = SnmpCollector("fw", router)
+    families = col.collect()
+    # Every family is declared but empty — keeps `absent()` alerts stable.
+    assert {f.name for f in families}.issuperset(
+        {"shorewall_nft_ip_forwarded_total",
+         "shorewall_nft_tcp_curr_estab"})
+    for fam in families:
+        assert fam.samples == []
+
+
+# ── NetstatCollector ─────────────────────────────────────────────────
+
+
+def test_netstat_collector_extracts_tcpext_block():
+    text = (
+        "TcpExt: ListenOverflows ListenDrops TCPBacklogDrop TCPTimeouts "
+        "TCPSynRetrans PruneCalled TCPOFODrop TCPAbortOnData "
+        "TCPAbortOnMemory TCPRetransFail\n"
+        "TcpExt: 1 2 3 4 5 6 7 8 9 10\n"
+        "IpExt: InNoRoutes\n"
+        "IpExt: 99\n"
+    )
+    router = FakeRouter(files={"/proc/net/netstat": text.encode()})
+    col = NetstatCollector("fw", router)
+
+    families = col.collect()
+    overflows = _get_family(
+        families, "shorewall_nft_tcpext_listen_overflows_total")
+    syn_retrans = _get_family(
+        families, "shorewall_nft_tcpext_syn_retrans_total")
+
+    assert overflows.samples == [(["fw"], 1.0)]
+    assert syn_retrans.samples == [(["fw"], 5.0)]
+
+
+# ── SockstatCollector ────────────────────────────────────────────────
+
+
+def test_sockstat_collector_emits_family_split_for_inuse():
+    v4 = (
+        "sockets: used 100\n"
+        "TCP: inuse 42 orphan 1 tw 7 alloc 50 mem 23\n"
+        "UDP: inuse 5 mem 3\n"
+        "FRAG: inuse 0 memory 0\n"
+    )
+    v6 = (
+        "TCP6: inuse 12\n"
+        "UDP6: inuse 4\n"
+        "FRAG6: inuse 0 memory 0\n"
+    )
+    router = FakeRouter(files={
+        "/proc/net/sockstat": v4.encode(),
+        "/proc/net/sockstat6": v6.encode(),
+    })
+    col = SockstatCollector("fw", router)
+
+    families = col.collect()
+    tcp_inuse = _get_family(families, "shorewall_nft_sockstat_tcp_inuse")
+    tcp_orphan = _get_family(families, "shorewall_nft_sockstat_tcp_orphan")
+    sockets_used = _get_family(families, "shorewall_nft_sockstat_sockets_used")
+
+    samples = {tuple(lbl): val for lbl, val in tcp_inuse.samples}
+    assert samples[("fw", "ipv4")] == 42.0
+    assert samples[("fw", "ipv6")] == 12.0
+
+    # v4-only metrics carry no family label.
+    assert tcp_orphan.samples == [(["fw"], 1.0)]
+    assert sockets_used.samples == [(["fw"], 100.0)]
+
+
+# ── SoftnetCollector ─────────────────────────────────────────────────
+
+
+def test_softnet_collector_labels_per_cpu():
+    # Two CPUs, 11 columns each.
+    text = (
+        "00000064 00000001 00000002 00000000 00000000 "
+        "00000000 00000000 00000000 00000000 00000005 00000000\n"
+        "00000100 00000003 00000004 00000000 00000000 "
+        "00000000 00000000 00000000 00000000 00000007 00000002\n"
+    )
+    router = FakeRouter(files={"/proc/net/softnet_stat": text.encode()})
+    col = SoftnetCollector("fw", router)
+
+    families = col.collect()
+    processed = _get_family(
+        families, "shorewall_nft_softnet_processed_total")
+    dropped = _get_family(
+        families, "shorewall_nft_softnet_dropped_total")
+    rps = _get_family(
+        families, "shorewall_nft_softnet_received_rps_total")
+
+    by_cpu = {lbl[1]: val for lbl, val in processed.samples}
+    assert by_cpu == {"0": 100.0, "1": 256.0}
+    by_cpu = {lbl[1]: val for lbl, val in dropped.samples}
+    assert by_cpu == {"0": 1.0, "1": 3.0}
+    by_cpu = {lbl[1]: val for lbl, val in rps.samples}
+    assert by_cpu == {"0": 5.0, "1": 7.0}
+
+
+# ── CtCollector with router-sourced reads ────────────────────────────
+
+
+def test_ct_collector_emits_counts_and_fib_via_router():
+    router = FakeRouter(
+        files={
+            "/proc/sys/net/netfilter/nf_conntrack_count": b"1234\n",
+            "/proc/sys/net/netfilter/nf_conntrack_max": b"65536\n",
+            "/proc/sys/net/netfilter/nf_conntrack_buckets": b"16384\n",
+        },
+        # /proc/net/route has a one-line header CtCollector subtracts.
+        line_counts={
+            "/proc/net/route": 42 + 1,
+            "/proc/net/ipv6_route": 900_000,
+        },
+    )
+    col = CtCollector("fw", router)
+    families = col.collect()
+
+    count = _get_family(families, "shorewall_nft_ct_count")
+    mx = _get_family(families, "shorewall_nft_ct_max")
+    buckets = _get_family(families, "shorewall_nft_ct_buckets")
+    fib = _get_family(families, "shorewall_nft_fib_routes")
+
+    assert count.samples == [(["fw"], 1234.0)]
+    assert mx.samples == [(["fw"], 65536.0)]
+    assert buckets.samples == [(["fw"], 16384.0)]
+    fib_samples = {tuple(lbl): val for lbl, val in fib.samples}
+    assert fib_samples[("fw", "ipv4")] == 42.0
+    assert fib_samples[("fw", "ipv6")] == 900_000.0
+
+
+def test_ct_collector_skips_missing_samples():
+    # Router returns None for everything -> all families present, empty.
+    col = CtCollector("fw", FakeRouter())
+    families = col.collect()
+    # Four families regardless of data availability.
+    names = {f.name for f in families}
+    assert names == {
+        "shorewall_nft_ct_count",
+        "shorewall_nft_ct_max",
+        "shorewall_nft_ct_buckets",
+        "shorewall_nft_fib_routes",
+    }
+    for fam in families:
+        assert fam.samples == []
+
+
+# ── FlowtableCollector via NftScraper snapshot ───────────────────────
+
+
+def _make_ruleset_with_flowtables():
+    """Variant of :func:`_make_ruleset` that also includes two
+    flowtable descriptors. Mirrors the JSON layout libnftables emits.
+    """
+    return {
+        "nftables": [
+            {"table": {"family": "inet", "name": "shorewall", "handle": 1}},
+            {"flowtable": {
+                "family": "inet", "table": "shorewall",
+                "name": "ft_main", "hook": "ingress", "prio": "filter",
+                "devices": ["bond0.10", "bond0.20"],
+                "flags": ["offload"]}},
+            {"flowtable": {
+                "family": "inet", "table": "shorewall",
+                "name": "ft_mgmt", "hook": "ingress", "prio": "filter",
+                "devices": [],
+                "flags": ["offload"]}},
+        ]
+    }
+
+
+def test_flowtable_collector_emits_device_counts_and_existence():
+    fake = FakeNftInterface(tables={"fw": _make_ruleset_with_flowtables()})
+    scraper = NftScraper(fake, ttl_s=60.0)
+    col = FlowtableCollector("fw", scraper)
+
+    families = col.collect()
+    devices = _get_family(families, "shorewall_nft_flowtable_devices")
+    exists = _get_family(families, "shorewall_nft_flowtable_exists")
+
+    dev_map = {lbl[1]: val for lbl, val in devices.samples}
+    assert dev_map == {"ft_main": 2.0, "ft_mgmt": 0.0}
+
+    exist_labels = {(lbl[1], lbl[2]) for lbl, _ in exists.samples}
+    assert exist_labels == {("ft_main", "ingress"), ("ft_mgmt", "ingress")}
+
+
+def test_flowtable_collector_empty_on_missing_table():
+    fake = FakeNftInterface(tables={})
+    scraper = NftScraper(fake, ttl_s=60.0)
+    col = FlowtableCollector("ghost", scraper)
+
+    families = col.collect()
+    for fam in families:
+        assert fam.samples == []

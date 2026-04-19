@@ -9,6 +9,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **shorewalld: worker-delegated `/proc` reads for all per-netns
+  file-backed collectors** — the Prometheus scrape thread no longer
+  calls `setns(2)` itself; every `/proc/net/*` and
+  `/proc/sys/net/netfilter/*` read now goes through the nft-worker
+  that is already pinned to the target netns via
+  `setns(CLONE_NEWNET)` at fork time. New wire protocol
+  (`shorewalld.read_codec`) sits alongside the SetWriter batch codec:
+  two magics `SWRR`/`SWRS` dispatched by the worker main loop, one
+  SEQPACKET round-trip per read, response capped at 60 KiB. Large
+  files (`/proc/net/ipv6_route` on a full-BGP router) use the
+  parallel `count_lines` RPC which ships an 8-byte integer regardless
+  of file size. For the daemon's own netns the in-process
+  `LocalWorker` short-circuits to a direct `open()` on the default
+  thread pool — no fork, no IPC — while keeping the same async API.
+  `WorkerRouter` is constructed early in `Daemon.run()` with
+  `tracker=None` so collectors can delegate reads from the first
+  scrape onwards; the DNS-set pipeline later calls
+  `attach_tracker()` and respawns any scrape-only workers so their
+  lookup closure picks up the real tracker.
+
+- **shorewalld: protocol-stack and connection-quality metrics** — six
+  new Prometheus collectors surface the kernel's own MIBs plus
+  per-CPU softirq state, all routed through the worker-delegated
+  read path above. Every metric carries the usual `netns` label and,
+  where applicable, a `family=ipv4|ipv6` label so one alerting rule
+  covers both stacks. Key additions per collector:
+
+  - `SnmpCollector` (`/proc/net/snmp` + `/proc/net/snmp6`) — IP
+    forwarding quality (`ip_forwarded_total`, `ip_out_no_routes_total`,
+    `ip_in_discards_total`), ICMP (`icmp_{in,out}_{msgs,dest_unreachs,
+    time_excds}_total`, `icmp_in_redirects_total`,
+    `icmp_in_echos_total`, `icmp_in_echo_reps_total`), UDP (datagrams
+    in/out, `no_ports`, rcv/snd-buf errors, csum errors) and TCP
+    (`curr_estab` gauge plus active/passive opens, attempt fails,
+    estab resets, retrans/in/out segs, in errs, out rsts, csum
+    errors). On a firewall these are the first-class SRE signal —
+    `OutNoRoutes` catches dead static routes or vanished BGP
+    sessions before the downstream complaints arrive.
+  - `NetstatCollector` (`/proc/net/netstat`) — curated `TcpExt`
+    counters: `listen_overflows`, `listen_drops`, `backlog_drop`
+    (SYN-flood / accept-queue exhaustion), `timeouts`, `syn_retrans`
+    (wire-level packet loss), `prune_called`, `ofo_drop`,
+    `abort_on_{data,memory}`, `retrans_fail`.
+  - `SockstatCollector` (`/proc/net/sockstat` + `sockstat6`) — TCP /
+    UDP / UDPLITE / RAW `inuse` with v4+v6 split, TCP `orphan`/`tw`/
+    `alloc`/`mem`, UDP `mem`, kernel-wide `sockets_used`, IP reassembly
+    queues + bytes. Socket churn (`tcp_tw`), kernel memory pressure
+    (`tcp_mem_pages`) and reassembly load (`frag_*`) all in one
+    collector.
+  - `SoftnetCollector` (`/proc/net/softnet_stat`) — per-CPU softirq
+    counters with `cpu` label: `processed`, `dropped`,
+    `time_squeeze`, `received_rps`, `flow_limit`. The only way to
+    see that one CPU is dropping packets at line rate while others
+    idle — critical on firewalls with uneven IRQ distribution.
+  - `NeighbourCollector` (`RTM_GETNEIGH` via pyroute2) — ARP / ND
+    cache entry counts labelled by `(iface, family, state)` where
+    state ∈ {reachable, stale, failed, incomplete, delay, probe,
+    permanent, noarp}. A spike in `state="failed"` is the
+    gateway-down signal.
+  - `AddressCollector` (`RTM_GETADDR` via pyroute2) — configured
+    address count per `(iface, family)`. A VIP disappearing during
+    a VRRP flap drops the gauge from N+1 to N for the affected
+    interface — easier to alert on than watching every address
+    individually.
+
+- **shorewalld: `FlowtableCollector` (per netns with a loaded
+  ruleset)** — extracts flowtable descriptors from the shared
+  `NftScraper` snapshot (zero extra netlink round-trips). Emits
+  `shorewall_nft_flowtable_devices{name}` (attached interfaces) and
+  `shorewall_nft_flowtable_exists{name,hook}=1`. Live flow counts
+  per flowtable are **not** emitted — libnftables' JSON output
+  carries only the flowtable definition, not the transient flow
+  entries; operators alert on `devices == 0` (interface detached)
+  and on an absent `exists` sample (flowtable disappeared after a
+  faulty reload).
+
+- **shorewalld: extended link & conntrack metrics** — same netlink
+  dumps as before, no extra round-trips.
+  - `LinkCollector` now emits `shorewall_nft_iface_carrier_changes_total`
+    (cumulative link up↔down transitions, authoritative kernel
+    counter for physical-layer flap — a jump without a matching VRRP
+    transition points at cable/SFP/switch-port trouble) and
+    `shorewall_nft_iface_mtu` (current MTU in bytes, catches
+    jumbo-negotiation regressions after an LACP reconfigure).
+  - `CtCollector` now emits `shorewall_nft_ct_buckets` (hash bucket
+    count from `nf_conntrack_buckets`) so the ratio `count / buckets`
+    directly expresses mean hash-chain length, and
+    `shorewall_nft_fib_routes{family}` (line count of `/proc/net/route`
+    respectively `/proc/net/ipv6_route`) which collapses on BGP
+    session loss before downstream reachability alerts fire.
+
 - **shorewalld: netlink-sourced link, qdisc, and conntrack-engine metrics**
   — three new Prometheus collectors built on direct pyroute2 API calls,
   zero forks, one dump per scrape per netns. All carry the usual `netns`

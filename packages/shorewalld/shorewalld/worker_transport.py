@@ -42,10 +42,13 @@ import socket
 import struct
 from dataclasses import dataclass
 
-# Tune to cover the largest reply — typically REPLY_HEADER_LEN + error
-# string. 4 KiB is comfortably big enough and still pocket change in
-# terms of memory (per worker).
-DEFAULT_RECV_BUF = 4096
+# Tune to cover the largest datagram we ship over this transport.
+# Batch replies fit in a few dozen bytes, but the read-RPC channel
+# (:mod:`shorewalld.read_codec`) carries /proc file contents up to
+# ``MAX_FILE_BYTES`` ≈ 60 KiB. 64 KiB leaves 4 KiB of margin for the
+# response header and future growth. Memory cost is still pocket
+# change per worker (two SEQPACKET fds × one buffer each).
+DEFAULT_RECV_BUF = 65536
 
 # Send timeout for the parent → worker direction. A worker that can't
 # drain within this window is considered stuck; the router kills and

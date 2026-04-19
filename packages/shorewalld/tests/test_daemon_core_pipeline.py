@@ -31,11 +31,20 @@ class _StubRegistry:
 class _StubRouter:
     """Router double that skips fork+setns and records add_netns calls."""
 
-    def __init__(self, *, tracker, loop) -> None:
+    def __init__(self, *, loop, tracker=None) -> None:
         self.tracker = tracker
         self.loop = loop
         self.added: list[str] = []
         self.shutdown_called = False
+
+    def attach_tracker(self, tracker) -> None:
+        self.tracker = tracker
+
+    def iter_workers(self):
+        return []
+
+    async def respawn_netns(self, netns: str) -> None:
+        pass
 
     async def add_netns(self, netns: str):
         self.added.append(netns)
@@ -54,6 +63,15 @@ class _StubRouter:
 
     async def shutdown(self) -> None:
         self.shutdown_called = True
+
+    # ── Read-RPC surface (scrape-thread sync) — no-op in tests ─────────
+    def read_file_sync(self, netns: str, path: str, *,
+                       timeout: float = 5.0):
+        return None
+
+    def count_lines_sync(self, netns: str, path: str, *,
+                         timeout: float = 5.0):
+        return None
 
 
 @pytest.fixture
@@ -121,7 +139,7 @@ def test_daemon_without_allowlist_does_not_build_pipeline(
 
             monkeypatch.setattr(
                 mod, "ProfileBuilder",
-                lambda nft, registry, scraper: _StubPB())
+                lambda nft, registry, scraper, router: _StubPB())
             monkeypatch.setattr(
                 mod, "NftScraper", lambda nft, ttl_s: object())
             monkeypatch.setattr(
@@ -132,7 +150,10 @@ def test_daemon_without_allowlist_does_not_build_pipeline(
         rc = await wrapped_run()
         assert rc == 0
         assert d._tracker is None
-        assert d._router is None
+        # The router is now created early in run() regardless of
+        # whether the DNS-set pipeline bootstraps, so the collectors
+        # can delegate /proc reads from the first scrape onwards.
+        assert d._router is None or d._router.tracker is None
         assert d._set_writer is None
         assert d._tracker_bridge is None
         assert d._state_store is None
@@ -148,7 +169,7 @@ def test_daemon_with_allowlist_builds_pipeline(
     router sees the configured netns list."""
     stub_router: _StubRouter | None = None
 
-    def _stub_router_ctor(*, tracker, loop):
+    def _stub_router_ctor(*, loop, tracker=None):
         nonlocal stub_router
         stub_router = _StubRouter(tracker=tracker, loop=loop)
         return stub_router
@@ -179,7 +200,7 @@ def test_daemon_with_allowlist_builds_pipeline(
 
         monkeypatch.setattr(
             core_mod, "ProfileBuilder",
-            lambda nft, registry, scraper: _StubPB())
+            lambda nft, registry, scraper, router: _StubPB())
         monkeypatch.setattr(
             core_mod, "NftScraper", lambda nft, ttl_s: object())
         monkeypatch.setattr(

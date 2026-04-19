@@ -7,18 +7,34 @@ without one), and each gets a different collector mix.
 
 Every profile always includes:
 
-* ``LinkCollector`` — per-iface RX/TX/errors/dropped via pyroute2
+* ``LinkCollector`` — per-iface RX/TX/errors/carrier/MTU via pyroute2
 * ``QdiscCollector`` — per-qdisc bytes/drops/qlen via pyroute2
+* ``NeighbourCollector`` — ARP / ND cache entry counts by state
+* ``AddressCollector`` — configured addresses per iface / family
 * ``ConntrackStatsCollector`` — per-netns conntrack engine counters
-  (drop, early_drop, insert_failed, invalid) via CTNETLINK
-* ``CtCollector`` — conntrack table size via ``/proc/sys/net/...``
+  via CTNETLINK (stays on ``_in_netns`` — netlink not routed through
+  the worker IPC)
+* ``CtCollector`` — conntrack table size + buckets + FIB route
+  counts, reads delegated to the netns-pinned nft worker
+* ``SnmpCollector`` — IP/TCP/UDP/ICMP stats from ``/proc/net/snmp``
+  + ``/proc/net/snmp6``, via worker
+* ``NetstatCollector`` — ``TcpExt`` counters from
+  ``/proc/net/netstat``, via worker
+* ``SockstatCollector`` — socket counts from ``/proc/net/sockstat``
+  + sockstat6, via worker
+* ``SoftnetCollector`` — per-CPU softirq counters from
+  ``/proc/net/softnet_stat``, via worker
 
-A profile *conditionally* includes:
+A profile *conditionally* includes (only when ``list table inet
+shorewall`` succeeds in that netns):
 
-* ``NftCollector`` — only when ``list table inet shorewall`` succeeds
-  in that netns. A periodic re-probe loop adds/removes the collector
-  as the operator loads/unloads the ruleset without having to
-  restart the daemon.
+* ``NftCollector`` — per-rule + named-counter + set-element metrics
+* ``FlowtableCollector`` — flowtable existence + attached device
+  counts (reuses the NftScraper snapshot)
+
+A periodic re-probe loop adds/removes the conditional collectors as
+the operator loads/unloads the ruleset without having to restart
+the daemon.
 """
 
 from __future__ import annotations
@@ -27,18 +43,29 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from shorewall_nft.nft.netlink import NftError, NftInterface
 
 from .exporter import (
+    AddressCollector,
     ConntrackStatsCollector,
     CtCollector,
+    FlowtableCollector,
     LinkCollector,
+    NeighbourCollector,
+    NetstatCollector,
     NftCollector,
     NftScraper,
     QdiscCollector,
     ShorewalldRegistry,
+    SnmpCollector,
+    SockstatCollector,
+    SoftnetCollector,
 )
+
+if TYPE_CHECKING:
+    from .worker_router import WorkerRouter
 
 log = logging.getLogger("shorewalld.discover")
 
@@ -89,7 +116,14 @@ class NetnsProfile:
     qdisc_collector: QdiscCollector
     ct_stats_collector: ConntrackStatsCollector
     ct_collector: CtCollector
+    snmp_collector: SnmpCollector
+    netstat_collector: NetstatCollector
+    sockstat_collector: SockstatCollector
+    softnet_collector: SoftnetCollector
+    neigh_collector: NeighbourCollector
+    addr_collector: AddressCollector
     nft_collector: NftCollector | None = None
+    flowtable_collector: FlowtableCollector | None = None
     has_table: bool = False
     collectors_added_to_registry: list[object] = field(default_factory=list)
 
@@ -102,8 +136,10 @@ class ProfileBuilder:
     """Assembles ``NetnsProfile`` objects and maintains them over time.
 
     One builder per Daemon. Owns the shared ``NftScraper`` cache and
-    the ``ShorewalldRegistry``, and knows how to add/remove collectors
-    as netns state changes.
+    the ``ShorewalldRegistry``, holds a reference to the
+    ``WorkerRouter`` so ``/proc``-reading collectors can delegate
+    their reads to the netns-pinned worker, and knows how to
+    add/remove collectors as netns state changes.
     """
 
     def __init__(
@@ -111,10 +147,12 @@ class ProfileBuilder:
         nft: NftInterface,
         registry: ShorewalldRegistry,
         scraper: NftScraper,
+        router: "WorkerRouter",
     ) -> None:
         self._nft = nft
         self._registry = registry
         self._scraper = scraper
+        self._router = router
         self._profiles: dict[str, NetnsProfile] = {}
 
     @property
@@ -123,8 +161,9 @@ class ProfileBuilder:
 
     def build(self, netns_names: list[str]) -> list[NetnsProfile]:
         """Create a fresh profile for every name and register its
-        always-on collectors. NftCollector is NOT added yet — the
-        first ``reprobe()`` call wires it up if the table is present.
+        always-on collectors. NftCollector + FlowtableCollector are
+        NOT added yet — the first ``reprobe()`` call wires them up
+        when the table is present.
         """
         for name in netns_names:
             if name in self._profiles:
@@ -132,25 +171,43 @@ class ProfileBuilder:
             link = LinkCollector(name)
             qdisc = QdiscCollector(name)
             ct_stats = ConntrackStatsCollector(name)
-            ct = CtCollector(name)
-            profile = NetnsProfile(name=name, link_collector=link,
-                                   qdisc_collector=qdisc,
-                                   ct_stats_collector=ct_stats,
-                                   ct_collector=ct)
-            self._registry.add(link)
-            self._registry.add(qdisc)
-            self._registry.add(ct_stats)
-            self._registry.add(ct)
-            profile.collectors_added_to_registry.extend(
-                [link, qdisc, ct_stats, ct])
+            ct = CtCollector(name, self._router)
+            snmp = SnmpCollector(name, self._router)
+            netstat = NetstatCollector(name, self._router)
+            sockstat = SockstatCollector(name, self._router)
+            softnet = SoftnetCollector(name, self._router)
+            neigh = NeighbourCollector(name)
+            addr = AddressCollector(name)
+            profile = NetnsProfile(
+                name=name,
+                link_collector=link,
+                qdisc_collector=qdisc,
+                ct_stats_collector=ct_stats,
+                ct_collector=ct,
+                snmp_collector=snmp,
+                netstat_collector=netstat,
+                sockstat_collector=sockstat,
+                softnet_collector=softnet,
+                neigh_collector=neigh,
+                addr_collector=addr,
+            )
+            always_on = [
+                link, qdisc, ct_stats, ct,
+                snmp, netstat, sockstat, softnet,
+                neigh, addr,
+            ]
+            for col in always_on:
+                self._registry.add(col)
+            profile.collectors_added_to_registry.extend(always_on)
             self._profiles[name] = profile
             log.info("shorewalld registered netns profile %r", name)
         return list(self._profiles.values())
 
     def reprobe(self) -> None:
-        """Probe every profile for its nft table and add/remove the
-        ``NftCollector`` accordingly. Called on startup and on a
-        periodic ticker by ``Daemon``.
+        """Probe every profile for its nft table and add/remove
+        the table-gated collectors (``NftCollector`` +
+        ``FlowtableCollector``) accordingly. Called on startup and
+        on a periodic ticker by ``Daemon``.
         """
         for profile in self._profiles.values():
             self._reprobe_one(profile)
@@ -168,19 +225,25 @@ class ProfileBuilder:
 
         if has and profile.nft_collector is None:
             col = NftCollector(profile.name, self._scraper)
+            ft = FlowtableCollector(profile.name, self._scraper)
             self._registry.add(col)
+            self._registry.add(ft)
             profile.nft_collector = col
-            profile.collectors_added_to_registry.append(col)
+            profile.flowtable_collector = ft
+            profile.collectors_added_to_registry.extend([col, ft])
             profile.has_table = True
             log.info("netns %r gained inet shorewall table", profile.name)
         elif not has and profile.nft_collector is not None:
-            self._registry.remove(profile.nft_collector)
-            try:
-                profile.collectors_added_to_registry.remove(
-                    profile.nft_collector)
-            except ValueError:
-                pass
+            for col in (profile.nft_collector, profile.flowtable_collector):
+                if col is None:
+                    continue
+                self._registry.remove(col)
+                try:
+                    profile.collectors_added_to_registry.remove(col)
+                except ValueError:
+                    pass
             profile.nft_collector = None
+            profile.flowtable_collector = None
             profile.has_table = False
             # Drop stale cache so the next scrape sees an empty
             # snapshot instead of the old rule counters.
