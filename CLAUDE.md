@@ -27,24 +27,32 @@ Each package has its own `CLAUDE.md` — open it before touching that code.
 
 ## Bootstrap
 
+**Project venv lives at the repo root: `.venv/` (Python 3.13).**
+Always activate or invoke it directly — every package expects this one venv,
+no per-package venvs. Re-use across sessions; don't create new ones.
+
 ```bash
-# Install all three (editable, dev extras):
+# From the repo root:
+source .venv/bin/activate          # or call .venv/bin/python / .venv/bin/pytest directly
+
+# Install all three sub-packages editably (first-time bootstrap):
 pip install -e 'packages/shorewall-nft[dev]' \
             -e 'packages/shorewalld[dev]' \
             -e 'packages/shorewall-nft-simlab[dev]'
+# `pip install -e .` in the repo root installs the empty monorepo stub only.
 
-# Run core tests:
-cd packages/shorewall-nft && python -m pytest tests/ -q
-
-# Run daemon tests:
-cd packages/shorewalld && python -m pytest tests/ -q
+# Run tests (per package):
+pytest packages/shorewall-nft/tests -q
+pytest packages/shorewalld/tests -q
+pytest packages/shorewall-nft-simlab/tests -q
 ```
 
 ## Release state
 
-Branch `shorewall-nft-release`. Versions in sync across all three
-`pyproject.toml` files and `packages/shorewall-nft/shorewall_nft/__init__.py`.
-Latest released: **v1.4.2** (IPv6 NDP & baseline security fixes).
+Branch `master`. Versions stay in sync across all three `pyproject.toml`
+files and `packages/shorewall-nft/shorewall_nft/__init__.py`. Latest
+released version: see `CHANGELOG.md` top-most `## [X.Y.Z]` heading and
+`git tag --sort=-v:refname | head -1`.
 
 When bumping a version, update all of these in one commit:
 - `packages/shorewall-nft/pyproject.toml`

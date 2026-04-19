@@ -4,6 +4,10 @@ Packet-level simulation lab for shorewall-nft firewall validation.
 Python package: `shorewall_nft_simlab`. Entry point: `shorewall-nft-simlab`.
 Depends on `shorewall-nft` (core) for `verify.simulate`, `verify.iptables_parser`.
 
+**Development: use the repo-root venv at `../../.venv/` (Python 3.13).**
+No per-package venv. See root `CLAUDE.md` for bootstrap.
+On the remote test host the venv is at `/root/shorewall-nft/.venv/`.
+
 ## Key modules
 
 - `smoketest.py` — CLI: `full` / `quick` / `single` runs; archives
@@ -65,14 +69,6 @@ ip netns exec <name> <cmd>
 ip netns list
 ```
 
-**Monorepo note:** Python-Pakete müssen über die Sub-Package-Verzeichnisse installiert werden:
-```bash
-pip install -e packages/shorewall-nft[dev] \
-            -e packages/shorewalld[dev] \
-            -e packages/shorewall-nft-simlab[dev]
-```
-`pip install -e .` im Repo-Root installiert nur den leeren Monorepo-Stub.
-
 ## Running simlab
 
 ```bash
@@ -88,34 +84,32 @@ ssh root@192.168.203.83 \
 
 ## Open items (simlab)
 
-1. **Baseline established** — smoketest `full --seed 42` passes at
-   98.9% positive (18 fail_drops are anycast topology), 100% negative,
-   100% random. Reports archived under `docs/testing/simlab-reports/`.
-2. **simlab → pytest integration gate** — `full` is reproducibly green.
-   Build a pytest wrapper that runs a minimal simlab scenario (single
-   probe) in CI. Gate for future emitter changes.
-3. **Anycast topology routes** — `2a00:f88::2` and `2a00:f88::53:2`
-   are Anycast/Loopback IPs outside the simlab namespace. Adding
-   dummy routes would eliminate the last 18 fail_drops.
-3. **VRRP/BGP/RADIUS probe injection** — builders exist in `packets.py`
-   but no controller-side query generates them automatically from the
-   ruleset. Essential for HA validation (keepalived + bird).
+1. **simlab → pytest integration gate** — build a pytest wrapper that
+   runs a minimal simlab scenario (single probe) in CI. Gate for future
+   emitter changes.
+2. **Anycast topology routes** — `2a00:f88::2` and `2a00:f88::53:2` are
+   anycast/loopback outside the simlab namespace; adding dummy routes
+   would eliminate the last ~18 fail_drops.
+3. **VRRP / BGP / RADIUS probe injection** — builders exist in
+   `packets.py` but no controller-side query generates them
+   automatically from the ruleset. Needed for HA validation
+   (keepalived + bird).
 4. **Flowtable offload probe** — `FLOWTABLE_FLAGS=offload` is live in
-   1.1 but not simlab-validated. Needs either offload-capable mock NIC
-   or software-fastpath check via conntrack counters.
-5. **Full HA-pair simulation** — build a second NS_FW (simlab-peer) with
-   VRRP + conntrackd sync, then run failover scenarios. Needs
+   1.1 but not simlab-validated. Needs either an offload-capable mock
+   NIC or a software-fastpath check via conntrack counters.
+5. **Full HA-pair simulation** — build a second NS_FW (simlab-peer)
+   with VRRP + conntrackd sync, then run failover scenarios. Needs a
    multi-FW-NS concept (currently one only).
 6. **Worker ring-buffer pcaps** — `_write_fail_pcaps` currently writes
-   the injected frame only. Next iteration: include the worker's
-   captured-frame ring buffer (`trace_dump`) so you can see what the
-   FW actually forwarded/dropped.
+   the injected frame only. Include the worker's captured-frame ring
+   buffer (`trace_dump`) so you can see what the FW actually
+   forwarded/dropped.
 7. **routefilter / rp_filter in topology** — `topology.py` currently
    forces `rp_filter=0` globally. Should replay per-iface values from
    the parsed `interfaces` file instead (coordinate with core TODO).
-8. **Flame graph** — `py-spy record --format flamegraph` during `full`
-   scan, covering every interface carrying probe traffic. Save artifact
-   locally alongside the run's JSON report (not committed to git).
+8. **Flame graph** — `py-spy record --format flamegraph` during a
+   `full` scan; save artifact locally alongside the run's JSON report
+   (not committed to git).
 
 ## Debug lessons (do not re-learn these)
 
