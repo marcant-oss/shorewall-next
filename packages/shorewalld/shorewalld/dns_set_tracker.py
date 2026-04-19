@@ -219,6 +219,42 @@ class DnsSetTracker:
         with self._lock:
             return self._by_name.get((qname, family))
 
+    def set_ids_for_qnames(self, qnames: Iterable[str]) -> list[int]:
+        """Return every set_id currently mapped to any of *qnames*
+        (both families). Used by InstanceManager to scope element-cache
+        invalidation to one instance's qnames without touching others."""
+        with self._lock:
+            out: list[int] = []
+            for qname in qnames:
+                for family in (FAMILY_V4, FAMILY_V6):
+                    sid = self._by_name.get((qname, family))
+                    if sid is not None:
+                        out.append(sid)
+            return out
+
+    def clear_elements(self, set_ids: Iterable[int]) -> int:
+        """Drop every cached ``(ip_bytes, deadline)`` for the given set_ids.
+
+        Called when we know the kernel's copy of these sets has been
+        wiped (typically on ``shorewall-nft restart`` → table deleted +
+        recreated).  Without this, ``propose()`` would keep returning
+        ``DEDUP`` for IPs whose cached deadline is still in the future,
+        leaving the fresh kernel set empty until the TTL elapses.
+
+        Set-state (spec, family, metrics counters) is preserved — only
+        the live-element dict is cleared.  Returns the number of elements
+        dropped (handy for the caller's log line)."""
+        dropped = 0
+        with self._lock:
+            for sid in set_ids:
+                state = self._states.get(sid)
+                if state is None:
+                    continue
+                dropped += len(state.elements)
+                state.elements.clear()
+                state.metrics.elements = 0
+        return dropped
+
     def name_for(self, set_id: int) -> tuple[str, int] | None:
         """Reverse lookup: ``set_id`` → ``(qname, family)`` or ``None``."""
         with self._lock:
