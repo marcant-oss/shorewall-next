@@ -1325,8 +1325,57 @@ Two units ship under `packaging/systemd/`:
   `After=shorewall-nft@%i.service` so the per-instance daemon starts
   only once the corresponding firewall ruleset is present.
 
-Both require `CAP_NET_ADMIN` + `CAP_SYS_PTRACE` for the setns hop and
-create `/run/shorewalld` via `RuntimeDirectory=`.
+Both require `CAP_NET_ADMIN` (nft writes) + `CAP_SYS_ADMIN` (the
+`setns(2)` hop into a named netns) and create `/run/shorewalld` via
+`RuntimeDirectory=`. `CAP_NET_RAW` is carried conservatively but is not
+strictly required.
+
+### Hardening
+
+The shipped units already apply the standard systemd sandboxing
+directives. Operators who drop-in-override the unit should preserve
+them — removing any of these lines weakens the security posture
+without buying the daemon anything:
+
+```ini
+[Service]
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/shorewalld /var/lib/shorewalld /var/log
+
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+
+RuntimeDirectory=shorewalld
+RuntimeDirectoryMode=0750
+StateDirectory=shorewalld
+StateDirectoryMode=0750
+```
+
+`ProtectSystem=strict` + `ReadWritePaths=` is load-bearing: the daemon
+writes its state to `/var/lib/shorewalld/`, its runtime sockets to
+`/run/shorewalld/`, and rate-limited warnings to `/var/log/`. If you
+redirect state via `--state-dir=` or sockets via `--listen-api=` /
+`--control-socket=`, extend `ReadWritePaths=` accordingly or the daemon
+will fail to open the new path with `EROFS`.
+
+The capability set is the kernel-enforced minimum:
+
+- Dropping `CAP_SYS_ADMIN` breaks `setns(2)` → no named-netns worker
+  can be forked → metrics + nft set writes in those namespaces fall
+  back to silent drops. Default netns still works.
+- Dropping `CAP_NET_ADMIN` breaks nft element writes and pyroute2
+  link / qdisc / neighbour dumps → `set_writes_total` stops
+  advancing and most collectors emit zeros.
+- `CAP_NET_RAW` can be removed if you never plan to open a raw
+  socket from a collector; no shipped code path requires it today.
+
+Do not add `User=` / `Group=` without also providing the caps above
+via file-based capabilities or `AmbientCapabilities=` — the ambient
+set in the shipped unit only grants the caps because the process
+starts as root and systemd applies them before the first exec.
 
 Override the command line with a drop-in, not by editing the unit:
 
@@ -1353,7 +1402,10 @@ systemctl restart shorewalld
   returns cleanly — install it via `pip install shorewall-nft[daemon]`.
 - **`netns="fw"` has no nft metrics** — either the table isn't loaded
   in that netns (`ip netns exec fw nft list table inet shorewall`) or
-  the daemon lacks `CAP_SYS_PTRACE` to enter the target namespace.
+  the daemon lacks `CAP_SYS_ADMIN` to `setns(2)` into the target
+  namespace. Check `AmbientCapabilities=` in the effective unit
+  (`systemctl cat shorewalld`) and look for
+  `setns(...) failed: Operation not permitted` in the journal.
 - **Queue depth climbing toward capacity** — the decode workers can't
   keep up. Check `workers_busy` gauge; if it stays at `cpu_count`, the
   bottleneck is nft set writes, not decoding. Consider tightening the
