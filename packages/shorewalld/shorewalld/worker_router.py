@@ -69,6 +69,12 @@ log = get_logger("worker")
 RESPAWN_BACKOFF_MIN = 0.5
 RESPAWN_BACKOFF_MAX = 30.0
 
+# Auto-respawn after transport loss (worker crash / netns vanished):
+# if the new child survives this long we treat it as healthy and reset
+# the backoff so the next failure starts from zero again.
+_RESPAWN_BACKOFF_MAX = RESPAWN_BACKOFF_MAX
+_RESPAWN_HEALTHY_AFTER = 30.0
+
 # Worker ack timeout — if the worker hasn't replied to a dispatched
 # batch in this window, the router marks it stuck and respawns.
 # libnftables commits on the reference 1600-rule ruleset take <50 ms;
@@ -133,6 +139,11 @@ class ParentWorker:
         # dispatch so idle workers don't burn a task slot.
         self._timeout_task: asyncio.Task[None] | None = None
         self._stopped = False
+        # Auto-respawn state: backoff grows on rapid child deaths
+        # (e.g., the target netns vanished briefly), resets to 0 when a
+        # spawn lives long enough to look healthy.
+        self._respawn_task: asyncio.Task[None] | None = None
+        self._respawn_backoff: float = 0.0
 
     # ── Spawn / respawn ───────────────────────────────────────────────
 
@@ -220,11 +231,15 @@ class ParentWorker:
         if hasattr(self, "_local"):
             return await self._local.dispatch(builder)
 
-        if self._transport is None:
-            raise RuntimeError(
-                "ParentWorker not started or already stopped")
         if self._stopped:
             raise RuntimeError("ParentWorker stopped")
+        if self._transport is None:
+            # Worker died (or netns is briefly gone); kick the
+            # auto-respawn task so the next batch has a fresh worker
+            # to talk to and surface the cause to the caller now.
+            self._schedule_respawn()
+            raise RuntimeError(
+                "ParentWorker transport lost; respawn scheduled")
 
         batch_id = self._alloc_batch_id()
         view = builder.finish(batch_id)
@@ -259,16 +274,9 @@ class ParentWorker:
                 "worker recv failed: %s", e,
                 extra={"netns": self.netns or "(own)"},
             )
-            # Remove the reader and drop the transport so the dead fd
-            # doesn't keep firing this callback in a tight loop.
-            if self._transport is not None:
-                try:
-                    self._loop.remove_reader(self._transport.fileno)
-                except (ValueError, OSError):
-                    pass
-                self._transport.close()
-                self._transport = None
+            self._tear_down_transport()
             self._fail_all_pending(e)
+            self._schedule_respawn()
             return
         try:
             reply = decode_reply(view)
@@ -307,6 +315,102 @@ class ParentWorker:
                 pending.future.set_exception(exc)
         self._pending.clear()
 
+    def _tear_down_transport(self) -> None:
+        """Close the parent-side socket and reap the dead child.
+
+        Idempotent. Always safe to call after a failed recv or before
+        starting a fresh fork. Reaping the child prevents a zombie pile
+        when the worker process exits but the parent never waitpid()s.
+        """
+        if self._transport is not None:
+            try:
+                self._loop.remove_reader(self._transport.fileno)
+            except (ValueError, OSError):
+                pass
+            self._transport.close()
+            self._transport = None
+        if self._child_pid is not None:
+            try:
+                os.waitpid(self._child_pid, os.WNOHANG)
+            except ChildProcessError:
+                pass
+            except OSError as e:
+                log.debug(
+                    "worker waitpid failed: %s", e,
+                    extra={"netns": self.netns or "(own)"})
+            self._child_pid = None
+        if self._timeout_task is not None:
+            self._timeout_task.cancel()
+            self._timeout_task = None
+        self.metrics.alive = 0
+
+    def _schedule_respawn(self) -> None:
+        """Trigger an asynchronous auto-respawn.
+
+        Idempotent — a new task is only created if no respawn is
+        already in flight.  The delay is governed by
+        ``self._respawn_backoff`` which grows on rapid child deaths
+        (typical when the target netns is briefly absent during a
+        ``ip netns del/add`` cycle) and resets once the new child
+        survives long enough to look stable.
+        """
+        if self._stopped:
+            return
+        if self._respawn_task is not None and not self._respawn_task.done():
+            return
+        self._respawn_task = self._loop.create_task(self._auto_respawn())
+
+    async def _auto_respawn(self) -> None:
+        """Re-fork the worker child after a transport loss.
+
+        Backoff schedule (seconds): 0, 1, 2, 4, 8, 16, 30, 30, …
+        — capped so a wedged netns doesn't peg a CPU.  After a
+        successful spawn that survives ``_RESPAWN_HEALTHY_AFTER``
+        seconds we reset the backoff so the next failure starts
+        from zero again.
+        """
+        delay = self._respawn_backoff
+        self._respawn_backoff = min(
+            max(self._respawn_backoff * 2.0, 1.0),
+            _RESPAWN_BACKOFF_MAX,
+        )
+        if delay > 0:
+            log.info(
+                "nft-worker auto-respawn in %.1fs", delay,
+                extra={"netns": self.netns or "(own)"})
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+        if self._stopped:
+            return
+        try:
+            await self._start_forked()
+        except Exception as e:  # noqa: BLE001
+            log.error(
+                "nft-worker auto-respawn failed: %s; will retry", e,
+                extra={"netns": self.netns or "(own)"})
+            # Re-schedule ourselves through the normal path so the
+            # backoff continues to grow.
+            self._respawn_task = None
+            self._schedule_respawn()
+            return
+        self.metrics.spawned_total += 1
+        self.metrics.restarts_total += 1
+        self.metrics.alive = 1
+        self.metrics.last_spawn_mono = time.monotonic()
+        log.info(
+            "nft-worker auto-respawned",
+            extra={"netns": self.netns or "(own)"})
+        # Schedule a backoff reset if the new child survives long
+        # enough — done on the loop so we don't pin a coroutine.
+        self._loop.call_later(
+            _RESPAWN_HEALTHY_AFTER, self._reset_backoff_if_healthy)
+
+    def _reset_backoff_if_healthy(self) -> None:
+        if self._transport is not None and not self._stopped:
+            self._respawn_backoff = 0.0
+
     # ── Shutdown + reaping ────────────────────────────────────────────
 
     async def shutdown(self) -> None:
@@ -321,6 +425,10 @@ class ParentWorker:
             self.metrics.alive = 0
             return
         self._stopped = True
+        # Cancel any pending auto-respawn so it doesn't race with us
+        # tearing the transport down.
+        if self._respawn_task is not None and not self._respawn_task.done():
+            self._respawn_task.cancel()
         if self._transport is None:
             return
         builder = BatchBuilder()

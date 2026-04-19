@@ -125,6 +125,23 @@ respawn" path only exists for operator-invoked `reload-instance` where
 the table is assumed unchanged.  Register and reload have deliberately
 different semantics.
 
+**Element refresh requires explicit `expires`**: `nft_worker.build_nft_script`
+emits `add element ... { ip timeout Ts expires Ts }` — both keywords. The
+Linux nft kernel does NOT reset an existing element's countdown when
+`add element` is re-issued with the same `timeout`; it silently keeps
+the original deadline. Setting `expires` populates `NFTA_SET_ELEM_EXPIRATION`
+which the kernel always honours. Do not drop the `expires` keyword to "save
+bytes" — the `dns_*_v4/v6` sets will silently age out between pull cycles
+even though every metric reports success.
+
+**Auto-respawn on transport loss**: `ParentWorker._drain_replies` no longer
+just nullifies the transport on EOF — it also reaps the dead child and
+schedules `_auto_respawn()`. Backoff: 0 → 1 → 2 → … → 30 s; resets after
+`_RESPAWN_HEALTHY_AFTER` (30 s) of liveness. Covers worker crashes, OOM
+kills, and the "named netns is briefly absent during ip-netns-del/add"
+window. Without this, `dispatch()` would fail forever with
+`ParentWorker not started or already stopped` once the worker died.
+
 ## DNS architecture (shipped v1.4.0)
 
 Full pipeline shipped: compiler declares `dns_<qname>_v4/v6` sets,

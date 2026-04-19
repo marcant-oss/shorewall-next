@@ -98,6 +98,11 @@ class TestParentWorkerInproc:
             assert "dns_github_com_v4" in applied_scripts[0]
             assert "1.2.3.4" in applied_scripts[0]
             assert "timeout 300s" in applied_scripts[0]
+            # Both timeout AND expires must be on the line so the kernel
+            # actually resets the deadline on a refresh — without
+            # ``expires`` the kernel silently keeps the original
+            # countdown when the same timeout is re-added.
+            assert "expires 300s" in applied_scripts[0]
         finally:
             event_loop.run_until_complete(pw.shutdown())
 

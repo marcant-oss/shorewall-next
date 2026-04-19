@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **shorewalld: dns set elements ageing out between pull cycles** — the
+  pull resolver fires every ~`ttl_floor × 0.8` seconds with a clamped TTL
+  (default 300 s), but the Linux nft kernel does **not** reset an existing
+  element's expiration countdown when `add element ... { ip timeout T }`
+  is re-issued with the same `T`. The kernel-side timer kept counting down
+  on its original deadline regardless of how often the daemon "refreshed"
+  it; sets emptied between pull cycles even though every metric reported
+  success. Fix: the worker now emits `add element ... { ip timeout Ts
+  expires Ts }` so the kernel populates `NFTA_SET_ELEM_EXPIRATION` and
+  honours the reset. Verified on kernel 6.12 / nft 1.1.1.
+
+- **shorewalld: nft worker not respawned after crash or transient netns
+  loss** — when the forked nft worker died (signal, OOM, the target netns
+  briefly disappeared during an `ip netns del/add` cycle), the parent
+  nullified its transport but never spawned a replacement. Subsequent
+  `SetWriter.dispatch()` calls failed silently with
+  `WARNING batch dispatch failed: ParentWorker not started or already
+  stopped` until the daemon was restarted manually. The router now
+  schedules `_auto_respawn()` whenever the transport reader sees EOF,
+  reaps the dead child, and re-forks with exponential backoff (0 → 1 → 2
+  → … → 30 s) so a wedged netns can't peg the CPU. The backoff resets
+  once the new child survives 30 s.
+
 - **shorewalld: empty nft sets after `shorewall-nft restart`** — the tracker's
   `(ip, deadline)` dedup cache survived firewall restarts unchanged. Because
   the kernel sets were freshly empty but the tracker still held non-expired
