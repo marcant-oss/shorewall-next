@@ -61,7 +61,10 @@ CHECK_TREX_UPDATES=0
 # install a specific version without editing this file.
 TREX_VERSION_LATEST_KNOWN="v3.08"
 TREX_VERSION="${STAGELAB_TREX_VERSION:-$TREX_VERSION_LATEST_KNOWN}"
+# Consumed by lib/trex-install.sh which is sourced later.
+# shellcheck disable=SC2034
 TREX_CDN_BASE="https://trex-tgn.cisco.com/trex/release"
+# shellcheck disable=SC2034
 TREX_CA_PEM="$SCRIPT_DIR/trex-ca.pem"
 
 info() { printf 'setup-remote-test-host: %s\n' "$1"; }
@@ -108,13 +111,11 @@ if [ "$ROLE" = "stagelab-agent-dpdk" ]; then
     IS_DPDK=1
 fi
 
-# ── Required binary sets (for post-install verification) ──────────────────────
-# role=default
-REQUIRED_BINS_DEFAULT="python3 ip ss nft conntrack ipset sudo rsync"
-# role=stagelab-agent adds:
-REQUIRED_BINS_STAGELAB="iperf3 nmap ethtool tcpdump jq"
-# role=stagelab-agent-dpdk adds:
-REQUIRED_BINS_DPDK="python3-pyelftools"   # checked as package; dpdk-devbind.py checked separately
+# Required binaries per role (reference — bins are passed inline to
+# verify_binaries at each call site; these lists just document intent):
+#   default:              python3 ip ss nft conntrack ipset sudo rsync
+#   stagelab-agent adds:  iperf3 nmap ethtool tcpdump jq
+#   stagelab-agent-dpdk:  python3-pyelftools (RPM package check, not binary)
 
 # ── Verification helpers ──────────────────────────────────────────────────────
 

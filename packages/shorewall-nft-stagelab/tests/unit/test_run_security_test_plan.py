@@ -15,6 +15,7 @@ required.  Tests cover:
 from __future__ import annotations
 
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -404,7 +405,9 @@ def _run_merge_block(tmp_path: Path, base_cfg: Path, fragment: Path) -> tuple[in
     import subprocess
     from pathlib import Path as _Path
 
-    python = str(_repo_root() / ".venv" / "bin" / "python")
+    # Use the same interpreter that's running the tests. In CI this is the
+    # system Python from actions/setup-python; locally it's the repo .venv.
+    python = sys.executable
     sh_text = _Path(_script()).read_text()
     start = sh_text.index("<<'PYEOF'\n") + len("<<'PYEOF'\n")
     end = sh_text.index("\nPYEOF")
