@@ -12,6 +12,8 @@ beim Start einer Arbeitssession.
 | Compiler, Emitter, CLI | `packages/shorewall-nft/` | `packages/shorewall-nft/CLAUDE.md` |
 | Daemon (Prometheus, DNS-Sets, HA-Sync) | `packages/shorewalld/` | `packages/shorewalld/CLAUDE.md` |
 | Simlab (Packet-Tests, netns) | `packages/shorewall-nft-simlab/` | `packages/shorewall-nft-simlab/CLAUDE.md` |
+| Stagelab (Performance, DPDK, Advisor) | `packages/shorewall-nft-stagelab/` | `packages/shorewall-nft-stagelab/CLAUDE.md` |
+| Netkit (Shared primitives: tundev, nsstub, packets) | `packages/shorewall-nft-netkit/` | `packages/shorewall-nft-netkit/CLAUDE.md` |
 | Monorepo-Überblick, CI, Release | Repo-Root | `CLAUDE.md` |
 
 ---
@@ -106,6 +108,39 @@ packages/shorewalld/
   shorewalld/reload_monitor.py Repopulate nach shorewall-nft reload
 ```
 
+### Stagelab — Performance / Durchsatz-Tests gegen reale FW-Hardware
+
+**Symptom:** Throughput unter Erwartung, hohe Retransmits, Connection-Storm-Fehler
+
+```
+packages/shorewall-nft-stagelab/
+  shorewall_nft_stagelab/advisor.py      Regel-basierter Advisor (Tier A/B/C)
+  shorewall_nft_stagelab/rule_order.py   nft Rule-Order-Analyser (Tier-C-Hints)
+  shorewall_nft_stagelab/scenarios.py    Scenario-Runner (throughput, tuning_sweep, …)
+  shorewall_nft_stagelab/controller.py   asyncio Orchestrator
+  shorewall_nft_stagelab/config.py       Pydantic-Schema (Host, Endpoint, Scenario, …)
+  shorewall_nft_stagelab/report.py       run.json / summary.md / recommendations.yaml
+  docs/testing/stagelab.md              Operator-Referenz
+
+  # Für Korrektheits-Smoke (keine Line-Rate-NIC nötig):
+  #   endpoint mode: probe → scapy-Frames via TAP
+  # Für Kernel-Stack-Durchsatz (10–25 Gbps):
+  #   endpoint mode: native → iperf3 / nmap
+  # Für DPDK Line-Rate (40–100 Gbps) / 10 M+ Sessions:
+  #   endpoint mode: dpdk → TRex STL / ASTF
+  #   Bootstrap: tools/setup-remote-test-host.sh root@<host> --role stagelab-agent-dpdk
+```
+
+### Line-Rate / 10 M+ concurrent sessions (DPDK / TRex)
+
+```
+packages/shorewall-nft-stagelab/
+  shorewall_nft_stagelab/topology_dpdk.py    NIC-Binding vfio-pci + Crash-Recovery
+  shorewall_nft_stagelab/trafgen_trex.py     TRex STL + ASTF Wrapper
+  # Bootstrap: tools/setup-remote-test-host.sh root@<host> --role stagelab-agent-dpdk
+  # STAGELAB_HUGEPAGES=512 für 1 GiB Hugepages (default)
+```
+
 ### Simlab-Testfehler
 
 **Symptom:** POSITIVE fail_drop, RANDOM-Mismatches, Topologie-Fehler
@@ -139,16 +174,19 @@ tools/
   run-tests.sh                Tests in isoliertem Namespace (unshare --mount --net)
   setup-remote-test-host.sh   Remote: Repo-Sync + alle 3 Pakete installieren
 
-  # Einmalige Bootstrap-Installation ins Repo-Venv:
+  # Einmalige Bootstrap-Installation ins Repo-Venv (Reihenfolge wichtig!):
   source .venv/bin/activate
-  pip install -e packages/shorewall-nft[dev] \
+  pip install -e packages/shorewall-nft-netkit[dev] \
+              -e packages/shorewall-nft[dev] \
               -e packages/shorewalld[dev] \
-              -e packages/shorewall-nft-simlab[dev]
+              -e packages/shorewall-nft-simlab[dev] \
+              -e packages/shorewall-nft-stagelab[dev]
 
   # Tests (isoliert, kein Crash des Hosts möglich):
   tools/run-tests.sh packages/shorewall-nft/tests/ -q
   pytest packages/shorewalld/tests/ -q
   pytest packages/shorewall-nft-simlab/tests/ -q
+  pytest packages/shorewall-nft-stagelab/tests/unit -q
 ```
 
 ### Packaging (.deb / .rpm)
@@ -182,11 +220,12 @@ packaging/
 
 ```
 docs/
-  index.md                    Einstieg mit 3-Paket-Übersicht
+  index.md                    Einstieg mit 4-Paket-Übersicht (inkl. Stagelab)
   quick-start.md              Anfänger + Migrations-Pfad
   shorewall-nft/              7 Dateien: merge-config, plugins, debug, optimizer, config-hash, config-dirs, plugin-dev
   shorewalld/index.md         Daemon-Referenz (Metriken, DNS-Sets, HA, tap)
-  testing/                    9 Dateien: Setup, Suite, Simlab, Debugging, Verification
+  testing/                    Simlab + Stagelab + Setup, Suite, Debugging, Verification
+  testing/stagelab.md         Stagelab-Operator-Referenz (NEU)
   cli/commands.md             CLI-Referenz aller shorewall-nft-Befehle
   concepts/ features/         Shorewall config-language Referenz
 ```
