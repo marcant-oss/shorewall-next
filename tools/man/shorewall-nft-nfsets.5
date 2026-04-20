@@ -90,8 +90,8 @@ web   api.example.com            dnstap,dnstype=a
 Emits:
 .RS
 .nf
-set nfset_web_v4 { type ipv4_addr; flags timeout; size 512; }
-set nfset_web_v6 { type ipv6_addr; flags timeout; size 512; }
+set nfset_web_v4 { type ipv4_addr; flags timeout; size 4096; }
+set nfset_web_v6 { type ipv6_addr; flags timeout; size 4096; }
 .fi
 .RE
 
@@ -153,8 +153,8 @@ aws\-ec2  aws  ip\-list,filter=region=us\-east\-1,refresh=6h
 Emits:
 .RS
 .nf
-set nfset_aws_ec2_v4 { type ipv4_addr; flags interval; size 65536; }
-set nfset_aws_ec2_v6 { type ipv6_addr; flags interval; size 65536; }
+set nfset_aws_ec2_v4 { type ipv4_addr; flags interval; size 262144; }
+set nfset_aws_ec2_v6 { type ipv6_addr; flags interval; size 262144; }
 .fi
 .RE
 

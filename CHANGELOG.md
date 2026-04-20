@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (W1–W9 nfsets, man pages, Prometheus metrics, VRRP collector)
+
+- **`nfsets` config file** — named dynamic nft sets with four backends
+  (`dnstap`, `resolver`, `ip-list`, `ip-list-plain`). Declarative syntax
+  decouples set definition from rule usage; brace expansion at parse time;
+  multi-set comma syntax in rules; N→1 qname→set sharing via `DnsSetTracker`.
+  See `docs/features/nfsets.md` and `shorewall-nft-nfsets(5)`.
+- **Full man-page coverage** — 5 section-8 pages (all CLI binaries) + 35
+  section-5 pages (one per active config table) with worked examples.
+  Installed under `/usr/share/man/{man5,man8}/`.
+- **Prometheus metrics for nfsets** (shorewalld) — `NfSetsManager`
+  registration metrics (`shorewalld_nfsets_entries`, `_hosts`,
+  `_payload_bytes`); `DnsSetTracker` N→1 grouping counter
+  (`shorewalld_dns_set_shared_qnames`); `PlainListTracker` refresh/error/
+  inotify metrics (7 metric families for `ip-list-plain` sources).
+- **Resolver per-set counters** —
+  `shorewalld_dns_resolver_refresh_total{set_name, outcome}` and
+  `shorewalld_dns_resolver_refresh_duration_seconds_{sum,count}{set_name}`.
+- **VrrpCollector** — D-Bus + optional SNMP scrape of keepalived processes,
+  opt-in via `--enable-vrrp-collector`. SNMP augmentation (`--vrrp-snmp-enable`)
+  fills `priority`, `effective_priority`, `vip_count`, and `master_transitions`
+  that D-Bus does not expose. Works on AlmaLinux 10 where keepalived ships
+  without `--enable-dbus` (SNMP-only discovery mode). 7 metric families.
+
+### Changed (W1–W9)
+
+- `DnsSetSpec.set_name` now stores the base name (without `_v4`/`_v6`
+  suffix); the family suffix is appended only at nft write time.
+  Internal API change; no operator-visible impact unless out-of-tree code
+  reads `DnsSetSpec.set_name` directly.
+- `InstanceCache.load()` / `.update()` signatures accept an optional
+  `nfsets_payload: dict | None` parameter for the control-socket handshake.
+
+### Fixed (W1–W9)
+
+- `worker_router._lookup` honours `DnsSetSpec.set_name` instead of
+  always deriving the target set from the qname — nfset-backed DNS sets
+  were written to the wrong kernel set before this fix.
+- `nfset_registry_to_dns_registries` no longer drops the v4 set name
+  when a qname is registered for both families.
+- `PlainListTracker._metrics` is now registered with `ShorewalldRegistry`;
+  the `shorewalld_iplist_apply_*` and `_set_capacity` metrics for
+  plain-list sources are now actually scraped (were silently absent).
+- `NfSetsManager.payload_bytes()` returns the exact JSON wire size
+  instead of a `len(str(…))` lower bound.
+
+### Packaging (W1–W9)
+
+- New man pages wired into `packaging/debian/rules` and
+  `packaging/rpm/shorewall-nft.spec.in`; installed under
+  `/usr/share/man/{man5,man8}/`.
+- Optional extras added to `packages/shorewalld/pyproject.toml`:
+  `[inotify]` (`inotify_simple>=1.3`), `[vrrp]` (`jeepney>=0.8`),
+  `[snmp]` (`pysnmp>=7.0`). All default-off; core functionality
+  requires none of them.
+
+### Known limitations (W1–W9)
+
+- `keepalived 2.2.8-6.el10` on RHEL 10 / AlmaLinux 10 / CentOS Stream 10
+  is built without `--enable-dbus`; the VrrpCollector requires
+  `--vrrp-snmp-enable` to report non-zero metrics on those hosts.
+  Debian trixie (2.3.3), Fedora 40+, and Ubuntu 24.04 ship keepalived
+  with D-Bus enabled.
+- `shorewalld_plainlist_refresh_duration_seconds` is emitted as an
+  empty `HistogramMetricFamily` alongside the populated sum/count pair —
+  benign but visible in scrape output. To be cleaned up post-release.
+
 ### Added (large-set sync hardening — nfsets + shorewalld iplist)
 - Compiler: `size=N` override per nfset entry (accepts `k`/`M` suffixes,
   range 1–64M). Raised defaults to 4096 for DNS-only sets and 262144 for

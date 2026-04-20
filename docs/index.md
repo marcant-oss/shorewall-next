@@ -41,6 +41,7 @@ Shorewall — existing configs load unchanged.
 | Six config-dir modes (merged, dual, v4-only, v6-only, …) | [config-dirs](shorewall-nft/config-dirs.md) |
 | Native network-namespace support | [CLI reference](cli/commands.md) |
 | DNS-driven nft set population (`dns:` rule syntax) | [shorewalld](shorewalld/index.md) |
+| Named dynamic nft sets (`nfsets` config file — dnstap, resolver, ip-list, ip-list-plain backends) | [nfsets](features/nfsets.md) |
 
 **Config concepts** (shared with upstream Shorewall):
 
@@ -71,7 +72,10 @@ Long-running companion daemon with two jobs:
 2. **DNS-set API** — feeds nft sets named `dns_<qname>_v4/v6` from
    `pdns_recursor` so rules can match on hostname
 
-→ [shorewalld reference](shorewalld/index.md)
+→ [shorewalld reference](shorewalld/index.md) · [Prometheus metrics reference](shorewalld/metrics.md)
+
+VRRP observability (keepalived D-Bus + SNMP) is opt-in via
+`--enable-vrrp-collector`; see [metrics reference](shorewalld/metrics.md#vrrp-keepalived-d-bus--snmp-augmentation-w8w9).
 
 ---
 
