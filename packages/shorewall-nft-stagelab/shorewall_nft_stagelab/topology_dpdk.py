@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import re
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 RECOVERY_FILE = Path("/var/lib/stagelab/dpdk-bindings.json")
 
@@ -43,6 +46,9 @@ class DpdkEndpointHandle:
     pci_addr: str
     orig_driver: str             # "ixgbe" / "mlx5_core" / "virtio-pci" / ...
     bound_at_ts: float           # time.time() when we bound to vfio-pci
+    # master-interface snapshot (captured before unbind)
+    orig_master: str | None = None        # bond/bridge master iface name, or None
+    orig_master_kind: str | None = None   # "bond" | "bridge" | None
 
 
 # ---------------------------------------------------------------------------
@@ -53,20 +59,16 @@ class DpdkEndpointHandle:
 def setup_dpdk_endpoint(spec: DpdkEndpointSpec) -> DpdkEndpointHandle:
     """Unbind NIC from kernel driver, bind to vfio-pci, register recovery entry.
 
-    1. Validate spec (pci regex, cores non-empty, hugepages >= 1).
-    2. Read current driver via /sys/bus/pci/devices/<pci_addr>/driver symlink.
-       If already vfio-pci, skip bind steps but still register in RECOVERY_FILE.
-    3. dpdk-devbind.py -u <pci_addr>  (unbind)
-    4. dpdk-devbind.py -b vfio-pci <pci_addr>  (bind)
-    5. Append JSON entry to RECOVERY_FILE.
-    6. Return DpdkEndpointHandle.
-
-    On any bind failure: attempt rebind to orig_driver (best effort), then raise.
+    Validates spec, reads orig_driver + master-snapshot, unbinds, binds vfio-pci,
+    appends recovery entry. On bind failure: rollback to orig_driver then raise.
     """
     _validate_spec(spec)
 
     orig_driver = _read_current_driver(spec.pci_addr)
     already_dpdk = orig_driver == "vfio-pci"
+
+    ifname = _pci_to_ifname(spec.pci_addr)
+    orig_master, orig_master_kind = _read_master(ifname) if ifname else (None, None)
 
     if not already_dpdk:
         try:
@@ -95,6 +97,8 @@ def setup_dpdk_endpoint(spec: DpdkEndpointSpec) -> DpdkEndpointHandle:
         "pci_addr": spec.pci_addr,
         "orig_driver": orig_driver or "",
         "bound_at_ts": bound_at,
+        "orig_master": orig_master,
+        "orig_master_kind": orig_master_kind,
     }
     _append_recovery(entry)
 
@@ -103,35 +107,44 @@ def setup_dpdk_endpoint(spec: DpdkEndpointSpec) -> DpdkEndpointHandle:
         pci_addr=spec.pci_addr,
         orig_driver=orig_driver or "",
         bound_at_ts=bound_at,
+        orig_master=orig_master,
+        orig_master_kind=orig_master_kind,
     )
 
 
 def teardown_dpdk_endpoint(handle: DpdkEndpointHandle) -> None:
-    """Rebind NIC to original driver and remove recovery entry.
+    """Rebind NIC to original driver, restore bond/bridge master, remove recovery entry.
 
-    Idempotent — double-teardown on the same handle does not raise.
+    Idempotent; master restore is best-effort.
     """
-    # Unbind from vfio-pci (best effort — may already be unbound)
     try:
         _run_devbind(["-u", handle.pci_addr])
     except RuntimeError:
         pass
-
-    # Rebind to original driver (best effort)
     if handle.orig_driver:
         try:
             _run_devbind(["-b", handle.orig_driver, handle.pci_addr])
         except RuntimeError:
             pass
 
+    # Restore bond/bridge membership (best-effort)
+    if handle.orig_master and handle.orig_master_kind:
+        try:
+            ifname = _wait_for_netdev(handle.pci_addr, timeout_s=2.0)
+            _restore_master(ifname, handle.orig_master, handle.orig_master_kind)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "dpdk: master restore failed for %s (master=%s kind=%s): %s",
+                handle.pci_addr, handle.orig_master, handle.orig_master_kind, exc,
+            )
+
     _remove_recovery(handle.pci_addr)
 
 
 def recover_from_crash() -> list[str]:
-    """Called at agent start. Read RECOVERY_FILE; rebind all entries to orig_driver.
+    """Rebind all RECOVERY_FILE entries to orig_driver; restore master if present.
 
-    Returns list of pci addresses that were processed. Truncates RECOVERY_FILE
-    to [] at the end regardless of individual rebind outcomes. Never raises.
+    Returns processed pci addresses. Truncates file at end. Never raises.
     """
     try:
         entries = _read_recovery()
@@ -142,6 +155,8 @@ def recover_from_crash() -> list[str]:
     for entry in entries:
         pci = entry.get("pci_addr", "")
         driver = entry.get("orig_driver", "")
+        orig_master = entry.get("orig_master")
+        orig_master_kind = entry.get("orig_master_kind")
         if not pci:
             continue
         try:
@@ -153,6 +168,14 @@ def recover_from_crash() -> list[str]:
                 _run_devbind(["-b", driver, pci])
             except RuntimeError:
                 pass
+        if orig_master and orig_master_kind:
+            try:
+                ifname = _wait_for_netdev(pci, timeout_s=2.0)
+                _restore_master(ifname, orig_master, orig_master_kind)
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "dpdk: crash-recovery master restore failed for %s: %s", pci, exc
+                )
         recovered.append(pci)
 
     # Truncate regardless of individual outcomes
@@ -169,6 +192,72 @@ def recover_from_crash() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _pci_to_ifname(pci_addr: str) -> str | None:
+    """Return kernel netdev name for pci_addr via sysfs, or None."""
+    net_dir = Path(f"/sys/bus/pci/devices/{pci_addr}/net")
+    try:
+        names = list(net_dir.iterdir())
+        return names[0].name if names else None
+    except (OSError, FileNotFoundError):
+        return None
+
+
+def _read_master(ifname: str) -> tuple[str | None, str | None]:
+    """Return (master_ifname, kind) where kind in {"bond","bridge"}, or (None,None)."""
+    master_link = Path(f"/sys/class/net/{ifname}/master")
+    try:
+        master_name = master_link.resolve().name
+        if not master_name:
+            return (None, None)
+    except (OSError, FileNotFoundError):
+        return (None, None)
+    if Path(f"/sys/class/net/{master_name}/bonding").exists():
+        return (master_name, "bond")
+    if Path(f"/sys/class/net/{master_name}/bridge").exists():
+        return (master_name, "bridge")
+    _log.warning("dpdk: master %r for %r has unknown kind; skipping restore", master_name, ifname)
+    return (None, None)
+
+
+def _wait_for_netdev(pci_addr: str, timeout_s: float = 2.0) -> str:
+    """Poll sysfs until a netdev appears for pci_addr. Raises RuntimeError on timeout."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        ifname = _pci_to_ifname(pci_addr)
+        if ifname:
+            return ifname
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"dpdk: netdev for {pci_addr} did not appear within {timeout_s}s after rebind"
+            )
+        time.sleep(0.1)
+
+
+def _run(cmd: list[str]) -> None:
+    """Run cmd; raise RuntimeError with stderr on non-zero exit."""
+    try:
+        subprocess.run(cmd, check=True, text=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"{' '.join(cmd)} failed (rc={exc.returncode}): {(exc.stderr or '').strip()[-400:]}"
+        ) from exc
+
+
+def _restore_master(ifname: str, master: str, kind: str) -> None:
+    """Re-enslave ifname to master. Bond: down→master→up; bridge: master→up."""
+    if kind == "bond":
+        _run(["ip", "link", "set", ifname, "down"])
+        _run(["ip", "link", "set", ifname, "master", master])
+        _run(["ip", "link", "set", ifname, "up"])
+        _run(["ip", "link", "set", master, "up"])
+    elif kind == "bridge":
+        _run(["ip", "link", "set", ifname, "master", master])
+        _run(["ip", "link", "set", ifname, "up"])
+        _run(["ip", "link", "set", master, "up"])
+    else:
+        _log.warning("dpdk: unknown master kind %r; skipping restore for %s", kind, ifname)
+
+
 def _validate_spec(spec: DpdkEndpointSpec) -> None:
     if not _PCI_RE.match(spec.pci_addr):
         raise ValueError(
@@ -182,10 +271,7 @@ def _validate_spec(spec: DpdkEndpointSpec) -> None:
 
 
 def _read_current_driver(pci_addr: str) -> str | None:
-    """Return driver name bound to pci_addr, or None if no driver is bound.
-
-    Reads /sys/bus/pci/devices/<pci_addr>/driver symlink and extracts basename.
-    """
+    """Return driver name bound to pci_addr (via sysfs symlink), or None."""
     driver_link = Path(f"/sys/bus/pci/devices/{pci_addr}/driver")
     try:
         target = driver_link.resolve()
@@ -195,7 +281,7 @@ def _read_current_driver(pci_addr: str) -> str | None:
 
 
 def _find_devbind() -> str:
-    """Locate dpdk-devbind.py — check PATH first, then well-known paths."""
+    """Locate dpdk-devbind.py — PATH first, then well-known paths."""
     found = shutil.which("dpdk-devbind.py")
     if found:
         return found
@@ -204,25 +290,20 @@ def _find_devbind() -> str:
             return candidate
     raise RuntimeError(
         "dpdk-devbind.py not found in PATH or well-known locations "
-        f"({', '.join(_DEVBIND_FALLBACKS)}). "
-        "Install dpdk-tools (Debian) or dpdk (RHEL/Fedora)."
+        f"({', '.join(_DEVBIND_FALLBACKS)}). Install dpdk-tools (Debian) or dpdk (RHEL/Fedora)."
     )
 
 
 def _run_devbind(args: list[str]) -> subprocess.CompletedProcess:
-    """Run dpdk-devbind.py with the given args.
-
-    Raises RuntimeError with stderr excerpt on CalledProcessError.
-    """
+    """Run dpdk-devbind.py; raise RuntimeError with stderr on failure."""
     devbind = _find_devbind()
     cmd = [devbind] + args
     try:
         return subprocess.run(cmd, check=True, text=True, capture_output=True)
     except subprocess.CalledProcessError as exc:
-        stderr_slice = (exc.stderr or "").strip()[-400:]
         raise RuntimeError(
             f"dpdk-devbind.py {' '.join(args)} failed (rc={exc.returncode}): "
-            f"{stderr_slice}"
+            f"{(exc.stderr or '').strip()[-400:]}"
         ) from exc
 
 
@@ -231,21 +312,18 @@ def _read_recovery() -> list[dict]:
     if not RECOVERY_FILE.exists():
         return []
     text = RECOVERY_FILE.read_text().strip()
-    if not text:
-        return []
-    return json.loads(text)
+    return json.loads(text) if text else []
 
 
 def _write_recovery(entries: list[dict]) -> None:
-    """Write entries list to RECOVERY_FILE (no locking — use inside flock)."""
+    """Write entries to RECOVERY_FILE (no locking — call inside flock)."""
     RECOVERY_FILE.parent.mkdir(parents=True, exist_ok=True)
     RECOVERY_FILE.write_text(json.dumps(entries, indent=2))
 
 
 def _append_recovery(entry: dict) -> None:
-    """Append one entry to RECOVERY_FILE under an exclusive file lock."""
+    """Append one entry to RECOVERY_FILE under an exclusive lock."""
     RECOVERY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # Open (or create) for read+write without truncation
     with open(RECOVERY_FILE, "a+") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         fh.seek(0)
