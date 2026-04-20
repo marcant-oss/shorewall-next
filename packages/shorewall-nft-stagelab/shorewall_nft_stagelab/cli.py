@@ -61,6 +61,17 @@ def run_cmd(config_path: str, output_dir: str | None) -> None:
             report_spec = cfg.report.model_copy(update={"output_dir": output_dir})
             cfg = cfg.model_copy(update={"report": report_spec})
 
+        # Warn before firing DoS-class scenarios.
+        _dos_scenarios = [s for s in cfg.scenarios if s.kind.startswith("dos_")]
+        if _dos_scenarios:
+            from . import dos_safety
+            summaries = [
+                f"{s.kind} id={s.id!r} "
+                f"(see run config for parameters)"
+                for s in _dos_scenarios
+            ]
+            dos_safety.preflight_warning(summaries, countdown_s=3)
+
         controller = StagelabController(cfg, config_path=config_path)
         try:
             await controller.connect()

@@ -350,6 +350,19 @@ class StagelabConfig(BaseModel):
     scenarios: list[Scenario]
     metrics: MetricsSpec = MetricsSpec()
     report: ReportSpec
+    dos_target_allowlist: list[str] = Field(default_factory=list)
+
+    @field_validator("dos_target_allowlist")
+    @classmethod
+    def _validate_dos_allowlist(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            try:
+                ipaddress.ip_network(entry, strict=False)
+            except ValueError as exc:
+                raise ValueError(
+                    f"dos_target_allowlist: invalid CIDR/IP entry {entry!r}: {exc}"
+                ) from exc
+        return v
 
     @model_validator(mode="after")
     def _check_integrity(self) -> "StagelabConfig":
@@ -555,6 +568,26 @@ def total_hugepages_per_host(cfg: StagelabConfig) -> dict[str, int]:
     return totals
 
 
+def _is_dos_target_allowed(ip_or_cidr: str, allowlist: list[str]) -> bool:
+    """True iff ``ip_or_cidr`` is a subnet (or single IP) contained in any
+    of the allowlist entries. Empty allowlist → returns False (fail-safe:
+    nothing is allowed until explicitly whitelisted)."""
+    if not allowlist:
+        return False
+    try:
+        candidate = ipaddress.ip_network(ip_or_cidr, strict=False)
+    except ValueError:
+        return False
+    for allowed in allowlist:
+        try:
+            parent = ipaddress.ip_network(allowed, strict=False)
+        except ValueError:
+            continue
+        if candidate.version == parent.version and candidate.subnet_of(parent):
+            return True
+    return False
+
+
 __all__ = [
     "Host",
     "Dut",
@@ -575,4 +608,5 @@ __all__ = [
     "StagelabConfig",
     "load",
     "total_hugepages_per_host",
+    "_is_dos_target_allowed",
 ]
