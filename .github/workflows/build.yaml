@@ -160,7 +160,17 @@ jobs:
 
       - name: Run shellcheck on tools/
         run: |
-          shellcheck tools/run-tests.sh tools/gen-rpm-spec.sh tools/release.sh tools/setup-remote-test-host.sh
+          # --severity=warning: info-level notes (SC1091 source-not-followed,
+          # SC2029 ssh-client-side-expand) are informational-only and do not
+          # indicate bugs in our scripts.
+          # -x: follow sourced files that carry a `# shellcheck source=` directive
+          # so variables consumed in lib/trex-install.sh are visible and don't
+          # produce SC2034 false positives in the sourcing script.
+          shellcheck --severity=warning -x \
+            tools/run-tests.sh \
+            tools/gen-rpm-spec.sh \
+            tools/release.sh \
+            tools/setup-remote-test-host.sh
 
   build:
     name: Build wheels
