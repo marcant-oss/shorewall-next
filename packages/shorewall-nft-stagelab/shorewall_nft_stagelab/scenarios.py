@@ -89,8 +89,22 @@ class ThroughputRunner(Scenario):
         src_ep = ep_map[sc.source]
 
         # Derive bind/server IPs from endpoint config (strip prefix len).
-        sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else ""
-        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else ""
+        if sc.family == "ipv6":
+            if not sink_ep.ipv6:
+                raise ValueError(
+                    f"throughput scenario {sc.id!r}: family=ipv6 requires "
+                    f"ipv6 address on sink endpoint {sc.sink!r}"
+                )
+            if not src_ep.ipv6:
+                raise ValueError(
+                    f"throughput scenario {sc.id!r}: family=ipv6 requires "
+                    f"ipv6 address on source endpoint {sc.source!r}"
+                )
+            sink_ip = sink_ep.ipv6.split("/")[0]
+            src_ip = src_ep.ipv6.split("/")[0]
+        else:
+            sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else ""
+            src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else ""
 
         server_cmd = AgentCommand(
             endpoint_name=sc.sink,
@@ -98,6 +112,7 @@ class ThroughputRunner(Scenario):
             spec={
                 "bind": sink_ip,
                 "port": 5201,
+                "family": sc.family,
                 "scenario_id": sc.id,
             },
         )
@@ -111,6 +126,7 @@ class ThroughputRunner(Scenario):
                 "duration_s": sc.duration_s,
                 "parallel": sc.parallel,
                 "proto": sc.proto,
+                "family": sc.family,
                 "delay_before_s": 1,
                 "measure_latency": sc.measure_latency,
                 "scenario_id": sc.id,

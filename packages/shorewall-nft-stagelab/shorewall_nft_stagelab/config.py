@@ -219,6 +219,7 @@ class ThroughputScenario(BaseModel):
     source: str
     sink: str
     proto: Literal["tcp", "udp"]
+    family: Literal["ipv4", "ipv6"] = "ipv4"
     duration_s: int
     parallel: int
     expect_min_gbps: float

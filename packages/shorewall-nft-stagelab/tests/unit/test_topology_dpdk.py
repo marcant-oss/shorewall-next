@@ -1,11 +1,11 @@
-"""Unit tests for topology_dpdk — all subprocess/sysfs calls are mocked."""
+"""Unit tests for topology_dpdk — all subprocess/sysfs/pyroute2 calls are mocked."""
 
 from __future__ import annotations
 
 import json
 import logging
 import subprocess
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -262,27 +262,19 @@ def test_teardown_reattaches_bond_master(tmp_path, monkeypatch):
         orig_master_kind="bond",
     )
 
-    run_calls: list[list[str]] = []
+    restore_calls: list[tuple[str, str, str]] = []
 
-    def _fake_run(cmd: list[str]) -> None:
-        run_calls.append(list(cmd))
+    def _fake_restore(ifname: str, master: str, kind: str) -> None:
+        restore_calls.append((ifname, master, kind))
 
     monkeypatch.setattr(topology_dpdk, "_run_devbind", _fake_devbind_factory())
     monkeypatch.setattr(topology_dpdk, "_wait_for_netdev", lambda pci, timeout_s=2.0: "eth1")
-    monkeypatch.setattr(topology_dpdk, "_run", _fake_run)
+    monkeypatch.setattr(topology_dpdk, "_restore_master", _fake_restore)
 
     teardown_dpdk_endpoint(handle)
 
-    # Bond sequence: down → master → up → master up
-    assert ["ip", "link", "set", "eth1", "down"] in run_calls
-    assert ["ip", "link", "set", "eth1", "master", "bond0"] in run_calls
-    assert ["ip", "link", "set", "eth1", "up"] in run_calls
-    assert ["ip", "link", "set", "bond0", "up"] in run_calls
-
-    # Ordering: down before master
-    idx_down = run_calls.index(["ip", "link", "set", "eth1", "down"])
-    idx_master = run_calls.index(["ip", "link", "set", "eth1", "master", "bond0"])
-    assert idx_down < idx_master
+    # _restore_master must be called with the correct ifname, master, kind
+    assert ("eth1", "bond0", "bond") in restore_calls
 
 
 # ---------------------------------------------------------------------------
@@ -304,23 +296,19 @@ def test_teardown_reattaches_bridge_master(tmp_path, monkeypatch):
         orig_master_kind="bridge",
     )
 
-    run_calls: list[list[str]] = []
+    restore_calls: list[tuple[str, str, str]] = []
 
-    def _fake_run(cmd: list[str]) -> None:
-        run_calls.append(list(cmd))
+    def _fake_restore(ifname: str, master: str, kind: str) -> None:
+        restore_calls.append((ifname, master, kind))
 
     monkeypatch.setattr(topology_dpdk, "_run_devbind", _fake_devbind_factory())
     monkeypatch.setattr(topology_dpdk, "_wait_for_netdev", lambda pci, timeout_s=2.0: "eth1")
-    monkeypatch.setattr(topology_dpdk, "_run", _fake_run)
+    monkeypatch.setattr(topology_dpdk, "_restore_master", _fake_restore)
 
     teardown_dpdk_endpoint(handle)
 
-    # Bridge sequence: master → up → master up (no down step)
-    assert ["ip", "link", "set", "eth1", "master", "br-trunk"] in run_calls
-    assert ["ip", "link", "set", "eth1", "up"] in run_calls
-    assert ["ip", "link", "set", "br-trunk", "up"] in run_calls
-    # Must NOT have a 'down' for eth1
-    assert ["ip", "link", "set", "eth1", "down"] not in run_calls
+    # _restore_master must be called with the correct ifname, master, kind
+    assert ("eth1", "br-trunk", "bridge") in restore_calls
 
 
 # ---------------------------------------------------------------------------
@@ -342,13 +330,12 @@ def test_teardown_master_restore_best_effort(tmp_path, monkeypatch, caplog):
         orig_master_kind="bond",
     )
 
-    def _failing_run(cmd: list[str]) -> None:
-        if "master" in cmd:
-            raise RuntimeError("simulated ip link set master failure")
+    def _failing_restore(ifname: str, master: str, kind: str) -> None:
+        raise RuntimeError("simulated ip link set master failure")
 
     monkeypatch.setattr(topology_dpdk, "_run_devbind", _fake_devbind_factory())
     monkeypatch.setattr(topology_dpdk, "_wait_for_netdev", lambda pci, timeout_s=2.0: "eth1")
-    monkeypatch.setattr(topology_dpdk, "_run", _failing_run)
+    monkeypatch.setattr(topology_dpdk, "_restore_master", _failing_restore)
 
     # Must not raise — master restore is best-effort
     with caplog.at_level(logging.WARNING, logger="shorewall_nft_stagelab.topology_dpdk"):
