@@ -81,7 +81,8 @@ class _FakeLock:
 
 
 class _FakeDnsSetTracker:
-    """Minimal stub exposing _lock, _by_name, _by_id."""
+    """Minimal stub exposing _lock, _by_name, _by_id, and the
+    shared_qname_counts() public API added in W7."""
 
     def __init__(
         self,
@@ -91,6 +92,20 @@ class _FakeDnsSetTracker:
         self._lock = _FakeLock()
         self._by_name = by_name or {}
         self._by_id = by_id or {}
+
+    def shared_qname_counts(self) -> dict[tuple[str, str], int]:
+        counts_by_sid: dict[tuple[int, str], int] = {}
+        for (_, family), sid in self._by_name.items():
+            fam_str = "ipv4" if family == 4 else "ipv6"
+            key = (sid, fam_str)
+            counts_by_sid[key] = counts_by_sid.get(key, 0) + 1
+        result: dict[tuple[str, str], int] = {}
+        for (sid, fam_str), count in counts_by_sid.items():
+            canonical = self._by_id.get(sid)
+            if canonical is None:
+                continue
+            result[(canonical[0], fam_str)] = count
+        return result
 
 
 # ---------------------------------------------------------------------------

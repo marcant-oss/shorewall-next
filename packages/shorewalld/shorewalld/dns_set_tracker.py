@@ -456,6 +456,39 @@ class DnsSetTracker:
 
     # ── exporter read path ───────────────────────────────────────────
 
+    def shared_qname_counts(self) -> dict[tuple[str, str], int]:
+        """Return count of qnames feeding each ``(set_name, family)`` group.
+
+        Keyed by ``(canonical_set_name, family_str)`` where *family_str* is
+        ``"ipv4"`` or ``"ipv6"``.  The canonical set name is the qname of
+        the first member assigned to that set_id (as stored in ``_by_id``).
+
+        Value is the number of ``(qname, family)`` pairs in ``_by_name``
+        that map to the same set_id.  A value > 1 indicates active N→1
+        grouping — multiple qnames feeding one nft set.
+
+        Called by :class:`~shorewalld.collectors.nfsets.NfsetsCollector`
+        at scrape time to emit ``shorewalld_dns_set_shared_qnames``.  Using
+        this method avoids direct access to private attributes.
+
+        Returns an empty dict when no registry has been loaded.
+        """
+        with self._lock:
+            counts_by_sid: dict[tuple[int, str], int] = {}
+            for (_, family), sid in self._by_name.items():
+                fam_str = "ipv4" if family == FAMILY_V4 else "ipv6"
+                key = (sid, fam_str)
+                counts_by_sid[key] = counts_by_sid.get(key, 0) + 1
+
+            result: dict[tuple[str, str], int] = {}
+            for (sid, fam_str), count in counts_by_sid.items():
+                canonical = self._by_id.get(sid)
+                if canonical is None:
+                    continue
+                set_name = canonical[0]
+                result[(set_name, fam_str)] = count
+        return result
+
     def snapshot(self) -> TrackerSnapshot:
         """Return a copy of the metric state for the Prometheus scrape.
 
