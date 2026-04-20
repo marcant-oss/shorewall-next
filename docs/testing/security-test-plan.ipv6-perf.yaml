@@ -12,7 +12,8 @@ tests:
     maps_to_scenario:
       kind: throughput
       proto: tcp
-      source_role: wan-uplink
+      family: ipv6
+      source_role: wan-native
       sink_role: lan-downstream
       duration_s: 30
       parallel: 4
@@ -38,7 +39,8 @@ tests:
     maps_to_scenario:
       kind: throughput
       proto: udp
-      source_role: wan-uplink
+      family: ipv6
+      source_role: wan-native
       sink_role: lan-downstream
       duration_s: 20
       parallel: 2

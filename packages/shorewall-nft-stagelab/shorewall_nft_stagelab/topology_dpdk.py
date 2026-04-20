@@ -12,6 +12,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from pyroute2 import IPRoute
+from pyroute2.netlink.exceptions import NetlinkError
+
 _log = logging.getLogger(__name__)
 
 RECOVERY_FILE = Path("/var/lib/stagelab/dpdk-bindings.json")
@@ -235,29 +238,41 @@ def _wait_for_netdev(pci_addr: str, timeout_s: float = 2.0) -> str:
         time.sleep(0.1)
 
 
-def _run(cmd: list[str]) -> None:
-    """Run cmd; raise RuntimeError with stderr on non-zero exit."""
+def _nl_step(step: str, fn, *args, **kwargs):
+    """Call fn(*args, **kwargs); translate NetlinkError to RuntimeError(step …)."""
     try:
-        subprocess.run(cmd, check=True, text=True, capture_output=True)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            f"{' '.join(cmd)} failed (rc={exc.returncode}): {(exc.stderr or '').strip()[-400:]}"
-        ) from exc
+        return fn(*args, **kwargs)
+    except NetlinkError as exc:
+        raise RuntimeError(f"{step} failed: {exc}") from exc
 
 
 def _restore_master(ifname: str, master: str, kind: str) -> None:
-    """Re-enslave ifname to master. Bond: down→master→up; bridge: master→up."""
-    if kind == "bond":
-        _run(["ip", "link", "set", ifname, "down"])
-        _run(["ip", "link", "set", ifname, "master", master])
-        _run(["ip", "link", "set", ifname, "up"])
-        _run(["ip", "link", "set", master, "up"])
-    elif kind == "bridge":
-        _run(["ip", "link", "set", ifname, "master", master])
-        _run(["ip", "link", "set", ifname, "up"])
-        _run(["ip", "link", "set", master, "up"])
-    else:
-        _log.warning("dpdk: unknown master kind %r; skipping restore for %s", kind, ifname)
+    """Re-enslave ifname to master via pyroute2 netlink.
+
+    Bond: set ifname down → set master → set ifname up → set master up.
+    Bridge: set master → set ifname up → set master up (no intermediate down).
+    """
+    with IPRoute() as ipr:
+        ifidx = ipr.link_lookup(ifname=ifname)
+        if not ifidx:
+            raise RuntimeError(f"dpdk restore: {ifname!r} not found")
+        mstr_idx = ipr.link_lookup(ifname=master)
+        if not mstr_idx:
+            raise RuntimeError(f"dpdk restore: master {master!r} not found")
+        idx = ifidx[0]
+        midx = mstr_idx[0]
+
+        if kind == "bond":
+            _nl_step(f"set {ifname} down", ipr.link, "set", index=idx, state="down")
+            _nl_step(f"set {ifname} master {master}", ipr.link, "set", index=idx, master=midx)
+            _nl_step(f"set {ifname} up", ipr.link, "set", index=idx, state="up")
+            _nl_step(f"set {master} up", ipr.link, "set", index=midx, state="up")
+        elif kind == "bridge":
+            _nl_step(f"set {ifname} master {master}", ipr.link, "set", index=idx, master=midx)
+            _nl_step(f"set {ifname} up", ipr.link, "set", index=idx, state="up")
+            _nl_step(f"set {master} up", ipr.link, "set", index=midx, state="up")
+        else:
+            _log.warning("dpdk: unknown master kind %r; skipping restore for %s", kind, ifname)
 
 
 def _check_numa_affinity(

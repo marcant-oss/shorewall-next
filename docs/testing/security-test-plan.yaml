@@ -2,7 +2,7 @@ __comment__: Auto-generated (security-test-plan) — DO NOT edit by hand; regene
   via tools/merge-security-test-plan-yaml.py or the M1 merger.
 schema_version: 1
 generated_by: M1 merger (security-test-plan feature)
-generated_at: '2026-04-20T18:51:59+00:00'
+generated_at: '2026-04-20T21:22:57+00:00'
 standards:
 - id: cc-iso-15408
   title: Common Criteria (ISO/IEC 15408)
@@ -1590,7 +1590,8 @@ tests:
   maps_to_scenario:
     kind: throughput
     proto: tcp
-    source_role: wan-uplink
+    family: ipv6
+    source_role: wan-native
     sink_role: lan-downstream
     duration_s: 30
     parallel: 4
@@ -1619,7 +1620,8 @@ tests:
   maps_to_scenario:
     kind: throughput
     proto: udp
-    source_role: wan-uplink
+    family: ipv6
+    source_role: wan-native
     sink_role: lan-downstream
     duration_s: 20
     parallel: 2

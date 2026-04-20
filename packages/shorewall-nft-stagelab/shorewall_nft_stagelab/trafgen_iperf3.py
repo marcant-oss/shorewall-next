@@ -17,6 +17,7 @@ class Iperf3Spec:
     duration_s: int = 10
     parallel: int = 1
     proto: str = "tcp"     # "tcp" | "udp"
+    family: str = "ipv4"   # "ipv4" | "ipv6"
     udp_bandwidth_mbps: int = 0  # only for udp; 0 = unlimited
     port: int = 5201
 
@@ -40,6 +41,8 @@ class TrafGenResult:
 def build_argv(spec: Iperf3Spec) -> list[str]:
     """Translate spec into iperf3 argv. Always include --json."""
     argv = ["iperf3", "--json", "-p", str(spec.port), "-B", spec.bind]
+    if spec.family == "ipv6":
+        argv.insert(1, "-6")
 
     if spec.mode == "server":
         argv += ["-s", "--one-off"]

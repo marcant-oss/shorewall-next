@@ -2,20 +2,30 @@
 
 from __future__ import annotations
 
+import os
 import re
-import subprocess
 from dataclasses import dataclass
+
+from pyroute2 import IPRoute, NetNS
+from pyroute2.netlink.exceptions import NetlinkError
 
 from shorewall_nft_netkit.nsstub import spawn_nsstub, stop_nsstub
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
+# errno constants
+_EEXIST = 17
+_ENODEV = 19
+_ENOENT = 2
+_EADDRNOTAVAIL = 99
 
-def _run(cmd: list[str], step: str) -> None:
+
+def _nl_step(step: str, fn, *args, **kwargs):
+    """Call fn(*args, **kwargs); translate NetlinkError to RuntimeError(step …)."""
     try:
-        subprocess.run(cmd, check=True, text=True, capture_output=True)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"{step} failed: {exc.stderr}") from exc
+        return fn(*args, **kwargs)
+    except NetlinkError as exc:
+        raise RuntimeError(f"{step} failed: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -62,70 +72,103 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
     )
 
     try:
-        # Parent NIC must be up before VLAN add, otherwise the subsequent
-        # `ip link set <vlan> up` inside the netns fails with
-        # "Network is down". This is common on hosts where the test NIC is
-        # NM-unmanaged and has no boot-time enslavement: eth2 starts DOWN.
-        _run(
-            ["ip", "link", "set", spec.nic, "up"],
-            "bring up parent NIC",
-        )
-        # Create VLAN sub-interface. If it already exists (e.g. created by a
-        # systemd service at boot — tester02-downstream.service) we reuse it
-        # directly rather than failing. The kernel emits two distinct error
-        # strings for this depending on whether the interface exists in the
-        # current netns ("File exists" from RTNETLINK) or the 8021q layer
-        # remembers the VLAN-on-parent mapping from a previous setup in
-        # another netns ("8021q: VLAN device already exists"). Both are
-        # safe to ignore — we adopt the interface.
-        try:
-            subprocess.run(
-                ["ip", "link", "add", "link", spec.nic,
-                 "name", vlan_iface, "type", "vlan", "id", str(spec.vlan)],
-                check=True, text=True, capture_output=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            err = exc.stderr or ""
-            if "File exists" not in err and "VLAN device already exists" not in err:
-                raise RuntimeError(f"create VLAN iface failed: {err}") from exc
-            # Interface pre-exists; take it over by moving it to our netns.
-            # Flush any IPs that might have been configured in the root-ns
-            # (from the persistent service) so our IP assignment is clean.
-            subprocess.run(
-                ["ip", "addr", "flush", "dev", vlan_iface],
-                check=False, text=True, capture_output=True,
-            )
-        _run(
-            ["ip", "link", "set", vlan_iface, "netns", netns],
-            "move VLAN iface to netns",
-        )
-        _run(
-            ["ip", "-n", netns, "link", "set", "lo", "up"],
-            "bring up loopback",
-        )
-        _run(
-            ["ip", "-n", netns, "link", "set", vlan_iface, "up"],
-            "bring up VLAN iface",
-        )
-        _run(
-            ["ip", "-n", netns, "addr", "add", spec.ipv4, "dev", vlan_iface],
-            "add IPv4 address",
-        )
-        _run(
-            ["ip", "-n", netns, "route", "add", "default", "via", spec.ipv4_gw],
-            "add IPv4 default route",
-        )
-        if spec.ipv6 is not None:
-            _run(
-                ["ip", "-n", netns, "addr", "add", spec.ipv6, "dev", vlan_iface],
-                "add IPv6 address",
-            )
-        if spec.ipv6_gw is not None:
-            _run(
-                ["ip", "-n", netns, "route", "add", "default",
-                 "via", spec.ipv6_gw],
-                "add IPv6 default route",
-            )
+        with IPRoute() as ipr:
+            # Parent NIC must be up before VLAN add, otherwise the subsequent
+            # `ip link set <vlan> up` inside the netns fails with
+            # "Network is down". This is common on hosts where the test NIC is
+            # NM-unmanaged and has no boot-time enslavement: eth2 starts DOWN.
+            nic_idx = ipr.link_lookup(ifname=spec.nic)
+            if not nic_idx:
+                raise RuntimeError(
+                    f"bring up parent NIC failed: {spec.nic!r} not found"
+                )
+            _nl_step("bring up parent NIC",
+                     ipr.link, "set", index=nic_idx[0], state="up")
+
+            # Create VLAN sub-interface. If it already exists (e.g. created by a
+            # systemd service at boot — tester02-downstream.service) we reuse it
+            # directly rather than failing. The kernel emits two distinct error
+            # strings for this depending on whether the interface exists in the
+            # current netns ("File exists" from RTNETLINK) or the 8021q layer
+            # remembers the VLAN-on-parent mapping from a previous setup in
+            # another netns ("8021q: VLAN device already exists"). Both are
+            # safe to ignore — we adopt the interface.
+            try:
+                ipr.link(
+                    "add",
+                    ifname=vlan_iface,
+                    kind="vlan",
+                    link=nic_idx[0],
+                    vlan_id=spec.vlan,
+                )
+            except NetlinkError as exc:
+                if exc.code != _EEXIST:
+                    raise RuntimeError(
+                        f"create VLAN iface failed: {exc}"
+                    ) from exc
+                # Interface pre-exists; take it over by moving it to our netns.
+                # Flush any IPs that might have been configured in the root-ns
+                # (from the persistent service) so our IP assignment is clean.
+                vlan_idx = ipr.link_lookup(ifname=vlan_iface)
+                if vlan_idx:
+                    try:
+                        ipr.flush_addr(index=vlan_idx[0])
+                    except NetlinkError:
+                        pass
+
+            # Move VLAN iface to netns — open the netns fd for the move
+            vlan_idx = ipr.link_lookup(ifname=vlan_iface)
+            if not vlan_idx:
+                raise RuntimeError(
+                    f"move VLAN iface to netns failed: {vlan_iface!r} not found after create"
+                )
+            ns_fd = os.open(f"/run/netns/{netns}", os.O_RDONLY)
+            try:
+                _nl_step("move VLAN iface to netns",
+                         ipr.link, "set", index=vlan_idx[0], net_ns_fd=ns_fd)
+            finally:
+                os.close(ns_fd)
+
+        # All subsequent ops happen inside the new netns
+        with NetNS(netns) as ipns:
+            lo_idx = ipns.link_lookup(ifname="lo")
+            if lo_idx:
+                _nl_step("bring up loopback",
+                         ipns.link, "set", index=lo_idx[0], state="up")
+
+            vi_idx = ipns.link_lookup(ifname=vlan_iface)
+            if not vi_idx:
+                raise RuntimeError(
+                    f"bring up VLAN iface failed: {vlan_iface!r} not found in {netns}"
+                )
+            idx = vi_idx[0]
+
+            _nl_step("bring up VLAN iface",
+                     ipns.link, "set", index=idx, state="up")
+
+            # Parse CIDR for addr add (e.g. "10.0.10.100/24")
+            ipv4_addr, ipv4_plen = spec.ipv4.split("/")
+            _nl_step("add IPv4 address",
+                     ipns.addr, "add",
+                     index=idx, address=ipv4_addr, prefixlen=int(ipv4_plen),
+                     family=2)
+
+            _nl_step("add IPv4 default route",
+                     ipns.route, "add",
+                     dst="0.0.0.0/0", gateway=spec.ipv4_gw, family=2)
+
+            if spec.ipv6 is not None:
+                ipv6_addr, ipv6_plen = spec.ipv6.split("/")
+                _nl_step("add IPv6 address",
+                         ipns.addr, "add",
+                         index=idx, address=ipv6_addr,
+                         prefixlen=int(ipv6_plen), family=10)
+
+            if spec.ipv6_gw is not None:
+                _nl_step("add IPv6 default route",
+                         ipns.route, "add",
+                         dst="::/0", gateway=spec.ipv6_gw, family=10)
+
     except Exception:
         teardown_native_endpoint(handle)
         raise
@@ -140,11 +183,11 @@ def teardown_native_endpoint(handle: NativeEndpointHandle) -> None:
     """
     # Best-effort: delete the VLAN iface from inside the netns first.
     try:
-        subprocess.run(
-            ["ip", "-n", handle.netns, "link", "delete", handle.vlan_iface],
-            check=True, text=True, capture_output=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        with NetNS(handle.netns) as ipns:
+            vi_idx = ipns.link_lookup(ifname=handle.vlan_iface)
+            if vi_idx:
+                ipns.link("del", index=vi_idx[0])
+    except Exception:
         pass
 
     # Remove the netns (stop the stub). Swallow errors to stay idempotent.

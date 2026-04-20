@@ -198,7 +198,7 @@ def test_run_scenario_send_probe_calls_scapy() -> None:
 
 
 def test_run_scenario_iperf3_client_calls_netns_exec() -> None:
-    """iperf3 client scenario calls subprocess with 'ip netns exec <ns> iperf3 ...'."""
+    """iperf3 client scenario calls _exec_in_netns with the correct netns + iperf3 argv."""
     handle = NativeEndpointHandle(
         name="ep3", netns="NS_TEST_ep3", nsstub_pid=50, vlan_iface="eth0.3"
     )
@@ -225,19 +225,20 @@ def test_run_scenario_iperf3_client_calls_netns_exec() -> None:
             },
         },
     )
+    captured_netns: list[str] = []
     captured_argv: list[list[str]] = []
 
-    def fake_run(argv, **kwargs):
-        captured_argv.append(argv)
+    def fake_exec_in_netns(netns, argv, **kwargs):
+        captured_netns.append(netns)
+        captured_argv.append(list(argv))
         return fake_proc
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("shorewall_nft_stagelab.agent._exec_in_netns", side_effect=fake_exec_in_netns):
         resp = asyncio.run(handle_run_scenario(msg, state))
 
-    assert captured_argv, "subprocess.run was not called"
-    argv = captured_argv[0]
-    assert argv[:4] == ["ip", "netns", "exec", "NS_TEST_ep3"]
-    assert "iperf3" in argv
+    assert captured_argv, "_exec_in_netns was not called"
+    assert captured_netns[0] == "NS_TEST_ep3"
+    assert "iperf3" in captured_argv[0]
     assert resp["tool"] == "iperf3"
     assert resp["ok"] is True
     assert abs(resp["throughput_gbps"] - 10.0) < 0.01
@@ -556,19 +557,20 @@ def test_run_scenario_iperf3_server_timeout_returns_error() -> None:
 
     # _exec_in_netns raises TimeoutExpired (subprocess level) when the
     # iperf3 server sits in accept() past duration_s + 30 s grace.
-    def _raise_timeout(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=["iperf3"], timeout=40)
-
+    # On timeout the handler calls _exec_in_netns again with pkill to clean up.
+    call_count = [0]
     pkill_calls: list = []
 
-    def _fake_pkill(argv, **kwargs):
-        pkill_calls.append(argv)
+    def _raise_then_pkill(netns, argv, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # First call — the iperf3 server itself — times out.
+            raise subprocess.TimeoutExpired(cmd=["iperf3"], timeout=40)
+        # Subsequent calls — pkill cleanup.
+        pkill_calls.append(list(argv))
         return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
 
-    with (
-        patch("shorewall_nft_stagelab.agent._exec_in_netns", side_effect=_raise_timeout),
-        patch("subprocess.run", side_effect=_fake_pkill),
-    ):
+    with patch("shorewall_nft_stagelab.agent._exec_in_netns", side_effect=_raise_then_pkill):
         resp = asyncio.run(handle_run_scenario(msg, state))
 
     assert resp["tool"] == "iperf3"
@@ -602,15 +604,18 @@ def test_run_scenario_iperf3_server_timeout_uses_duration_plus_grace() -> None:
     )
 
     captured_timeout: list = []
+    call_count_grace = [0]
 
     def _capture_and_raise(netns, argv, *, timeout=None, **kwargs):
-        captured_timeout.append(timeout)
-        raise subprocess.TimeoutExpired(cmd=["iperf3"], timeout=timeout or 0)
+        call_count_grace[0] += 1
+        if call_count_grace[0] == 1:
+            # First call — the iperf3 server — record timeout and raise.
+            captured_timeout.append(timeout)
+            raise subprocess.TimeoutExpired(cmd=["iperf3"], timeout=timeout or 0)
+        # Second call — pkill cleanup — succeed silently.
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
 
-    with (
-        patch("shorewall_nft_stagelab.agent._exec_in_netns", side_effect=_capture_and_raise),
-        patch("subprocess.run"),
-    ):
+    with patch("shorewall_nft_stagelab.agent._exec_in_netns", side_effect=_capture_and_raise):
         resp = asyncio.run(handle_run_scenario(msg, state))
 
     assert captured_timeout, "_exec_in_netns was not called"

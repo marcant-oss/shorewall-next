@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 from typing import Any
@@ -66,15 +67,46 @@ def _exec_in_netns(
     capture_output: bool = True,
     timeout: int | None = None,
 ) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
-    """Prepend ``ip netns exec <netns>`` to *argv* and run subprocess."""
-    full_argv = ["ip", "netns", "exec", netns] + argv
-    return subprocess.run(
-        full_argv,
-        check=check,
-        text=text,
-        capture_output=capture_output,
-        timeout=timeout,
-    )
+    """Run *argv* with the child process pre-entered into *netns* via setns().
+
+    Uses an in-process setns() preexec_fn instead of ``ip netns exec``
+    so no extra iproute2 fork+exec is needed.  Falls back to
+    ``ip netns exec`` on EPERM (e.g., when the agent runs without
+    CAP_SYS_ADMIN but a setuid ip wrapper is available).
+    """
+    import ctypes
+
+    _CLONE_NEWNET = 0x40000000
+    ns_path = f"/run/netns/{netns}"
+
+    def _enter_ns() -> None:  # runs in child, post-fork, pre-exec
+        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        fd = os.open(ns_path, os.O_RDONLY)
+        try:
+            if _libc.setns(fd, _CLONE_NEWNET) != 0:
+                raise OSError(ctypes.get_errno(), "setns failed")
+        finally:
+            os.close(fd)
+
+    try:
+        return subprocess.run(
+            argv,
+            check=check,
+            text=text,
+            capture_output=capture_output,
+            timeout=timeout,
+            preexec_fn=_enter_ns,
+        )
+    except OSError:
+        # Fallback: ip netns exec (available when running as root with iproute2)
+        full_argv = ["ip", "netns", "exec", netns] + argv
+        return subprocess.run(
+            full_argv,
+            check=check,
+            text=text,
+            capture_output=capture_output,
+            timeout=timeout,
+        )
 
 
 # ── Local metrics runner ──────────────────────────────────────────────────────
@@ -96,7 +128,7 @@ async def handle_ping(msg: Message, state: dict[str, Any]) -> dict[str, Any]:
 
 _IPERF3_FIELDS = frozenset({
     "mode", "bind", "server_ip", "duration_s", "parallel",
-    "proto", "udp_bandwidth_mbps", "port",
+    "proto", "family", "udp_bandwidth_mbps", "port",
 })
 _TCPKALI_FIELDS = frozenset({
     "target", "bind", "connections", "connect_rate",
@@ -226,8 +258,8 @@ async def handle_run_scenario(
             # the scenario reports ok=False rather than the controller timing
             # out and the agent becoming unresponsive to SHUTDOWN.
             await asyncio.to_thread(
-                subprocess.run,
-                ["ip", "netns", "exec", netns, "pkill", "-9", "-x", "iperf3"],
+                _exec_in_netns, netns,
+                ["pkill", "-9", "-x", "iperf3"],
                 check=False, capture_output=True, text=True,
             )
             result_timeout: dict[str, Any] = {
