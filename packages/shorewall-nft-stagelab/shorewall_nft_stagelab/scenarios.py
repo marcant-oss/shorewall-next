@@ -10,9 +10,11 @@ from dataclasses import dataclass
 from typing import Union
 
 from .config import (
+    ConnStormAstfScenario,
     ConnStormScenario,
     RuleScanScenario,
     StagelabConfig,
+    ThroughputDpdkScenario,
     ThroughputScenario,
     TuningSweepScenario,
 )
@@ -384,10 +386,136 @@ class TuningSweepRunner(Scenario):
 
 
 # ---------------------------------------------------------------------------
+# ThroughputDpdkRunner
+# ---------------------------------------------------------------------------
+
+
+class ThroughputDpdkRunner(Scenario):
+    """Wraps ``config.ThroughputDpdkScenario``.
+
+    ``plan()`` emits a single ``run_trex_stateless`` command on the *source*
+    endpoint (TX side).  Sink-side RX counter collection is deferred to the
+    agent (T24) as a POLL_METRICS call.
+    """
+
+    def __init__(self, scenario: ThroughputDpdkScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        spec: dict = {
+            "ports": (0,),
+            "duration_s": sc.duration_s,
+            "multiplier": sc.multiplier,
+            "_scenario_id": sc.id,
+        }
+        if sc.pcap_file:
+            spec["pcap_files"] = (sc.pcap_file,)
+        else:
+            spec["packet_size_b"] = sc.packet_size_b
+        return [
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="run_trex_stateless",
+                spec=spec,
+            )
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        r = results[0] if results else {}
+        if not r.get("ok", False):
+            return ScenarioResult(
+                scenario_id=sc.id,
+                kind="throughput_dpdk",
+                ok=False,
+                duration_s=float(r.get("duration_s", 0.0)),
+                raw=r,
+            )
+        throughput_gbps = float(r.get("throughput_gbps", 0.0))
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="throughput_dpdk",
+            ok=True,
+            duration_s=float(r.get("duration_s", 0.0)),
+            raw={
+                "throughput_gbps": throughput_gbps,
+                "pps": r.get("pps", 0.0),
+                "errors": r.get("errors", 0),
+                "tool": r.get("tool", "trex-stl"),
+                **r,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# ConnStormAstfRunner
+# ---------------------------------------------------------------------------
+
+
+class ConnStormAstfRunner(Scenario):
+    """Wraps ``config.ConnStormAstfScenario``.
+
+    ``plan()`` emits a single ``run_trex_astf`` command on the *source*
+    endpoint.  The ASTF profile drives both client and server sides (TRex
+    ASTF is single-box dual-port).
+    """
+
+    def __init__(self, scenario: ConnStormAstfScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        return [
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="run_trex_astf",
+                spec={
+                    "profile_py": sc.profile_py,
+                    "duration_s": sc.duration_s,
+                    "multiplier": sc.multiplier,
+                    "_scenario_id": sc.id,
+                },
+            )
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        r = results[0] if results else {}
+        concurrent_sessions = int(r.get("concurrent_sessions", 0))
+        new_sessions_per_s = float(r.get("new_sessions_per_s", 0.0))
+        errors = int(r.get("errors", 0))
+        base_ok = r.get("ok", False)
+        threshold_ok = concurrent_sessions >= sc.expect_min_concurrent
+        ok = bool(base_ok) and threshold_ok
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="conn_storm_astf",
+            ok=ok,
+            duration_s=float(r.get("duration_s", 0.0)),
+            raw={
+                "concurrent_sessions": concurrent_sessions,
+                "new_sessions_per_s": new_sessions_per_s,
+                "errors": errors,
+                "expect_min_concurrent": sc.expect_min_concurrent,
+                "tool": r.get("tool", "trex-astf"),
+                **r,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
-_ScenarioCfg = Union[ThroughputScenario, ConnStormScenario, RuleScanScenario, TuningSweepScenario]
+_ScenarioCfg = Union[
+    ThroughputScenario,
+    ConnStormScenario,
+    RuleScanScenario,
+    TuningSweepScenario,
+    ThroughputDpdkScenario,
+    ConnStormAstfScenario,
+]
 
 
 def build_runner(scenario: _ScenarioCfg) -> Scenario:
@@ -400,6 +528,10 @@ def build_runner(scenario: _ScenarioCfg) -> Scenario:
         return RuleScanRunner(scenario)  # type: ignore[arg-type]
     if scenario.kind == "tuning_sweep":
         return TuningSweepRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "throughput_dpdk":
+        return ThroughputDpdkRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "conn_storm_astf":
+        return ConnStormAstfRunner(scenario)  # type: ignore[arg-type]
     raise ValueError(f"Unknown scenario kind: {scenario.kind!r}")
 
 
@@ -410,5 +542,7 @@ __all__ = [
     "ConnStormRunner",
     "RuleScanRunner",
     "TuningSweepRunner",
+    "ThroughputDpdkRunner",
+    "ConnStormAstfRunner",
     "build_runner",
 ]
