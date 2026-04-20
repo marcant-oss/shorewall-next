@@ -135,7 +135,10 @@ async def handle_setup_endpoint(
         }
 
     if mode == "probe":
-        vlan = int(spec.get("vlan", 1))
+        # spec.get("vlan", 1) returns None (not 1) when the key is present
+        # with a None value — which is what Pydantic serialises when
+        # Endpoint(vlan=None) crosses the wire. Guard with `or`.
+        vlan = int(spec.get("vlan") or 1)
         bridge = spec.get("bridge", f"br-{name}")
         tap_name = f"{name}-tap"[:15]
         members = (BridgeMemberSpec(kind="tap", name=tap_name, vlan=vlan),)

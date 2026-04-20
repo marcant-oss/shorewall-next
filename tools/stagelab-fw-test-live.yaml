@@ -57,16 +57,21 @@ endpoints:
     bridge: br-uplink
     role: wan-uplink
 
-  # tester02 downstream endpoint — native mode on VLAN sub-interface eth1.10.
-  # eth1 is on the customer-VLAN trunk bridge (VLAN-transparent; separate from
-  # eth2's backbone bridge).  tester02-downstream.service creates eth1.10 at boot.
+  # tester02 downstream endpoint — native mode on VLAN sub-interface eth1.20
+  # (host zone, 217.14.168.0/24). net→host ICMP is ACCEPTed by the FW policy,
+  # so tester01 sim-uplink ←→ tester02 through-FW flows are live (ICMP-only;
+  # TCP/UDP need a permitted zone-pair or a test-ACCEPT rule).
+  #
+  # eth1 is on the customer-VLAN-transparent trunk bridge (separate from eth2's
+  # backbone bridge). tester02-downstream.service creates eth1.20 + return route
+  # 217.14.160.64/27 via 217.14.168.1 at boot.
   - name: lan-downstream
     host: tester02
     mode: native
     nic: eth1
-    vlan: 10
-    ipv4: 217.14.160.30/29
-    ipv4_gw: 217.14.160.25
+    vlan: 20
+    ipv4: 217.14.168.254/24
+    ipv4_gw: 217.14.168.1
     role: lan-downstream
 
 metrics:
