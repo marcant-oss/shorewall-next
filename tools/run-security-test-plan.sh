@@ -21,11 +21,11 @@ REPO="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 if [[ -x "${REPO}/.venv/bin/python" ]]; then
     PYTHON="${REPO}/.venv/bin/python"
-    STAGELAB="${REPO}/.venv/bin/stagelab"
+    STAGELAB="${REPO}/.venv/bin/shorewall-nft-stagelab"
 elif command -v python3 > /dev/null 2>&1; then
     echo "WARNING: repo venv not found at ${REPO}/.venv; falling back to system python3" >&2
     PYTHON="python3"
-    STAGELAB="stagelab"
+    STAGELAB="shorewall-nft-stagelab"
 else
     echo "ERROR: neither ${REPO}/.venv/bin/python nor system python3 found" >&2
     exit 1
