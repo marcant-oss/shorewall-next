@@ -163,4 +163,67 @@ def review(report_dir: str, output: str | None, open_pr_flag: bool,
             sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# audit
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.argument("report_dirs", nargs=-1, type=click.Path(exists=True, file_okay=False), required=True)
+@click.option("--output", type=click.Path(file_okay=False), default=None,
+              help="Write audit.html (+audit.pdf) here (default: first REPORT_DIR).")
+@click.option("--format", "output_format", type=click.Choice(["html", "pdf", "both"]),
+              default="both",
+              help="Output format. Defaults to both; pdf requires weasyprint.")
+@click.option("--operator", default=None,
+              help="Operator name for the cover page (default: $USER).")
+def audit(report_dirs: tuple, output: str | None, output_format: str,
+          operator: str | None) -> None:
+    """Consolidate one or more stagelab run-dirs into a signed-off audit
+    report (single-file HTML + optional PDF)."""
+    import os as _os
+
+    from . import audit_report as _audit
+
+    paths = [Path(p) for p in report_dirs]
+    try:
+        payload = _audit.load_runs(paths)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"Error loading run dirs: {exc}", err=True)
+        sys.exit(1)
+
+    if operator:
+        payload = _audit.AuditPayload(
+            run_id=payload.run_id,
+            operator=operator,
+            config_path=payload.config_path,
+            scenarios=payload.scenarios,
+            recommendations=payload.recommendations,
+            sut_facts=payload.sut_facts,
+            setup_facts=payload.setup_facts,
+        )
+    elif not payload.operator:
+        payload = _audit.AuditPayload(
+            run_id=payload.run_id,
+            operator=_os.environ.get("USER", "unknown"),
+            config_path=payload.config_path,
+            scenarios=payload.scenarios,
+            recommendations=payload.recommendations,
+            sut_facts=payload.sut_facts,
+            setup_facts=payload.setup_facts,
+        )
+
+    out_dir = Path(output) if output else paths[0]
+    render_pdf_flag = output_format in ("pdf", "both")
+    try:
+        written = _audit.write(payload, out_dir, render_pdf=render_pdf_flag)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    click.echo(str(written["html"]))
+    if written.get("pdf"):
+        click.echo(str(written["pdf"]))
+
+
 __all__ = ["main"]

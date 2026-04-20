@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stagelab Firewall Validation Report &mdash; {{ run_id }}</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 2em; color: #222; }
+  header.cover { text-align: center; border-bottom: 2px solid #222; padding-bottom: 2em; margin-bottom: 2em; }
+  header.cover h1 { font-size: 2em; }
+  .grade-badge { display: inline-block; padding: .5em 1em; font-weight: bold; font-size: 2em; border-radius: .5em; color: white; }
+  .grade-A\+, .grade-A { background: #22c55e; }
+  .grade-B { background: #84cc16; }
+  .grade-C { background: #eab308; }
+  .grade-D { background: #f97316; }
+  .grade-F { background: #ef4444; }
+  .risk-green { color: #16a34a; font-weight: bold; }
+  .risk-yellow { color: #ca8a04; font-weight: bold; }
+  .risk-orange { color: #ea580c; font-weight: bold; }
+  .risk-red { color: #dc2626; font-weight: bold; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { text-align: left; padding: .4em .6em; border-bottom: 1px solid #ddd; }
+  th { background: #f5f5f5; }
+  .pass { color: #16a34a; }
+  .fail { color: #dc2626; }
+  .partial { color: #ca8a04; }
+  details { margin-left: 1em; }
+  .anchor-back { font-size: 0.85em; color: #666; }
+  section { margin-bottom: 2em; }
+  h2 { border-bottom: 1px solid #ddd; padding-bottom: .3em; }
+  pre { background: #f8f8f8; padding: 1em; overflow-x: auto; font-size: .85em; }
+  code { font-family: monospace; }
+</style>
+</head>
+<body>
+
+<header class="cover">
+  <h1>Stagelab Firewall Validation Report</h1>
+  <p>Run ID: <code>{{ run_id }}</code> &middot; Operator: {{ operator }}</p>
+  <p>Grade: <span class="grade-badge grade-{{ grade }}">{{ grade }}</span>
+     &nbsp; Risk score: <span class="risk-{{ risk_color }}">{{ risk_score }}</span></p>
+</header>
+
+<section id="sut">
+  <h2>System under test</h2>
+  {% if sut_facts %}
+  <table>
+    {% for k, v in sut_facts.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}
+  </table>
+  {% else %}
+  <p><em>No system-under-test metadata recorded in this run.</em></p>
+  {% endif %}
+</section>
+
+<section id="setup">
+  <h2>Test setup</h2>
+  {% if setup_facts %}
+  <table>
+    {% for k, v in setup_facts.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}
+  </table>
+  {% else %}
+  <p><em>No test-setup metadata recorded in this run.</em></p>
+  {% endif %}
+</section>
+
+<section id="summary">
+  <h2>Executive summary</h2>
+  <p>
+    <strong>{{ pass_pct }}%</strong> of scenarios passed.
+    Overall grade: <span class="grade-badge grade-{{ grade }}">{{ grade }}</span>
+  </p>
+  {% for cat, cat_scenarios in scenarios_by_category.items() %}
+    <h3>{{ cat }}</h3>
+    <table>
+      <thead>
+        <tr><th>Scenario</th><th>Kind</th><th>Status</th><th>Note</th><th>Details</th></tr>
+      </thead>
+      <tbody>
+        {% for s in cat_scenarios %}
+          <tr id="summary-{{ s.scenario_id }}">
+            <td><code>{{ s.scenario_id }}</code></td>
+            <td><code>{{ s.kind }}</code></td>
+            <td class="{{ 'pass' if s.ok else 'fail' }}">{{ 'PASS' if s.ok else 'FAIL' }}</td>
+            <td>{{ s.note }}</td>
+            <td><a href="#detail-{{ s.scenario_id }}">see details</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endfor %}
+</section>
+
+<section id="risk-assessment">
+  <h2>Risk assessment</h2>
+  <p>Overall grade: <span class="grade-badge grade-{{ grade }}">{{ grade }}</span> &middot;
+     <strong>{{ pass_pct }}%</strong> of scenarios passed &middot;
+     Risk score: <span class="risk-{{ risk_color }}">{{ risk_score }}</span></p>
+  <h3>Recommendations (tier B+C, operator review)</h3>
+  {% if recommendations %}
+    <ul>
+      {% for r in recommendations %}
+      <li><strong>[{{ r.tier }}] {{ r.signal }}</strong> &mdash; <code>{{ r.action }}</code><br>
+          <em>{{ r.rationale }}</em></li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p><em>No tier-B/C recommendations.</em></p>
+  {% endif %}
+</section>
+
+<section id="details">
+  <h2>Scenario details</h2>
+  {% for s in all_scenarios %}
+    <article id="detail-{{ s.scenario_id }}">
+      <h3>{{ s.scenario_id }} ({{ s.kind }}) &mdash;
+          <span class="{{ 'pass' if s.ok else 'fail' }}">{{ 'PASS' if s.ok else 'FAIL' }}</span>
+          <a class="anchor-back" href="#summary-{{ s.scenario_id }}">back to summary</a>
+      </h3>
+      <p>Category: <strong>{{ s.category }}</strong> &middot; Duration: {{ s.duration_s }} s</p>
+      {% if s.raw %}
+        <details><summary>Raw result</summary>
+          <pre>{{ s.raw | tojson(indent=2) }}</pre>
+        </details>
+      {% endif %}
+    </article>
+  {% endfor %}
+</section>
+
+</body>
+</html>
