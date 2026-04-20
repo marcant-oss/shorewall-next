@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from dataclasses import dataclass
 
 from pyroute2 import IPRoute, NetNS
 from pyroute2.netlink.exceptions import NetlinkError
-
 from shorewall_nft_netkit.nsstub import spawn_nsstub, stop_nsstub
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
@@ -106,11 +106,39 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
                     raise RuntimeError(
                         f"create VLAN iface failed: {exc}"
                     ) from exc
-                # Interface pre-exists; take it over by moving it to our netns.
-                # Flush any IPs that might have been configured in the root-ns
-                # (from the persistent service) so our IP assignment is clean.
+                # Interface pre-exists; check visibility. The 8021q kernel
+                # layer sometimes reports EEXIST even after the user-space
+                # interface has been destroyed by a prior netns-delete — in
+                # that case `link_lookup` returns empty and any subsequent
+                # `set netns` fails with "Cannot find device". Sledgehammer:
+                # reset the 8021q module and retry the add.
                 vlan_idx = ipr.link_lookup(ifname=vlan_iface)
-                if vlan_idx:
+                if not vlan_idx:
+                    subprocess.run(
+                        ["rmmod", "8021q"],
+                        check=False, text=True, capture_output=True,
+                    )
+                    subprocess.run(
+                        ["modprobe", "8021q"],
+                        check=False, text=True, capture_output=True,
+                    )
+                    # Re-lookup parent NIC (index may have changed after rmmod).
+                    nic_idx = ipr.link_lookup(ifname=spec.nic)
+                    if not nic_idx:
+                        raise RuntimeError(
+                            f"create VLAN iface failed: parent {spec.nic!r} "
+                            f"vanished after 8021q reset"
+                        )
+                    ipr.link(
+                        "add",
+                        ifname=vlan_iface,
+                        kind="vlan",
+                        link=nic_idx[0],
+                        vlan_id=spec.vlan,
+                    )
+                else:
+                    # Interface genuinely exists; flush any stray IPs so our
+                    # assignment is clean.
                     try:
                         ipr.flush_addr(index=vlan_idx[0])
                     except NetlinkError:
@@ -159,10 +187,16 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
 
             if spec.ipv6 is not None:
                 ipv6_addr, ipv6_plen = spec.ipv6.split("/")
+                # IFA_F_NODAD (0x02) skips Duplicate Address Detection so the
+                # address is usable immediately. Without this, callers that
+                # bind() to the address (iperf3, nmap, scapy raw sockets) fail
+                # with "Cannot assign requested address" during the ~1s DAD
+                # window because the address is still in `tentative` state.
                 _nl_step("add IPv6 address",
                          ipns.addr, "add",
                          index=idx, address=ipv6_addr,
-                         prefixlen=int(ipv6_plen), family=10)
+                         prefixlen=int(ipv6_plen), family=10,
+                         flags=0x02)
 
             if spec.ipv6_gw is not None:
                 _nl_step("add IPv6 default route",

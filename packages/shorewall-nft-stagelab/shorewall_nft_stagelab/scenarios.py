@@ -129,6 +129,7 @@ class ThroughputRunner(Scenario):
                 "family": sc.family,
                 "delay_before_s": 1,
                 "measure_latency": sc.measure_latency,
+                "udp_bandwidth_mbps": sc.udp_bandwidth_mbps,
                 "scenario_id": sc.id,
             },
         )
@@ -198,8 +199,16 @@ class ThroughputRunner(Scenario):
 class ConnStormRunner(Scenario):
     """Wraps ``config.ConnStormScenario``.
 
-    ``plan()`` emits a single ``run_tcpkali`` command on the *source* endpoint.
-    The sink is expected to have an iperf3-server or similar listener running.
+    ``plan()`` emits three commands:
+    1. ``start_http_listener`` on the *sink* endpoint — spawns a stdlib HTTP
+       server on ``target_port`` (default 80) so pyconn can complete a real
+       TCP 3-way handshake.
+    2. ``run_tcpkali`` on the *source* endpoint — drives the connection storm.
+    3. ``stop_http_listener`` on the *sink* endpoint — tears down the listener.
+
+    The HTTP listener is identified by the PID returned from step 1.  Both
+    listener commands are tagged ``_http_sidecar: true`` so that
+    ``summarize()`` can exclude them from the connection-count aggregation.
     """
 
     def __init__(self, scenario: ConnStormScenario) -> None:
@@ -210,26 +219,49 @@ class ConnStormRunner(Scenario):
         ep_map = {ep.name: ep for ep in cfg.endpoints}
         sink_ep = ep_map[sc.sink]
         sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else ""
+        port = sc.target_port
 
-        return [
-            AgentCommand(
-                endpoint_name=sc.source,
-                kind="run_tcpkali",
-                spec={
-                    "target": f"{sink_ip}:5001",
-                    "connections": sc.target_conns,
-                    "connect_rate": sc.rate_per_s,
-                    "duration_s": sc.hold_s,
-                    "scenario_id": sc.id,
-                },
-            )
-        ]
+        start_cmd = AgentCommand(
+            endpoint_name=sc.sink,
+            kind="start_http_listener",
+            spec={
+                "bind_ip": sink_ip,
+                "port": port,
+                "_http_sidecar": True,
+                "scenario_id": sc.id,
+            },
+        )
+        storm_cmd = AgentCommand(
+            endpoint_name=sc.source,
+            kind="run_tcpkali",
+            spec={
+                "target": f"{sink_ip}:{port}",
+                "connections": sc.target_conns,
+                "connect_rate": sc.rate_per_s,
+                "duration_s": sc.hold_s,
+                "delay_before_s": 1,
+                "scenario_id": sc.id,
+            },
+        )
+        stop_cmd = AgentCommand(
+            endpoint_name=sc.sink,
+            kind="stop_http_listener",
+            spec={
+                "bind_ip": sink_ip,
+                "port": port,
+                "_http_sidecar": True,
+                "scenario_id": sc.id,
+            },
+        )
+        return [start_cmd, storm_cmd, stop_cmd]
 
     def summarize(self, results: list[dict]) -> ScenarioResult:
         sc = self._sc
-        r = results[0] if results else {}
-        established = r.get("established", 0)
-        failed = r.get("failed", 0)
+        # Filter out http-sidecar results; keep only the pyconn storm result.
+        storm_results = [r for r in results if not r.get("_http_sidecar")]
+        r = storm_results[0] if storm_results else (results[0] if results else {})
+        established = r.get("connections_established", r.get("established", 0))
+        failed = r.get("connections_failed", r.get("failed", 0))
         ok = r.get("ok", False) and established >= sc.target_conns
 
         return ScenarioResult(

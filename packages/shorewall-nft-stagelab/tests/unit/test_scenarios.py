@@ -79,11 +79,12 @@ def test_throughput_plan_emits_server_then_client():
 
 
 # ---------------------------------------------------------------------------
-# Test 2: conn_storm plan emits exactly one tcpkali command on source
+# Test 2: conn_storm plan emits 3 commands: start_http_listener, run_tcpkali,
+#          stop_http_listener
 # ---------------------------------------------------------------------------
 
 
-def test_conn_storm_plan_one_command():
+def test_conn_storm_plan_three_commands():
     sc = ConnStormScenario(
         id="cs1",
         kind="conn_storm",
@@ -97,14 +98,107 @@ def test_conn_storm_plan_one_command():
     runner = build_runner(sc)
     cmds = runner.plan(cfg)
 
-    assert len(cmds) == 1
-    cmd = cmds[0]
-    assert cmd.kind == "run_tcpkali"
-    assert cmd.endpoint_name == "src"
-    assert cmd.spec["target"] == "192.168.1.20:5001"
-    assert cmd.spec["connections"] == 1000
-    assert cmd.spec["connect_rate"] == 200
-    assert cmd.spec["duration_s"] == 5
+    assert len(cmds) == 3, f"expected 3 commands, got {len(cmds)}: {[c.kind for c in cmds]}"
+
+    start_cmd, storm_cmd, stop_cmd = cmds
+
+    # 1) HTTP listener start on sink
+    assert start_cmd.kind == "start_http_listener"
+    assert start_cmd.endpoint_name == "sink"
+    assert start_cmd.spec["bind_ip"] == "192.168.1.20"
+    assert start_cmd.spec["port"] == 80
+    assert start_cmd.spec["_http_sidecar"] is True
+
+    # 2) Connection storm on source — target is sink_ip:target_port (default 80)
+    assert storm_cmd.kind == "run_tcpkali"
+    assert storm_cmd.endpoint_name == "src"
+    assert storm_cmd.spec["target"] == "192.168.1.20:80"
+    assert storm_cmd.spec["connections"] == 1000
+    assert storm_cmd.spec["connect_rate"] == 200
+    assert storm_cmd.spec["duration_s"] == 5
+
+    # 3) HTTP listener stop on sink
+    assert stop_cmd.kind == "stop_http_listener"
+    assert stop_cmd.endpoint_name == "sink"
+    assert stop_cmd.spec["port"] == 80
+    assert stop_cmd.spec["_http_sidecar"] is True
+
+
+def test_conn_storm_plan_custom_target_port():
+    """target_port=443 propagates into both the listener and the storm target."""
+    sc = ConnStormScenario(
+        id="cs2",
+        kind="conn_storm",
+        source="src",
+        sink="sink",
+        target_conns=500,
+        rate_per_s=100,
+        hold_s=10,
+        target_port=443,
+    )
+    cfg = _base_cfg([sc])
+    runner = build_runner(sc)
+    cmds = runner.plan(cfg)
+
+    assert len(cmds) == 3
+    start_cmd, storm_cmd, stop_cmd = cmds
+    assert start_cmd.spec["port"] == 443
+    assert storm_cmd.spec["target"] == "192.168.1.20:443"
+    assert stop_cmd.spec["port"] == 443
+
+
+def test_conn_storm_summarize_ignores_http_sidecar():
+    """summarize() must compute established from pyconn result, not sidecar dicts."""
+    sc = ConnStormScenario(
+        id="cs3",
+        kind="conn_storm",
+        source="src",
+        sink="sink",
+        target_conns=100,
+        rate_per_s=50,
+        hold_s=5,
+    )
+    runner = build_runner(sc)
+    # Simulate 3 result dicts: start sidecar, pyconn, stop sidecar
+    results = [
+        {"tool": "http_listener", "ok": True, "pid": 1234, "port": 80, "_http_sidecar": True},
+        {
+            "tool": "pyconn", "ok": True,
+            "connections_established": 100, "connections_failed": 0,
+            "duration_s": 5.0, "traffic_bps": 0,
+        },
+        {"tool": "http_listener", "ok": True, "pid": 1234, "port": 80, "_http_sidecar": True},
+    ]
+    result = runner.summarize(results)
+    assert result.ok is True
+    assert result.raw["established"] == 100
+    assert result.raw["failed"] == 0
+
+
+def test_conn_storm_summarize_fails_when_established_below_target():
+    """summarize() ok=False when established < target_conns."""
+    sc = ConnStormScenario(
+        id="cs4",
+        kind="conn_storm",
+        source="src",
+        sink="sink",
+        target_conns=1000,
+        rate_per_s=100,
+        hold_s=5,
+    )
+    runner = build_runner(sc)
+    results = [
+        {"tool": "http_listener", "ok": True, "pid": 9, "port": 80, "_http_sidecar": True},
+        {
+            "tool": "pyconn", "ok": True,
+            "connections_established": 200, "connections_failed": 800,
+            "duration_s": 5.0, "traffic_bps": 0,
+        },
+        {"tool": "http_listener", "ok": True, "pid": 9, "port": 80, "_http_sidecar": True},
+    ]
+    result = runner.summarize(results)
+    assert result.ok is False
+    assert result.raw["established"] == 200
 
 
 # ---------------------------------------------------------------------------

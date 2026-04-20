@@ -98,11 +98,12 @@ tests:
       must keep throughput above 80% of baseline.
     maps_to_scenario:
       kind: conn_storm
-      source_role: wan-uplink
+      source_role: wan-native
       sink_role: lan-downstream
       target_conns: 100000
       rate_per_s: 10000
       hold_s: 30
+      target_port: 80
       test_id: nist-sc-5-dos-conntrack
       standard_refs:
         - nist-800-53-sc-5

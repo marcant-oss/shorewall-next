@@ -119,8 +119,9 @@ tests:
       item: "simlab stateful oracle".
     maps_to_scenario:
       kind: conn_storm
-      source_role: wan-uplink
+      source_role: wan-native
       sink_role: lan-downstream
+      target_port: 80
     acceptance_criteria:
       established_flows_dropped: 0
       conntrack_table_fill_fraction: "<= 0.80"

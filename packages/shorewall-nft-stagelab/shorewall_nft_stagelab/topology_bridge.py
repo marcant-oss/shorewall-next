@@ -10,7 +10,6 @@ from dataclasses import dataclass
 
 from pyroute2 import IPRoute, NetNS
 from pyroute2.netlink.exceptions import NetlinkError
-
 from shorewall_nft_netkit.nsstub import spawn_nsstub, stop_nsstub
 from shorewall_nft_netkit.tundev import close_tuntap, create_tuntap
 

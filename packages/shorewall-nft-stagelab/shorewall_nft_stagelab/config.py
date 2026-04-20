@@ -224,6 +224,7 @@ class ThroughputScenario(BaseModel):
     parallel: int
     expect_min_gbps: float
     measure_latency: bool = False  # if True, extract per-interval TCP RTT from iperf3 JSON
+    udp_bandwidth_mbps: int = 0    # UDP only; 0 = unlimited (iperf3 -b 0), >0 = cap in Mbps
     test_id: str | None = None
     standard_refs: list[str] = []
     acceptance_criteria: dict[str, Any] = {}
@@ -255,9 +256,17 @@ class ConnStormScenario(BaseModel):
     target_conns: int
     rate_per_s: int
     hold_s: int
+    target_port: int = 80              # TCP port on the sink that pyconn connects to
     test_id: str | None = None
     standard_refs: list[str] = []
     acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("target_port")
+    @classmethod
+    def _validate_target_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError(f"target_port={v} out of range 1–65535")
+        return v
 
     @field_validator("test_id")
     @classmethod

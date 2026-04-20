@@ -2,7 +2,7 @@ __comment__: Auto-generated (security-test-plan) — DO NOT edit by hand; regene
   via tools/merge-security-test-plan-yaml.py or the M1 merger.
 schema_version: 1
 generated_by: M1 merger (security-test-plan feature)
-generated_at: '2026-04-20T21:22:57+00:00'
+generated_at: '2026-04-20T23:22:01+00:00'
 standards:
 - id: cc-iso-15408
   title: Common Criteria (ISO/IEC 15408)
@@ -137,11 +137,12 @@ tests:
     '
   maps_to_scenario:
     kind: conn_storm
-    source_role: wan-uplink
+    source_role: wan-native
     sink_role: lan-downstream
     target_conns: 100000
     rate_per_s: 10000
     hold_s: 30
+    target_port: 80
     test_id: cc-fru-rsa-1-conn-storm
     standard_refs:
     - cc-iso-15408-fru-rsa-1
@@ -409,11 +410,12 @@ tests:
     '
   maps_to_scenario:
     kind: conn_storm
-    source_role: wan-uplink
+    source_role: wan-native
     sink_role: lan-downstream
     target_conns: 100000
     rate_per_s: 10000
     hold_s: 30
+    target_port: 80
     test_id: nist-sc-5-dos-conntrack
     standard_refs:
     - nist-800-53-sc-5
@@ -1251,8 +1253,9 @@ tests:
     '
   maps_to_scenario:
     kind: conn_storm
-    source_role: wan-uplink
+    source_role: wan-native
     sink_role: lan-downstream
+    target_port: 80
   acceptance_criteria:
     established_flows_dropped: 0
     conntrack_table_fill_fraction: <= 0.80
@@ -1626,6 +1629,7 @@ tests:
     duration_s: 20
     parallel: 2
     expect_min_gbps: 5.0
+    udp_bandwidth_mbps: 0
   acceptance_criteria:
     min_gbps: 5.0
   standard_refs:

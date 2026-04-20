@@ -56,6 +56,10 @@ def build_argv(spec: Iperf3Spec) -> list[str]:
             argv.append("-u")
             if spec.udp_bandwidth_mbps:
                 argv += ["-b", f"{spec.udp_bandwidth_mbps}M"]
+            else:
+                # udp_bandwidth_mbps=0 means unlimited; emit -b 0 explicitly
+                # so iperf3 doesn't silently cap at its built-in 1 Mbps default.
+                argv += ["-b", "0"]
 
     return argv
 

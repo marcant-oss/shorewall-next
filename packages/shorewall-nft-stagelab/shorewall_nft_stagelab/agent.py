@@ -548,6 +548,12 @@ async def handle_run_scenario(
     if kind == "conntrack_overflow_inspect":
         return await _handle_conntrack_overflow_inspect(spec)
 
+    if kind == "start_http_listener":
+        return await _handle_start_http_listener(spec, state, endpoint_name)
+
+    if kind == "stop_http_listener":
+        return await _handle_stop_http_listener(spec, state, endpoint_name)
+
     raise ValueError(f"unknown scenario kind: {kind!r}")
 
 
@@ -860,6 +866,104 @@ async def _handle_conntrack_overflow_inspect(
     }
 
 
+async def _handle_start_http_listener(
+    spec: dict[str, Any],
+    state: dict[str, Any],
+    endpoint_name: str,
+) -> dict[str, Any]:
+    """Spawn ``python3 -m http.server`` inside the endpoint's netns.
+
+    The server process is stored in ``state["http_listeners"]`` keyed by
+    ``(endpoint_name, port)`` so that ``_handle_stop_http_listener`` can
+    terminate it.  Returns ``{"ok": True, "pid": <pid>, "port": <port>,
+    "_http_sidecar": True}``.
+    """
+    import signal
+
+    netns = state["endpoints"][endpoint_name].netns
+    bind_ip: str = spec.get("bind_ip", "0.0.0.0")
+    port: int = int(spec.get("port", 80))
+    key = (endpoint_name, port)
+
+    # Kill any stale listener on the same key.
+    old_proc = state.get("http_listeners", {}).get(key)
+    if old_proc is not None:
+        try:
+            old_proc.send_signal(signal.SIGTERM)
+        except Exception:  # noqa: BLE001
+            pass
+
+    import ctypes
+
+    _CLONE_NEWNET = 0x40000000
+    ns_path = f"/run/netns/{netns}"
+
+    def _enter_ns() -> None:
+        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        fd = os.open(ns_path, os.O_RDONLY)
+        try:
+            if _libc.setns(fd, _CLONE_NEWNET) != 0:
+                raise OSError(ctypes.get_errno(), "setns failed")
+        finally:
+            os.close(fd)
+
+    argv = [
+        sys.executable, "-m", "http.server", str(port),
+        "--bind", bind_ip,
+    ]
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        preexec_fn=_enter_ns,
+    )
+
+    if "http_listeners" not in state:
+        state["http_listeners"] = {}
+    state["http_listeners"][key] = proc
+
+    # Brief settle so the server is listening before pyconn starts.
+    await asyncio.sleep(0.3)
+
+    return {"tool": "http_listener", "ok": True, "pid": proc.pid, "port": port, "_http_sidecar": True}
+
+
+async def _handle_stop_http_listener(
+    spec: dict[str, Any],
+    state: dict[str, Any],
+    endpoint_name: str,
+) -> dict[str, Any]:
+    """Send SIGTERM to a previously started HTTP listener subprocess.
+
+    Returns ``{"ok": True, "pid": <pid>, "port": <port>, "_http_sidecar": True}``
+    or ``{"ok": False, ...}`` if no matching listener was found.
+    """
+    import signal
+
+    port: int = int(spec.get("port", 80))
+    key = (endpoint_name, port)
+
+    listeners: dict = state.get("http_listeners", {})
+    proc = listeners.pop(key, None)
+    if proc is None:
+        return {
+            "tool": "http_listener", "ok": False,
+            "port": port, "note": "no listener registered for this endpoint+port",
+            "_http_sidecar": True,
+        }
+
+    pid = proc.pid
+    try:
+        proc.send_signal(signal.SIGTERM)
+        await asyncio.to_thread(proc.wait, 5.0)
+    except Exception:  # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+    return {"tool": "http_listener", "ok": True, "pid": pid, "port": port, "_http_sidecar": True}
+
+
 async def handle_poll_metrics(
     msg: PollMetricsMessage, state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -920,6 +1024,21 @@ def _cleanup_trex_daemons(state: dict[str, Any]) -> None:
     state.get("trex_daemons", {}).clear()
 
 
+def _cleanup_http_listeners(state: dict[str, Any]) -> None:
+    """SIGTERM all tracked HTTP listener subprocesses, swallowing errors."""
+    import signal
+    for key, proc in list(state.get("http_listeners", {}).items()):
+        try:
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=3)
+        except Exception:  # noqa: BLE001
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+    state.get("http_listeners", {}).clear()
+
+
 def _cleanup_endpoints(state: dict[str, Any]) -> None:
     """Teardown all active endpoint handles, swallowing errors."""
     for name, handle in list(state["endpoints"].items()):
@@ -965,6 +1084,7 @@ async def run_agent(host_name: str) -> int:
         "stubs": {},
         "endpoints": {},
         "trex_daemons": {},
+        "http_listeners": {},
     }
 
     try:
@@ -997,12 +1117,14 @@ async def run_agent(host_name: str) -> int:
         try:
             raw_line = await channel._reader.readline()
         except Exception:  # noqa: BLE001
+            _cleanup_http_listeners(state)
             _cleanup_endpoints(state)
             _cleanup_stubs(state)
             _cleanup_trex_daemons(state)
             return 0
 
         if not raw_line:
+            _cleanup_http_listeners(state)
             _cleanup_endpoints(state)
             _cleanup_stubs(state)
             _cleanup_trex_daemons(state)
@@ -1023,6 +1145,7 @@ async def run_agent(host_name: str) -> int:
             continue
 
         if isinstance(msg, ShutdownMessage):
+            _cleanup_http_listeners(state)
             _cleanup_endpoints(state)
             _cleanup_stubs(state)
             _cleanup_trex_daemons(state)
