@@ -406,8 +406,15 @@ class ThroughputDpdkRunner(Scenario):
 
     def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
         sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        if src_ep.trex_port_id is None:
+            raise RuntimeError(
+                f"scenario {sc.id!r}: source endpoint {sc.source!r} is not a DPDK "
+                "endpoint — throughput_dpdk requires mode=dpdk endpoints."
+            )
+        ports = (src_ep.trex_port_id,)
         spec: dict = {
-            "ports": (0,),
+            "ports": ports,
             "duration_s": sc.duration_s,
             "multiplier": sc.multiplier,
             "_scenario_id": sc.id,
@@ -469,11 +476,29 @@ class ConnStormAstfRunner(Scenario):
 
     def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
         sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        sink_ep = cfg.endpoint_by_name(sc.sink)
+        if src_ep.trex_port_id is None:
+            raise RuntimeError(
+                f"scenario {sc.id!r}: source endpoint {sc.source!r} is not a DPDK "
+                "endpoint — conn_storm_astf requires mode=dpdk endpoints."
+            )
+        if sink_ep.trex_port_id is None:
+            raise RuntimeError(
+                f"scenario {sc.id!r}: sink endpoint {sc.sink!r} is not a DPDK "
+                "endpoint — conn_storm_astf requires mode=dpdk endpoints."
+            )
+        # ASTF is single-box dual-port: include both client and server port IDs.
+        if src_ep.host == sink_ep.host:
+            ports = (src_ep.trex_port_id, sink_ep.trex_port_id)
+        else:
+            ports = (src_ep.trex_port_id,)
         return [
             AgentCommand(
                 endpoint_name=sc.source,
                 kind="run_trex_astf",
                 spec={
+                    "ports": ports,
                     "profile_py": sc.profile_py,
                     "duration_s": sc.duration_s,
                     "multiplier": sc.multiplier,

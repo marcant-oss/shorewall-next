@@ -12,6 +12,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 _PCI_RE = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$")
 
+# TRex multiplier grammar: "<number><unit>" or "<percent>%".
+# Numbers: integer or decimal. Units (case-insensitive): bps, kbps, mbps,
+# gbps, pps, kpps, mpps, or "%" for percent-of-line-rate.
+_TREX_MULTIPLIER_RE = re.compile(
+    r"^\d+(?:\.\d+)?(?:bps|kbps|mbps|gbps|pps|kpps|mpps|%)$",
+    re.IGNORECASE,
+)
+
 # ---------------------------------------------------------------------------
 # Host
 # ---------------------------------------------------------------------------
@@ -63,6 +71,9 @@ class Endpoint(BaseModel):
     dpdk_cores: list[int] = []             # CPU cores for DPDK poll mode
     hugepages_gib: int = 0                 # memory footprint
     trex_role: Literal["client", "server", ""] = ""
+    # Derived field — operator must NOT set this in YAML.
+    # Populated by StagelabConfig._assign_trex_port_ids after full config parse.
+    trex_port_id: int | None = None
 
     @field_validator("vlan")
     @classmethod
@@ -225,6 +236,17 @@ class ThroughputDpdkScenario(BaseModel):
     multiplier: str = "10gbps"          # TRex DSL: "50%", "1000kpps", "5gbps", etc.
     packet_size_b: int = 64             # for synthetic streams
     pcap_file: str = ""                 # optional replay pcap (absolute path)
+
+    @field_validator("multiplier")
+    @classmethod
+    def _check_multiplier(cls, v: str) -> str:
+        if not _TREX_MULTIPLIER_RE.match(v):
+            raise ValueError(
+                f"invalid TRex multiplier {v!r}; expected forms like "
+                "'10gbps', '50%', '1.5mpps', '1000bps' (units: bps, kbps, "
+                "mbps, gbps, pps, kpps, mpps, %; case-insensitive)"
+            )
+        return v
 
 
 class ConnStormAstfScenario(BaseModel):
@@ -489,6 +511,23 @@ class StagelabConfig(BaseModel):
                     )
 
         return self
+
+    @model_validator(mode="after")
+    def _assign_trex_port_ids(self) -> "StagelabConfig":
+        """Assign consecutive trex_port_id to DPDK endpoints, per host, in declaration order."""
+        by_host: dict[str, int] = {}
+        for ep in self.endpoints:
+            if ep.mode == "dpdk":
+                ep.trex_port_id = by_host.get(ep.host, 0)
+                by_host[ep.host] = by_host.get(ep.host, 0) + 1
+        return self
+
+    def endpoint_by_name(self, name: str) -> "Endpoint":
+        """Return the Endpoint with the given name, or raise KeyError."""
+        for ep in self.endpoints:
+            if ep.name == name:
+                return ep
+        raise KeyError(f"endpoint {name!r} not found")
 
 
 # ---------------------------------------------------------------------------

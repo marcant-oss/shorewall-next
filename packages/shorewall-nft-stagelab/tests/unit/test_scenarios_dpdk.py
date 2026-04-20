@@ -6,7 +6,7 @@ import textwrap
 
 import yaml
 
-from shorewall_nft_stagelab.config import StagelabConfig
+from shorewall_nft_stagelab.config import StagelabConfig  # endpoint_by_name is a method
 from shorewall_nft_stagelab.scenarios import (
     AgentCommand,
     ConnStormAstfRunner,
@@ -201,6 +201,53 @@ def test_conn_storm_astf_summarize_meets_threshold():
     assert result.ok is True
     assert result.raw["concurrent_sessions"] == 200_000
     assert result.raw["expect_min_concurrent"] == 100_000
+
+
+def test_throughput_dpdk_plan_uses_source_trex_port_id():
+    """ThroughputDpdkRunner uses the source endpoint's trex_port_id, not hardcoded 0."""
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: thx1
+            address: root@192.168.4.73
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: dpdk-first
+            host: thx1
+            mode: dpdk
+            pci_addr: "0000:01:00.0"
+            dpdk_cores: [2, 3]
+            hugepages_gib: 4
+            trex_role: client
+          - name: dpdk-second
+            host: thx1
+            mode: dpdk
+            pci_addr: "0000:01:00.1"
+            dpdk_cores: [4, 5]
+            hugepages_gib: 4
+            trex_role: server
+
+        scenarios:
+          - id: tput-second
+            kind: throughput_dpdk
+            source: dpdk-second
+            sink: dpdk-first
+            duration_s: 10
+            multiplier: "10gbps"
+
+        report:
+          output_dir: /tmp/out
+    """)
+    cfg = _load_cfg(yaml_text)
+    # dpdk-second is the second DPDK endpoint on thx1 → trex_port_id == 1
+    assert cfg.endpoint_by_name("dpdk-second").trex_port_id == 1
+    sc = cfg.scenarios[0]
+    runner = build_runner(sc)
+    commands = runner.plan(cfg)
+    assert len(commands) == 1
+    assert commands[0].spec["ports"] == (1,)
 
 
 def test_conn_storm_astf_summarize_below_threshold():
