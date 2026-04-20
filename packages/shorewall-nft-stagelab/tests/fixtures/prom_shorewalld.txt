@@ -1,0 +1,15 @@
+# HELP shorewalld_set_size Number of entries in a dynamic nft set.
+# TYPE shorewalld_set_size gauge
+shorewalld_set_size{set="blocked_ips"} 42.0
+shorewalld_set_size{set="trusted_peers"} 3.0
+# HELP shorewalld_dns_resolve_duration_seconds DNS resolution latency.
+# TYPE shorewalld_dns_resolve_duration_seconds histogram
+shorewalld_dns_resolve_duration_seconds_bucket{le="0.005"} 10
+shorewalld_dns_resolve_duration_seconds_bucket{le="0.01"} 15
+shorewalld_dns_resolve_duration_seconds_bucket{le="+Inf"} 17
+shorewalld_dns_resolve_duration_seconds_sum 0.35
+shorewalld_dns_resolve_duration_seconds_count 17
+# HELP node_conntrack_count Current number of conntrack entries.
+# TYPE node_conntrack_count gauge
+node_conntrack_count 128734
+node_conntrack_max 4194304

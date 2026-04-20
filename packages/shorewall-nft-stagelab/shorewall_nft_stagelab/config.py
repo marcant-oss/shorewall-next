@@ -157,11 +157,38 @@ Scenario = Annotated[
 _MetricName = Literal["nft_counters", "conntrack_stats", "nic_ethtool", "cpu_softirq"]
 
 
+class PrometheusSourceSpec(BaseModel):
+    kind: Literal["prometheus"]
+    name: str
+    url: str
+    timeout_s: float = 5.0
+    metric_prefix_allow: list[str] = []
+    model_config = ConfigDict(extra="forbid")
+
+
+class SNMPSourceSpec(BaseModel):
+    kind: Literal["snmp"]
+    name: str
+    host: str
+    community: str
+    oids: list[str]
+    port: int = 161
+    timeout_s: float = 3.0
+    model_config = ConfigDict(extra="forbid")
+
+
+SourceSpec = Annotated[
+    Union[PrometheusSourceSpec, SNMPSourceSpec],
+    Field(discriminator="kind"),
+]
+
+
 class MetricsSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     poll_interval_s: int = 1
     collect: list[_MetricName] = []
+    sources: list[SourceSpec] = []
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +349,9 @@ __all__ = [
     "ConnStormScenario",
     "RuleScanScenario",
     "Scenario",
+    "PrometheusSourceSpec",
+    "SNMPSourceSpec",
+    "SourceSpec",
     "MetricsSpec",
     "ReportSpec",
     "StagelabConfig",
