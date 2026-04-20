@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import yaml
+
+if TYPE_CHECKING:
+    from .advisor import Recommendation
 
 
 @dataclass(frozen=True)
@@ -21,11 +27,13 @@ class RunReport:
     run_id: str                    # UTC ISO8601, e.g. "2026-04-20T15:00:00Z"
     config_path: str
     scenarios: list[ScenarioResult]
+    recommendations: tuple["Recommendation", ...] = field(default_factory=tuple)
 
 
 def write(run: RunReport, output_dir: Path) -> Path:
     """Create the run directory and write run.json + summary.md.
 
+    Also writes recommendations.yaml if run.recommendations is non-empty.
     Returns the created directory path.
     Raises FileExistsError if the run directory already exists — never overwrites.
     """
@@ -44,6 +52,24 @@ def write(run: RunReport, output_dir: Path) -> Path:
 
     # Markdown summary
     (run_dir / "summary.md").write_text(_render_markdown(run))
+
+    # Recommendations YAML (only when non-empty)
+    if run.recommendations:
+        rec_list = [
+            {
+                "tier": r.tier,
+                "signal": r.signal,
+                "action": r.action,
+                "target": r.target,
+                "confidence": r.confidence,
+                "rationale": r.rationale,
+            }
+            for r in run.recommendations
+        ]
+        payload_yaml = {"recommendations": rec_list}
+        (run_dir / "recommendations.yaml").write_text(
+            yaml.safe_dump(payload_yaml, sort_keys=False, allow_unicode=True)
+        )
 
     return run_dir
 
@@ -78,6 +104,25 @@ def _render_markdown(run: RunReport) -> str:
             # Generic fallback — dump raw keys
             for k, v in s.raw.items():
                 lines.append(f"- {k}: {v}")
+            lines.append("")
+
+    # Recommendations section (only when non-empty)
+    if run.recommendations:
+        lines.append("## Recommendations")
+        lines.append("")
+        tiers: dict[str, list] = {"A": [], "B": [], "C": []}
+        for rec in run.recommendations:
+            tiers.setdefault(rec.tier, []).append(rec)
+        for tier in ("A", "B", "C"):
+            recs = tiers.get(tier, [])
+            if not recs:
+                continue
+            lines.append(f"### Tier {tier}")
+            lines.append("")
+            for rec in recs:
+                lines.append(
+                    f"- **[{rec.tier}] {rec.signal}** — {rec.action} ({rec.rationale})"
+                )
             lines.append("")
 
     return "\n".join(lines) + "\n"
