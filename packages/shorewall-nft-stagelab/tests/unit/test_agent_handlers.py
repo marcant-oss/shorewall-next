@@ -21,7 +21,9 @@ from shorewall_nft_stagelab.ipc import (
     TeardownEndpointMessage,
 )
 from shorewall_nft_stagelab.topology_bridge import ProbeBridgeHandle
+from shorewall_nft_stagelab.topology_dpdk import DpdkEndpointHandle
 from shorewall_nft_stagelab.topology_native import NativeEndpointHandle
+from shorewall_nft_stagelab.trafgen_trex import TrexResult
 
 
 def _state() -> dict:
@@ -307,6 +309,71 @@ def test_run_scenario_apply_tuning_calls_tuning_module() -> None:
     assert resp["ok"] is True
     assert resp["applied"]["rss_queues"] == 4
     assert resp["applied"]["sysctls"] == {"net.core.rmem_max": "16777216"}
+
+
+def test_setup_dpdk_stores_handle() -> None:
+    """handle_setup_endpoint(mode=dpdk) stores DpdkEndpointHandle in state."""
+    spec = {
+        "name": "dpdk0", "mode": "dpdk",
+        "pci_addr": "0000:01:00.0",
+        "dpdk_cores": [4, 5],
+        "hugepages_gib": 2,
+    }
+    msg = SetupEndpointMessage(id="s-dpdk", endpoint_spec=spec)
+    state = _state()
+
+    fake = DpdkEndpointHandle(
+        name="dpdk0", pci_addr="0000:01:00.0",
+        orig_driver="ixgbe", bound_at_ts=1234567890.0,
+    )
+    with patch(
+        "shorewall_nft_stagelab.agent.topology_dpdk.setup_dpdk_endpoint",
+        return_value=fake,
+    ):
+        resp = asyncio.run(handle_setup_endpoint(msg, state))
+
+    assert state["endpoints"]["dpdk0"] is fake
+    assert resp["mode"] == "dpdk"
+    assert resp["pci_addr"] == "0000:01:00.0"
+    assert resp["orig_driver"] == "ixgbe"
+    assert "bound_at_ts" in resp
+
+
+def test_run_scenario_trex_stateless_calls_trafgen_trex() -> None:
+    """run_trex_stateless scenario calls trafgen_trex.run_trex_stl and returns result."""
+    state = _state()
+    # No endpoint needed for TRex (daemon-based, not netns-based)
+    state["endpoints"]["trex0"] = NativeEndpointHandle(
+        name="trex0", netns="NS_TEST_trex0", nsstub_pid=0, vlan_iface="eth0.0"
+    )
+
+    msg = RunScenarioMessage(
+        id="r-trex",
+        scenario_spec={
+            "endpoint_name": "trex0",
+            "kind": "run_trex_stateless",
+            "spec": {
+                "ports": [0, 1],
+                "duration_s": 10,
+                "multiplier": "10gbps",
+            },
+        },
+    )
+    fake_result = TrexResult(
+        tool="trex-stl", ok=True, duration_s=10,
+        throughput_gbps=9.5, pps=1e6,
+        concurrent_sessions=0, new_sessions_per_s=0,
+        errors=0, raw={},
+    )
+    with patch(
+        "shorewall_nft_stagelab.agent.trafgen_trex.run_trex_stl",
+        return_value=fake_result,
+    ):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    assert resp["tool"] == "trex-stl"
+    assert resp["ok"] is True
+    assert resp["throughput_gbps"] == 9.5
 
 
 def test_poll_metrics_nft_counters() -> None:
