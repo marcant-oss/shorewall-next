@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
+from shorewall_nft_stagelab.advisor import Recommendation
 from shorewall_nft_stagelab.report import (
     RunReport,
     ScenarioResult,
@@ -152,3 +154,78 @@ def test_markdown_throughput_renders() -> None:
     assert "tput-001" in md
     assert "throughput" in md
     assert "OK" in md
+
+
+# ---------------------------------------------------------------------------
+# New tests: recommendations in report
+# ---------------------------------------------------------------------------
+
+
+def _two_recommendations() -> tuple[Recommendation, ...]:
+    return (
+        Recommendation(
+            tier="A",
+            signal="rx_no_buffer",
+            action="ethtool -G eth0 rx 4096",
+            rationale="rx_no_buffer_count=42 observed on thx1-eth0 under throughput",
+            target="testhost",
+            confidence="high",
+        ),
+        Recommendation(
+            tier="B",
+            signal="conntrack_headroom",
+            action="sysctl -w net.netfilter.nf_conntrack_max=8388608",
+            rationale="conntrack_count=900000 / conntrack_max=1000000 (90.0% — headroom below 20%)",
+            target="fw",
+            confidence="medium",
+        ),
+    )
+
+
+def test_recommendations_yaml_written_when_nonempty(tmp_path: Path) -> None:
+    run = RunReport(
+        run_id="2026-04-20T17:00:00Z",
+        config_path="/etc/stagelab.yaml",
+        scenarios=[],
+        recommendations=_two_recommendations(),
+    )
+    run_dir = write(run, tmp_path)
+
+    yaml_path = run_dir / "recommendations.yaml"
+    assert yaml_path.is_file(), "recommendations.yaml must be written when non-empty"
+
+    data = yaml.safe_load(yaml_path.read_text())
+    recs = data["recommendations"]
+    assert len(recs) == 2
+
+    # Verify key fields of first entry
+    assert recs[0]["tier"] == "A"
+    assert recs[0]["signal"] == "rx_no_buffer"
+    assert recs[0]["target"] == "testhost"
+
+    # Verify key fields of second entry
+    assert recs[1]["tier"] == "B"
+    assert recs[1]["signal"] == "conntrack_headroom"
+    assert recs[1]["target"] == "fw"
+
+
+def test_recommendations_section_in_markdown() -> None:
+    rec = Recommendation(
+        tier="A",
+        signal="rx_no_buffer",
+        action="ethtool -G eth0 rx 4096",
+        rationale="rx_no_buffer_count=42 observed",
+        target="testhost",
+        confidence="medium",
+    )
+    run = RunReport(
+        run_id="2026-04-20T18:00:00Z",
+        config_path="/etc/stagelab.yaml",
+        scenarios=[],
+        recommendations=(rec,),
+    )
+    md = _render_markdown(run)
+
+    assert "## Recommendations" in md
+    assert "rx_no_buffer" in md
+    assert "ethtool -G eth0 rx 4096" in md
