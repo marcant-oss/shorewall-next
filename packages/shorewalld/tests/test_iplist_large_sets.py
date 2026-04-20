@@ -242,7 +242,6 @@ class TestCapacityWarning:
     def test_warning_via_mock_nft_cmd(self, caplog):
         """End-to-end: mock _nft.cmd returns JSON with declared=1000 and 800 elements."""
         from shorewalld.iplist.tracker import IpListTracker
-        from shorewalld.iplist.protocol import IpListConfig
 
         # Use a simple config-like object since IpListConfig is a protocol/ABC
         class _FakeCfg:
