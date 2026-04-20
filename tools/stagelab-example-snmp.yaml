@@ -1,0 +1,91 @@
+# Example stagelab config demonstrating SNMP metric sources alongside Prometheus.
+#
+# Topology:
+#   fw-tester01 (192.168.203.93) — client side, native-mode on eth2.10
+#   fw-tester02 (192.168.203.74) — server side, native-mode on eth2.20
+#   elgar-test  (192.168.203.70) — firewall-under-test (primary)
+#   tropheus-test (192.168.203.87) — firewall-under-test (secondary)
+#
+# SNMP community string is read from the environment — NEVER commit a literal value.
+# Set it before running:
+#   export STAGELAB_SNMP_COMMUNITY_MON=<your-community>
+#   stagelab validate tools/stagelab-example-snmp.yaml
+#   stagelab run    tools/stagelab-example-snmp.yaml
+#
+# Install the SNMP extra on the controller host before use:
+#   pip install 'shorewall-nft-stagelab[snmp]'
+
+hosts:
+  - name: tester01
+    address: root@192.168.203.93
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+
+  - name: tester02
+    address: root@192.168.203.74
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+
+dut:
+  kind: external
+
+endpoints:
+  - name: client-lan
+    host: tester01
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: 10.0.13.100/24
+    ipv4_gw: 10.0.13.200
+    rss_queues: 4
+    irq_affinity: [2, 3]
+
+  - name: server-wan
+    host: tester02
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: 10.0.13.200/24
+    ipv4_gw: 10.0.13.100
+    rss_queues: 4
+    irq_affinity: [2, 3]
+
+scenarios:
+  - id: baseline_throughput
+    kind: throughput
+    source: client-lan
+    sink: server-wan
+    proto: tcp
+    duration_s: 10
+    parallel: 4
+    expect_min_gbps: 0.5
+
+metrics:
+  poll_interval_s: 5
+  collect: [nft_counters, conntrack_stats]
+  sources:
+    - kind: prometheus
+      name: elgar-shorewalld
+      url: http://192.168.203.70:9748/metrics
+      timeout_s: 5.0
+      metric_prefix_allow: ["shorewalld_"]
+
+    - kind: snmp
+      name: elgar-snmp
+      host: 192.168.203.70
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp, pdns]
+
+    - kind: snmp
+      name: tropheus-snmp
+      host: 192.168.203.87
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp, pdns]
+
+report:
+  output_dir: /tmp/stagelab-reports
+  keep_pcaps: failed_only

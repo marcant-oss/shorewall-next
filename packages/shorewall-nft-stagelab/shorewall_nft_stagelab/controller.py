@@ -31,6 +31,111 @@ from .report import RunReport, ScenarioResult
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# PowerDNS extend-MIB aggregation helper
+# ---------------------------------------------------------------------------
+#
+# SNMPScraper emits pdns rows with:
+#   source = "<snmp-source-name>:pdns"
+#   key    = "pdns_extend_output.<len>.<byte1>.<byte2>..."
+#
+# The key suffix encodes the extend-name as OID bytes (len + ASCII codepoints).
+# We decode the suffix back to the ASCII label so we can match
+# "pdns-all-queries", "pdns-cache-hits", "pdns-answers-0-1" by string
+# containment without embedding raw byte sequences in caller code.
+
+
+def _decode_oid_name_suffix(suffix: str) -> str:
+    """Decode an OID name-encoding suffix "<len>.<b1>.<b2>..." → ASCII string.
+
+    Returns an empty string if the suffix is malformed or non-ASCII.
+    """
+    if not suffix:
+        return ""
+    try:
+        parts = suffix.split(".")
+        length = int(parts[0])
+        if len(parts) != length + 1:
+            return ""
+        return "".join(chr(int(b)) for b in parts[1:])
+    except (ValueError, IndexError):
+        return ""
+
+
+def _aggregate_pdns_metrics(rows: list["MetricRow"]) -> dict[str, float]:
+    """Extract pdns QPS / cache-hit-ratio / latency-approx from SNMP pdns rows.
+
+    Looks for MetricRows whose source ends with ":pdns" and whose key contains
+    the extend-name string decoded from the OID suffix.  Returns a dict with
+    keys:
+      "pdns_qps"              — (last - first) all-queries delta / time window
+      "pdns_cache_hit_ratio"  — cache-hits delta / all-queries delta (clamped 0–1)
+      "pdns_latency_approx"   — 1.0 - cache_hit_ratio  (miss-rate proxy;
+                                 higher = more upstream lookups = more latency)
+
+    All values default to 0.0 when no pdns rows are present or when the
+    necessary counters are missing.
+    """
+    _PREFIX = "pdns_extend_output."
+
+    # Collect (ts_unix, extend_name, value) triples from pdns rows.
+    observations: list[tuple[float, str, float]] = []
+    for row in rows:
+        if not row.source.endswith(":pdns"):
+            continue
+        key = row.key
+        if not key.startswith(_PREFIX):
+            continue
+        suffix = key[len(_PREFIX):]
+        extend_name = _decode_oid_name_suffix(suffix)
+        if not extend_name:
+            continue
+        observations.append((row.ts_unix, extend_name, row.value))
+
+    if not observations:
+        return {"pdns_qps": 0.0, "pdns_cache_hit_ratio": 0.0, "pdns_latency_approx": 0.0}
+
+    # Group by extend_name → sorted list of (ts, value).
+    by_name: dict[str, list[tuple[float, float]]] = {}
+    for ts, name, val in observations:
+        by_name.setdefault(name, []).append((ts, val))
+    for name in by_name:
+        by_name[name].sort()
+
+    def _delta(name: str) -> float:
+        pts = by_name.get(name, [])
+        if len(pts) < 2:
+            return 0.0
+        return max(0.0, pts[-1][1] - pts[0][1])
+
+    def _window_s(name: str) -> float:
+        pts = by_name.get(name, [])
+        if len(pts) < 2:
+            return 1.0
+        return max(1.0, pts[-1][0] - pts[0][0])
+
+    all_queries_delta = _delta("pdns-all-queries")
+    cache_hits_delta = _delta("pdns-cache-hits")
+    window_s = _window_s("pdns-all-queries")
+
+    pdns_qps = all_queries_delta / window_s
+
+    if all_queries_delta > 0:
+        pdns_cache_hit_ratio = min(1.0, max(0.0, cache_hits_delta / all_queries_delta))
+    else:
+        pdns_cache_hit_ratio = 0.0
+
+    # pdns_latency_approx: miss-rate proxy (1.0 = all cache misses = max latency).
+    # This is a pragmatic stand-in until pdns Stats-API latency metrics are wired.
+    pdns_latency_approx = 1.0 - pdns_cache_hit_ratio
+
+    return {
+        "pdns_qps": pdns_qps,
+        "pdns_cache_hit_ratio": pdns_cache_hit_ratio,
+        "pdns_latency_approx": pdns_latency_approx,
+    }
+
+
+# ---------------------------------------------------------------------------
 # AgentConnection
 # ---------------------------------------------------------------------------
 
@@ -332,6 +437,7 @@ class StagelabController:
 
         # ── Build AdvisorInput from scenario results + metric rows ─────────────
         rows = tuple(self._metric_rows)
+        pdns_metrics = _aggregate_pdns_metrics(list(rows))
         best_gbps, total_retrans, parallel = 0.0, 0, 1
         for sr in scenario_results:
             raw = sr.raw
@@ -365,6 +471,14 @@ class StagelabController:
             elif sr.kind == "dos_dns_query":
                 ratio = float(sr.raw.get("latency_increase_ratio", 0.0))
                 dns_resolve_latency_increase_ratio = max(dns_resolve_latency_increase_ratio, ratio)
+        # pdns_qps_increase_ratio: no baseline-vs-DoS windowing exists in
+        # the current single-pass aggregation, so we use pdns_latency_approx
+        # (miss-rate proxy) as the ratio value.  A future DoS-window-aware
+        # pass (tied to T-4 DoS scenario metadata) will compute a proper
+        # before/after ratio; until then the value is meaningful only when
+        # SNMP pdns rows are present and the proxy is non-trivial.
+        pdns_qps_increase_ratio = pdns_metrics.get("pdns_latency_approx", 0.0) * 10.0
+
         recommendations = tuple(analyze(AdvisorInput(
             metric_rows=rows,
             iperf3_throughput_gbps=best_gbps,
@@ -376,6 +490,7 @@ class StagelabController:
             dos_scenario_ran=dos_scenario_ran,
             dos_syn_pass_ratio=dos_syn_pass_ratio,
             dns_resolve_latency_increase_ratio=dns_resolve_latency_increase_ratio,
+            pdns_qps_increase_ratio=pdns_qps_increase_ratio,
         )))
 
         return RunReport(

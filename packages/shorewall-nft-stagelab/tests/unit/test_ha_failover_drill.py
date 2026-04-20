@@ -15,6 +15,66 @@ from shorewall_nft_stagelab.scenarios import (
 )
 
 # ---------------------------------------------------------------------------
+# YAML template with VRRP-SNMP sources
+# ---------------------------------------------------------------------------
+
+_VRRP_YAML = textwrap.dedent("""\
+    hosts:
+      - name: tester
+        address: root@192.168.4.73
+
+    dut:
+      kind: external
+
+    endpoints:
+      - name: src-ep
+        host: tester
+        mode: native
+        nic: eth0
+        vlan: 10
+        ipv4: 10.0.10.1/24
+        ipv4_gw: 10.0.10.254
+      - name: sink-ep
+        host: tester
+        mode: native
+        nic: eth0
+        vlan: 20
+        ipv4: 10.0.20.1/24
+        ipv4_gw: 10.0.20.254
+
+    scenarios:
+      - id: ha-vrrp-1
+        kind: ha_failover_drill
+        source: src-ep
+        sink: sink-ep
+        primary_fw_host: root@192.168.4.1
+        secondary_fw_host: root@192.168.4.2
+        duration_s: 90
+        stop_at_s: 20
+        restart_at_s: 60
+        service_name: keepalived
+        vrrp_snmp_source: [elgar-snmp, tropheus-snmp]
+        vrrp_poll_interval_ms: 200
+        vrrp_instance_name: VI_1
+
+    metrics:
+      sources:
+        - kind: snmp
+          name: elgar-snmp
+          host: 192.168.203.70
+          community: public
+          bundles: [vrrp]
+        - kind: snmp
+          name: tropheus-snmp
+          host: 192.168.203.87
+          community: public
+          bundles: [vrrp]
+
+    report:
+      output_dir: /tmp/out
+""")
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -189,3 +249,106 @@ def test_summarize_fail_retrans_storm() -> None:
 
     assert result.ok is False
     assert result.raw["retransmits_observed"] == 5000
+
+
+# ---------------------------------------------------------------------------
+# Test S5-1 — VRRP-state-transitions: downtime computed from SNMP data
+# ---------------------------------------------------------------------------
+
+
+def test_vrrp_snmp_downtime_computed_from_transitions() -> None:
+    """summarize() uses VRRP transitions when poll_vrrp_state result is present.
+
+    Primary leaves MASTER at t=1.0; secondary becomes MASTER at t=1.2.
+    Expected downtime = 0.2 s, downtime_source = 'vrrp_snmp'.
+    """
+    cfg = StagelabConfig.model_validate(yaml.safe_load(_VRRP_YAML))
+    runner = HaFailoverDrillRunner(cfg.scenarios[0])  # type: ignore[arg-type]
+
+    # Transitions: primary 2→3 at t=1.0, secondary 1→2 at t=1.2
+    vrrp_result = {
+        "tool": "poll_vrrp_state",
+        "ok": True,
+        "transitions": [
+            [0.5, "primary", 2],   # primary observed as MASTER
+            [0.5, "secondary", 1], # secondary observed as BACKUP
+            [1.0, "primary", 3],   # primary transitions to FAULT
+            [1.2, "secondary", 2], # secondary becomes MASTER
+        ],
+    }
+    result = runner.summarize([
+        {"tool": "iperf3", "ok": True, "retransmits": 100, "duration_s": 90.0},
+        {"tool": "fw_service", "action": "stop", "ok": True, "duration_s": 0.3},
+        {"tool": "fw_service", "action": "start", "ok": True, "duration_s": 0.2},
+        {"tool": "conntrack_count", "ok": True, "count": 1234},
+        vrrp_result,
+    ])
+
+    assert result.raw["downtime_source"] == "vrrp_snmp"
+    assert "downtime_s" in result.raw
+    assert abs(result.raw["downtime_s"] - 0.2) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# Test S5-2 — downtime computation happy path with richer fixture
+# ---------------------------------------------------------------------------
+
+
+def test_vrrp_snmp_downtime_happy_path_rich_fixture() -> None:
+    """Multiple polls before/after transition; only state-change rows matter.
+
+    Primary: 2→2→2→3 at t=5.0, secondary: 1→1→1→2 at t=5.7.
+    Expected downtime = 0.7 s.
+    """
+    cfg = StagelabConfig.model_validate(yaml.safe_load(_VRRP_YAML))
+    runner = HaFailoverDrillRunner(cfg.scenarios[0])  # type: ignore[arg-type]
+
+    # Build transitions list mimicking deduplicated poll output.
+    transitions = [
+        [1.0, "primary", 2],    # initial observation: MASTER
+        [1.0, "secondary", 1],  # initial observation: BACKUP
+        [5.0, "primary", 3],    # primary leaves MASTER (FAULT)
+        [5.7, "secondary", 2],  # secondary becomes MASTER
+        [70.0, "primary", 2],   # primary recovers at end
+    ]
+    vrrp_result = {"tool": "poll_vrrp_state", "ok": True, "transitions": transitions}
+
+    result = runner.summarize([
+        {"tool": "iperf3", "ok": True, "retransmits": 150, "duration_s": 90.0},
+        {"tool": "fw_service", "action": "stop", "ok": True, "duration_s": 0.3},
+        {"tool": "fw_service", "action": "start", "ok": True, "duration_s": 0.2},
+        {"tool": "conntrack_count", "ok": True, "count": 999},
+        vrrp_result,
+    ])
+
+    assert result.raw["downtime_source"] == "vrrp_snmp"
+    assert abs(result.raw["downtime_s"] - 0.7) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# Test S5-3 — fallback when vrrp_snmp_source is None
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_when_no_vrrp_snmp_source() -> None:
+    """When vrrp_snmp_source is None, plan() emits exactly 5 commands (no VRRP poll)
+    and summarize() uses retrans_heuristic as downtime_source.
+    """
+    cfg = _load(_BASE_YAML)
+    runner = HaFailoverDrillRunner(cfg.scenarios[0])  # type: ignore[arg-type]
+
+    # Confirm no poll_vrrp_state command is emitted.
+    cmds = runner.plan(cfg)
+    assert len(cmds) == 5
+    assert all(c.kind != "poll_vrrp_state" for c in cmds)
+
+    # Confirm summarize uses retrans_heuristic (no VRRP result in list).
+    result = runner.summarize([
+        {"tool": "iperf3", "ok": True, "retransmits": 80, "duration_s": 90.0},
+        {"tool": "fw_service", "action": "stop", "ok": True, "duration_s": 0.3},
+        {"tool": "fw_service", "action": "start", "ok": True, "duration_s": 0.2},
+        {"tool": "conntrack_count", "ok": True, "count": 1000},
+    ])
+
+    assert result.raw["downtime_source"] == "retrans_heuristic"
+    assert "downtime_s" not in result.raw

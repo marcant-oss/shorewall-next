@@ -813,3 +813,53 @@ def test_conn_storm_astf_valid(tmp_path):
     assert sc.sink == "dpdk-server"
     assert sc.multiplier == 1.5
     assert sc.expect_min_concurrent == 50000
+
+
+# ---------------------------------------------------------------------------
+# SNMPSourceSpec: env-var expansion + bundle validation
+# ---------------------------------------------------------------------------
+
+
+def test_snmp_community_env_var_expansion(monkeypatch):
+    """community=${VAR} is expanded from the env at validation time."""
+    monkeypatch.setenv("STAGELAB_SNMP_COMMUNITY_FOO", "public")
+    spec = SNMPSourceSpec(
+        kind="snmp",
+        name="test-src",
+        host="192.168.1.1",
+        community="${STAGELAB_SNMP_COMMUNITY_FOO}",
+        oids=["1.3.6.1.2.1.1.1.0"],
+    )
+    assert spec.community == "public"
+
+
+def test_snmp_community_missing_env_var_raises(monkeypatch):
+    """community=${UNSET_VAR} raises ValidationError mentioning VARNAME but not the value."""
+    monkeypatch.delenv("STAGELAB_SNMP_COMMUNITY_NOTSET", raising=False)
+    with pytest.raises(ValidationError) as exc_info:
+        SNMPSourceSpec(
+            kind="snmp",
+            name="test-src",
+            host="192.168.1.1",
+            community="${STAGELAB_SNMP_COMMUNITY_NOTSET}",
+            oids=["1.3.6.1.2.1.1.1.0"],
+        )
+    err_str = str(exc_info.value)
+    assert "STAGELAB_SNMP_COMMUNITY_NOTSET" in err_str
+    assert "public" not in err_str
+
+
+def test_snmp_unknown_bundle_rejected():
+    """bundles containing an unknown name raises ValidationError mentioning the name and valid names."""
+    with pytest.raises(ValidationError) as exc_info:
+        SNMPSourceSpec(
+            kind="snmp",
+            name="test-src",
+            host="192.168.1.1",
+            community="public",
+            oids=[],
+            bundles=["node_traffic", "not-a-bundle"],
+        )
+    err_str = str(exc_info.value)
+    assert "not-a-bundle" in err_str
+    assert "vrrp" in err_str

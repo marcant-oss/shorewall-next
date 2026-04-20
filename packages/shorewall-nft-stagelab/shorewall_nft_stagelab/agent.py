@@ -473,7 +473,128 @@ async def handle_run_scenario(
             "stderr": (proc.stderr or "")[:500],
         }
 
+    if kind == "poll_vrrp_state":
+        # First stagelab code path that does SNMP *during* a scenario
+        # (other SNMP sources are scraped by the controller's background scraper).
+        return await _handle_poll_vrrp_state(spec)
+
     raise ValueError(f"unknown scenario kind: {kind!r}")
+
+
+async def _handle_poll_vrrp_state(spec: dict[str, Any]) -> dict[str, Any]:
+    """Poll VRRP_INSTANCE_STATE on primary and secondary FW nodes via SNMP.
+
+    Spec keys: snmp_host_primary, snmp_host_secondary, community, port,
+    duration_s, poll_interval_ms, instance_name (optional).
+
+    Returns: {tool, ok, transitions: [[ts_unix, host_label, state_int], ...]}
+    Only state-change events are recorded (deduplication per host).
+    """
+    try:
+        from pysnmp.hlapi.asyncio import (  # type: ignore[import-untyped]
+            CommunityData,
+            ContextData,
+            ObjectIdentity,
+            ObjectType,
+            SnmpEngine,
+            UdpTransportTarget,
+            get_cmd,
+            walk_cmd,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "pysnmp not installed — `pip install 'shorewall-nft-stagelab[snmp]'`"
+        ) from exc
+
+    import time
+
+    from shorewall_nft_stagelab.snmp_oids import VRRP_INSTANCE_NAME, VRRP_INSTANCE_STATE
+
+    host_primary: str = spec["snmp_host_primary"]
+    host_secondary: str = spec["snmp_host_secondary"]
+    community: str = spec["community"]
+    port: int = int(spec.get("port", 161))
+    duration_s: float = float(spec.get("duration_s", 30))
+    poll_interval_s: float = float(spec.get("poll_interval_ms", 200)) / 1000.0
+    instance_name: str | None = spec.get("instance_name")
+
+    engine = SnmpEngine()
+    # mpModel=1 = SNMPv2c.
+    auth = CommunityData(community, mpModel=1)
+    ctx = ContextData()
+
+    async def _mk_transport(host: str):
+        return await UdpTransportTarget.create((host, port), timeout=2, retries=0)
+
+    async def _resolve_instance_index(host: str) -> str | None:
+        """Walk VRRP_INSTANCE_NAME on host; return the OID index matching instance_name."""
+        if instance_name is None:
+            return None
+        transport = await _mk_transport(host)
+        try:
+            async for (err_ind, err_status, _idx, var_binds) in walk_cmd(
+                engine, auth, transport, ctx,
+                ObjectType(ObjectIdentity(VRRP_INSTANCE_NAME)),
+                lexicographicMode=False,
+            ):
+                if err_ind or err_status:
+                    break
+                for oid_obj, val in var_binds:
+                    if str(val) == instance_name:
+                        # Return the leaf index (part after the base OID).
+                        full = str(oid_obj)
+                        idx = full[len(VRRP_INSTANCE_NAME):].lstrip(".")
+                        return idx
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    async def _poll_state(host: str, oid: str) -> int | None:
+        """Single SNMP GET for the VRRP instance state OID leaf."""
+        transport = await _mk_transport(host)
+        try:
+            err_ind, err_status, _idx, var_binds = await get_cmd(
+                engine, auth, transport, ctx,
+                ObjectType(ObjectIdentity(oid)),
+            )
+            if err_ind or err_status:
+                return None
+            for _o, val in var_binds:
+                try:
+                    return int(val)
+                except (TypeError, ValueError):
+                    return None
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    # Resolve per-instance OIDs (leaf = base.index if filtered, else base.1 — the
+    # column OID without a row index returns an empty leaf on keepalived v2.x AgentX).
+    primary_idx = await _resolve_instance_index(host_primary)
+    secondary_idx = await _resolve_instance_index(host_secondary)
+    primary_oid = f"{VRRP_INSTANCE_STATE}.{primary_idx or '1'}"
+    secondary_oid = f"{VRRP_INSTANCE_STATE}.{secondary_idx or '1'}"
+
+    transitions: list[list] = []          # [[ts_unix, host_label, state_int], ...]
+    last_primary: int | None = None
+    last_secondary: int | None = None
+    deadline = time.monotonic() + duration_s
+
+    while time.monotonic() < deadline:
+        ts = time.time()
+        p_state, s_state = await asyncio.gather(
+            _poll_state(host_primary, primary_oid),
+            _poll_state(host_secondary, secondary_oid),
+        )
+        if p_state is not None and p_state != last_primary:
+            transitions.append([ts, "primary", p_state])
+            last_primary = p_state
+        if s_state is not None and s_state != last_secondary:
+            transitions.append([ts, "secondary", s_state])
+            last_secondary = s_state
+        await asyncio.sleep(poll_interval_s)
+
+    return {"tool": "poll_vrrp_state", "ok": True, "transitions": transitions}
 
 
 async def handle_poll_metrics(

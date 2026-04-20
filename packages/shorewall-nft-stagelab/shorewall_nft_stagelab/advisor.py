@@ -72,6 +72,12 @@ class AdvisorInput:
     dos_scenario_ran: bool = False
     dos_syn_pass_ratio: float = 0.0          # highest observed across syn_flood scenarios
     dns_resolve_latency_increase_ratio: float = 0.0
+    # PowerDNS-recursor signal from SNMP NET-SNMP-EXTEND-MIB rows (S6).
+    # Ratio of pdns QPS (or miss-rate proxy) during DoS window vs baseline.
+    # Defaults to 0.0 so existing tests and non-SNMP runs are unaffected.
+    # Populated by the controller's _aggregate_pdns_metrics helper when pdns
+    # SNMP rows are present; left at 0.0 when no baseline/DoS windowing exists.
+    pdns_qps_increase_ratio: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -341,12 +347,39 @@ def _h_dos_conntrack_saturation(data: AdvisorInput) -> Recommendation | None:
     )
 
 
+_PDNS_QPS_INCREASE_RATIO_THRESHOLD: float = 10.0
+
+
 def _h_dos_dns_latency_blowup(data: AdvisorInput) -> Recommendation | None:
-    """Tier B — DNS resolver latency blew up during dos_dns_query."""
+    """Tier B — DNS resolver latency blew up during dos_dns_query.
+
+    Fires when EITHER:
+    - ``dns_resolve_latency_increase_ratio`` from shorewalld-derived timing
+      exceeds 10× (original signal path — preserved for backward compat), OR
+    - ``pdns_qps_increase_ratio`` from SNMP NET-SNMP-EXTEND-MIB pdns rows
+      exceeds 10× (new S6 signal).
+    """
     if not data.dos_scenario_ran:
         return None
-    if data.dns_resolve_latency_increase_ratio <= 10.0:
+    shorewalld_triggered = data.dns_resolve_latency_increase_ratio > 10.0
+    pdns_triggered = data.pdns_qps_increase_ratio > _PDNS_QPS_INCREASE_RATIO_THRESHOLD
+    if not shorewalld_triggered and not pdns_triggered:
         return None
+
+    # Build a rationale that reflects whichever signal(s) fired.
+    parts: list[str] = []
+    if shorewalld_triggered:
+        parts.append(
+            f"dns_resolve latency increased "
+            f"{data.dns_resolve_latency_increase_ratio:.1f}× (shorewalld signal)"
+        )
+    if pdns_triggered:
+        parts.append(
+            f"pdns QPS-increase ratio {data.pdns_qps_increase_ratio:.1f}× "
+            f"(SNMP pdns-extend signal)"
+        )
+    rationale = "; ".join(parts) + " during dos_dns_query — resolver pipeline is a bottleneck."
+
     return Recommendation(
         tier="B",
         signal="dos_dns_latency_blowup",
@@ -355,10 +388,7 @@ def _h_dos_dns_latency_blowup(data: AdvisorInput) -> Recommendation | None:
             "`shorewalld.conf` → `[dns] workers = N`) and enable a caching "
             "tier in front of the upstream resolver to absorb query bursts."
         ),
-        rationale=(
-            f"dns_resolve latency increased {data.dns_resolve_latency_increase_ratio:.1f}× "
-            "during dos_dns_query — resolver pipeline is a bottleneck."
-        ),
+        rationale=rationale,
         target="fw",
         confidence="medium",
     )

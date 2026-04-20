@@ -23,6 +23,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the base `output` chain carries `oifname lo accept`, placed
   after FASTACCEPT and before NDP/dispatch.
 
+## [1.9.0] - 2026-04-20
+
+### Added
+- stagelab: SNMP metric source (`kind: snmp` in `metrics.sources`) with
+  bundles `node_traffic`, `system`, `vrrp`, `pdns` (S1–S4). Optional
+  `[snmp]` extra installs pysnmp.
+- stagelab: env-var expansion `${VAR}` for SNMP community/host in YAML
+  config. Community strings stay out of git.
+- stagelab: HA-failover drill now computes real downtime from
+  keepalived-MIB VRRP-instance-state transitions via SNMP polling
+  (fallback: retrans heuristic, backward-compatible).
+- stagelab: PowerDNS-recursor advisor signal —
+  `_h_dos_dns_latency_blowup` triggers when `pdns_qps_increase_ratio > 10`.
+- stagelab: CI matrix now runs stagelab unit + integration tests (one
+  root-less controller smoke + bridge/TAP probe topology + agent runtime).
+
+### Fixed
+- stagelab: pysnmp 7.x API migration (walk_cmd / get_cmd /
+  UdpTransportTarget.create / SNMPv2c mpModel=1).
+- stagelab: SNMP coercion of STRING-encoded numerics (e.g. UCD-SNMP
+  laLoad "0.02") — was returning -1.0.
+
+### Operations
+- setup-remote-test-host.sh: stagelab-agent role installs the `[snmp]`
+  extra, net-snmp-utils/snmp CLI tools, and writes `mibs +ALL` to
+  `/etc/snmp/snmp.conf` so snmpwalk loads symbolic MIBs by default.
+
 ## [1.8.0] — 2026-04-19 — shorewalld: Prometheus deep-dive, worker /proc delegation, seed handshake, AlmaLinux 10
 
 ### Fixed

@@ -1235,13 +1235,14 @@ class LongFlowSurvivalRunner(Scenario):
 
 
 class HaFailoverDrillRunner(Scenario):
-    """HA VRRP failover drill.  Emits five commands in order:
+    """HA VRRP failover drill.  Emits five commands in order (plus an optional sixth):
 
     1. run_iperf3_server on sink (duration = scenario.duration_s + 20 s)
     2. run_iperf3_client on source (duration = duration_s, delay_before_s=1)
     3. stop_fw_service on primary_fw_host (delay_before_s = stop_at_s)
     4. start_fw_service on primary_fw_host (delay_before_s = restart_at_s)
     5. query_conntrack_count on secondary_fw_host (read-only, for drift report)
+    6. poll_vrrp_state on source (only when vrrp_snmp_source is set)
 
     This is strictly ephemeral: no disk writes on the FWs, no persistent
     service-unit changes. ``systemctl stop/start`` only — operator or reboot
@@ -1251,6 +1252,40 @@ class HaFailoverDrillRunner(Scenario):
     def __init__(self, scenario: HaFailoverDrillScenario) -> None:
         self._sc = scenario
 
+    def _build_vrrp_poll_cmd(self, cfg: StagelabConfig) -> AgentCommand | None:
+        sc = self._sc
+        if sc.vrrp_snmp_source is None:
+            return None
+        # vrrp_snmp_source is validated to be exactly [primary_src, secondary_src]
+        primary_src_name, secondary_src_name = sc.vrrp_snmp_source
+        source_map = {s.name: s for s in cfg.metrics.sources}
+        primary_src = source_map.get(primary_src_name)
+        secondary_src = source_map.get(secondary_src_name)
+        if primary_src is None:
+            raise RuntimeError(
+                f"scenario {sc.id!r}: vrrp_snmp_source[0]={primary_src_name!r} "
+                "not found in metrics.sources"
+            )
+        if secondary_src is None:
+            raise RuntimeError(
+                f"scenario {sc.id!r}: vrrp_snmp_source[1]={secondary_src_name!r} "
+                "not found in metrics.sources"
+            )
+        return AgentCommand(
+            endpoint_name=sc.source,
+            kind="poll_vrrp_state",
+            spec={
+                "snmp_host_primary": getattr(primary_src, "host", ""),
+                "snmp_host_secondary": getattr(secondary_src, "host", ""),
+                "community": getattr(primary_src, "community", "public"),
+                "port": getattr(primary_src, "port", 161),
+                "duration_s": sc.duration_s,
+                "poll_interval_ms": sc.vrrp_poll_interval_ms,
+                "instance_name": sc.vrrp_instance_name,
+                "scenario_id": sc.id,
+            },
+        )
+
     def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
         sc = self._sc
         src_ep = cfg.endpoint_by_name(sc.source)
@@ -1258,7 +1293,7 @@ class HaFailoverDrillRunner(Scenario):
         src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else ""
         sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else ""
 
-        return [
+        cmds = [
             AgentCommand(
                 endpoint_name=sc.sink,
                 kind="run_iperf3_server",
@@ -1313,6 +1348,46 @@ class HaFailoverDrillRunner(Scenario):
                 },
             ),
         ]
+        vrrp_cmd = self._build_vrrp_poll_cmd(cfg)
+        if vrrp_cmd is not None:
+            cmds.append(vrrp_cmd)
+        return cmds
+
+    @staticmethod
+    def _compute_vrrp_downtime(
+        transitions: list[tuple[float, str, int]],
+    ) -> float | None:
+        """Compute downtime from a VRRP state transition log.
+
+        Returns seconds between primary leaving MASTER state and secondary
+        reaching MASTER state, or None if data is insufficient.
+        State encoding: 0=init 1=backup 2=master 3=fault.
+        """
+        # Find last timestamp where primary was 2 (MASTER) before it left.
+        primary_left_ts: float | None = None
+        secondary_became_master_ts: float | None = None
+
+        # Walk transitions in time order to find the handoff sequence.
+        primary_state: int | None = None
+        secondary_state: int | None = None
+
+        for ts, host, state in sorted(transitions, key=lambda x: x[0]):
+            if host == "primary":
+                if primary_state == 2 and state != 2:
+                    primary_left_ts = ts
+                primary_state = state
+            elif host == "secondary":
+                if secondary_state != 2 and state == 2:
+                    secondary_became_master_ts = ts
+                secondary_state = state
+
+        if primary_left_ts is None or secondary_became_master_ts is None:
+            return None
+        if secondary_became_master_ts < primary_left_ts:
+            # Secondary was already master before primary left — unclear topology;
+            # return 0 rather than negative value.
+            return 0.0
+        return secondary_became_master_ts - primary_left_ts
 
     def summarize(self, results: list[dict]) -> ScenarioResult:
         sc = self._sc
@@ -1332,41 +1407,62 @@ class HaFailoverDrillRunner(Scenario):
             (r for r in results if r.get("tool") == "conntrack_count"),
             {},
         )
+        vrrp_r = next(
+            (r for r in results if r.get("tool") == "poll_vrrp_state"),
+            None,
+        )
 
         retrans = int(client_r.get("retransmits", 0))
         stream_survived = bool(client_r.get("ok", False))
         stop_ok = bool(stop_r.get("ok", False))
         start_ok = bool(start_r.get("ok", False))
 
-        # Downtime heuristic: iperf3 reports one aggregate duration — we
-        # can't extract mid-stream stalls without per-interval parsing.
-        # For MVP, compare retransmits against max_retrans_proxy:
-        # VRRP failover typically bursts ~50-200 retrans in the few seconds
-        # around the switch; anything much higher = problem. Caller can
-        # refine by parsing iperf3's interval-breakdown in the future.
+        # Downtime: prefer VRRP-SNMP transitions when available; fall back to
+        # retransmit heuristic. VRRP failover typically bursts ~50-200 retrans
+        # in the few seconds around the switch; anything much higher = problem.
+        downtime_source: str
+        downtime_s: float | None
+
+        if vrrp_r is not None:
+            transitions = [
+                (float(t[0]), str(t[1]), int(t[2]))
+                for t in (vrrp_r.get("transitions") or [])
+            ]
+            vrrp_dt = self._compute_vrrp_downtime(transitions)
+            if vrrp_dt is not None:
+                downtime_s = vrrp_dt
+                downtime_source = "vrrp_snmp"
+            else:
+                # VRRP data present but insufficient — fall back.
+                downtime_s = None
+                downtime_source = "retrans_heuristic"
+        else:
+            downtime_s = None
+            downtime_source = "retrans_heuristic"
+
         failover_plausible = retrans > 0 and retrans < 2000  # non-zero but not stormed
         ok = stream_survived and stop_ok and start_ok and failover_plausible
 
+        raw: dict = {
+            "primary_fw": sc.primary_fw_host,
+            "secondary_fw": sc.secondary_fw_host,
+            "service_stopped": stop_ok,
+            "service_started": start_ok,
+            "retransmits_observed": retrans,
+            "stream_survived": stream_survived,
+            "secondary_conntrack_count": conntrack_r.get("count", -1),
+            "stop_at_s": sc.stop_at_s,
+            "restart_at_s": sc.restart_at_s,
+            "downtime_source": downtime_source,
+        }
+        if downtime_s is not None:
+            raw["downtime_s"] = downtime_s
         return ScenarioResult(
             scenario_id=sc.id,
             kind="ha_failover_drill",
             ok=ok,
             duration_s=client_r.get("duration_s", 0.0),
-            raw={
-                "primary_fw": sc.primary_fw_host,
-                "secondary_fw": sc.secondary_fw_host,
-                "service_stopped": stop_ok,
-                "service_started": start_ok,
-                "retransmits_observed": retrans,
-                "stream_survived": stream_survived,
-                "secondary_conntrack_count": conntrack_r.get("count", -1),
-                "stop_at_s": sc.stop_at_s,
-                "restart_at_s": sc.restart_at_s,
-                "note": (
-                    "Downtime estimation from iperf3 aggregate retrans only. "
-                    "Refine with --json interval parsing in a later extension."
-                ),
-            },
+            raw=raw,
         )
 
 

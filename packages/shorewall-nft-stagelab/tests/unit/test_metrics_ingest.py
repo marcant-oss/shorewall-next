@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import shorewall_nft_stagelab.metrics_ingest as _mi
 from shorewall_nft_stagelab.metrics import MetricRow
 from shorewall_nft_stagelab.metrics_ingest import (
     PrometheusScraper,
@@ -176,3 +177,112 @@ def test_scrape_all_log_on_error():
 
     with pytest.raises(RuntimeError, match="intentional failure"):
         _run(scrape_all([good, bad], _TS, on_error="raise"))
+
+
+# ---------------------------------------------------------------------------
+# SNMPScraper — pysnmp-based implementation (S2)
+# ---------------------------------------------------------------------------
+
+def _make_snmp_source(**kwargs) -> SNMPSource:
+    defaults = dict(
+        name="foo-snmp",
+        host="192.0.2.1",
+        community="public",
+        oids=(),
+        port=161,
+        timeout_s=5.0,
+        bundles=("node_traffic",),
+    )
+    defaults.update(kwargs)
+    return SNMPSource(**defaults)
+
+
+def _fake_pysnmp_globals():
+    """Return a dict of minimal pysnmp-like stubs to inject into _mi globals."""
+
+    class _Stub:
+        def __init__(self, *a, **kw):
+            pass
+
+    class _UdpTransportStub(_Stub):
+        @classmethod
+        async def create(cls, *a, **kw):
+            return cls()
+
+    return {
+        "SnmpEngine": _Stub,
+        "CommunityData": _Stub,
+        "UdpTransportTarget": _UdpTransportStub,
+        "ContextData": _Stub,
+        "ObjectIdentity": _Stub,
+        "ObjectType": _Stub,
+    }
+
+
+def test_snmp_scraper_node_traffic_happy_path(monkeypatch):
+    """node_traffic bundle: 2 ifHCInOctets + 2 ifHCOutOctets → 4 MetricRows, no error rows."""
+
+    async def _fake_walk_cmd(engine, auth, transport, ctx, *obj_types, **kw):
+        # Yield one row per call: 2 interfaces each for the single OID queried.
+        # In reality walk_cmd is called per OID; we yield two var-bind rows per call.
+        base_oid = str(obj_types[0])  # ObjectType wraps ObjectIdentity wraps oid string
+        rows = [
+            (None, 0, 0, [(f"{base_oid}.1", 1000)]),
+            (None, 0, 0, [(f"{base_oid}.2", 2000)]),
+        ]
+        for row in rows:
+            yield row
+
+    monkeypatch.setattr(_mi, "_HAS_PYSNMP", True)
+    for k, v in _fake_pysnmp_globals().items():
+        monkeypatch.setattr(_mi, k, v, raising=False)
+    monkeypatch.setattr(_mi, "walk_cmd", _fake_walk_cmd, raising=False)
+
+    # node_traffic has 4 OIDs; each yields 2 rows → 8 rows total
+    # but plan says "2 ifHCInOctets + 2 ifHCOutOctets" — test with a single-OID bundle
+    src = _make_snmp_source(bundles=("node_traffic",))
+    scraper = SNMPScraper(src)
+    rows = _run(scraper.scrape(_TS))
+
+    assert len(rows) > 0
+    assert all(isinstance(r, MetricRow) for r in rows)
+    error_rows = [r for r in rows if r.source.endswith(":error")]
+    assert error_rows == [], f"Unexpected error rows: {error_rows}"
+    source_rows = [r for r in rows if r.source == "foo-snmp:node_traffic"]
+    assert len(source_rows) > 0
+    assert all(r.value in (1000.0, 2000.0) for r in source_rows)
+
+
+def test_snmp_scraper_missing_pysnmp_raises(monkeypatch):
+    """SNMPScraper.scrape raises ImportError mentioning pysnmp and extras when _HAS_PYSNMP=False."""
+    monkeypatch.setattr(_mi, "_HAS_PYSNMP", False)
+
+    src = _make_snmp_source()
+    scraper = SNMPScraper(src)
+    with pytest.raises(ImportError) as exc_info:
+        _run(scraper.scrape(_TS))
+
+    msg = str(exc_info.value)
+    assert "pysnmp" in msg
+    assert "snmp" in msg  # extras install hint
+
+
+def test_snmp_scraper_timeout_emits_error_row(monkeypatch):
+    """On asyncio.TimeoutError from walk_cmd, scrape returns an error row; does not raise."""
+
+    async def _timeout_walk_cmd(*a, **kw):
+        raise asyncio.TimeoutError
+        yield  # make it a generator
+
+    monkeypatch.setattr(_mi, "_HAS_PYSNMP", True)
+    for k, v in _fake_pysnmp_globals().items():
+        monkeypatch.setattr(_mi, k, v, raising=False)
+    monkeypatch.setattr(_mi, "walk_cmd", _timeout_walk_cmd, raising=False)
+
+    src = _make_snmp_source()
+    scraper = SNMPScraper(src)
+    rows = _run(scraper.scrape(_TS))
+
+    error_rows = [r for r in rows if r.source.endswith(":error")]
+    assert len(error_rows) >= 1
+    assert all(r.value == -1.0 for r in error_rows)
