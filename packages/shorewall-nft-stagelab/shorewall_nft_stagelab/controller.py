@@ -283,8 +283,8 @@ class StagelabController:
                 },
             )
             log.debug("→ host %r: kind=%r", host_name, cmd.kind)
-            await conn.channel.send(msg)
             try:
+                await conn.channel.send(msg)
                 response = await asyncio.wait_for(conn.channel.recv(), timeout=120.0)
             except asyncio.TimeoutError:
                 log.error("host %r timed out on RUN_SCENARIO kind=%r", host_name, cmd.kind)

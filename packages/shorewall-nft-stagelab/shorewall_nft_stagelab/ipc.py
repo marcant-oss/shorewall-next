@@ -307,10 +307,22 @@ class JsonLineChannel:
         self._writer = writer
 
     async def send(self, msg: Message) -> None:
-        """Serialise *msg* and write it as a newline-terminated JSON line."""
+        """Serialise *msg* and write it as a newline-terminated JSON line.
+
+        Raises :exc:`ConnectionClosedError` when the remote side has gone
+        away — e.g. an SSH-agent subprocess was SIGKILLed mid-run. asyncio
+        surfaces that as ConnectionResetError / BrokenPipeError from
+        ``drain()``; we normalise to our own exception type so callers
+        only need one except clause for peer-gone conditions.
+        """
         data = json.dumps(msg.to_dict(), separators=(",", ":"))
-        self._writer.write(data.encode() + b"\n")
-        await self._writer.drain()
+        try:
+            self._writer.write(data.encode() + b"\n")
+            await self._writer.drain()
+        except (ConnectionResetError, BrokenPipeError) as exc:
+            raise ConnectionClosedError(
+                f"remote end closed the connection during send: {exc}"
+            ) from exc
 
     async def recv(self) -> Message:
         """Read one line from the stream and decode it as a :class:`Message`.
