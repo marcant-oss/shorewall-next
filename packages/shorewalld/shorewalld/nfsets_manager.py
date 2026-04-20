@@ -158,26 +158,33 @@ class NfSetsManager:
         return counts
 
     def payload_bytes(self) -> int:
-        """Approximate serialised payload size in bytes.
+        """Exact serialised payload size in bytes.
 
-        Estimates the size of the JSON payload by summing string lengths of
-        all entry fields.  Used by the collector as
-        ``shorewalld_nfsets_payload_bytes``.  Returns 0 when no registry is
-        loaded.
+        Serialises the full nfsets registry payload using
+        ``json.dumps`` with compact separators (no spaces) and returns the
+        UTF-8 byte length.  This gives the exact wire size of the JSON
+        document that ``shorewall-nft`` sends over the control socket.
 
-        The value is a lower-bound estimate (no JSON framing overhead), which
-        is fine for the alerting use-case (operator wants to know if the
-        payload is growing unbounded, not its exact byte count).
+        Returns 0 when no registry is loaded or when serialisation fails.
         """
+        import json
+
         if self._registry is None:
             return 0
-        total = 0
-        for entry in self._registry.entries:
-            total += len(entry.name) + len(entry.backend)
-            total += sum(len(h) for h in entry.hosts)
-            for k, vs in entry.options.items():
-                total += len(k) + sum(len(v) for v in vs)
-        return total
+        try:
+            from shorewall_nft.nft.nfsets import nfset_registry_to_payload
+            payload = nfset_registry_to_payload(self._registry)
+            return len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+        except Exception as exc:
+            log.debug("payload_bytes: serialisation failed: %s", exc)
+            # Fallback: rough estimate from string field lengths.
+            total = 0
+            for entry in self._registry.entries:
+                total += len(entry.name) + len(entry.backend)
+                total += sum(len(h) for h in entry.hosts)
+                for k, vs in entry.options.items():
+                    total += len(k) + sum(len(v) for v in vs)
+            return total
 
     def plain_list_configs(self) -> "list[PlainListConfig]":
         """Extract ``ip-list-plain`` entries as :class:`~shorewalld.iplist.plain.PlainListConfig` objects.

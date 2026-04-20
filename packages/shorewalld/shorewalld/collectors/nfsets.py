@@ -40,12 +40,10 @@ if TYPE_CHECKING:
     from shorewalld.iplist.plain import PlainListTracker
     from shorewalld.nfsets_manager import NfSetsManager
 
-# Histogram buckets for refresh duration (seconds).
-# Most local file reads finish in < 1 ms; HTTP feeds may take a few seconds.
-# The +Inf bucket catches hung feeds so staleness alerts still fire.
-_REFRESH_DURATION_BUCKETS = [
-    0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0, 30.0,
-]
+# Histogram bucket bounds for refresh duration.  Must match
+# _DURATION_BUCKETS in iplist/plain.py so the per-bucket counts stored in
+# PlainListMetricsSnapshot map to these upper bounds 1:1.
+from shorewalld.iplist.plain import _DURATION_BUCKETS as _REFRESH_DURATION_BUCKETS
 
 
 class NfsetsCollector(CollectorBase):
@@ -138,6 +136,9 @@ class NfsetsCollector(CollectorBase):
         This metric adds ``shorewalld_dns_set_shared_qnames`` which counts
         how many ``_by_name`` keys point at each set_id — an operator can
         use ``> 1`` as the alert threshold for "N→1 grouping active".
+
+        Uses the public :meth:`~shorewalld.dns_set_tracker.DnsSetTracker.shared_qname_counts`
+        API so no private attributes are accessed.
         """
         shared_qnames_fam = _MetricFamily(
             "shorewalld_dns_set_shared_qnames",
@@ -149,31 +150,8 @@ class NfsetsCollector(CollectorBase):
         if tracker is None:
             return [shared_qnames_fam]
 
-        # Build set_id → list[(qname, family)] under the tracker's lock.
-        # We replicate just enough of the internal structure we need.
-        with tracker._lock:  # noqa: SLF001
-            # Invert _by_name: set_id → count of keys pointing at it.
-            counts_v4: dict[int, int] = {}
-            counts_v6: dict[int, int] = {}
-            for (qname, family), sid in tracker._by_name.items():  # noqa: SLF001
-                if family == 4:
-                    counts_v4[sid] = counts_v4.get(sid, 0) + 1
-                else:
-                    counts_v6[sid] = counts_v6.get(sid, 0) + 1
-
-            # Emit per set_id using the canonical qname as the set_name label.
-            for sid, count in counts_v4.items():
-                canonical = tracker._by_id.get(sid)  # noqa: SLF001
-                if canonical is None:
-                    continue
-                set_name = canonical[0]  # qname
-                shared_qnames_fam.add([set_name, "ipv4"], float(count))
-            for sid, count in counts_v6.items():
-                canonical = tracker._by_id.get(sid)  # noqa: SLF001
-                if canonical is None:
-                    continue
-                set_name = canonical[0]
-                shared_qnames_fam.add([set_name, "ipv6"], float(count))
+        for (set_name, fam_str), count in tracker.shared_qname_counts().items():
+            shared_qnames_fam.add([set_name, fam_str], float(count))
 
         return [shared_qnames_fam]
 

@@ -102,6 +102,13 @@ class PlainListConfig:
     max_prefixes: int = _MAX_PREFIXES
 
 
+# Default histogram bucket bounds for refresh duration (seconds).
+# Wide range: from fast local-file reads (~1 ms) to slow remote feeds (60 s+).
+_DURATION_BUCKETS = [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]
+# Number of buckets including +Inf.
+_N_BUCKETS = len(_DURATION_BUCKETS) + 1
+
+
 # ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
@@ -254,6 +261,9 @@ class PlainListMetricsSnapshot:
     last_success_ts: float = 0.0
     refresh_duration_sum: float = 0.0
     refresh_duration_count: int = 0
+    # Per-bucket cumulative counts for the refresh duration histogram.
+    # Length is len(_DURATION_BUCKETS) + 1 (last slot = +Inf).
+    refresh_duration_buckets: list[int] = field(default_factory=list)
     v4_entries: int = 0
     v6_entries: int = 0
     inotify_active: int = 0
@@ -277,6 +287,12 @@ class _PlainListState:
     last_success_ts: float = 0.0
     refresh_duration_sum: float = 0.0
     refresh_duration_count: int = 0
+    # W7: per-bucket histogram counts (len == len(_DURATION_BUCKETS) + 1).
+    # Incremented atomically on the event-loop thread; read lock-free by
+    # the scrape thread (CPython int assignment is atomic).
+    refresh_duration_buckets: list[int] = field(
+        default_factory=lambda: [0] * _N_BUCKETS
+    )
     inotify_active: int = 0  # set to 1 by _inotify_watch on success
 
 
@@ -359,6 +375,7 @@ class PlainListTracker:
                 last_success_ts=state.last_success_ts,
                 refresh_duration_sum=state.refresh_duration_sum,
                 refresh_duration_count=state.refresh_duration_count,
+                refresh_duration_buckets=list(state.refresh_duration_buckets),
                 v4_entries=len(state.current_v4),
                 v6_entries=len(state.current_v6),
                 inotify_active=state.inotify_active,
@@ -612,6 +629,12 @@ class PlainListTracker:
         state.last_success_ts = now
         state.refresh_duration_sum += fetch_duration
         state.refresh_duration_count += 1
+        # W7: increment per-bucket histogram counters.
+        buckets = state.refresh_duration_buckets
+        for i, ub in enumerate(_DURATION_BUCKETS):
+            if fetch_duration <= ub:
+                buckets[i] += 1
+        buckets[-1] += 1  # +Inf always
 
         if total_added or total_removed:
             list_log.info(
