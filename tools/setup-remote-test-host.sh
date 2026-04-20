@@ -1,10 +1,14 @@
 #!/bin/sh
-# setup-remote-test-host.sh — deploy shorewall-nft to a RAM-only test box.
+# setup-remote-test-host.sh — deploy shorewall-nft to a remote test host.
 #
-# Bootstraps a disposable test host over SSH:
+# Supported targets:
+#   AlmaLinux/RHEL/Rocky 10 with persistent storage (primary, stagelab)
+#   Debian/grml (legacy, simlab only)
+#
+# Bootstraps a test host over SSH:
 #   1. rsyncs the working copy to /root/shorewall-nft (excluding .venv, caches)
 #   2. creates a venv and installs all three sub-packages (packages/*)
-#   3. copies the marcant-fw iptables-save dump + matching shorewall config
+#   3. copies the iptables-save dump + matching shorewall config
 #      to /root/simulate-data, so `shorewall-nft simulate` has ground truth
 #
 # No extra tooling (run-netns, sudoers) is installed — tests run as root
@@ -17,9 +21,11 @@
 #   tools/setup-remote-test-host.sh root@host --role stagelab-agent-dpdk
 #
 # --role ROLE   choose bootstrap role:
-#               "default"              existing behaviour (simlab/simulate)
+#               "default"              simlab/simulate (AlmaLinux 10 or Debian/grml)
 #               "stagelab-agent"       adds iperf3/nmap/ethtool + high-pps sysctls
+#                                      (AlmaLinux 10 primary target)
 #               "stagelab-agent-dpdk"  stagelab-agent PLUS DPDK + TRex bootstrap
+#                                      (AlmaLinux 10 only — Debian supported but not primary)
 #               Default: "default".
 #
 # Environment variables (stagelab-agent-dpdk only):
@@ -27,7 +33,7 @@
 #   STAGELAB_SKIP_SHA    set to 1 to skip TRex tarball SHA-256 check (dev/CI only)
 #
 # The host must already accept passwordless SSH for the given user.
-# Idempotent: safe to re-run after the box is re-imaged.
+# Idempotent: safe to re-run on persistent-storage hosts.
 
 set -eu
 
@@ -85,6 +91,64 @@ fi
 
 info() { printf 'setup-remote-test-host: %s\n' "$1"; }
 
+# ── Required binary sets (for post-install verification) ──────────────────────
+# role=default
+REQUIRED_BINS_DEFAULT="python3 ip ss nft conntrack ipset sudo rsync"
+# role=stagelab-agent adds:
+REQUIRED_BINS_STAGELAB="iperf3 nmap ethtool tcpdump jq"
+# role=stagelab-agent-dpdk adds:
+REQUIRED_BINS_DPDK="python3-pyelftools"   # checked as package; dpdk-devbind.py checked separately
+
+# ── Verification helpers ──────────────────────────────────────────────────────
+
+# verify_binaries: check that each binary is findable via command -v on remote.
+# Usage: verify_binaries "description" bin1 bin2 ...
+verify_binaries() {
+    _vb_desc="$1"; shift
+    _vb_missing=""
+    for _vb_bin in "$@"; do
+        ssh "$REMOTE" "command -v '$_vb_bin' >/dev/null 2>&1" || _vb_missing="$_vb_missing $_vb_bin"
+    done
+    if [ -n "$_vb_missing" ]; then
+        echo "ERROR: binary verification failed for $_vb_desc on remote:" >&2
+        echo "  missing binaries:$_vb_missing" >&2
+        echo "  (on AlmaLinux this is usually EPEL/CRB not enabled. Check 'dnf repolist' on the remote.)" >&2
+        exit 1
+    fi
+    info "verified binaries present for $_vb_desc:$(printf ' %s' "$@")"
+}
+
+# verify_pkg_rpm: check that each rpm package is installed on remote.
+# Usage: verify_pkg_rpm "description" pkg1 pkg2 ...
+verify_pkg_rpm() {
+    _vp_desc="$1"; shift
+    _vp_missing=""
+    for _vp_pkg in "$@"; do
+        ssh "$REMOTE" "rpm -q '$_vp_pkg' >/dev/null 2>&1" || _vp_missing="$_vp_missing $_vp_pkg"
+    done
+    if [ -n "$_vp_missing" ]; then
+        echo "ERROR: RPM package verification failed for $_vp_desc:" >&2
+        echo "  missing packages:$_vp_missing" >&2
+        echo "  (on AlmaLinux this is usually EPEL/CRB not enabled. Check 'dnf repolist' on the remote.)" >&2
+        exit 1
+    fi
+    info "verified RPM packages present for $_vp_desc:$(printf ' %s' "$@")"
+}
+
+# verify_sysctl: assert that a sysctl value on remote is >= minimum.
+# Usage: verify_sysctl key minimum_value
+verify_sysctl() {
+    _vs_key="$1" _vs_min="$2"
+    _vs_actual=$(ssh "$REMOTE" "sysctl -n '$_vs_key' 2>/dev/null || echo 0")
+    if [ "$_vs_actual" -lt "$_vs_min" ]; then
+        echo "ERROR: sysctl $_vs_key=$_vs_actual < required $_vs_min" >&2
+        exit 1
+    fi
+    info "sysctl $_vs_key=$_vs_actual (>= required $_vs_min) OK"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 # probe_nics: enumerate non-loopback NICs and print ethtool offload info.
 # Informational only — never fails the bootstrap.
 probe_nics() {
@@ -120,56 +184,87 @@ rsync -a --delete \
     --exclude='tools/deploy.json' \
     "$REPO_DIR/" "$REMOTE:/root/shorewall-nft/"
 
-# Detect package manager on remote. grml/Debian → apt, AlmaLinux/Fedora → dnf.
-PKG_MGR=$(ssh "$REMOTE" '
-if command -v apt-get >/dev/null 2>&1; then
-    echo apt
-elif command -v dnf >/dev/null 2>&1; then
-    echo dnf
-elif command -v yum >/dev/null 2>&1; then
-    echo yum
-else
-    echo unknown
-fi
-')
-info "package manager on remote: $PKG_MGR"
-case "$PKG_MGR" in
-    apt|dnf|yum) ;;
-    *) echo "unsupported remote: no apt/dnf/yum found" >&2; exit 1 ;;
+# ── Detect remote OS and choose install path ─────────────────────────────────
+OS_ID=$(ssh "$REMOTE" '. /etc/os-release && echo "$ID:$VERSION_ID"')
+info "remote OS: $OS_ID"
+case "$OS_ID" in
+    almalinux:10.*|almalinux:10|rhel:10.*|rocky:10.*)
+        TARGET_FAMILY=rhel10 ;;
+    debian:*|ubuntu:*)
+        TARGET_FAMILY=debian ;;
+    *)
+        echo "ERROR: unsupported remote OS: $OS_ID (supported: AlmaLinux/RHEL/Rocky 10, Debian/Ubuntu)" >&2
+        exit 1 ;;
 esac
+info "target family: $TARGET_FAMILY"
 
 info "install base deps (idempotent)"
-if [ "$PKG_MGR" = "apt" ]; then
-    ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true; \
+# Legacy: grml/Debian codepath, used for simlab-only test hosts. stagelab targets AlmaLinux 10.
+if [ "$TARGET_FAMILY" = "debian" ]; then
+    ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3 python3-venv python3-pip python3.12-venv \
         python3-pytest python3-pytest-xdist python3-click python3-pyroute2 \
         python3-nftables \
-        iproute2 sudo nftables conntrack ipset 2>&1 | tail -5 || true'
+        iproute2 sudo nftables conntrack ipset rsync 2>&1 | tail -10'
+    verify_binaries "role=default (Debian)" python3 ip ss nft conntrack ipset sudo rsync
 else
-    # AlmaLinux 10 / Fedora: install via dnf. EPEL + CRB needed for several
-    # Python deps (python3-pyroute2, python3-pytest-xdist). Best-effort — if
-    # EPEL/CRB cannot be enabled, fall back to pip inside the venv.
+    # AlmaLinux 10 / RHEL 10: EPEL and CRB are required for python3-pyroute2,
+    # python3-pytest-xdist, and several stagelab tools (iperf3, nmap).
+    # Fail fast if either repo cannot be enabled — silently missing repos is
+    # what caused iperf3 to vanish without error in previous bootstraps.
     ssh "$REMOTE" '
 set -e
-dnf install -y -q epel-release 2>/dev/null || true
-dnf config-manager --set-enabled crb 2>/dev/null || true
-dnf install -y -q \
+# EPEL may already be provided by a local overlay (e.g. marcant-config-repo).
+# Only install epel-release if no enabled repo id matches /epel/.
+if ! dnf repolist enabled 2>/dev/null | grep -qi "epel"; then
+    echo "enabling EPEL (installing epel-release)..."
+    dnf install -y epel-release
+else
+    echo "EPEL already enabled via existing repo — skipping epel-release install"
+fi
+echo "enabling CRB..."
+dnf config-manager --set-enabled crb 2>/dev/null || \
+    dnf config-manager --set-enabled powertools 2>/dev/null || \
+    { echo "ERROR: could not enable crb/powertools" >&2; exit 1; }
+echo "refreshing dnf metadata..."
+dnf makecache -y
+'
+    # Verify EPEL and CRB are actually enabled (dnf config-manager is sometimes a no-op
+    # when the repo id differs by distro variant).
+    _repolist=$(ssh "$REMOTE" "dnf repolist enabled 2>/dev/null")
+    echo "$_repolist" | grep -qi "epel" || {
+        echo "ERROR: EPEL repo not enabled after dnf install epel-release." >&2
+        echo "  Check 'dnf repolist' on the remote." >&2
+        exit 1
+    }
+    echo "$_repolist" | grep -qiE "crb|powertools" || {
+        echo "ERROR: CRB/powertools repo not enabled after dnf config-manager --set-enabled crb." >&2
+        echo "  Check 'dnf repolist' on the remote." >&2
+        exit 1
+    }
+    info "EPEL and CRB repos confirmed enabled"
+
+    # Single transaction — atomic rollback on any partial failure.
+    ssh "$REMOTE" '
+set -e
+dnf install -y \
     python3 python3-pip \
     python3-click python3-pyroute2 python3-nftables \
-    iproute nftables conntrack-tools ipset sudo 2>&1 | tail -5 || true
-# python3-pytest may live in CRB; try, ignore if not found
-dnf install -y -q python3-pytest python3-pytest-xdist 2>/dev/null || true
+    python3-pytest python3-pytest-xdist \
+    iproute nftables conntrack-tools ipset sudo rsync
 '
+    verify_binaries "role=default (AlmaLinux)" python3 ip ss nft conntrack ipset sudo rsync
 fi
 
 # ── stagelab-agent: extra tooling ─────────────────────────────────
 if [ "$ROLE" = "stagelab-agent" ] || [ "$IS_DPDK" = "1" ]; then
-    info "stagelab-agent: installing perf-test tooling"
-    if [ "$PKG_MGR" = "apt" ]; then
+    info "stagelab-agent: installing perf-test tooling (primary target: AlmaLinux 10)"
+    # Legacy: grml/Debian codepath, used for simlab-only test hosts. stagelab targets AlmaLinux 10.
+    if [ "$TARGET_FAMILY" = "debian" ]; then
         ssh "$REMOTE" '
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    iperf3 nmap ethtool bridge-utils jq tcpdump 2>&1 | tail -5 || true
+    iperf3 nmap ethtool bridge-utils jq tcpdump 2>&1 | tail -10
 # TODO: tcpkali — add source-build step when needed (T8d)
 if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         linux-perf >/dev/null 2>&1; then
@@ -177,55 +272,64 @@ if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 else
     echo "WARNING: linux-perf not available on this distro — skipping"
 fi
-' || true
+'
+        verify_binaries "role=stagelab-agent (Debian)" iperf3 nmap ethtool tcpdump jq
     else
-        # dnf: iperf3 is in EPEL on EL10. bridge commands come from iproute
-        # (no separate bridge-utils package on EL). perf = "perf" package.
+        # AlmaLinux 10: iperf3 is in EPEL. bridge commands come from iproute
+        # (no separate bridge-utils on EL). perf = "perf" package.
+        # Single transaction for atomic rollback on partial failure.
         ssh "$REMOTE" '
-dnf install -y -q iperf3 nmap ethtool jq tcpdump 2>&1 | tail -5 || true
+set -e
+dnf install -y iperf3 nmap ethtool jq tcpdump
 # TODO: tcpkali — add source-build step when needed (T8d)
-if dnf install -y -q perf >/dev/null 2>&1; then
-    echo "perf installed"
-else
-    echo "WARNING: perf not available on this distro — skipping"
-fi
-' || true
+'
+        # perf is optional — warn but do not fail
+        ssh "$REMOTE" 'dnf install -y perf >/dev/null 2>&1 && echo "perf installed" || echo "WARNING: perf not available — skipping"' || true
+        verify_binaries "role=stagelab-agent (AlmaLinux)" iperf3 nmap ethtool tcpdump jq
     fi
 
-    info "stagelab-agent: applying ephemeral sysctls (grml is RAM-only — not persistent across reboot)"
-    ssh "$REMOTE" 'sysctl -w net.netfilter.nf_conntrack_max=4194304' && \
-        info "  net.netfilter.nf_conntrack_max=4194304" || \
-        info "  WARNING: could not set nf_conntrack_max"
-    ssh "$REMOTE" 'sysctl -w net.core.rmem_max=134217728' && \
-        info "  net.core.rmem_max=134217728" || \
-        info "  WARNING: could not set rmem_max"
-    ssh "$REMOTE" 'sysctl -w net.core.wmem_max=134217728' && \
-        info "  net.core.wmem_max=134217728" || \
-        info "  WARNING: could not set wmem_max"
+    info "stagelab-agent: applying sysctls (persistent on AlmaLinux 10)"
+    # nf_conntrack module must be loaded before /proc/sys/net/netfilter/nf_conntrack_max exists.
+    ssh "$REMOTE" 'modprobe nf_conntrack 2>/dev/null || true'
+    ssh "$REMOTE" 'sysctl -w net.netfilter.nf_conntrack_max=4194304' || \
+        { echo "ERROR: could not set nf_conntrack_max" >&2; exit 1; }
+    ssh "$REMOTE" 'sysctl -w net.core.rmem_max=134217728' || \
+        { echo "ERROR: could not set rmem_max" >&2; exit 1; }
+    ssh "$REMOTE" 'sysctl -w net.core.wmem_max=134217728' || \
+        { echo "ERROR: could not set wmem_max" >&2; exit 1; }
+    verify_sysctl net.netfilter.nf_conntrack_max 4194304
+    verify_sysctl net.core.rmem_max 134217728
+    verify_sysctl net.core.wmem_max 134217728
 
     info "stagelab-agent: probing NIC offload capabilities"
     probe_nics
-
-    info "stagelab role: grml is RAM-only; for persistent isolcpus/nohz_full pin, edit boot cmdline manually (note: rebooting wipes everything on grml)."
 fi
 # ──────────────────────────────────────────────────────────────────
 
 # ── stagelab-agent-dpdk: DPDK + TRex bootstrap ────────────────────
 if [ "$IS_DPDK" = "1" ]; then
     # ── 1. DPDK tooling install ──────────────────────────────────
-    info "stagelab-agent-dpdk: installing DPDK tooling"
-    if [ "$PKG_MGR" = "apt" ]; then
+    info "stagelab-agent-dpdk: installing DPDK tooling (primary target: AlmaLinux 10)"
+    # Legacy: grml/Debian codepath, used for simlab-only test hosts. stagelab targets AlmaLinux 10.
+    if [ "$TARGET_FAMILY" = "debian" ]; then
         ssh "$REMOTE" '
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    dpdk python3-pyelftools 2>&1 | tail -5 || true
+    dpdk python3-pyelftools 2>&1 | tail -10
 # dpdk-kmods-dkms may fail on kernels without matching headers — log and continue
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     dpdk-kmods-dkms 2>&1 | tail -5 || echo "WARNING: dpdk-kmods-dkms not available — skipping"
-' || true
+'
+        # dpkg-based: verify pyelftools via python3 import (no rpm -q available)
+        ssh "$REMOTE" "python3 -c 'import elftools' >/dev/null 2>&1" || {
+            echo "ERROR: python3-pyelftools not importable after apt install" >&2; exit 1
+        }
     else
+        # AlmaLinux 10: single transaction for atomic rollback.
         ssh "$REMOTE" '
-dnf install -y -q dpdk dpdk-tools python3-pyelftools 2>&1 | tail -5 || true
-' || true
+set -e
+dnf install -y dpdk dpdk-tools python3-pyelftools
+'
+        verify_pkg_rpm "role=stagelab-agent-dpdk (AlmaLinux)" python3-pyelftools
     fi
     # Fall-back: if dpdk-devbind.py was not provided by the distro package,
     # use a vendored copy if present (we do not create it here — placeholder only).
@@ -241,7 +345,19 @@ if ! command -v dpdk-devbind.py >/dev/null 2>&1 && \
         echo "WARNING: dpdk-devbind.py not found — DPDK NIC binding will not work"
     fi
 fi
-' || true
+'
+    # Verify dpdk-devbind.py is reachable via PATH or known paths
+    ssh "$REMOTE" '
+command -v dpdk-devbind.py >/dev/null 2>&1 || \
+test -f /usr/share/dpdk/usertools/dpdk-devbind.py || \
+test -f /usr/sbin/dpdk-devbind.py || \
+test -f /usr/local/sbin/dpdk-devbind.py || {
+    echo "ERROR: dpdk-devbind.py not found after install — DPDK NIC binding unavailable" >&2
+    exit 1
+}
+echo "dpdk-devbind.py: present"
+' || exit 1
+    info "dpdk-devbind.py verified present"
 
     # ── 2. Load vfio-pci kernel module ───────────────────────────
     info "stagelab-agent-dpdk: loading vfio-pci module"
@@ -252,14 +368,25 @@ if [ ! -d /sys/class/iommu ] || [ -z "$(ls -A /sys/class/iommu 2>/dev/null)" ]; 
     echo "no IOMMU detected — enabling vfio unsafe_noiommu_mode"
     echo 1 > /sys/module/vfio/parameters/enable_unsafe_noiommu_mode 2>/dev/null || true
 fi
-' || true
+'
+    # Verify vfio-pci module is live
+    _vfio_state=$(ssh "$REMOTE" "cat /sys/module/vfio_pci/initstate 2>/dev/null || echo absent")
+    if [ "$_vfio_state" != "live" ]; then
+        echo "ERROR: vfio-pci module not live after modprobe (initstate=$_vfio_state)." >&2
+        echo "  The kernel may lack CONFIG_VFIO_PCI. Check 'modinfo vfio-pci' on the remote." >&2
+        exit 1
+    fi
+    info "vfio-pci module: live"
 
     # ── 3. Hugepages allocation ───────────────────────────────────
     info "stagelab-agent-dpdk: allocating 2 MiB hugepages"
     _hp="${STAGELAB_HUGEPAGES:-512}"
     ssh "$REMOTE" "
 DPDK_HUGEPAGES_2M='${_hp}'
-echo \"\$DPDK_HUGEPAGES_2M\" > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+_cur=\$(cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages 2>/dev/null || echo 0)
+if [ \"\$_cur\" -lt \"\$DPDK_HUGEPAGES_2M\" ]; then
+    echo \"\$DPDK_HUGEPAGES_2M\" > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+fi
 mkdir -p /dev/hugepages
 mountpoint -q /dev/hugepages || mount -t hugetlbfs nodev /dev/hugepages
 got=\$(cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages)
@@ -267,7 +394,19 @@ echo \"hugepages: requested=\$DPDK_HUGEPAGES_2M got=\$got\"
 if [ \"\$got\" -lt \"\$DPDK_HUGEPAGES_2M\" ]; then
     echo \"WARNING: only \$got of \$DPDK_HUGEPAGES_2M hugepages allocated — low RAM?\"
 fi
-" || true
+"
+    # Verify hugepages count and /dev/hugepages mount
+    _hp_actual=$(ssh "$REMOTE" "cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages 2>/dev/null || echo 0")
+    if [ "$_hp_actual" -lt "$_hp" ]; then
+        echo "ERROR: hugepages allocated=$_hp_actual < requested=$_hp — insufficient RAM?" >&2
+        exit 1
+    fi
+    info "hugepages: $_hp_actual x 2 MiB allocated (requested $_hp)"
+    ssh "$REMOTE" "mountpoint -q /dev/hugepages" || {
+        echo "ERROR: /dev/hugepages is not mounted after mount attempt" >&2
+        exit 1
+    }
+    info "/dev/hugepages: mounted"
 
     # ── 4. NIC DPDK-compatibility survey ─────────────────────────
     info "stagelab-agent-dpdk: surveying NIC DPDK compatibility"
@@ -343,19 +482,30 @@ info "create venv + editable install (netkit first, then dependent packages)"
 # (which depends on shorewall-nft-netkit>=1.8.0). pip with -e does not
 # resolve local-path editables transitively — they must be installed in
 # dependency order.
+# Idempotent: if venv already exists and shorewall_nft is importable, skip
+# venv recreation and only upgrade deps as needed.
 STAGELAB_EXTRA=""
 if [ "$ROLE" = "stagelab-agent" ] || [ "$IS_DPDK" = "1" ]; then
-    STAGELAB_EXTRA=" -e packages/shorewall-nft-stagelab[dev]"
+    STAGELAB_EXTRA=" -e 'packages/shorewall-nft-stagelab[dev]'"
 fi
-ssh "$REMOTE" "cd /root/shorewall-nft && \
-    python3 -m venv --system-site-packages .venv && \
-    .venv/bin/pip install -q --upgrade pip && \
-    .venv/bin/pip install -q \
-        -e packages/shorewall-nft-netkit[dev] \
-        -e 'packages/shorewall-nft[dev]' \
-        -e 'packages/shorewalld[dev]' \
-        -e 'packages/shorewall-nft-simlab[dev]'$STAGELAB_EXTRA && \
-    .venv/bin/shorewall-nft --version"
+ssh "$REMOTE" "
+cd /root/shorewall-nft
+_venv_ok=0
+if [ -x .venv/bin/python ] && .venv/bin/python -c 'import shorewall_nft' >/dev/null 2>&1; then
+    echo 'venv exists and shorewall_nft importable — upgrading deps only'
+    _venv_ok=1
+fi
+if [ \"\$_venv_ok\" = '0' ]; then
+    python3 -m venv --system-site-packages .venv
+    .venv/bin/pip install -q --upgrade pip
+fi
+.venv/bin/pip install -q --upgrade-strategy only-if-needed \
+    -e packages/shorewall-nft-netkit[dev] \
+    -e 'packages/shorewall-nft[dev]' \
+    -e 'packages/shorewalld[dev]' \
+    -e 'packages/shorewall-nft-simlab[dev]'${STAGELAB_EXTRA}
+.venv/bin/shorewall-nft --version
+"
 
 info "verify libnftables Python bindings (required for production setns path)"
 ssh "$REMOTE" 'python3 -c "
