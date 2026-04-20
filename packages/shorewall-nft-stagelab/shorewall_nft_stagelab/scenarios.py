@@ -12,8 +12,17 @@ from typing import Union
 from .config import (
     ConnStormAstfScenario,
     ConnStormScenario,
+    DnsDosScenario,
+    EvasionProbesScenario,
+    HaFailoverDrillScenario,
+    HalfOpenDosScenario,
+    LongFlowSurvivalScenario,
+    ReloadAtomicityScenario,
+    RuleCoverageMatrixScenario,
     RuleScanScenario,
     StagelabConfig,
+    StatefulHelperFtpScenario,
+    SynFloodDosScenario,
     ThroughputDpdkScenario,
     ThroughputScenario,
     TuningSweepScenario,
@@ -533,6 +542,835 @@ class ConnStormAstfRunner(Scenario):
 
 
 # ---------------------------------------------------------------------------
+# _parse_port_range helper
+# ---------------------------------------------------------------------------
+
+
+def _parse_port_range(spec: str) -> list[int]:
+    """Parse a port spec string into a list of ints.
+
+    Accepts comma-separated values and/or hyphenated ranges, e.g.:
+      "80,443"       → [80, 443]
+      "1000-1010"    → [1000, 1001, …, 1010]
+      "80,443,8000-8003" → [80, 443, 8000, 8001, 8002, 8003]
+    """
+    result: list[int] = []
+    for token in spec.split(","):
+        token = token.strip()
+        if "-" in token:
+            lo_s, hi_s = token.split("-", 1)
+            lo, hi = int(lo_s.strip()), int(hi_s.strip())
+            result.extend(range(lo, hi + 1))
+        else:
+            result.append(int(token))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# SynFloodDosRunner
+# ---------------------------------------------------------------------------
+
+
+class SynFloodDosRunner(Scenario):
+    """Wraps ``config.SynFloodDosScenario``.
+
+    ``plan()`` emits a single ``run_trex_stateless`` command on the *source*
+    endpoint carrying an inline STL profile that generates spoofed-source SYN
+    packets at the configured rate.
+    """
+
+    def __init__(self, scenario: SynFloodDosScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        from .trafgen_trex_profiles import build_syn_flood_profile
+
+        sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        sink_ep = cfg.endpoint_by_name(sc.sink)
+        if src_ep.mode != "dpdk" or sink_ep.mode != "dpdk":
+            raise RuntimeError(
+                f"scenario {sc.id!r}: dos_syn_flood requires both source and sink "
+                "to be mode=dpdk endpoints"
+            )
+
+        sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else "0.0.0.0"
+        dst_ports = tuple(_parse_port_range(sc.dst_port_range))
+        profile_text = build_syn_flood_profile(
+            src_cidr=sc.src_ip_range,
+            dst_ips=(sink_ip,),
+            dst_ports=dst_ports,
+            rate_pps=sc.rate_pps,
+        )
+
+        return [
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="run_trex_stateless",
+                spec={
+                    "ports": (src_ep.trex_port_id or 0,),
+                    "duration_s": sc.duration_s,
+                    "multiplier": f"{sc.rate_pps}pps",
+                    "profile_text": profile_text,
+                    "scenario_id": sc.id,
+                },
+            ),
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        r = results[0] if results else {}
+        passed_ratio = float(r.get("passed_ratio", 0.0))
+        ok = r.get("ok", False) and passed_ratio <= sc.expect_max_passed_ratio
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="dos_syn_flood",
+            ok=ok,
+            duration_s=r.get("duration_s", 0.0),
+            raw={
+                "passed_ratio": passed_ratio,
+                "rate_pps": sc.rate_pps,
+                "observed_tx_pps": r.get("pps", 0.0),
+                "errors": r.get("errors", 0),
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# DnsDosRunner
+# ---------------------------------------------------------------------------
+
+
+def _qnames_for_pattern(pattern: str, fixed_qname: str) -> list[str]:
+    """Return a list of qnames for the given query_name_pattern."""
+    if pattern == "fixed":
+        return [fixed_qname]
+    if pattern == "amplification":
+        return ["example.com"]
+    # random: 100 random 8-hex-char labels + ".example.com"
+    import secrets
+    return [f"{secrets.token_hex(4)}.example.com" for _ in range(100)]
+
+
+class DnsDosRunner(Scenario):
+    """Wraps ``config.DnsDosScenario``.
+
+    ``plan()`` emits a single ``run_trex_stateless`` command on the *source*
+    endpoint carrying an inline STL profile that generates UDP-53 DNS query
+    packets at the configured rate.
+    """
+
+    def __init__(self, scenario: DnsDosScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        from .trafgen_trex_profiles import build_dns_query_profile
+
+        sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        if src_ep.mode != "dpdk":
+            raise RuntimeError(
+                f"scenario {sc.id!r}: dos_dns_query requires source to be mode=dpdk"
+            )
+        src_cidr = src_ep.ipv4 if src_ep.ipv4 else "0.0.0.0/32"
+        qnames = _qnames_for_pattern(sc.query_name_pattern, sc.fixed_qname)
+        qtype = "ANY" if sc.query_name_pattern == "amplification" else "A"
+        profile_text = build_dns_query_profile(
+            src_cidr=src_cidr,
+            resolver_ip=sc.target_resolver,
+            qnames=tuple(qnames),
+            qps=sc.queries_per_s,
+            qtype=qtype,
+        )
+        return [
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="run_trex_stateless",
+                spec={
+                    "ports": (src_ep.trex_port_id or 0,),
+                    "duration_s": sc.duration_s,
+                    "multiplier": f"{sc.queries_per_s}pps",
+                    "profile_text": profile_text,
+                    "scenario_id": sc.id,
+                },
+            ),
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        r = results[0] if results else {}
+        latency_increase_ratio = float(r.get("latency_increase_ratio", 0.0))
+        ok = r.get("ok", False)
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="dos_dns_query",
+            ok=ok,
+            duration_s=r.get("duration_s", 0.0),
+            raw={
+                "queries_per_s": sc.queries_per_s,
+                "observed_tx_pps": r.get("pps", 0.0),
+                "errors": r.get("errors", 0),
+                "latency_increase_ratio": latency_increase_ratio,
+                "query_name_pattern": sc.query_name_pattern,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# HalfOpenDosRunner
+# ---------------------------------------------------------------------------
+
+
+class HalfOpenDosRunner(Scenario):
+    """Wraps ``config.HalfOpenDosScenario``.
+
+    ``plan()`` emits a single ``run_trex_astf`` command on the *source*
+    endpoint.  The embedded ASTF profile opens TCP connections to the sink
+    and idles (no FIN, no RST) to saturate the conntrack table.
+    """
+
+    def __init__(self, scenario: HalfOpenDosScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        from .trafgen_trex_profiles import build_half_open_profile
+
+        sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        sink_ep = cfg.endpoint_by_name(sc.sink)
+        if src_ep.mode != "dpdk" or sink_ep.mode != "dpdk":
+            raise RuntimeError(
+                f"scenario {sc.id!r}: dos_half_open requires both endpoints "
+                "to be mode=dpdk"
+            )
+        src_cidr = src_ep.ipv4 if src_ep.ipv4 else "0.0.0.0/32"
+        sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else "0.0.0.0"
+        profile_text = build_half_open_profile(
+            src_cidr=src_cidr,
+            dst_ip=sink_ip,
+            dst_port=sc.dst_port,
+            target_conns=sc.target_conns,
+            open_rate_per_s=sc.open_rate_per_s,
+        )
+        return [
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="run_trex_astf",
+                spec={
+                    "duration_s": sc.duration_s,
+                    "multiplier": 1.0,
+                    "profile_text": profile_text,
+                    "scenario_id": sc.id,
+                },
+            ),
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        r = results[0] if results else {}
+        observed_conns = int(r.get("concurrent_sessions", 0))
+        saturated = observed_conns < int(0.5 * sc.target_conns)
+        ok = r.get("ok", False) and observed_conns >= sc.target_conns
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="dos_half_open",
+            ok=ok,
+            duration_s=r.get("duration_s", 0.0),
+            raw={
+                "target_conns": sc.target_conns,
+                "observed_conns": observed_conns,
+                "open_rate_per_s": sc.open_rate_per_s,
+                "errors": r.get("errors", 0),
+                "conntrack_saturated": saturated,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# RuleCoverageMatrixRunner
+# ---------------------------------------------------------------------------
+
+
+class RuleCoverageMatrixRunner(Scenario):
+    """Systematic zone x zone x proto x port coverage.
+
+    Emits one send_probe command per tuple, iterating through tcp_ports,
+    udp_ports, and icmp combinations exhaustively (no random sampling).
+    Same-zone pairs are skipped — intra-zone is typically implicit-accept.
+    """
+
+    def __init__(self, scenario: RuleCoverageMatrixScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        commands: list[AgentCommand] = []
+        probe_id = 0
+
+        # Deterministic iteration order: sorted zone names → consistent test+report.
+        zones = sorted(sc.zone_subnets.keys())
+        for src_zone in zones:
+            src_net = ipaddress.ip_network(sc.zone_subnets[src_zone], strict=False)
+            src_hosts = list(src_net.hosts()) or [src_net.network_address]
+            src_ip = str(src_hosts[0])
+
+            for dst_zone in zones:
+                if dst_zone == src_zone:
+                    continue  # skip same-zone (usually accepted implicitly)
+                dst_net = ipaddress.ip_network(sc.zone_subnets[dst_zone], strict=False)
+                dst_hosts = list(dst_net.hosts()) or [dst_net.network_address]
+                dst_ip = str(dst_hosts[0])
+
+                for proto in sc.protos:
+                    ports: list[int] = (
+                        sc.tcp_ports if proto == "tcp"
+                        else sc.udp_ports if proto == "udp"
+                        else [0]
+                    )
+                    for port in ports:
+                        for _ in range(sc.probe_count_per_tuple):
+                            probe_id += 1
+                            commands.append(AgentCommand(
+                                endpoint_name=sc.source,
+                                kind="send_probe",
+                                spec={
+                                    "probe_id": probe_id,
+                                    "src_ip": src_ip,
+                                    "dst_ip": dst_ip,
+                                    "src_zone": src_zone,
+                                    "dst_zone": dst_zone,
+                                    "proto": proto,
+                                    "dst_port": port,
+                                    "scenario_id": sc.id,
+                                },
+                            ))
+
+        # One oracle hint at the end (consistent with RuleScanRunner pattern).
+        commands.append(AgentCommand(
+            endpoint_name=sc.source,
+            kind="collect_oracle_verdict",
+            spec={"scenario_id": sc.id},
+        ))
+        return commands
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        # Exclude the oracle-marker command from probe counts.
+        probe_results = [r for r in results if r.get("tool") != "oracle_marker"]
+        total = len(probe_results)
+        ok_count = sum(1 for r in probe_results if r.get("ok") is True)
+        mismatches = [r for r in probe_results if r.get("oracle_mismatch") is True]
+
+        # Structured matrix: (src_zone, dst_zone, proto, port) → pass|fail
+        matrix: dict[tuple[str, str, str, int], bool] = {}
+        for r in probe_results:
+            key = (
+                r.get("src_zone", ""),
+                r.get("dst_zone", ""),
+                r.get("proto", ""),
+                r.get("dst_port", 0),
+            )
+            matrix[key] = bool(r.get("ok", False))
+
+        ok = len(mismatches) == 0 and total > 0
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="rule_coverage_matrix",
+            ok=ok,
+            duration_s=0.0,
+            raw={
+                "total_probes": total,
+                "passed": ok_count,
+                "mismatches": len(mismatches),
+                "matrix": {f"{k[0]}\u2192{k[1]}/{k[2]}/{k[3]}": v for k, v in matrix.items()},
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# StatefulHelperFtpRunner
+# ---------------------------------------------------------------------------
+
+
+class StatefulHelperFtpRunner(Scenario):
+    """Validates nf_conntrack_ftp helper: sends an FTP request through the
+    FW; success requires the helper to track the negotiated data channel."""
+
+    def __init__(self, scenario: StatefulHelperFtpScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        sink_ep = cfg.endpoint_by_name(sc.sink)
+        sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else ""
+        return [
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="run_ftp_helper_probe",
+                spec={
+                    "sink_ip": sink_ip,
+                    "ftp_port": sc.ftp_port,
+                    "mode": sc.mode,
+                    "user": sc.user,
+                    "password": sc.password,
+                    "test_file": sc.test_file,
+                    "scenario_id": sc.id,
+                },
+            ),
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        r = results[0] if results else {}
+        data_ok = bool(r.get("data_transfer_ok", False))
+        control_ok = bool(r.get("control_ok", False))
+        ok = control_ok and (data_ok == sc.expect_data_connection)
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="stateful_helper_ftp",
+            ok=ok,
+            duration_s=r.get("duration_s", 0.0),
+            raw={
+                "control_ok": control_ok,
+                "data_transfer_ok": data_ok,
+                "expected_data_connection": sc.expect_data_connection,
+                "mode": sc.mode,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# EvasionProbesRunner
+# ---------------------------------------------------------------------------
+
+
+class EvasionProbesRunner(Scenario):
+    """Battery of evasion probes. Each probe is expected to be DROPPED by
+    the FW (oracle-side: ``expected_verdict = drop``). A probe that passes
+    is a real finding — summarize() flags the failing probe_ids."""
+
+    def __init__(self, scenario: EvasionProbesScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
+
+        commands: list[AgentCommand] = []
+        for idx, probe_type in enumerate(sc.probe_types, start=1):
+            probe_spec: dict = {
+                "probe_id": idx,
+                "probe_type": probe_type,
+                "src_ip": sc.spoof_src_ip if probe_type == "ip_spoof" else src_ip,
+                "dst_ip": sc.target_ip,
+                "dst_port": sc.target_port,
+                "scenario_id": sc.id,
+                "expected_verdict": "drop",
+            }
+            if probe_type == "tcp_null":
+                probe_spec["proto"] = "tcp"
+                probe_spec["tcp_flags"] = ""
+            elif probe_type == "tcp_xmas":
+                probe_spec["proto"] = "tcp"
+                probe_spec["tcp_flags"] = "FPU"
+            elif probe_type == "tcp_fin_no_syn":
+                probe_spec["proto"] = "tcp"
+                probe_spec["tcp_flags"] = "F"
+            elif probe_type == "tcp_shrinking_window":
+                probe_spec["proto"] = "tcp"
+                probe_spec["tcp_flags"] = "A"
+                probe_spec["tcp_window"] = 1
+            elif probe_type == "ip_spoof":
+                probe_spec["proto"] = "tcp"
+                probe_spec["tcp_flags"] = "S"
+            elif probe_type == "ip_overlap_fragments":
+                probe_spec["proto"] = "icmp"
+                probe_spec["frag_overlap"] = True
+            elif probe_type == "udp_malformed_checksum":
+                probe_spec["proto"] = "udp"
+                probe_spec["udp_bad_checksum"] = True
+
+            commands.append(AgentCommand(
+                endpoint_name=sc.source,
+                kind="send_probe",
+                spec=probe_spec,
+            ))
+
+        commands.append(AgentCommand(
+            endpoint_name=sc.source,
+            kind="collect_oracle_verdict",
+            spec={"scenario_id": sc.id},
+        ))
+        return commands
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        probe_results = [r for r in results if r.get("tool") != "oracle_marker"]
+        total = len(probe_results)
+        leaked = [r for r in probe_results if r.get("observed_verdict") == "accept"]
+        ok = len(leaked) == 0 and total > 0
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="evasion_probes",
+            ok=ok,
+            duration_s=0.0,
+            raw={
+                "total_probes": total,
+                "dropped_by_fw": total - len(leaked),
+                "leaked_through": len(leaked),
+                "leaked_probe_types": [r.get("probe_type", "?") for r in leaked],
+                "probe_types_attempted": list(sc.probe_types),
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# ReloadAtomicityRunner
+# ---------------------------------------------------------------------------
+
+
+class ReloadAtomicityRunner(Scenario):
+    """Reload-atomicity drill. Emits three commands in sequence:
+
+    1. run_iperf3_server on sink (duration = total + 10 s grace)
+    2. run_iperf3_client on source with delay_before_s=1
+    3. trigger_fw_reload — agent on source SSHes into fw_host mid-stream and
+       executes the reload command, then returns continuity signal.
+
+    Prerequisite: the agent host must have passwordless SSH access to the
+    fw_host specified in the scenario config.
+    """
+
+    def __init__(self, scenario: ReloadAtomicityScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        sink_ep = cfg.endpoint_by_name(sc.sink)
+        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else ""
+        sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else ""
+
+        return [
+            AgentCommand(
+                endpoint_name=sc.sink,
+                kind="run_iperf3_server",
+                spec={
+                    "bind": sink_ip,
+                    "port": 5201,
+                    "duration_s": sc.duration_s + 10,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="run_iperf3_client",
+                spec={
+                    "bind": src_ip,
+                    "server_ip": sink_ip,
+                    "port": 5201,
+                    "duration_s": sc.duration_s,
+                    "parallel": 1,
+                    "proto": "tcp",
+                    "delay_before_s": 1,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.source,  # agent on source runs the ssh trigger
+                kind="trigger_fw_reload",
+                spec={
+                    "fw_host": sc.fw_host,
+                    "reload_command": sc.reload_command,
+                    "delay_before_s": sc.reload_at_s,
+                    "scenario_id": sc.id,
+                },
+            ),
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        # Expect: [server_result, client_result, trigger_result]
+        client_r = next(
+            (r for r in results if r.get("tool") == "iperf3" and r.get("role") != "server"),
+            {},
+        )
+        trigger_r = next(
+            (r for r in results if r.get("tool") == "fw_reload"),
+            {},
+        )
+
+        retrans = int(client_r.get("retransmits", 0))
+        stream_ok = bool(client_r.get("ok", False))
+        reload_ok = bool(trigger_r.get("ok", False))
+        ok = stream_ok and reload_ok and retrans <= sc.max_retrans_during_reload
+
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="reload_atomicity",
+            ok=ok,
+            duration_s=client_r.get("duration_s", 0.0),
+            raw={
+                "retransmits_observed": retrans,
+                "max_retrans_allowed": sc.max_retrans_during_reload,
+                "stream_survived": stream_ok,
+                "reload_triggered_ok": reload_ok,
+                "reload_at_s": sc.reload_at_s,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# LongFlowSurvivalRunner
+# ---------------------------------------------------------------------------
+
+
+class LongFlowSurvivalRunner(Scenario):
+    """Long-flow survivability drill. Emits three commands:
+
+    1. set_fw_sysctl — lower nf_conntrack_tcp_timeout_established temporarily
+    2. run_iperf3_server (duration = scenario.duration_s + 20 s grace)
+    3. run_iperf3_client (duration = scenario.duration_s, delay_before_s=2)
+
+    No restore step — operator reverts the sysctl after the run or reboots
+    the FW; documented in the scenario's raw output.
+    """
+
+    def __init__(self, scenario: LongFlowSurvivalScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        sink_ep = cfg.endpoint_by_name(sc.sink)
+        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else ""
+        sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else ""
+
+        return [
+            AgentCommand(
+                endpoint_name=sc.source,  # any endpoint can drive the SSH call
+                kind="set_fw_sysctl",
+                spec={
+                    "fw_host": sc.fw_host,
+                    "sysctl_key": sc.sysctl_key,
+                    "sysctl_value": sc.sysctl_value,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.sink,
+                kind="run_iperf3_server",
+                spec={
+                    "bind": sink_ip,
+                    "port": 5201,
+                    "duration_s": sc.duration_s + 20,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="run_iperf3_client",
+                spec={
+                    "bind": src_ip,
+                    "server_ip": sink_ip,
+                    "port": 5201,
+                    "duration_s": sc.duration_s,
+                    "parallel": 1,
+                    "proto": "tcp",
+                    "delay_before_s": 2,   # a beat after the sysctl lands
+                    "scenario_id": sc.id,
+                },
+            ),
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        client_r = next(
+            (r for r in results if r.get("tool") == "iperf3" and r.get("role") != "server"),
+            {},
+        )
+        sysctl_r = next(
+            (r for r in results if r.get("tool") == "fw_sysctl"),
+            {},
+        )
+
+        observed_duration = float(client_r.get("duration_s", 0.0))
+        # iperf3 reports "ok=True" if the stream completed without fatal error.
+        # If the flow died at the conntrack timeout, duration_s will be
+        # noticeably shorter than the configured duration_s.
+        flow_survived = observed_duration >= (sc.duration_s * 0.95)  # 5% tolerance
+
+        if sc.expect_flow_dies:
+            # Flow SHOULD have died → pass iff it did not survive.
+            ok = sysctl_r.get("ok", False) and not flow_survived
+        else:
+            # Flow SHOULD have survived the full duration.
+            ok = sysctl_r.get("ok", False) and flow_survived
+
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="long_flow_survival",
+            ok=ok,
+            duration_s=observed_duration,
+            raw={
+                "expected_flow_dies": sc.expect_flow_dies,
+                "observed_flow_survived": flow_survived,
+                "observed_duration_s": observed_duration,
+                "configured_duration_s": sc.duration_s,
+                "sysctl_applied": sysctl_r.get("ok", False),
+                "sysctl_key": sc.sysctl_key,
+                "sysctl_value": sc.sysctl_value,
+                "note": (
+                    "Operator should revert the sysctl after the run or reboot "
+                    "the FW; this scenario does not restore it automatically."
+                ),
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# HaFailoverDrillRunner
+# ---------------------------------------------------------------------------
+
+
+class HaFailoverDrillRunner(Scenario):
+    """HA VRRP failover drill.  Emits five commands in order:
+
+    1. run_iperf3_server on sink (duration = scenario.duration_s + 20 s)
+    2. run_iperf3_client on source (duration = duration_s, delay_before_s=1)
+    3. stop_fw_service on primary_fw_host (delay_before_s = stop_at_s)
+    4. start_fw_service on primary_fw_host (delay_before_s = restart_at_s)
+    5. query_conntrack_count on secondary_fw_host (read-only, for drift report)
+
+    This is strictly ephemeral: no disk writes on the FWs, no persistent
+    service-unit changes. ``systemctl stop/start`` only — operator or reboot
+    restores default state.
+    """
+
+    def __init__(self, scenario: HaFailoverDrillScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        sink_ep = cfg.endpoint_by_name(sc.sink)
+        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else ""
+        sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else ""
+
+        return [
+            AgentCommand(
+                endpoint_name=sc.sink,
+                kind="run_iperf3_server",
+                spec={
+                    "bind": sink_ip,
+                    "port": 5201,
+                    "duration_s": sc.duration_s + 20,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="run_iperf3_client",
+                spec={
+                    "bind": src_ip,
+                    "server_ip": sink_ip,
+                    "port": 5201,
+                    "duration_s": sc.duration_s,
+                    "parallel": 1,
+                    "proto": "tcp",
+                    "delay_before_s": 1,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="stop_fw_service",
+                spec={
+                    "fw_host": sc.primary_fw_host,
+                    "service_name": sc.service_name,
+                    "delay_before_s": sc.stop_at_s,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="start_fw_service",
+                spec={
+                    "fw_host": sc.primary_fw_host,
+                    "service_name": sc.service_name,
+                    "delay_before_s": sc.restart_at_s,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="query_conntrack_count",
+                spec={
+                    "fw_host": sc.secondary_fw_host,
+                    "delay_before_s": sc.duration_s + 2,  # after the run
+                    "scenario_id": sc.id,
+                },
+            ),
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        client_r = next(
+            (r for r in results if r.get("tool") == "iperf3" and r.get("role") != "server"),
+            {},
+        )
+        stop_r = next(
+            (r for r in results if r.get("tool") == "fw_service" and r.get("action") == "stop"),
+            {},
+        )
+        start_r = next(
+            (r for r in results if r.get("tool") == "fw_service" and r.get("action") == "start"),
+            {},
+        )
+        conntrack_r = next(
+            (r for r in results if r.get("tool") == "conntrack_count"),
+            {},
+        )
+
+        retrans = int(client_r.get("retransmits", 0))
+        stream_survived = bool(client_r.get("ok", False))
+        stop_ok = bool(stop_r.get("ok", False))
+        start_ok = bool(start_r.get("ok", False))
+
+        # Downtime heuristic: iperf3 reports one aggregate duration — we
+        # can't extract mid-stream stalls without per-interval parsing.
+        # For MVP, compare retransmits against max_retrans_proxy:
+        # VRRP failover typically bursts ~50-200 retrans in the few seconds
+        # around the switch; anything much higher = problem. Caller can
+        # refine by parsing iperf3's interval-breakdown in the future.
+        failover_plausible = retrans > 0 and retrans < 2000  # non-zero but not stormed
+        ok = stream_survived and stop_ok and start_ok and failover_plausible
+
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="ha_failover_drill",
+            ok=ok,
+            duration_s=client_r.get("duration_s", 0.0),
+            raw={
+                "primary_fw": sc.primary_fw_host,
+                "secondary_fw": sc.secondary_fw_host,
+                "service_stopped": stop_ok,
+                "service_started": start_ok,
+                "retransmits_observed": retrans,
+                "stream_survived": stream_survived,
+                "secondary_conntrack_count": conntrack_r.get("count", -1),
+                "stop_at_s": sc.stop_at_s,
+                "restart_at_s": sc.restart_at_s,
+                "note": (
+                    "Downtime estimation from iperf3 aggregate retrans only. "
+                    "Refine with --json interval parsing in a later extension."
+                ),
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -543,6 +1381,15 @@ _ScenarioCfg = Union[
     TuningSweepScenario,
     ThroughputDpdkScenario,
     ConnStormAstfScenario,
+    SynFloodDosScenario,
+    DnsDosScenario,
+    HalfOpenDosScenario,
+    RuleCoverageMatrixScenario,
+    StatefulHelperFtpScenario,
+    EvasionProbesScenario,
+    ReloadAtomicityScenario,
+    LongFlowSurvivalScenario,
+    HaFailoverDrillScenario,
 ]
 
 
@@ -560,6 +1407,24 @@ def build_runner(scenario: _ScenarioCfg) -> Scenario:
         return ThroughputDpdkRunner(scenario)  # type: ignore[arg-type]
     if scenario.kind == "conn_storm_astf":
         return ConnStormAstfRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "dos_syn_flood":
+        return SynFloodDosRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "dos_dns_query":
+        return DnsDosRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "dos_half_open":
+        return HalfOpenDosRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "rule_coverage_matrix":
+        return RuleCoverageMatrixRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "stateful_helper_ftp":
+        return StatefulHelperFtpRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "evasion_probes":
+        return EvasionProbesRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "reload_atomicity":
+        return ReloadAtomicityRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "long_flow_survival":
+        return LongFlowSurvivalRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "ha_failover_drill":
+        return HaFailoverDrillRunner(scenario)  # type: ignore[arg-type]
     raise ValueError(f"Unknown scenario kind: {scenario.kind!r}")
 
 
@@ -572,5 +1437,16 @@ __all__ = [
     "TuningSweepRunner",
     "ThroughputDpdkRunner",
     "ConnStormAstfRunner",
+    "SynFloodDosRunner",
+    "DnsDosRunner",
+    "HalfOpenDosRunner",
+    "RuleCoverageMatrixRunner",
+    "StatefulHelperFtpRunner",
+    "EvasionProbesRunner",
+    "ReloadAtomicityRunner",
+    "LongFlowSurvivalRunner",
+    "HaFailoverDrillRunner",
+    "_parse_port_range",
+    "_qnames_for_pattern",
     "build_runner",
 ]

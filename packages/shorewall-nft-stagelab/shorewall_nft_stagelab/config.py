@@ -262,6 +262,292 @@ class ConnStormAstfScenario(BaseModel):
     expect_min_concurrent: int = 0      # advisor signal threshold
 
 
+class SynFloodDosScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["dos_syn_flood"]
+    source: str                            # endpoint name (must be mode=dpdk)
+    sink: str                              # endpoint name (must be mode=dpdk)
+    duration_s: int = 10
+    rate_pps: int                          # aggregate SYN pps
+    src_ip_range: str                      # CIDR for spoofed src IPs
+    dst_port_range: str = "80,443"         # comma-list or single port/range
+    expect_max_passed_ratio: float = 0.05  # pass if ≤5% of SYNs reach sink
+
+    @field_validator("src_ip_range")
+    @classmethod
+    def _check_cidr(cls, v: str) -> str:
+        ipaddress.ip_network(v, strict=False)  # raises on malformed
+        return v
+
+    @field_validator("rate_pps")
+    @classmethod
+    def _check_rate_cap(cls, v: int) -> int:
+        from .dos_safety import rate_cap_pps
+        cap = rate_cap_pps()
+        if v > cap:
+            raise ValueError(
+                f"rate_pps={v} exceeds STAGELAB_DOS_RATE_CAP_PPS={cap}"
+            )
+        return v
+
+
+class DnsDosScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["dos_dns_query"]
+    source: str                            # endpoint name (mode=dpdk)
+    sink: str                              # endpoint name (mode=dpdk)
+    duration_s: int = 10
+    queries_per_s: int                     # aggregate QPS
+    query_name_pattern: Literal["random", "fixed", "amplification"] = "random"
+    target_resolver: str                   # IPv4 of the DNS server
+    fixed_qname: str = "example.com"       # used when pattern=fixed
+
+    @field_validator("target_resolver")
+    @classmethod
+    def _check_ip(cls, v: str) -> str:
+        ipaddress.ip_address(v)
+        return v
+
+    @field_validator("queries_per_s")
+    @classmethod
+    def _check_rate_cap(cls, v: int) -> int:
+        from .dos_safety import rate_cap_pps
+        cap = rate_cap_pps()
+        if v > cap:
+            raise ValueError(
+                f"queries_per_s={v} exceeds STAGELAB_DOS_RATE_CAP_PPS={cap}"
+            )
+        return v
+
+
+class HalfOpenDosScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["dos_half_open"]
+    source: str                           # endpoint name (mode=dpdk)
+    sink: str                             # endpoint name (mode=dpdk)
+    duration_s: int = 30
+    target_conns: int                     # concurrent half-open TCP conns to reach
+    open_rate_per_s: int                  # new-connection rate
+    dst_port: int = 80
+
+    @field_validator("dst_port")
+    @classmethod
+    def _check_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError(f"dst_port={v} out of range 1-65535")
+        return v
+
+    @field_validator("open_rate_per_s")
+    @classmethod
+    def _check_rate_cap(cls, v: int) -> int:
+        from .dos_safety import rate_cap_pps
+        cap = rate_cap_pps()
+        if v > cap:
+            raise ValueError(
+                f"open_rate_per_s={v} exceeds STAGELAB_DOS_RATE_CAP_PPS={cap}"
+            )
+        return v
+
+
+class RuleCoverageMatrixScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["rule_coverage_matrix"]
+    source: str                          # endpoint name (probe or native)
+    zone_subnets: dict[str, str]         # zone_name -> CIDR, e.g. {"lan": "10.0.10.0/24"}
+    protos: list[Literal["tcp", "udp", "icmp"]] = ["tcp", "udp", "icmp"]
+    tcp_ports: list[int] = [22, 80, 443]
+    udp_ports: list[int] = [53, 123]
+    probe_count_per_tuple: int = 1       # how many probes per (src-zone, dst-zone, proto, port)
+
+    @field_validator("zone_subnets")
+    @classmethod
+    def _check_subnets(cls, v: dict[str, str]) -> dict[str, str]:
+        for zone, cidr in v.items():
+            ipaddress.ip_network(cidr, strict=False)  # raises on malformed
+            if "_" in zone:
+                raise ValueError(f"zone name {zone!r} contains '_' (not Shorewall-compatible)")
+        return v
+
+
+class StatefulHelperFtpScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["stateful_helper_ftp"]
+    source: str                           # endpoint name (native)
+    sink: str                             # endpoint name (native) — hosts vsftpd
+    ftp_port: int = 21                    # control channel port
+    mode: Literal["active", "passive"] = "passive"
+    user: str = "ftpuser"
+    password: str = "ftpuser"
+    test_file: str = "/tmp/stagelab-ftp-test.txt"  # expected on vsftpd
+    expect_data_connection: bool = True    # True = data xfer must succeed
+
+    @field_validator("ftp_port")
+    @classmethod
+    def _check_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError(f"ftp_port={v} out of range 1–65535")
+        return v
+
+
+class EvasionProbesScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["evasion_probes"]
+    source: str                             # endpoint name (probe mode preferred)
+    target_ip: str                          # destination IP
+    probe_types: list[Literal[
+        "tcp_null", "tcp_xmas", "tcp_fin_no_syn",
+        "tcp_shrinking_window",
+        "ip_spoof", "ip_overlap_fragments",
+        "udp_malformed_checksum",
+    ]] = [
+        "tcp_null", "tcp_xmas", "tcp_fin_no_syn",
+        "ip_spoof", "udp_malformed_checksum",
+    ]
+    spoof_src_ip: str = "10.255.255.255"    # used for ip_spoof probes
+    target_port: int = 80
+
+    @field_validator("target_ip", "spoof_src_ip")
+    @classmethod
+    def _check_ip(cls, v: str) -> str:
+        ipaddress.ip_address(v)
+        return v
+
+    @field_validator("target_port")
+    @classmethod
+    def _check_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError(f"target_port={v} out of range 1–65535")
+        return v
+
+
+class ReloadAtomicityScenario(BaseModel):
+    """Reload-atomicity drill: runs a long TCP stream through the FW, then
+    mid-stream triggers ``shorewall-nft restart`` via SSH on the FW host.
+
+    Prerequisite: the agent host must have passwordless SSH access to
+    ``fw_host`` (e.g. via an authorized_keys entry for root).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["reload_atomicity"]
+    source: str                           # endpoint name (native)
+    sink: str                             # endpoint name (native)
+    fw_host: str                          # user@host of FW (to SSH for reload)
+    reload_command: str = "shorewall-nft restart /etc/shorewall46"
+    duration_s: int = 60                  # total stream length
+    reload_at_s: int = 20                 # fire the reload this many seconds in
+    max_retrans_during_reload: int = 100  # pass threshold
+
+    @field_validator("reload_at_s")
+    @classmethod
+    def _check_reload_timing(cls, v: int, info) -> int:
+        dur = info.data.get("duration_s", 60)
+        if v < 2 or v >= dur - 2:
+            raise ValueError(
+                f"reload_at_s={v} must be ≥ 2 and ≤ duration_s-2 ({dur - 2})"
+            )
+        return v
+
+
+class LongFlowSurvivalScenario(BaseModel):
+    """Long-flow survivability drill.
+
+    Temporarily lowers a conntrack timeout sysctl on the FW via SSH, then
+    runs a long iperf3 TCP stream and checks whether the flow survived (or
+    died, if that is what the scenario expects).
+
+    Prerequisite: the agent host must have passwordless SSH access to
+    ``fw_host``.
+
+    **The sysctl change is runtime-only (non-persistent).  Operator is
+    responsible for reverting it after the run or rebooting the FW.**
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["long_flow_survival"]
+    source: str
+    sink: str
+    fw_host: str                              # user@host of FW — SSH target
+    duration_s: int = 300                      # 5 minutes default
+    sysctl_key: str = "net.netfilter.nf_conntrack_tcp_timeout_established"
+    sysctl_value: int = 240                    # 4 minutes (less than duration_s → flow should die)
+    expect_flow_dies: bool = False             # False = flow should SURVIVE the full duration
+
+    @field_validator("sysctl_key")
+    @classmethod
+    def _check_sysctl_key(cls, v: str) -> str:
+        if not v.startswith("net.netfilter.nf_conntrack_"):
+            raise ValueError(
+                f"sysctl_key={v!r} must start with 'net.netfilter.nf_conntrack_' "
+                "— only conntrack timeouts are in-scope for this scenario"
+            )
+        return v
+
+
+class HaFailoverDrillScenario(BaseModel):
+    """VRRP HA failover drill.
+
+    Establishes a long-running TCP stream through the FW HA pair, stops a
+    service (keepalived, bird, frr) on the primary FW host, measures
+    downtime until traffic flows again via the secondary, then restarts the
+    service on the primary to restore normal operation.
+
+    All FW operations are runtime-only (``systemctl stop/start``).
+    No disk writes, no ``systemctl enable/disable``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["ha_failover_drill"]
+    source: str                                     # endpoint name (native)
+    sink: str                                       # endpoint name (native)
+    primary_fw_host: str                            # user@host of FW to stop service on
+    secondary_fw_host: str                          # user@host — read-only conntrack query after drill
+    duration_s: int = 90                            # total stream length
+    stop_at_s: int = 20                             # seconds in, stop service
+    restart_at_s: int = 60                          # seconds in, restart service
+    service_name: str = "keepalived"                # limited vocabulary, see validator
+    max_downtime_s: float = 5.0                     # flow must recover within this
+
+    @field_validator("service_name")
+    @classmethod
+    def _check_service(cls, v: str) -> str:
+        # Lock the service name to a known-safe set — prevents the SSH
+        # handler from being used to stop arbitrary services on the FW.
+        _ALLOWED = {"keepalived", "bird", "frr"}
+        if v not in _ALLOWED:
+            raise ValueError(f"service_name={v!r} not in allowed set {_ALLOWED}")
+        return v
+
+    @field_validator("restart_at_s")
+    @classmethod
+    def _check_ordering(cls, v: int, info) -> int:
+        dur = info.data.get("duration_s", 90)
+        stop = info.data.get("stop_at_s", 20)
+        if v <= stop:
+            raise ValueError(f"restart_at_s={v} must be > stop_at_s={stop}")
+        if v >= dur - 5:
+            raise ValueError(f"restart_at_s={v} must leave >= 5 s tail (duration_s={dur})")
+        return v
+
+
 Scenario = Annotated[
     Union[
         ThroughputScenario,
@@ -270,6 +556,15 @@ Scenario = Annotated[
         TuningSweepScenario,
         ThroughputDpdkScenario,
         ConnStormAstfScenario,
+        SynFloodDosScenario,
+        DnsDosScenario,
+        HalfOpenDosScenario,
+        RuleCoverageMatrixScenario,
+        StatefulHelperFtpScenario,
+        EvasionProbesScenario,
+        ReloadAtomicityScenario,
+        LongFlowSurvivalScenario,
+        HaFailoverDrillScenario,
     ],
     Field(discriminator="kind"),
 ]
@@ -428,6 +723,55 @@ class StagelabConfig(BaseModel):
                         f"scenario {sc.id!r} ({sc.kind}): sink {sc.sink!r} "  # type: ignore[union-attr]
                         "must reference a dpdk endpoint"
                     )
+
+        # 5c. dos_syn_flood: sink (and source if it has an ipv4) must be in
+        #     dos_target_allowlist.
+        #     dos_dns_query: target_resolver must be in dos_target_allowlist.
+        #     dos_half_open: sink endpoint ipv4 (if any) must be in dos_target_allowlist.
+        for sc in self.scenarios:
+            if sc.kind == "dos_dns_query":
+                if not _is_dos_target_allowed(sc.target_resolver, self.dos_target_allowlist):  # type: ignore[union-attr]
+                    raise ValueError(
+                        f"scenario {sc.id!r} dos_dns_query: target_resolver "
+                        f"{sc.target_resolver!r} is not in dos_target_allowlist"  # type: ignore[union-attr]
+                    )
+        for sc in self.scenarios:
+            if sc.kind == "dos_half_open":
+                sink_ep = next(
+                    (ep for ep in self.endpoints if ep.name == sc.sink), None  # type: ignore[union-attr]
+                )
+                if sink_ep is not None and sink_ep.ipv4 is not None:
+                    sink_ip = sink_ep.ipv4.split("/")[0]
+                    if not _is_dos_target_allowed(sink_ip, self.dos_target_allowlist):
+                        raise ValueError(
+                            f"scenario {sc.id!r} dos_half_open: sink endpoint "
+                            f"{sc.sink!r} ip {sink_ip!r} is not in "  # type: ignore[union-attr]
+                            "dos_target_allowlist"
+                        )
+        for sc in self.scenarios:
+            if sc.kind == "dos_syn_flood":
+                sink_ep = next(
+                    (ep for ep in self.endpoints if ep.name == sc.sink), None
+                )
+                if sink_ep is not None and sink_ep.ipv4 is not None:
+                    sink_ip = sink_ep.ipv4.split("/")[0]
+                    if not _is_dos_target_allowed(sink_ip, self.dos_target_allowlist):
+                        raise ValueError(
+                            f"scenario {sc.id!r} dos_syn_flood: sink endpoint "
+                            f"{sc.sink!r} ip {sink_ip!r} is not in "
+                            "dos_target_allowlist"
+                        )
+                src_ep = next(
+                    (ep for ep in self.endpoints if ep.name == sc.source), None
+                )
+                if src_ep is not None and src_ep.ipv4 is not None:
+                    src_ip = src_ep.ipv4.split("/")[0]
+                    if not _is_dos_target_allowed(src_ip, self.dos_target_allowlist):
+                        raise ValueError(
+                            f"scenario {sc.id!r} dos_syn_flood: source endpoint "
+                            f"{sc.source!r} ip {src_ip!r} is not in "
+                            "dos_target_allowlist"
+                        )
 
         # 6. Disjoint-mode rule: same (host, nic) cannot mix probe and native
         probe_nics: set[tuple[str, str]] = set()
@@ -598,6 +942,15 @@ __all__ = [
     "TuningSweepScenario",
     "ThroughputDpdkScenario",
     "ConnStormAstfScenario",
+    "SynFloodDosScenario",
+    "DnsDosScenario",
+    "HalfOpenDosScenario",
+    "RuleCoverageMatrixScenario",
+    "StatefulHelperFtpScenario",
+    "EvasionProbesScenario",
+    "ReloadAtomicityScenario",
+    "LongFlowSurvivalScenario",
+    "HaFailoverDrillScenario",
     "Scenario",
     "PrometheusSourceSpec",
     "SNMPSourceSpec",

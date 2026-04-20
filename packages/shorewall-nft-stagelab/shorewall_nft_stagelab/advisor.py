@@ -68,6 +68,10 @@ class AdvisorInput:
     conntrack_max: int = 0
     nft_counter_ranking: tuple[tuple[str, int], ...] = field(default_factory=tuple)
     # (counter_name, packets) sorted descending
+    # DoS-scenario signals (populated by controller for kind.startswith("dos_")):
+    dos_scenario_ran: bool = False
+    dos_syn_pass_ratio: float = 0.0          # highest observed across syn_flood scenarios
+    dns_resolve_latency_increase_ratio: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +291,79 @@ def _h_flowtable_stagnant(data: AdvisorInput) -> Recommendation | None:
     return None
 
 
+def _h_dos_syn_pass_ratio(data: AdvisorInput) -> Recommendation | None:
+    """Tier B — FW let too many SYNs through during dos_syn_flood."""
+    if not data.dos_scenario_ran:
+        return None
+    if data.dos_syn_pass_ratio <= 0.05:
+        return None
+    return Recommendation(
+        tier="B",
+        signal="dos_syn_pass_ratio",
+        action=(
+            "Add `ct state new limit rate 1000/second` (or equivalent burst-"
+            "limit) to the FW's forward/input chain for the source zone."
+        ),
+        rationale=(
+            f"dos_syn_flood scenario let {data.dos_syn_pass_ratio:.1%} of SYNs "
+            "through — FW rate-limiting is either absent or set too permissive."
+        ),
+        target="fw",
+        confidence="medium",
+    )
+
+
+def _h_dos_conntrack_saturation(data: AdvisorInput) -> Recommendation | None:
+    """Tier A (testhost-side) / B (FW-side) — conntrack saturation under DoS."""
+    if not data.dos_scenario_ran:
+        return None
+    if data.conntrack_max == 0:
+        return None
+    ratio = data.conntrack_count / data.conntrack_max
+    if ratio < 0.95:
+        return None
+    new_max = data.conntrack_max * 2
+    return Recommendation(
+        tier="B",
+        signal="dos_conntrack_saturation",
+        action=(
+            f"Double nf_conntrack_max: `sysctl -w "
+            f"net.netfilter.nf_conntrack_max={new_max}`. Also set "
+            f"nf_conntrack_buckets={new_max // 4} for matching hash-table size."
+        ),
+        rationale=(
+            f"conntrack_count={data.conntrack_count} "
+            f"/ max={data.conntrack_max} ({ratio:.1%}) during a DoS scenario "
+            "— flow-table is nearly exhausted."
+        ),
+        target="fw",
+        confidence="high",
+    )
+
+
+def _h_dos_dns_latency_blowup(data: AdvisorInput) -> Recommendation | None:
+    """Tier B — DNS resolver latency blew up during dos_dns_query."""
+    if not data.dos_scenario_ran:
+        return None
+    if data.dns_resolve_latency_increase_ratio <= 10.0:
+        return None
+    return Recommendation(
+        tier="B",
+        signal="dos_dns_latency_blowup",
+        action=(
+            "Increase shorewalld dns-resolver worker count (see "
+            "`shorewalld.conf` → `[dns] workers = N`) and enable a caching "
+            "tier in front of the upstream resolver to absorb query bursts."
+        ),
+        rationale=(
+            f"dns_resolve latency increased {data.dns_resolve_latency_increase_ratio:.1f}× "
+            "during dos_dns_query — resolver pipeline is a bottleneck."
+        ),
+        target="fw",
+        confidence="medium",
+    )
+
+
 def _h_rule_order_topN(data: AdvisorInput) -> Recommendation | None:
     """Trigger when ranking has > 10 entries and top-3 account for > 70% of packets."""
     ranking = data.nft_counter_ranking
@@ -336,6 +413,9 @@ _HEURISTICS = [
     _h_flat_parallel_scaling,
     _h_flowtable_stagnant,
     _h_rule_order_topN,
+    _h_dos_syn_pass_ratio,
+    _h_dos_conntrack_saturation,
+    _h_dos_dns_latency_blowup,
 ]
 
 
@@ -361,4 +441,7 @@ __all__ = [
     "_h_flat_parallel_scaling",
     "_h_flowtable_stagnant",
     "_h_rule_order_topN",
+    "_h_dos_syn_pass_ratio",
+    "_h_dos_conntrack_saturation",
+    "_h_dos_dns_latency_blowup",
 ]

@@ -354,6 +354,17 @@ class StagelabController:
         ranking = tuple(
             sorted(cmap.items(), key=lambda kv: kv[1], reverse=True)
         )[:20]
+        # DoS-scenario signals — populated when any scenario.kind starts with "dos_".
+        dos_scenario_ran = any(sr.kind.startswith("dos_") for sr in scenario_results)
+        dos_syn_pass_ratio = 0.0
+        dns_resolve_latency_increase_ratio = 0.0
+        for sr in scenario_results:
+            if sr.kind == "dos_syn_flood":
+                ratio = float(sr.raw.get("passed_ratio", 0.0))
+                dos_syn_pass_ratio = max(dos_syn_pass_ratio, ratio)
+            elif sr.kind == "dos_dns_query":
+                ratio = float(sr.raw.get("latency_increase_ratio", 0.0))
+                dns_resolve_latency_increase_ratio = max(dns_resolve_latency_increase_ratio, ratio)
         recommendations = tuple(analyze(AdvisorInput(
             metric_rows=rows,
             iperf3_throughput_gbps=best_gbps,
@@ -362,6 +373,9 @@ class StagelabController:
             conntrack_count=ct_count,
             conntrack_max=ct_max,
             nft_counter_ranking=ranking,
+            dos_scenario_ran=dos_scenario_ran,
+            dos_syn_pass_ratio=dos_syn_pass_ratio,
+            dns_resolve_latency_increase_ratio=dns_resolve_latency_increase_ratio,
         )))
 
         return RunReport(

@@ -185,3 +185,49 @@ def test_rule_order_topN_triggers() -> None:
 def test_analyze_empty_input_returns_empty_list() -> None:
     result = analyze(AdvisorInput())
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# 10. dos_syn_pass_ratio
+# ---------------------------------------------------------------------------
+
+
+def test_dos_syn_pass_ratio_triggers():
+    inp = AdvisorInput(dos_scenario_ran=True, dos_syn_pass_ratio=0.10)
+    recs = analyze(inp)
+    matched = [r for r in recs if r.signal == "dos_syn_pass_ratio"]
+    assert len(matched) == 1
+    assert matched[0].tier == "B"
+
+
+# ---------------------------------------------------------------------------
+# 11. dos_conntrack_saturation
+# ---------------------------------------------------------------------------
+
+
+def test_dos_conntrack_saturation_triggers():
+    inp = AdvisorInput(
+        dos_scenario_ran=True,
+        conntrack_count=950_000,
+        conntrack_max=1_000_000,
+    )
+    recs = analyze(inp)
+    matched = [r for r in recs if r.signal == "dos_conntrack_saturation"]
+    assert len(matched) == 1
+    assert "2000000" in matched[0].action  # new_max = 2 ×
+
+
+# ---------------------------------------------------------------------------
+# 12. dos_dns_latency_blowup
+# ---------------------------------------------------------------------------
+
+
+def test_dos_dns_latency_blowup_triggers():
+    inp = AdvisorInput(
+        dos_scenario_ran=True,
+        dns_resolve_latency_increase_ratio=50.0,
+    )
+    recs = analyze(inp)
+    matched = [r for r in recs if r.signal == "dos_dns_latency_blowup"]
+    assert len(matched) == 1
+    assert matched[0].tier == "B"
