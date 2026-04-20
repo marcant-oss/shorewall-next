@@ -314,8 +314,11 @@ class TuningSweepRunner(Scenario):
         combos: list[tuple] = list(itertools.product(*value_lists)) if value_lists else [()]
 
         commands: list[AgentCommand] = []
-        for combo in combos:
+        # Rotate iperf3 port across sweep points so a prior --one-off server
+        # still in TIME_WAIT on the previous port cannot race the next client.
+        for idx, combo in enumerate(combos):
             params: dict = dict(zip(keys, combo))
+            port = 5201 + idx
             sysctls: dict[str, str] = {}
             if "rmem_max" in params:
                 sysctls["net.core.rmem_max"] = str(params["rmem_max"])
@@ -338,7 +341,7 @@ class TuningSweepRunner(Scenario):
                 spec={
                     "bind": sink_ip,
                     "duration_s": scen.duration_per_point_s + 2,
-                    "port": 5201,
+                    "port": port,
                 },
             ))
             commands.append(AgentCommand(
@@ -351,6 +354,7 @@ class TuningSweepRunner(Scenario):
                     "parallel": 1,
                     "proto": scen.proto,
                     "delay_before_s": 0.5,
+                    "port": port,
                     "_sweep_point": params,
                 },
             ))

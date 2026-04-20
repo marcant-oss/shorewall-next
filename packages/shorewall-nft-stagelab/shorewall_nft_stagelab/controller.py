@@ -249,19 +249,13 @@ class StagelabController:
         log.info("scraping stopped; collected %d metric rows", len(self._metric_rows))
 
     async def run_scenarios(self) -> RunReport:
-        """For each scenario: build_runner().plan(cfg) -> AgentCommands.
-
-        For each AgentCommand: send RUN_SCENARIO message to the right host
-        (look up endpoint.host). Await response. Collect results into a list.
-        Pass to scenario.summarize() -> ScenarioResult.
-        Assemble into RunReport with UTC run_id.
-
-        NOTE: Phase 2 will implement real agent handlers for RUN_SCENARIO.
-        For MVP the agent stub raises NotImplementedError, so every command
-        returns an ERROR response. The controller records these as
-        ScenarioResult(ok=False) without crashing. This is expected and
-        documented.
-        """
+        """For each scenario: build_runner().plan(cfg) -> AgentCommands, group
+        them by target host, and dispatch the per-host groups concurrently so
+        that e.g. an iperf3 server (blocking in accept()) on the sink can
+        coexist with the client on the source. Within a single host group
+        commands remain sequential so apply_tuning lands before the iperf3
+        run that depends on it. Results are re-merged into the original
+        global order before summarize()."""
         from .scenarios import build_runner
 
         # Build endpoint → host lookup table
@@ -272,93 +266,66 @@ class StagelabController:
         scenario_results: list[ScenarioResult] = []
         run_id = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+        async def _run_one(idx: int, cmd) -> tuple[int, dict]:
+            host_name = ep_to_host.get(cmd.endpoint_name)
+            if host_name is None:
+                return idx, {"ok": False, "error": "endpoint not found"}
+            conn = self._connections.get(host_name)
+            if conn is None:
+                return idx, {"ok": False, "error": "host not connected"}
+
+            msg = RunScenarioMessage(
+                id=new_id(),
+                scenario_spec={
+                    "endpoint_name": cmd.endpoint_name,
+                    "kind": cmd.kind,
+                    "spec": cmd.spec,
+                },
+            )
+            log.debug("→ host %r: kind=%r", host_name, cmd.kind)
+            await conn.channel.send(msg)
+            try:
+                response = await asyncio.wait_for(conn.channel.recv(), timeout=120.0)
+            except asyncio.TimeoutError:
+                log.error("host %r timed out on RUN_SCENARIO kind=%r", host_name, cmd.kind)
+                return idx, {"ok": False, "error": "timeout"}
+            except ConnectionClosedError:
+                log.error("host %r closed connection during RUN_SCENARIO kind=%r", host_name, cmd.kind)
+                return idx, {"ok": False, "error": "connection closed"}
+
+            if isinstance(response, AckMessage):
+                return idx, {"ok": True, **response.result}
+            if isinstance(response, ErrorMessage):
+                log.warning("host %r returned ERROR for RUN_SCENARIO kind=%r: %s",
+                            host_name, cmd.kind, response.message)
+                return idx, {"ok": False, "error": response.message}
+            log.warning("host %r unexpected response type %r for RUN_SCENARIO",
+                        host_name, type(response).__name__)
+            return idx, {"ok": False, "error": "unexpected response"}
+
+        async def _run_host_group(group: list[tuple[int, object]]) -> list[tuple[int, dict]]:
+            out: list[tuple[int, dict]] = []
+            for idx, cmd in group:
+                out.append(await _run_one(idx, cmd))
+            return out
+
         for scenario_cfg in self._config.scenarios:
             runner = build_runner(scenario_cfg)
             commands = runner.plan(self._config)
-            log.debug(
-                "scenario %r: %d commands", scenario_cfg.id, len(commands)
+            log.debug("scenario %r: %d commands", scenario_cfg.id, len(commands))
+
+            # Group by host, preserving intra-host order via the global index.
+            groups: dict[str, list[tuple[int, object]]] = {}
+            for idx, cmd in enumerate(commands):
+                host_name = ep_to_host.get(cmd.endpoint_name, "__unknown__")
+                groups.setdefault(host_name, []).append((idx, cmd))
+
+            group_results = await asyncio.gather(
+                *(_run_host_group(g) for g in groups.values())
             )
-
-            cmd_results: list[dict] = []
-
-            for cmd in commands:
-                host_name = ep_to_host.get(cmd.endpoint_name)
-                if host_name is None:
-                    log.warning(
-                        "scenario %r command %r: endpoint %r not in config; skipping",
-                        scenario_cfg.id,
-                        cmd.kind,
-                        cmd.endpoint_name,
-                    )
-                    cmd_results.append({"ok": False, "error": "endpoint not found"})
-                    continue
-
-                conn = self._connections.get(host_name)
-                if conn is None:
-                    log.warning(
-                        "scenario %r command %r: no connection for host %r",
-                        scenario_cfg.id,
-                        cmd.kind,
-                        host_name,
-                    )
-                    cmd_results.append({"ok": False, "error": "host not connected"})
-                    continue
-
-                msg = RunScenarioMessage(
-                    id=new_id(),
-                    scenario_spec={
-                        "endpoint_name": cmd.endpoint_name,
-                        "kind": cmd.kind,
-                        "spec": cmd.spec,
-                    },
-                )
-                log.debug(
-                    "sending RUN_SCENARIO to host %r: kind=%r", host_name, cmd.kind
-                )
-                await conn.channel.send(msg)
-
-                try:
-                    response = await asyncio.wait_for(
-                        conn.channel.recv(), timeout=60.0
-                    )
-                except asyncio.TimeoutError:
-                    log.error(
-                        "host %r timed out on RUN_SCENARIO kind=%r",
-                        host_name,
-                        cmd.kind,
-                    )
-                    cmd_results.append({"ok": False, "error": "timeout"})
-                    continue
-                except ConnectionClosedError:
-                    log.error(
-                        "host %r closed connection during RUN_SCENARIO kind=%r",
-                        host_name,
-                        cmd.kind,
-                    )
-                    cmd_results.append({"ok": False, "error": "connection closed"})
-                    continue
-
-                if isinstance(response, AckMessage):
-                    cmd_results.append({"ok": True, **response.result})
-                elif isinstance(response, ErrorMessage):
-                    # Agent stub raises NotImplementedError for RUN_SCENARIO (Phase 2).
-                    # Log and record as failure — do NOT retry.
-                    log.warning(
-                        "host %r returned ERROR for RUN_SCENARIO kind=%r: %s",
-                        host_name,
-                        cmd.kind,
-                        response.message,
-                    )
-                    cmd_results.append(
-                        {"ok": False, "error": response.message}
-                    )
-                else:
-                    log.warning(
-                        "host %r unexpected response type %r for RUN_SCENARIO",
-                        host_name,
-                        type(response).__name__,
-                    )
-                    cmd_results.append({"ok": False, "error": "unexpected response"})
+            indexed: list[tuple[int, dict]] = [pair for grp in group_results for pair in grp]
+            indexed.sort(key=lambda p: p[0])
+            cmd_results: list[dict] = [r for _, r in indexed]
 
             scenario_result = runner.summarize(cmd_results)
             scenario_results.append(scenario_result)
