@@ -12,6 +12,7 @@ from shorewall_nft_stagelab.config import (  # noqa: F401
     SNMPSourceSpec,
     StagelabConfig,
     load,
+    total_hugepages_per_host,
 )
 
 # ---------------------------------------------------------------------------
@@ -316,3 +317,174 @@ def test_metrics_sources_parse(tmp_path):
     assert snmp_src.host == "192.168.1.1"
     assert snmp_src.community == "public"
     assert snmp_src.oids == ["1.3.6.1.2.1.1.1.0"]
+
+
+# ---------------------------------------------------------------------------
+# DPDK endpoint tests
+# ---------------------------------------------------------------------------
+
+_DPDK_YAML_BASE = textwrap.dedent("""\
+    hosts:
+      - name: thx1
+        address: root@192.0.2.73
+
+    dut:
+      kind: external
+
+    endpoints:
+      - name: dpdk-client
+        host: thx1
+        mode: dpdk
+        pci_addr: "0000:01:00.0"
+        dpdk_cores: [2, 3]
+        hugepages_gib: 4
+        trex_role: client
+      - name: dpdk-server
+        host: thx1
+        mode: dpdk
+        pci_addr: "0000:01:00.1"
+        dpdk_cores: [4, 5]
+        hugepages_gib: 4
+        trex_role: server
+
+    scenarios:
+      - id: throughput_dpdk
+        kind: throughput
+        source: dpdk-client
+        sink: dpdk-server
+        proto: udp
+        duration_s: 10
+        parallel: 1
+        expect_min_gbps: 1.0
+
+    report:
+      output_dir: /tmp/out
+""")
+
+
+def test_dpdk_endpoint_valid(tmp_path):
+    """A well-formed dpdk endpoint parses correctly."""
+    p = _write_yaml(tmp_path, _DPDK_YAML_BASE)
+    cfg = load(p)
+    assert cfg.endpoints[0].mode == "dpdk"
+    assert cfg.endpoints[0].pci_addr == "0000:01:00.0"
+    assert cfg.endpoints[0].dpdk_cores == [2, 3]
+    assert cfg.endpoints[0].hugepages_gib == 4
+    assert cfg.endpoints[0].trex_role == "client"
+    totals = total_hugepages_per_host(cfg)
+    assert totals == {"thx1": 8}
+
+
+def test_dpdk_endpoint_missing_pci_rejected(tmp_path):
+    """A dpdk endpoint without pci_addr raises ValidationError mentioning pci."""
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: thx1
+            address: root@192.0.2.73
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: dpdk-nopci
+            host: thx1
+            mode: dpdk
+            dpdk_cores: [2, 3]
+            hugepages_gib: 4
+            trex_role: client
+
+        scenarios:
+          - id: throughput_dpdk
+            kind: throughput
+            source: dpdk-nopci
+            sink: dpdk-nopci
+            proto: udp
+            duration_s: 10
+            parallel: 1
+            expect_min_gbps: 1.0
+
+        report:
+          output_dir: /tmp/out
+    """)
+    p = _write_yaml(tmp_path, yaml_text)
+    with pytest.raises(ValidationError, match="pci"):
+        load(p)
+
+
+def test_dpdk_duplicate_pci_on_same_host_rejected(tmp_path):
+    """Two dpdk endpoints on the same host with the same pci_addr raise ValidationError."""
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: thx1
+            address: root@192.0.2.73
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: dpdk-a
+            host: thx1
+            mode: dpdk
+            pci_addr: "0000:01:00.0"
+            dpdk_cores: [2]
+            hugepages_gib: 2
+            trex_role: client
+          - name: dpdk-b
+            host: thx1
+            mode: dpdk
+            pci_addr: "0000:01:00.0"
+            dpdk_cores: [3]
+            hugepages_gib: 2
+            trex_role: server
+
+        scenarios:
+          - id: throughput_dpdk
+            kind: throughput
+            source: dpdk-a
+            sink: dpdk-b
+            proto: udp
+            duration_s: 10
+            parallel: 1
+            expect_min_gbps: 1.0
+
+        report:
+          output_dir: /tmp/out
+    """)
+    p = _write_yaml(tmp_path, yaml_text)
+    with pytest.raises(ValidationError, match="duplicate pci_addr"):
+        load(p)
+
+
+def test_dpdk_fields_rejected_on_native_mode(tmp_path):
+    """A native endpoint with pci_addr set raises ValidationError."""
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: thx1
+            address: root@192.0.2.73
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: native-ep
+            host: thx1
+            mode: native
+            nic: enp1s0f0
+            vlan: 10
+            ipv4: 10.0.10.100/24
+            ipv4_gw: 10.0.10.1
+            pci_addr: "0000:01:00.0"
+
+        scenarios:
+          - id: rule_scan
+            kind: rule_scan
+            source: native-ep
+            target_subnet: 10.0.0.0/8
+            random_count: 5
+
+        report:
+          output_dir: /tmp/out
+    """)
+    p = _write_yaml(tmp_path, yaml_text)
+    with pytest.raises(ValidationError, match="pci_addr"):
+        load(p)
