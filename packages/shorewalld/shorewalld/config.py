@@ -101,10 +101,11 @@ def find_default_config() -> Path | None:
 
 # Keys documented in docs/reference/shorewalld.md. All optional —
 # anything unset falls back to the CLI default.
-_BOOL_KEYS = frozenset({"STATE_ENABLED"})
+_BOOL_KEYS = frozenset({"STATE_ENABLED", "VRRP_SNMP_ENABLED"})
 _INT_KEYS = frozenset({
     "PEER_PORT",
     "PEER_BIND_PORT",
+    "VRRP_SNMP_PORT",
 })
 _FLOAT_KEYS = frozenset({
     "SCRAPE_INTERVAL",
@@ -112,6 +113,7 @@ _FLOAT_KEYS = frozenset({
     "PEER_HEARTBEAT_INTERVAL",
     "STATE_PERSIST_INTERVAL",
     "LOG_RATE_LIMIT_WINDOW",
+    "VRRP_SNMP_TIMEOUT",
 })
 
 
@@ -173,6 +175,12 @@ class ConfDefaults:
     control_socket: str | None = None
     control_socket_netns: str | None = None
     iplist_configs: list[str] = field(default_factory=list)
+    # VRRP SNMP augmentation (Wave 9).
+    vrrp_snmp_enabled: bool | None = None
+    vrrp_snmp_host: str | None = None
+    vrrp_snmp_port: int | None = None
+    vrrp_snmp_community: str | None = None
+    vrrp_snmp_timeout: float | None = None
 
 
 # Map config key → ConfDefaults attribute. Keys not in this map are
@@ -202,6 +210,11 @@ _CONF_KEY_MAP: dict[str, str] = {
     "LOG_RATE_LIMIT_WINDOW": "log_rate_limit_window",
     "CONTROL_SOCKET": "control_socket",
     "CONTROL_SOCKET_NETNS": "control_socket_netns",
+    "VRRP_SNMP_ENABLED": "vrrp_snmp_enabled",
+    "VRRP_SNMP_HOST": "vrrp_snmp_host",
+    "VRRP_SNMP_PORT": "vrrp_snmp_port",
+    "VRRP_SNMP_COMMUNITY": "vrrp_snmp_community",
+    "VRRP_SNMP_TIMEOUT": "vrrp_snmp_timeout",
 }
 
 

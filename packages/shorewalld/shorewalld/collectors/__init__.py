@@ -53,7 +53,7 @@ from .softnet import (
     SoftnetCollector,
     _parse_proc_net_softnet_stat,
 )
-from .vrrp import VrrpCollector, VrrpInstance
+from .vrrp import VrrpCollector, VrrpInstance, VrrpSnmpConfig
 
 __all__ = [
     "AddressCollector",
@@ -82,6 +82,7 @@ __all__ = [
     "_TCPEXT_FIELDS",
     "VrrpCollector",
     "VrrpInstance",
+    "VrrpSnmpConfig",
     "_extract_qdisc_row",
     "_format_tc_handle",
     "_neigh_state_name",

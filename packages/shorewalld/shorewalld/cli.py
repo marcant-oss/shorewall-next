@@ -185,6 +185,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable the VRRP D-Bus collector that scrapes keepalived state "
              "from the system bus (requires jeepney>=0.8; degrades silently "
              "if jeepney is absent or keepalived is not running).")
+    # ── VRRP SNMP augmentation (Wave 9) ──────────────────────────────────
+    p.add_argument(
+        "--vrrp-snmp-enable", action="store_true", default=False,
+        help="Enable SNMP augmentation of the VRRP collector via the "
+             "KEEPALIVED-MIB sub-agent.  Fills priority, effective_priority, "
+             "vip_count, and master_transitions from SNMP instead of leaving "
+             "them at 0.  Requires pysnmp>=7.0 (pip install shorewalld[snmp]). "
+             "Activates SNMP-only discovery mode when D-Bus is unavailable "
+             "(e.g. AlmaLinux 10 where keepalived ships without --enable-dbus).")
+    p.add_argument(
+        "--vrrp-snmp-host", default="127.0.0.1", metavar="HOST",
+        help="SNMP agent host for VRRP augmentation (default: 127.0.0.1).")
+    p.add_argument(
+        "--vrrp-snmp-port", type=int, default=161, metavar="PORT",
+        help="SNMP agent UDP port for VRRP augmentation (default: 161).")
+    p.add_argument(
+        "--vrrp-snmp-community", default="public", metavar="STR",
+        help="SNMPv2c community string for VRRP augmentation (default: public).")
+    p.add_argument(
+        "--vrrp-snmp-timeout", type=float, default=1.0, metavar="SECS",
+        help="SNMP request timeout in seconds (default: 1.0).")
     for sub in SUBSYSTEMS:
         p.add_argument(
             f"--log-level-{sub}", default=None, metavar="LEVEL",
@@ -263,6 +284,14 @@ def _merge_conf_defaults(
 
     take("control_socket", defaults.control_socket)
     take("control_socket_netns", defaults.control_socket_netns)
+
+    # VRRP SNMP augmentation config-file values.
+    if "vrrp_snmp_enable" not in explicit and defaults.vrrp_snmp_enabled is True:
+        args.vrrp_snmp_enable = True
+    take("vrrp_snmp_host", defaults.vrrp_snmp_host)
+    take("vrrp_snmp_port", defaults.vrrp_snmp_port)
+    take("vrrp_snmp_community", defaults.vrrp_snmp_community)
+    take("vrrp_snmp_timeout", defaults.vrrp_snmp_timeout)
 
     return args
 
@@ -399,6 +428,11 @@ def main(argv: list[str] | None = None) -> int:
         control_socket_netns=args.control_socket_netns,
         iplist_configs=iplist_cfgs,
         enable_vrrp_collector=args.enable_vrrp_collector,
+        vrrp_snmp_enabled=args.vrrp_snmp_enable,
+        vrrp_snmp_host=args.vrrp_snmp_host,
+        vrrp_snmp_port=args.vrrp_snmp_port,
+        vrrp_snmp_community=args.vrrp_snmp_community,
+        vrrp_snmp_timeout=args.vrrp_snmp_timeout,
     )
     try:
         return asyncio.run(daemon.run())

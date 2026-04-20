@@ -234,7 +234,54 @@ On AlmaLinux 10 / RHEL 10, keepalived is built without
 the collector will report
 .B dbus_unavailable
 errors and emit no VRRP metrics on those hosts.
+Use
+.B \-\-vrrp\-snmp\-enable
+to obtain metrics on AL10.
 See the PROMETHEUS METRICS section below for the metric list.
+.TP
+.B \-\-vrrp\-snmp\-enable
+Enable SNMP augmentation of the VRRP collector via the KEEPALIVED-MIB
+sub-agent.  When active, the collector additionally queries keepalived's
+SNMP agent to fill in the fields that the D-Bus interface leaves at zero:
+.BR priority ,
+.BR effective_priority ,
+.BR vip_count ,
+and
+.BR master_transitions .
+On AlmaLinux 10 / RHEL 10 where keepalived ships without
+.BR \-\-enable\-dbus ,
+this flag enables
+.I SNMP-only
+discovery mode — all instances are discovered from the SNMP table and
+.B bus_name
+is reported as
+.BR "" .
+Requires
+.B pysnmp>=7.0
+(installed via
+.BR "pip install shorewalld[snmp]" );
+degrades silently if pysnmp is absent.
+keepalived must be built with
+.B \-\-enable\-snmp\-vrrp
+and
+.B snmpd
+must have the pass-through sub-agent configured.
+.TP
+.BI \-\-vrrp\-snmp\-host " HOST"
+SNMP agent host for VRRP augmentation (default:
+.BR 127.0.0.1 ).
+.TP
+.BI \-\-vrrp\-snmp\-port " PORT"
+SNMP agent UDP port for VRRP augmentation (default:
+.BR 161 ).
+.TP
+.BI \-\-vrrp\-snmp\-community " STR"
+SNMPv2c community string for VRRP augmentation (default:
+.BR public ).
+.TP
+.BI \-\-vrrp\-snmp\-timeout " SECS"
+SNMP request timeout in seconds (default:
+.BR 1.0 ).
 
 .SH tap SUBCOMMAND
 .B shorewalld tap
@@ -455,7 +502,7 @@ Label values:
 is a Unix-timestamp gauge (0 = never refreshed).  Alert with
 .B time() \- metric > THRESHOLD .
 
-.SS VRRP metrics [Wave 8 \-\- keepalived D-Bus, opt-in via \-\-enable\-vrrp\-collector]
+.SS VRRP metrics [Wave 8/9 \-\- keepalived D-Bus + SNMP, opt-in via \-\-enable\-vrrp\-collector]
 .RS
 .nf
 shorewalld_vrrp_state                           gauge    bus_name,instance,vr_id,nic,family
@@ -463,28 +510,43 @@ shorewalld_vrrp_priority                        gauge    bus_name,instance,vr_id
 shorewalld_vrrp_effective_priority              gauge    bus_name,instance,vr_id
 shorewalld_vrrp_last_transition_timestamp_seconds gauge  bus_name,instance,vr_id
 shorewalld_vrrp_vip_count                       gauge    bus_name,instance,vr_id,family
+shorewalld_vrrp_master_transitions_total        counter  bus_name,instance,vr_id
 shorewalld_vrrp_scrape_errors_total             counter  reason
 .fi
 .RE
 
 .PP
 .B shorewalld_vrrp_state
-encodes the keepalived state integer: 1=BACKUP, 2=MASTER, 3=FAULT.
+encodes the keepalived state integer: 1=BACKUP, 2=MASTER, 3=FAULT via D-Bus;
+via SNMP, state 0=init is also possible.
 .B shorewalld_vrrp_priority
 and
 .B shorewalld_vrrp_effective_priority
-are reserved for future keepalived D-Bus extensions; currently reported as 0
-(not exposed by the keepalived D-Bus interface at this time).
+are filled by SNMP augmentation (see
+.BR \-\-vrrp\-snmp\-enable );
+reported as 0 when SNMP is not configured.
+.B shorewalld_vrrp_vip_count
+reflects
+.I vrrpInstanceVipsStatus
+from KEEPALIVED-MIB: 1=allSet, 2=notAllSet; 0 if SNMP is unavailable.
+.B shorewalld_vrrp_master_transitions_total
+is the cumulative transitions-to-MASTER counter
+.RI ( vrrpInstanceBecomeMaster );
+0 if SNMP is unavailable.
 .B shorewalld_vrrp_scrape_errors_total
 reason values:
 .B dbus_unavailable
 (bus unreachable or jeepney absent),
 .B timeout
-(per-call 1 s deadline exceeded),
+(per D-Bus call deadline exceeded),
 .B properties_get
 (GetAll call failed),
 .B parse
-(unexpected property format).
+(unexpected property format),
+.B snmp_timeout
+(SNMP walk timed out),
+.B snmp_parse
+(unexpected SNMP OID value).
 
 .SH FILES
 .TP

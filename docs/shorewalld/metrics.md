@@ -214,7 +214,7 @@ rate(shorewalld_plainlist_refresh_duration_seconds_sum[5m])
 
 ---
 
-## VRRP (keepalived D-Bus) **(W8)**
+## VRRP (keepalived D-Bus + SNMP augmentation) **(W8/W9)**
 
 Enabled with `--enable-vrrp-collector`.  Requires `jeepney>=0.8`
 (`pip install shorewalld[vrrp]`).  Degrades silently when jeepney is absent
@@ -224,24 +224,80 @@ or keepalived is not running.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `shorewalld_vrrp_state` | gauge | `bus_name`, `instance`, `vr_id`, `nic`, `family` | VRRP instance state: 1=BACKUP, 2=MASTER, 3=FAULT |
-| `shorewalld_vrrp_priority` | gauge | `bus_name`, `instance`, `vr_id` | Base priority (0 — not exposed via D-Bus, reserved for future) |
-| `shorewalld_vrrp_effective_priority` | gauge | `bus_name`, `instance`, `vr_id` | Effective priority after tracking adjustments (0 — not exposed via D-Bus) |
-| `shorewalld_vrrp_last_transition_timestamp_seconds` | gauge | `bus_name`, `instance`, `vr_id` | Unix timestamp of last observed state change (0 if unknown) |
-| `shorewalld_vrrp_vip_count` | gauge | `bus_name`, `instance`, `vr_id`, `family` | Number of VIPs currently held (0 — not exposed via D-Bus) |
-| `shorewalld_vrrp_scrape_errors_total` | counter | `reason` | D-Bus scrape errors by reason |
+| `shorewalld_vrrp_state` | gauge | `bus_name`, `instance`, `vr_id`, `nic`, `family` | VRRP instance state: 1=BACKUP, 2=MASTER, 3=FAULT (D-Bus); 0=init also possible via SNMP |
+| `shorewalld_vrrp_priority` | gauge | `bus_name`, `instance`, `vr_id` | Effective priority (filled by SNMP; 0 if SNMP unavailable) |
+| `shorewalld_vrrp_effective_priority` | gauge | `bus_name`, `instance`, `vr_id` | Effective priority after track-script adjustments (SNMP; 0 if unavailable) |
+| `shorewalld_vrrp_last_transition_timestamp_seconds` | gauge | `bus_name`, `instance`, `vr_id` | Unix timestamp of last observed state change (0 — not exposed by D-Bus or SNMP) |
+| `shorewalld_vrrp_vip_count` | gauge | `bus_name`, `instance`, `vr_id`, `family` | `vrrpInstanceVipsStatus` proxy: 1=allSet, 2=notAllSet (SNMP; 0 if unavailable) |
+| `shorewalld_vrrp_master_transitions_total` | counter | `bus_name`, `instance`, `vr_id` | Cumulative transitions-to-MASTER (`vrrpInstanceBecomeMaster`; 0 if SNMP unavailable) **(W9)** |
+| `shorewalld_vrrp_scrape_errors_total` | counter | `reason` | Scrape errors by reason |
 
-`reason` values: `dbus_unavailable`, `timeout`, `properties_get`, `parse`.
+`reason` values: `dbus_unavailable`, `timeout`, `properties_get`, `parse`,
+`snmp_timeout`, `snmp_parse`.
+
+### SNMP augmentation **(W9)**
+
+Add `--vrrp-snmp-enable` to query the KEEPALIVED-MIB sub-agent alongside (or
+instead of) D-Bus.  This fills in the fields that D-Bus cannot expose.
+
+**Requirements:**
+- `pysnmp>=7.0`: `pip install shorewalld[snmp]`
+- keepalived built with `--enable-snmp-vrrp`
+- `snmpd` with the keepalived pass-through sub-agent (`agentXSocket`
+  or direct sub-agent) running
+
+**OIDs queried** from KEEPALIVED-MIB root `.1.3.6.1.4.1.9586.100.5`:
+
+| OID suffix | Column name | Metric field |
+|------------|-------------|--------------|
+| `.2.3.1.2` | `vrrpInstanceName` | correlation key (`vrrp_name`) |
+| `.2.3.1.4` | `vrrpInstanceState` | `state` (SNMP-only mode) |
+| `.2.3.1.6` | `vrrpInstanceVirtualRouterId` | `vr_id` (SNMP-only mode) |
+| `.2.3.1.7` | `vrrpInstanceEffectivePriority` | `priority` + `effective_priority` |
+| `.2.3.1.8` | `vrrpInstanceVipsStatus` | `vip_count` |
+| `.2.3.1.9` | `vrrpInstanceBecomeMaster` | `master_transitions` |
+
+**SNMP state mapping:**
+
+| SNMP value | Meaning |
+|------------|---------|
+| 0 | `init` — keepalived starting up (not seen via D-Bus) |
+| 1 | `backup` |
+| 2 | `master` |
+| 3 | `fault` |
+
+The D-Bus interface exposes only 1/2/3; SNMP can also return 0.  When both
+paths succeed, D-Bus state takes precedence; SNMP fills in numeric fields only.
+
+**Configuration flags** (see `shorewalld --help` for full descriptions):
+
+```
+--vrrp-snmp-enable                (boolean)
+--vrrp-snmp-host HOST             (default: 127.0.0.1)
+--vrrp-snmp-port PORT             (default: 161)
+--vrrp-snmp-community STR         (default: public)
+--vrrp-snmp-timeout SECS          (default: 1.0)
+```
+
+Or in `shorewalld.conf`:
+
+```
+VRRP_SNMP_ENABLED=yes
+VRRP_SNMP_HOST=127.0.0.1
+VRRP_SNMP_PORT=161
+VRRP_SNMP_COMMUNITY=public
+VRRP_SNMP_TIMEOUT=1.0
+```
 
 ### Cardinality
 
 | Label | Upper bound | Notes |
 |-------|-------------|-------|
-| `bus_name` | # keepalived processes | Typically 1 per host |
+| `bus_name` | # keepalived processes | `""` in SNMP-only mode (AL10) |
 | `instance` | # VRRP instances | Typically 2–8 (one per VR per family) |
 | `vr_id` | 255 (VRRP spec) | Typically < 10 in practice |
-| `nic` | # firewall NICs | Typically 2–4 |
-| `family` | 2 | Fixed: `ipv4`, `ipv6` |
+| `nic` | # firewall NICs | `""` in SNMP-only mode |
+| `family` | 2 | Fixed: `ipv4`, `ipv6`; `""` in SNMP-only mode |
 
 Total label combinations: bounded by operator config.  Typically < 20.
 
@@ -257,7 +313,8 @@ keepalived exposes only two properties per instance via
 Object path format: `/org/keepalived/Vrrp1/Instance/<nic>/<vrid>/IPv4|IPv6`.
 The collector derives `nic`, `vr_id`, and `family` from the path.
 `priority`, `effective_priority`, `last_transition`, and `vip_count` are not
-available from the D-Bus interface and are reported as 0.
+available from the D-Bus interface and remain 0 unless SNMP augmentation is
+enabled.
 
 ### Example PromQL alerts
 
@@ -270,9 +327,15 @@ ALERT VrrpNotMaster
   LABELS { severity="critical" }
   ANNOTATIONS { summary="VRRP instance not MASTER" }
 
-# Alert on a spike in state transitions (>2/min over a 5-min window).
+# Alert on frequent VRRP failovers (>2 transitions in 5 min).
 ALERT VrrpFlapping
-  IF rate(shorewalld_vrrp_scrape_errors_total{reason="timeout"}[5m]) > 0.1
+  IF rate(shorewalld_vrrp_master_transitions_total[5m]) > 0.4
+  LABELS { severity="warning" }
+  ANNOTATIONS { summary="VRRP instance flapping" }
+
+# Alert on SNMP scrape failures.
+ALERT VrrpSnmpErrors
+  IF increase(shorewalld_vrrp_scrape_errors_total{reason=~"snmp.*"}[5m]) > 3
   LABELS { severity="warning" }
 ```
 
@@ -280,12 +343,15 @@ ALERT VrrpFlapping
 
 **AlmaLinux 10 / RHEL 10 / CentOS Stream 10**: `keepalived 2.2.8-6.el10`
 is built **without** `--enable-dbus`.  The D-Bus objects are not registered
-and `shorewalld_vrrp_*` metrics will be absent (the collector degrades
-silently with `dbus_unavailable` errors).  Options for operators on AL10:
+and the D-Bus path will report `dbus_unavailable` and emit no instances.
 
-1. Rebuild keepalived from source with `--enable-dbus` configured.
-2. Run the VRRP collector on the peer nodes (Debian/Fedora) where keepalived
-   ships with D-Bus support enabled.
+**The SNMP path is the only option that produces non-zero `priority`,
+`effective_priority`, `vip_count`, and `master_transitions` on AL10.**
+Enable it with `--vrrp-snmp-enable` (and ensure keepalived is built with
+`--enable-snmp-vrrp`).  In SNMP-only mode the collector falls back to full
+SNMP-based discovery: `bus_name`, `nic`, and `family` labels are `""` because
+the KEEPALIVED-MIB does not expose the NIC or IP-family per instance.
 
-No workaround exists within shorewalld — the underlying daemon must expose
-the D-Bus interface.
+If keepalived on AL10 cannot be rebuilt with SNMP support either, the only
+remaining option is to monitor via the peer nodes (Debian/Fedora) where
+keepalived ships with D-Bus or SNMP support enabled.
