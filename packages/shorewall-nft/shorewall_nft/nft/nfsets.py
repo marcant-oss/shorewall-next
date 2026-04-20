@@ -49,6 +49,13 @@ _DNS_TYPES: frozenset[str] = frozenset({"a", "aaaa", "srv"})
 # Duration suffix multipliers.
 _DURATION_UNITS: dict[str, int] = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
+# Size suffix multipliers (k = 1024, M = 1048576).
+_SIZE_UNITS: dict[str, int] = {"k": 1024, "M": 1024 * 1024}
+
+# Operator-configurable size bounds.
+_SIZE_MIN = 1
+_SIZE_MAX = 64 * 1024 * 1024  # 64M entries
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -94,6 +101,12 @@ class NfSetEntry:
     dnstype: str | None = None
     """DNS record type filter: ``"a"``, ``"aaaa"``, or ``"srv"``; ``None``
     means resolve both A and AAAA."""
+
+    size: int | None = None
+    """Explicit nft set size override (in entries).  ``None`` means use the
+    per-backend default (262144 for ip-list/ip-list-plain, 4096 for DNS
+    backends).  Set via ``size=N`` in the options string; accepts k/M
+    suffixes (1k = 1024, 1M = 1048576).  Valid range: 1 – 67108864 (64M)."""
 
 
 @dataclass
@@ -149,6 +162,38 @@ def nfset_to_set_name(name: str, family: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _parse_size(value: str, entry_name: str = "<unknown>") -> int:
+    """Parse a set-size string like ``262144``, ``256k``, or ``10M``.
+
+    Suffixes: ``k`` = 1024, ``M`` = 1048576.
+
+    Valid range: :data:`_SIZE_MIN` – :data:`_SIZE_MAX` (1 – 64M).
+
+    Raises :exc:`ValueError` on unrecognised format or out-of-range value.
+    """
+    v = value.strip()
+    if not v:
+        raise ValueError(f"nfsets entry {entry_name!r}: empty size value")
+    # Plain integer (no suffix)?
+    m = re.fullmatch(r"(\d+)", v)
+    if m:
+        n = int(m.group(1))
+    else:
+        # Integer with k/M suffix.
+        m = re.fullmatch(r"(\d+)([kM])", v)
+        if m:
+            n = int(m.group(1)) * _SIZE_UNITS[m.group(2)]
+        else:
+            raise ValueError(
+                f"nfsets entry {entry_name!r}: unrecognised size format: {value!r}"
+                " (expected integer, or integer with k/M suffix)")
+    if not (_SIZE_MIN <= n <= _SIZE_MAX):
+        raise ValueError(
+            f"nfsets entry {entry_name!r}: size {n} out of range "
+            f"({_SIZE_MIN}–{_SIZE_MAX})")
+    return n
+
+
 def _parse_duration(value: str) -> int:
     """Parse a duration string like ``5m``, ``1h``, ``30s``, or plain int.
 
@@ -202,6 +247,7 @@ def _parse_options(options_str: str) -> dict:
         "refresh": None,
         "inotify": False,
         "dnstype": None,
+        "size": None,
     }
     if not options_str or options_str == "-":
         return result
@@ -240,6 +286,10 @@ def _parse_options(options_str: str) -> dict:
                     raise ValueError(
                         f"unknown dnstype {val!r}; valid: {sorted(_DNS_TYPES)}")
                 result["dnstype"] = val
+            elif key == "size":
+                # Defer range validation to _parse_size at registry build time
+                # (we don't have the entry name here); store raw string.
+                result["size"] = val
             else:
                 raise ValueError(
                     f"unknown nfsets option: {token!r}")
@@ -300,6 +350,11 @@ def build_nfset_registry(lines: list) -> NfSetRegistry:
                 f"nfsets entry {name!r}: no backend specified in options "
                 f"(must be one of {sorted(_BACKENDS)})")
 
+        # Parse size= option (with range validation) now that we have the name.
+        parsed_size: int | None = None
+        if opts["size"] is not None:
+            parsed_size = _parse_size(opts["size"], entry_name=name)
+
         # Merge with existing entry for same name, or create new.
         if name in by_name:
             entry = by_name[name]
@@ -317,6 +372,8 @@ def build_nfset_registry(lines: list) -> NfSetRegistry:
                 entry.inotify = True
             if opts["dnstype"] is not None:
                 entry.dnstype = opts["dnstype"]
+            if parsed_size is not None:
+                entry.size = parsed_size
         else:
             entry = NfSetEntry(
                 name=name,
@@ -327,6 +384,7 @@ def build_nfset_registry(lines: list) -> NfSetRegistry:
                 dns_servers=opts["dns_servers"],
                 inotify=opts["inotify"],
                 dnstype=opts["dnstype"],
+                size=parsed_size,
             )
             by_name[name] = entry
             registry.entries.append(entry)
@@ -348,14 +406,36 @@ def emit_nfset_declarations(
     Each entry produces two sets — one for ``ipv4_addr`` and one for
     ``ipv6_addr``.
 
-    Set flags are determined by the backend mix across **all** entries:
+    **Flags** are determined by the backend mix across **all** entries
+    (registry-wide, not per entry — TODO: per-set flags optimisation):
 
     * All ``dnstap`` / ``resolver`` → ``flags timeout``
     * All ``ip-list`` / ``ip-list-plain`` → ``flags interval``
     * Mixed → ``flags timeout, interval``
 
-    Default ``size``: 512 for dns-only; 65536 if any ip-list backend is
-    present.
+    **Size** is resolved per entry:
+
+    1. If the entry has an explicit ``size=N`` override (set via the options
+       string, accepting k/M suffixes), that value is used.
+    2. Otherwise, the backend-specific default applies:
+
+       * ``ip-list`` / ``ip-list-plain`` → **262144** (suitable for AWS ranges,
+         Cloudflare prefixes, and typical threat-intel feeds up to ~256k entries)
+       * ``dnstap`` / ``resolver`` → **4096** (covers typical per-instance DNS
+         allow/block lists without wasting memory)
+
+    Operators can override the default per entry by adding ``size=N`` to the
+    options string.  Valid range: 1 – 67108864 (64M).  Example::
+
+        blocklist  https://example.org/ips.txt  ip-list,size=1M
+
+    .. note::
+        Existing nft sets compiled with the old defaults (size 65536 for
+        ip-list, size 512 for DNS) will be recreated with the new defaults on
+        the next compile + ``nft -f`` reload.  The kernel keeps the **old**
+        in-memory size until the ruleset is flushed and reloaded (e.g. via
+        ``shorewall-nft restart``).  No action needed for correctness; stale
+        sets simply keep the old capacity until next restart.
     """
     if not registry.entries:
         return []
@@ -364,6 +444,10 @@ def emit_nfset_declarations(
     has_dns = bool(backends & _DNS_BACKENDS)
     has_ip = bool(backends & _IPLIST_BACKENDS)
 
+    # TODO: per-set flags optimisation — a pure DNS set only needs
+    # ``flags timeout`` and a pure ip-list set only needs ``flags interval``;
+    # the mixed case over-allocates slightly.  For now the registry-wide
+    # flags_str is kept to avoid complexity.
     if has_dns and has_ip:
         flags_str = "timeout, interval"
     elif has_ip:
@@ -371,13 +455,21 @@ def emit_nfset_declarations(
     else:
         flags_str = "timeout"
 
-    default_size = 65536 if has_ip else 512
+    _DEFAULT_SIZE_IPLIST = 262144
+    _DEFAULT_SIZE_DNS = 4096
 
     lines: list[str] = []
     lines.append("")
     lines.append(f"{indent}# Named nft sets (populated by shorewalld nfsets manager)")
 
     for entry in registry.entries:
+        if entry.size is not None:
+            set_size = entry.size
+        elif entry.backend in _IPLIST_BACKENDS:
+            set_size = _DEFAULT_SIZE_IPLIST
+        else:
+            set_size = _DEFAULT_SIZE_DNS
+
         v4_name = nfset_to_set_name(entry.name, "v4")
         v6_name = nfset_to_set_name(entry.name, "v6")
         for set_name, nft_type in (
@@ -388,7 +480,7 @@ def emit_nfset_declarations(
             lines.append(f"{indent}set {set_name} {{")
             lines.append(f"{indent}\ttype {nft_type};")
             lines.append(f"{indent}\tflags {flags_str};")
-            lines.append(f"{indent}\tsize {default_size};")
+            lines.append(f"{indent}\tsize {set_size};")
             lines.append(f"{indent}}}")
             lines.append("")
 
@@ -418,6 +510,7 @@ def nfset_registry_to_payload(registry: NfSetRegistry) -> dict:
                 "dns_servers": list(e.dns_servers),
                 "inotify": e.inotify,
                 "dnstype": e.dnstype,
+                "size": e.size,
             }
             for e in registry.entries
         ],
@@ -442,6 +535,7 @@ def payload_to_nfset_registry(payload: dict) -> NfSetRegistry:
             dns_servers=list(d.get("dns_servers", [])),
             inotify=bool(d.get("inotify", False)),
             dnstype=d.get("dnstype"),
+            size=d.get("size"),
         )
         registry.entries.append(entry)
         registry.set_names.add(entry.name)

@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (large-set sync hardening — nfsets + shorewalld iplist)
+- Compiler: `size=N` override per nfset entry (accepts `k`/`M` suffixes,
+  range 1–64M). Raised defaults to 4096 for DNS-only sets and 262144 for
+  ip-list sets (was 512 and 65536).
+- Shorewalld iplist apply: `SHOREWALLD_IPLIST_CHUNK_SIZE` env var (default
+  2000, was hard-coded 200). Chunk 200→2000 reduces libnftables parser
+  overhead by ~10× at million-entry refreshes.
+- Shorewalld iplist apply: atomic swap-rename path (feature-gated via
+  `SHOREWALLD_IPLIST_SWAP_RENAME=1`). Replaces incremental
+  add/delete-element with one libnftables transaction that builds
+  `<name>_new`, swaps, renames. Rules continue matching across the swap.
+- Shorewalld iplist apply: autosize. When an incoming list hits ≥ 90% of
+  declared capacity, shorewalld transparently recreates the set with
+  `next_pow2(max(len × 2, declared × 2))` capacity (capped at 64M) and
+  emits a WARN so the operator can update `size:` in the nfsets config.
+- Shorewalld iplist apply: capacity warning at 80% fill, kernel "Set is
+  full" error detection.
+- Prometheus metrics: `shorewalld_iplist_apply_duration_seconds_{sum,count}`,
+  `shorewalld_iplist_apply_path_total{path}` (diff/swap/fallback/saturated),
+  `shorewalld_iplist_set_capacity{kind}`, `shorewalld_iplist_set_headroom_ratio`.
+- `PlainListConfig.max_prefixes` honoured per config (module default
+  raised 200k → 2M).
+
+### Added (stagelab)
+- `ThroughputScenario.family: "ipv4" | "ipv6"` — explicit address family
+  selection. `trafgen_iperf3` emits `-6` when `family=ipv6`. Runner raises
+  a clear `ValueError` naming the endpoint when `family=ipv6` is requested
+  and no `ipv6:` is configured.
+- IPv6 perf catalogue entries point at a separate `wan-native` role
+  (native-mode endpoint) rather than the probe-mode `wan-uplink` —
+  iperf3 cannot target probe endpoints.
+
+### Changed (stagelab)
+- `topology_bridge.py`, `topology_dpdk.py`, `agent.py._exec_in_netns`:
+  migrated from `subprocess ip …` / `ip netns exec …` to native
+  pyroute2 `NetNS`/`IPRoute` netlink API. The `bridge vlan …` CLI is
+  retained (pyroute2 has no bridge-VLAN API) but now entered via
+  in-process `setns()` instead of `ip netns exec`.
+
+### Fixed (netkit)
+- `nsstub.spawn_nsstub`: centralised orphan-cleanup before fork. Previously
+  every caller had to pre-clean stale `/run/netns/<name>` bind-mounts;
+  probe-mode `topology_bridge.py` did not, causing intermittent
+  `nsstub for 'NS_TEST_*' didn't signal readiness (got b'')` on re-runs
+  after an agent SIGKILL. Diagnostics: EOF on the readiness pipe now
+  reports `child exited code N` / `signal N`.
+
 ## [1.10.0] - 2026-04-20
 
 ### Added (security-test-plan feature)

@@ -262,7 +262,79 @@ The compiler selects flags based on the mix of backends across all entries:
 | All `ip-list` / `ip-list-plain` | `flags interval` |
 | Mixed DNS + ip-list | `flags timeout, interval` |
 
-Default `size`: `512` for DNS-only sets; `65536` if any ip-list backend is present.
+## nft set sizing
+
+The compiler emits a `size N` line for every nft set. Defaults:
+
+| Backend | Default size |
+|---------|--------------|
+| DNS-only (`dnstap` / `resolver`) | `4096` |
+| ip-list (`ip-list` / `ip-list-plain`) | `262144` |
+
+Override per entry with `size=N` in the `options:` column. Accepts plain
+integers (`size=1000000`), `k` suffix (`size=512k` → 524288), or `M`
+suffix (`size=10M` → 10485760). Range: `1` – `67108864` (64M).
+
+Upgrade caveat: the kernel keeps an already-loaded set at its originally
+allocated capacity until a full ruleset reload. After bumping sizes,
+`shorewall-nft restart` (not just `reload`) is required to pick up the
+new capacity.
+
+## Large-set operational tuning (shorewalld)
+
+For sets approaching or exceeding 100k elements, shorewalld exposes five
+environment variables that govern the apply path. All have sensible
+defaults; operators only tune them if the Prometheus metrics indicate a
+bottleneck or capacity concern.
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `SHOREWALLD_IPLIST_CHUNK_SIZE` | `2000` | Elements per `add element` script (libnftables parser batch). Clamp `[100, 10000]`. |
+| `SHOREWALLD_IPLIST_SWAP_RENAME` | `0` | Master gate for the atomic swap-rename path. Set to `1` after validating the pre-flight checklist below. |
+| `SHOREWALLD_IPLIST_SWAP_ABS` | `50000` | Trigger swap-rename when `len(new) ≥ N`. |
+| `SHOREWALLD_IPLIST_SWAP_FRAC` | `0.50` | Trigger swap-rename when `(added + removed) / current ≥ frac`. |
+| `SHOREWALLD_IPLIST_AUTOSIZE_HEADROOM` | `0.90` | Trigger autosize (swap with doubled capacity) when `len(new) / declared_size ≥ ratio`. |
+
+**Swap-rename** replaces incremental `add element` / `delete element` with a
+single libnftables transaction that declares `<name>_new`, fills it, deletes
+the old set, and renames. The whole block is atomic at the kernel level —
+rules referencing the set continue to match across the swap.
+
+**Autosize** fires when an incoming list approaches declared capacity. The
+tracker probes the current set via `list set … -j`, recomputes a
+`next_pow2(max(len × 2, declared × 2))` target capped at 64M, and executes
+the swap with the larger size. A WARN log is emitted so the operator can
+raise `size:` in the nfsets config on the next push (autosize is a safety
+net, not a config).
+
+**Capacity warning**: when any list hits `≥ 80 %` of its declared size a
+WARN log is emitted (`"iplist.NAME: set … at N% capacity (used/declared)"`)
+regardless of whether autosize is enabled.
+
+### Metrics
+
+All five metric families below are labelled by `list` + `family` (v4/v6):
+
+- `shorewalld_iplist_apply_duration_seconds_{sum,count}` — wall-clock per
+  apply (counter pair for histogram averaging).
+- `shorewalld_iplist_apply_path_total{path}` — `diff` (incremental),
+  `swap` (atomic), `fallback-from-swap` (probe/transaction failure →
+  diff), `saturated` (kernel reported "Set is full").
+- `shorewalld_iplist_set_capacity{kind}` — `used` / `declared` counts.
+- `shorewalld_iplist_set_headroom_ratio` — `used / declared` as a gauge.
+
+### Pre-flight checklist before `SHOREWALLD_IPLIST_SWAP_RENAME=1`
+
+1. `shorewalld_iplist_apply_path_total{path="diff"}` baseline observed.
+2. Managed sets live in `table inet shorewall` (swap script hard-codes).
+3. No named `map` references the managed sets as values (`rename set`
+   fails under a live map reference).
+4. nft ≥ 0.9.3 / Linux ≥ 5.10 on the firewall (needed for `rename set`).
+5. After enable, verify `path="swap"` appears without
+   `path="fallback-from-swap"` over a couple of refresh cycles.
+6. If `autosize` WARN fires, update the entry's `size:` in the nfsets
+   config to match the observed capacity — autosize is a safety net, not
+   a replacement for explicit sizing.
 
 ---
 

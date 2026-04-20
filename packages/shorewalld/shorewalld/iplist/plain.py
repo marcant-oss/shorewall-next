@@ -27,6 +27,8 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import os
+import time
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -39,7 +41,21 @@ _EXEC_TIMEOUT_CAP = 60
 _BACKOFF = (60, 120, 300, 3600)
 
 # Maximum prefixes allowed per list (safety cap).
-_MAX_PREFIXES = 200_000
+# Raised to 2 M to support large public feed lists; operator can override
+# per-config via PlainListConfig.max_prefixes.
+_MAX_PREFIXES = 2_000_000
+
+# Maximum prefixes per nft add/delete command.
+# Env-tunable: SHOREWALLD_IPLIST_CHUNK_SIZE (clamped to [100, 10000]).
+_CHUNK_SIZE = max(100, min(10_000, int(os.environ.get("SHOREWALLD_IPLIST_CHUNK_SIZE", "2000"))))
+
+# ── Swap-rename feature gate and thresholds (mirrors tracker.py) ─────────────
+_SWAP_ENABLED = os.environ.get("SHOREWALLD_IPLIST_SWAP_RENAME", "0") == "1"
+_SWAP_THRESHOLD_ABS = int(os.environ.get("SHOREWALLD_IPLIST_SWAP_ABS", "50000"))
+_SWAP_THRESHOLD_FRAC = float(os.environ.get("SHOREWALLD_IPLIST_SWAP_FRAC", "0.50"))
+_AUTOSIZE_HEADROOM = float(os.environ.get("SHOREWALLD_IPLIST_AUTOSIZE_HEADROOM", "0.90"))
+_AUTOSIZE_MIN_ELEMS = 50_000
+_AUTOSIZE_MAX = 67_108_864
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +196,59 @@ async def _exec_source(path: str, timeout: int) -> str:
 
 
 @dataclass
+class PlainListMetricsSnapshot:
+    """Point-in-time metrics view for one plain-list source.
+
+    Collected under no lock — all fields are simple Python ints/floats
+    assigned atomically by the event-loop coroutine, so reading them from
+    the Prometheus scrape thread is safe (CPython GIL guarantees integer
+    and float assignment is atomic).
+
+    Fields
+    ------
+    name:
+        Logical list name (matches the ``name`` in :class:`PlainListConfig`).
+    refresh_total:
+        Monotonic count of refresh attempts (success + failure combined).
+    refresh_success_total:
+        Monotonic count of successful refreshes.
+    refresh_failure_total:
+        Monotonic count of failed refreshes.
+    refresh_error_counts:
+        Per-error-type failure counts (keys ∈ ``http_status``, ``dns``,
+        ``timeout``, ``parse``, ``exec_exit``, ``inotify_missing``,
+        ``other``).
+    last_success_ts:
+        Unix wall-clock time of the last successful refresh (0 if never).
+    refresh_duration_sum:
+        Cumulative seconds spent in successful fetches.
+    refresh_duration_count:
+        Number of successful fetches measured.
+    v4_entries:
+        Current count of IPv4 prefixes.
+    v6_entries:
+        Current count of IPv6 prefixes.
+    inotify_active:
+        1 if an inotify watch is active, 0 if polling (or not a file source).
+    source_type:
+        One of ``"http"``, ``"file"``, ``"exec"`` — derived from ``source``.
+    """
+
+    name: str
+    refresh_total: int = 0
+    refresh_success_total: int = 0
+    refresh_failure_total: int = 0
+    refresh_error_counts: dict = field(default_factory=dict)
+    last_success_ts: float = 0.0
+    refresh_duration_sum: float = 0.0
+    refresh_duration_count: int = 0
+    v4_entries: int = 0
+    v6_entries: int = 0
+    inotify_active: int = 0
+    source_type: str = "file"
+
+
+@dataclass
 class _PlainListState:
     """Runtime state for one PlainListConfig."""
 
@@ -188,6 +257,15 @@ class _PlainListState:
     current_v6: set[str] = field(default_factory=set)
     consecutive_errors: int = 0
     last_refresh_ts: float = 0.0
+    # Wave 6 metrics fields — incremented in the event-loop coroutine only.
+    refresh_total: int = 0
+    refresh_success_total: int = 0
+    refresh_failure_total: int = 0
+    refresh_error_counts: dict = field(default_factory=dict)
+    last_success_ts: float = 0.0
+    refresh_duration_sum: float = 0.0
+    refresh_duration_count: int = 0
+    inotify_active: int = 0  # set to 1 by _inotify_watch on success
 
 
 class PlainListTracker:
@@ -214,6 +292,9 @@ class PlainListTracker:
     ``status()`` returns a list of dicts with per-list state.
     """
 
+    # Kernel error substrings that indicate the nft set is full.
+    _SET_FULL_MARKERS = ("Set is full", "Cannot resize", "No space left on device")
+
     def __init__(
         self,
         configs: list[PlainListConfig],
@@ -231,8 +312,47 @@ class PlainListTracker:
         }
         self._refresh_tasks: dict[str, asyncio.Task] = {}
         self._inotify_tasks: dict[str, asyncio.Task] = {}
+        # Metrics object reuses IpListMetrics so the Prometheus exporter can
+        # surface plain-list capacity/timing alongside tracker metrics.
+        from .tracker import IpListMetrics
+        self._metrics = IpListMetrics()
 
     # ── Public API ────────────────────────────────────────────────────────────
+
+    def metrics_snapshot(self) -> list[PlainListMetricsSnapshot]:
+        """Return a per-list metrics snapshot for the Prometheus scrape thread.
+
+        Called from the scrape thread.  All fields read here are Python ints
+        or floats assigned atomically on the event-loop thread — safe under
+        the CPython GIL without a lock.
+
+        Returns one :class:`PlainListMetricsSnapshot` per configured source.
+        """
+        snapshots = []
+        for name, state in self._states.items():
+            cfg = state.cfg
+            src = cfg.source
+            if src.startswith(("http://", "https://")):
+                src_type = "http"
+            elif src.startswith("exec:"):
+                src_type = "exec"
+            else:
+                src_type = "file"
+            snapshots.append(PlainListMetricsSnapshot(
+                name=name,
+                refresh_total=state.refresh_total,
+                refresh_success_total=state.refresh_success_total,
+                refresh_failure_total=state.refresh_failure_total,
+                refresh_error_counts=dict(state.refresh_error_counts),
+                last_success_ts=state.last_success_ts,
+                refresh_duration_sum=state.refresh_duration_sum,
+                refresh_duration_count=state.refresh_duration_count,
+                v4_entries=len(state.current_v4),
+                v6_entries=len(state.current_v6),
+                inotify_active=state.inotify_active,
+                source_type=src_type,
+            ))
+        return snapshots
 
     async def run(self) -> None:
         """Main loop; runs until cancelled."""
@@ -363,8 +483,6 @@ class PlainListTracker:
             await self._do_refresh_locked(state)
 
     async def _do_refresh_locked(self, state: _PlainListState) -> None:
-        import time
-
         cfg = state.cfg
         list_log = logging.getLogger(f"shorewalld.plain.{cfg.name}")
 
@@ -455,17 +573,43 @@ class PlainListTracker:
         list_name: str,
         family: str,
     ) -> tuple[int, int]:
-        """Compute and apply the diff for one set in one netns.
+        """Compute and apply the diff (or atomic swap-rename) for one set in one netns.
 
         Returns ``(added, removed)`` counts or ``(-1, 0)`` on error.
+        See :meth:`IpListTracker._apply_set` for the path-selection logic.
         """
-        from .tracker import _chunks  # reuse the shared helper
+        from .tracker import _chunks, _next_pow2, _parse_set_probe  # reuse shared helpers
 
+        t_start = time.monotonic()
+
+        # ── Decide whether to attempt the swap path ───────────────────────
+        total_delta = abs(len(new) - len(current))
+        _proxy_declared = max(len(current), 1) if current else max(len(new), 1)
+        _proxy_fill_ratio = (
+            len(new) / _proxy_declared if len(new) >= _AUTOSIZE_MIN_ELEMS else 0.0
+        )
+        use_swap = _SWAP_ENABLED and (
+            len(new) >= _SWAP_THRESHOLD_ABS
+            or (current and total_delta / max(1, len(current)) >= _SWAP_THRESHOLD_FRAC)
+            or _proxy_fill_ratio >= _AUTOSIZE_HEADROOM
+        )
+
+        if use_swap:
+            ok, added, removed, _elapsed = await self._try_swap_rename(
+                netns, set_name, current, new, list_name, family, t_start,
+                _chunks, _next_pow2, _parse_set_probe,
+            )
+            if ok:
+                return added, removed
+            self._metrics.record_apply_path(list_name, family, "fallback-from-swap")
+            t_start = time.monotonic()
+
+        # ── Standard diff path ────────────────────────────────────────────
         to_add = new - current
         to_remove = current - new
 
         if to_add:
-            for chunk in _chunks(to_add, 200):
+            for chunk in _chunks(to_add, _CHUNK_SIZE):
                 elements = ", ".join(chunk)
                 script = (
                     f"add element inet shorewall {set_name} {{ {elements} }}"
@@ -473,14 +617,29 @@ class PlainListTracker:
                 try:
                     self._nft.cmd(script, netns=netns)
                 except Exception as exc:
-                    log.error(
-                        "plain.%s: nft add element to %s (netns=%r) failed: %s",
-                        list_name, set_name, netns, exc,
-                    )
+                    err_str = str(exc)
+                    if any(m in err_str for m in self._SET_FULL_MARKERS):
+                        log.error(
+                            "plain.%s: set %s (netns=%r) is full — "
+                            "raise `size:` in nfsets config: %s",
+                            list_name, set_name, netns, exc,
+                        )
+                        self._metrics.record_fetch_error(
+                            list_name, "set_capacity_exceeded"
+                        )
+                    else:
+                        log.error(
+                            "plain.%s: nft add element to %s (netns=%r) failed: %s",
+                            list_name, set_name, netns, exc,
+                        )
+                        self._metrics.record_fetch_error(list_name, "nft_write_error")
+                    elapsed = time.monotonic() - t_start
+                    self._metrics.record_apply_duration(list_name, family, elapsed)
+                    self._metrics.record_apply_path(list_name, family, "diff")
                     return -1, 0
 
         if to_remove:
-            for chunk in _chunks(to_remove, 200):
+            for chunk in _chunks(to_remove, _CHUNK_SIZE):
                 elements = ", ".join(chunk)
                 script = (
                     f"delete element inet shorewall {set_name} {{ {elements} }}"
@@ -493,4 +652,112 @@ class PlainListTracker:
                         list_name, set_name, netns, exc,
                     )
 
+        elapsed = time.monotonic() - t_start
+        self._metrics.record_apply_duration(list_name, family, elapsed)
+        self._metrics.record_apply_path(list_name, family, "diff")
+
+        # ── Capacity probe (non-fatal) ────────────────────────────────────────
+        try:
+            result = self._nft.cmd(
+                f"list set inet shorewall {set_name}",
+                netns=netns,
+                json_output=True,
+            )
+            declared = 0
+            if isinstance(result, dict):
+                for entry in result.get("nftables", []):
+                    if isinstance(entry, dict) and "set" in entry:
+                        declared = entry["set"].get("size", 0)
+                        break
+            used = len(new)
+            self._metrics.record_apply_capacity(list_name, family, used, declared)
+        except Exception as exc:
+            log.debug(
+                "plain.%s: capacity probe failed: %s (non-fatal)", list_name, exc
+            )
+
         return len(to_add), len(to_remove)
+
+    async def _try_swap_rename(
+        self,
+        netns: str | None,
+        set_name: str,
+        current: set[str],
+        new: set[str],
+        list_name: str,
+        family: str,
+        t_start: float,
+        _chunks_fn,
+        _next_pow2_fn,
+        _parse_probe_fn,
+    ) -> tuple[bool, int, int, float]:
+        """Attempt an atomic swap-rename for *set_name*.
+
+        Returns ``(success, added, removed, elapsed)``.
+        """
+        try:
+            probe = self._nft.cmd(
+                f"list set inet shorewall {set_name}",
+                netns=netns,
+                json_output=True,
+            )
+        except Exception as exc:
+            log.warning(
+                "plain.%s: swap probe failed for %s — will fall back to diff: %s",
+                list_name, set_name, exc,
+            )
+            return False, 0, 0, 0.0
+
+        try:
+            set_type, set_flags, declared_size = _parse_probe_fn(probe)
+        except Exception as exc:
+            log.warning(
+                "plain.%s: swap probe parse error for %s — will fall back to diff: %s",
+                list_name, set_name, exc,
+            )
+            return False, 0, 0, 0.0
+
+        fill_ratio = len(new) / max(1, declared_size)
+        if fill_ratio >= _AUTOSIZE_HEADROOM:
+            new_size = min(
+                _next_pow2_fn(max(len(new) * 2, declared_size * 2)),
+                _AUTOSIZE_MAX,
+            )
+            log.warning(
+                "plain.%s: autosize %s %d → %d (fill %.0f%%, "
+                "operator should raise `size:` in nfsets config to match)",
+                list_name, set_name, declared_size, new_size, fill_ratio * 100,
+            )
+        else:
+            new_size = declared_size if declared_size else max(len(new) * 2, 65536)
+
+        tmp_name = f"{set_name}_new"
+        flags_str = ", ".join(set_flags) if set_flags else ""
+        flags_line = f" flags {flags_str};" if flags_str else ""
+        script_lines = [
+            f"add set inet shorewall {tmp_name} {{ type {set_type};{flags_line} size {new_size}; }}",
+        ]
+        for chunk in _chunks_fn(new, _CHUNK_SIZE):
+            elements = ", ".join(chunk)
+            script_lines.append(
+                f"add element inet shorewall {tmp_name} {{ {elements} }}"
+            )
+        script_lines.append(f"delete set inet shorewall {set_name}")
+        script_lines.append(f"rename set inet shorewall {tmp_name} {set_name}")
+        script = "\n".join(script_lines)
+
+        try:
+            self._nft.cmd(script, netns=netns)
+        except Exception as exc:
+            log.warning(
+                "plain.%s: swap script rejected for %s — will fall back to diff: %s",
+                list_name, set_name, exc,
+            )
+            return False, 0, 0, 0.0
+
+        elapsed = time.monotonic() - t_start
+        self._metrics.record_apply_duration(list_name, family, elapsed)
+        self._metrics.record_apply_path(list_name, family, "swap")
+        self._metrics.record_apply_capacity(list_name, family, len(new), new_size)
+
+        return True, len(new), len(current), elapsed
