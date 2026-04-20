@@ -362,15 +362,33 @@ Artefacts from a complete run:
 
 Archive the whole directory under a stable path for compliance evidence.
 
+## Lab coverage summary (live-verified 2026-04-20)
+
+- tester01 sim-uplink (netns) on eth2 backbone bridge → OSPF Full/DR with elgar + tropheus, default 0/0 announced.
+- tester02 downstream: eth1 on customer-VLAN-transparent bridge with:
+  - `eth1.10` (mgmt zone, 217.14.160.30/29) — gateway-reachable, mgmt-zone smoke-target.
+  - `eth1.20` (host zone, 217.14.168.254/24) — gateway-reachable via 217.14.168.1; return route `217.14.160.64/27 via 217.14.168.1 dev eth1.20` installed so replies traverse the FW symmetrically.
+- tester01 sim-uplink (217.14.160.77, net zone) ←→ tester02 eth1.20 (217.14.168.254, host zone):
+  - ICMP: **pass** (TTL=63, one FW hop, ~0.8ms) — net→host ICMP is ACCEPTed by policy.
+  - TCP (iperf3 port 5201): **drop** (connection timeout) — net→host TCP is REJECTed by policy. This is correct behaviour; any throughput scenario without a permitted zone-pair+proto will time out.
+- Persistent setup: `/usr/local/sbin/tester02-downstream-setup` + `tester02-downstream.service` on tester02 bring eth1.10, eth1.20 and the return route up idempotently at boot. Reference copy shipped in the repo at `tools/tester02-downstream-setup.example`.
+
+### Scenario dispatch implications
+
+- `rule_scan` + `rule_coverage_matrix` are **fully exercisable** — they test the policy matrix and expect specific DROP/ACCEPT verdicts per zone-pair + protocol. Use `source_role: wan-uplink` (tester01 sim-uplink) + `sink_role: lan-downstream` (tester02 host-zone) in the base config.
+- `evasion_probes` work in probe-mode (scapy frames via TAP in a fresh netns; no zone-pair-specific reachability needed).
+- `throughput`, `conn_storm`, `dos_syn_flood`, `dos_half_open`, `dos_dns_query`, `conntrack_overflow`, `stateful_helper_ftp`, `long_flow_survival`, `reload_atomicity` — require an allowed zone-pair + protocol. On the reference firewall, net→host only permits ICMP, so pure-TCP traffic-gen scenarios fail by default. Operator options:
+  - add a temporary **test-ACCEPT rule** on the FW for the duration of a drill (e.g. `net → host tcp:5201 ACCEPT`), then tear down after;
+  - or pick a zone-pair with a broader permit policy (e.g. adm→cdn tcp:443 was confirmed in simlab oracle) — needs a second downstream endpoint in the adm zone;
+  - or set up a downstream endpoint in a zone explicitly permitted by the policy you want to stress.
+
 ## Known limitations
 
-1. **FW policy limits through-FW traffic-gen** — tester02 is on the mgmt zone
-   (VLAN 10, 217.14.160.24/29); tester01 sim-uplink is on the net zone (bond1,
-   217.14.160.64/27). The FW policy `net → all REJECT` blocks generic ICMP
-   forwarding between them. Traffic-gen scenarios must target port/proto combos
-   with existing ACCEPT rules, or require a temporary test-only ACCEPT rule.
-   Probe-mode scenarios (rule_scan, evasion_probes, rule_coverage_matrix)
-   running locally on tester01 are not affected.
+1. **FW policy limits through-FW traffic-gen** — net→host ICMP is ACCEPTed but
+   TCP/UDP are REJECTed on the reference firewall. Traffic-gen scenarios must
+   target port/proto combos with existing ACCEPT rules, or require a temporary
+   test-only ACCEPT rule. Probe-mode scenarios (rule_scan, evasion_probes,
+   rule_coverage_matrix) test the policy matrix itself and are unaffected.
 2. **pdns advisor path is academic** — the `pdns` bundle requires NET-SNMP-EXTEND
    scripts on elgar/tropheus (`extend pdns-all-queries | cache-hits | answers-0-1`).
    Operator TODO on the firewall hosts.
