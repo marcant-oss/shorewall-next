@@ -49,6 +49,7 @@ class DpdkEndpointHandle:
     # master-interface snapshot (captured before unbind)
     orig_master: str | None = None        # bond/bridge master iface name, or None
     orig_master_kind: str | None = None   # "bond" | "bridge" | None
+    trex_port_id: int | None = None       # populated by T20d port-mapping; None when unknown
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +64,7 @@ def setup_dpdk_endpoint(spec: DpdkEndpointSpec) -> DpdkEndpointHandle:
     appends recovery entry. On bind failure: rollback to orig_driver then raise.
     """
     _validate_spec(spec)
+    _check_numa_affinity(spec.pci_addr, spec.dpdk_cores)
 
     orig_driver = _read_current_driver(spec.pci_addr)
     already_dpdk = orig_driver == "vfio-pci"
@@ -256,6 +258,49 @@ def _restore_master(ifname: str, master: str, kind: str) -> None:
         _run(["ip", "link", "set", master, "up"])
     else:
         _log.warning("dpdk: unknown master kind %r; skipping restore for %s", kind, ifname)
+
+
+def _check_numa_affinity(
+    pci_addr: str,
+    cores: tuple[int, ...],
+    sysfs_root: Path = Path("/"),
+) -> None:
+    """Warn if any core is on a different NUMA node than the NIC. Silent on match or missing info."""
+    nic_node_path = sysfs_root / f"sys/bus/pci/devices/{pci_addr}/numa_node"
+    if not nic_node_path.exists():
+        return
+    try:
+        nic_node = int(nic_node_path.read_text().strip())
+    except (OSError, ValueError):
+        return
+    if nic_node < 0:  # VM or single-socket — no NUMA topology
+        return
+
+    mismatched: list[tuple[int, int]] = []
+    for core in cores:
+        cpu_dir = sysfs_root / f"sys/devices/system/cpu/cpu{core}"
+        if not cpu_dir.exists():
+            continue
+        core_node: int | None = None
+        for entry in cpu_dir.glob("node*"):
+            try:
+                core_node = int(entry.name.removeprefix("node"))
+                break
+            except ValueError:
+                continue
+        if core_node is None or core_node == nic_node:
+            continue
+        mismatched.append((core, core_node))
+
+    if mismatched:
+        _log.warning(
+            "DPDK NIC %s is on NUMA node %d but these cores live on different "
+            "nodes: %s — cross-socket DMA may cap throughput ~40%%. Consider "
+            "pinning dpdk_cores to cores on node %d.",
+            pci_addr, nic_node,
+            ", ".join(f"cpu{c}=node{n}" for c, n in mismatched),
+            nic_node,
+        )
 
 
 def _validate_spec(spec: DpdkEndpointSpec) -> None:

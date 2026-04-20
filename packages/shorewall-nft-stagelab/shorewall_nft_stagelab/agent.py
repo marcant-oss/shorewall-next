@@ -315,6 +315,30 @@ async def handle_run_scenario(
             "errors": result_astf.errors, "duration_s": result_astf.duration_s,
         }
 
+    if kind == "start_trex_daemon":
+        from . import trex_daemon
+        daemon_spec = trex_daemon.TrexDaemonSpec(
+            mode=str(spec["mode"]),
+            port=int(spec["port"]),
+            pci_ports=tuple(spec["pci_ports"]),
+            cores=tuple(spec["cores"]),
+        )
+        h = await asyncio.to_thread(trex_daemon.ensure_running, daemon_spec)
+        state["trex_daemons"][h.port] = h
+        return {
+            "tool": "trex_daemon", "ok": True, "mode": h.mode,
+            "port": h.port, "pid": h.pid,
+        }
+
+    if kind == "stop_trex_daemon":
+        from . import trex_daemon
+        port = int(spec["port"])
+        h = state["trex_daemons"].pop(port, None)
+        if h is None:
+            return {"tool": "trex_daemon", "ok": True, "note": "no handle; was not tracked"}
+        await asyncio.to_thread(trex_daemon.stop, h)
+        return {"tool": "trex_daemon", "ok": True, "port": port, "pid": h.pid}
+
     raise ValueError(f"unknown scenario kind: {kind!r}")
 
 
@@ -367,6 +391,17 @@ def _cleanup_stubs(state: dict[str, Any]) -> None:
     state["stubs"].clear()
 
 
+def _cleanup_trex_daemons(state: dict[str, Any]) -> None:
+    """Stop all tracked TRex daemon handles, swallowing errors."""
+    from . import trex_daemon
+    for port, handle in list(state.get("trex_daemons", {}).items()):
+        try:
+            trex_daemon.stop(handle)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("agent: cleanup error for TRex daemon port %d: %s", port, exc)
+    state.get("trex_daemons", {}).clear()
+
+
 def _cleanup_endpoints(state: dict[str, Any]) -> None:
     """Teardown all active endpoint handles, swallowing errors."""
     for name, handle in list(state["endpoints"].items()):
@@ -411,6 +446,7 @@ async def run_agent(host_name: str) -> int:
         "host_name": host_name,
         "stubs": {},
         "endpoints": {},
+        "trex_daemons": {},
     }
 
     try:
@@ -419,6 +455,17 @@ async def run_agent(host_name: str) -> int:
             log.info("recovered %d orphaned DPDK binding(s): %s", len(recovered), recovered)
     except Exception as exc:  # noqa: BLE001 — best-effort, never fatal at startup
         log.warning("DPDK recovery failed at startup: %s", exc)
+
+    try:
+        from . import trex_daemon
+        recovered_trex = await asyncio.to_thread(trex_daemon.recover_orphaned)
+        if recovered_trex:
+            log.info(
+                "recovered %d orphaned TRex daemon(s): %s",
+                len(recovered_trex), recovered_trex,
+            )
+    except Exception as exc:  # noqa: BLE001 — best-effort, never fatal at startup
+        log.warning("TRex daemon recovery failed at startup: %s", exc)
 
     try:
         channel = await _make_stdio_channel()
@@ -434,11 +481,13 @@ async def run_agent(host_name: str) -> int:
         except Exception:  # noqa: BLE001
             _cleanup_endpoints(state)
             _cleanup_stubs(state)
+            _cleanup_trex_daemons(state)
             return 0
 
         if not raw_line:
             _cleanup_endpoints(state)
             _cleanup_stubs(state)
+            _cleanup_trex_daemons(state)
             return 0
 
         msg_id: str | None = None
@@ -458,6 +507,7 @@ async def run_agent(host_name: str) -> int:
         if isinstance(msg, ShutdownMessage):
             _cleanup_endpoints(state)
             _cleanup_stubs(state)
+            _cleanup_trex_daemons(state)
             await channel.send(AckMessage(id=new_id(), reply_to=msg.id, result={}))
             return 0
 

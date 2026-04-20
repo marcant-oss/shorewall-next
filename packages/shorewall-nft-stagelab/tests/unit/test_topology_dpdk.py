@@ -355,3 +355,48 @@ def test_teardown_master_restore_best_effort(tmp_path, monkeypatch, caplog):
         teardown_dpdk_endpoint(handle)
 
     assert any("master restore failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Test 13 — _check_numa_affinity warns when core is on different NUMA node
+# ---------------------------------------------------------------------------
+
+
+def test_numa_mismatch_warns(tmp_path, caplog):
+    """NIC on node 0, core 4 on node 1 → WARNING with 'cross-socket DMA'."""
+    # Build a minimal fake sysfs tree under tmp_path:
+    #   sys/bus/pci/devices/0000:01:00.0/numa_node  → "0"
+    #   sys/devices/system/cpu/cpu4/node1/           → directory (exists)
+    nic_numa = tmp_path / "sys/bus/pci/devices/0000:01:00.0"
+    nic_numa.mkdir(parents=True)
+    (nic_numa / "numa_node").write_text("0\n")
+
+    cpu4_dir = tmp_path / "sys/devices/system/cpu/cpu4"
+    cpu4_dir.mkdir(parents=True)
+    (cpu4_dir / "node1").mkdir()
+
+    with caplog.at_level(logging.WARNING, logger="shorewall_nft_stagelab.topology_dpdk"):
+        topology_dpdk._check_numa_affinity("0000:01:00.0", (4,), sysfs_root=tmp_path)
+
+    assert any("cross-socket DMA" in m for m in caplog.messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 14 — _check_numa_affinity is silent when core is on same NUMA node
+# ---------------------------------------------------------------------------
+
+
+def test_numa_match_silent(tmp_path, caplog):
+    """NIC on node 0, core 4 on node 0 → no warning."""
+    nic_numa = tmp_path / "sys/bus/pci/devices/0000:01:00.0"
+    nic_numa.mkdir(parents=True)
+    (nic_numa / "numa_node").write_text("0\n")
+
+    cpu4_dir = tmp_path / "sys/devices/system/cpu/cpu4"
+    cpu4_dir.mkdir(parents=True)
+    (cpu4_dir / "node0").mkdir()
+
+    with caplog.at_level(logging.WARNING, logger="shorewall_nft_stagelab.topology_dpdk"):
+        topology_dpdk._check_numa_affinity("0000:01:00.0", (4,), sysfs_root=tmp_path)
+
+    assert not any("cross-socket DMA" in m for m in caplog.messages)
