@@ -1,0 +1,72 @@
+.TH SHOREWALL-NFT-STOPPEDRULES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-stoppedrules \- rules active when the firewall is stopped
+.SH DESCRIPTION
+The
+.I stoppedrules
+file defines which traffic is allowed when the firewall is stopped (i.e.
+after
+.BR "shorewall\-nft stop" ).
+When present the compiler emits a separate
+.I inet shorewall_stopped
+nft table that is loaded by
+.B stop
+to maintain connectivity while the main ruleset is absent.
+
+.I stoppedrules
+is the modern replacement for
+.IR routestopped .
+Use
+.I stoppedrules
+for new configurations.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/stoppedrules
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+TARGET	yes	ACCEPT or DROP
+SOURCE	yes	Source zone:address or CIDR
+DEST	yes	Destination zone:address or CIDR
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+.TE
+
+.SH EXAMPLES
+.PP
+Allow SSH and management access while stopped:
+.RS
+.nf
+#TARGET  SOURCE          DEST        PROTO  DPORT
+ACCEPT   10.0.99.0/24    $FW         tcp    22
+ACCEPT   $FW             10.0.99.0/24
+.fi
+.RE
+.PP
+Allow SNMP monitoring:
+.RS
+.nf
+ACCEPT   10.0.99.5       $FW         udp    161
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-routestopped (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

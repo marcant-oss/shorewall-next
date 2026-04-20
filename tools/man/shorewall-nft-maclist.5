@@ -1,0 +1,62 @@
+.TH SHOREWALL-NFT-MACLIST 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-maclist \- MAC address filtering for shorewall-nft
+.SH DESCRIPTION
+The
+.I maclist
+file defines MAC address-based access control for interfaces that have the
+.B maclist
+option set in
+.IR shorewall\-nft\-interfaces (5).
+Each row declares a disposition (ACCEPT or REJECT) for a specific MAC address
+on a specific interface, optionally limited to specific IP addresses.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/maclist
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+DISPOSITION	yes	ACCEPT or REJECT
+INTERFACE	yes	Interface name
+MAC	yes	Ethernet MAC address (xx:xx:xx:xx:xx:xx)
+IP	no	Allowed IP address(es) for this MAC
+ASSIGNED_INTERFACES	no	Additional interfaces this MAC may use
+.TE
+
+.SH EXAMPLES
+.PP
+Allow two known hosts on the local interface:
+.RS
+.nf
+#DISPOSITION  INTERFACE  MAC
+ACCEPT        eth1       00:11:22:33:44:55
+ACCEPT        eth1       aa:bb:cc:dd:ee:ff
+.fi
+.RE
+.PP
+Allow a specific MAC only from its assigned IP:
+.RS
+.nf
+ACCEPT        eth1       00:11:22:33:44:55  192.168.1.10
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-interfaces (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

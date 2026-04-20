@@ -42,6 +42,8 @@ Release mechanics (version bump sync, tag, CHANGELOG) live in the root
 - **`generate-systemd --netns`** honours `/etc/shorewall46` as default.
 - **Wheel contents** — `python -m build` wheel must include
   `plugins/builtin/` and `data/macros/`.
+- **Man page `.TH` version strings** — `tools/man/*.8` and `tools/man/*.5`
+  must have their `.TH` date and version updated to match the new release.
 
 Deeper open items (not release-blockers):
 

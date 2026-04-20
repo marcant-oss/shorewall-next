@@ -1,0 +1,74 @@
+.TH SHOREWALL-NFT-NOTRACK 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-notrack \- connection tracking bypass rules for shorewall-nft
+.SH DESCRIPTION
+The
+.I notrack
+file defines flows that should bypass the kernel connection tracking
+subsystem.  For each matching packet the compiler emits a
+.B notrack
+statement in the
+.B prerouting raw
+chain (nft priority
+.BR -300 ).
+
+Bypassing conntrack can significantly improve throughput for high-rate
+flows (e.g. inter-router peering, monitoring traffic) at the cost of losing
+stateful tracking for those flows.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/notrack
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+SOURCE	yes	Source zone:address or CIDR (or - for any)
+DEST	yes	Destination zone:address or CIDR (or - for any)
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+USER	no	User/group match
+.TE
+
+.SH EXAMPLES
+.PP
+Bypass tracking for high-rate BGP peering traffic:
+.RS
+.nf
+#SOURCE          DEST             PROTO  DPORT
+10.0.0.1         10.0.0.2         tcp    179
+.fi
+.RE
+.PP
+Bypass tracking for SNMP polling:
+.RS
+.nf
+10.0.99.5        -                udp    161
+.fi
+.RE
+.PP
+Bypass tracking for all traffic on a monitoring interface:
+.RS
+.nf
+mon              all
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-conntrack (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

@@ -1,0 +1,80 @@
+.TH SHOREWALL-NFT-HOSTS 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-hosts \- host/subnet zone membership for shorewall-nft
+.SH DESCRIPTION
+The
+.I hosts
+file assigns specific hosts or subnets on an interface to a zone.  Use it
+when a single physical interface carries traffic from multiple zones and you
+cannot use VLAN tagging or separate interfaces.
+
+The compiler emits dispatch rules that match both
+.B iifname
+and source/destination address against the host list.  Entries here take
+precedence over the zone-level assignment in
+.IR interfaces .
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/hosts
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ZONE	yes	Zone name (must be in zones file)
+HOSTS	yes	interface:address[,address…] list
+OPTIONS	no	Comma-separated options (ipsec, nosmurfs, …)
+.TE
+
+.I HOSTS
+format:
+.IB interface : address
+where
+.I address
+is a CIDR prefix, a single IP, or
+.B !address
+for negation.
+
+.SH EXAMPLES
+.PP
+Assign two subnets on the same interface to different zones:
+.RS
+.nf
+#ZONE    HOSTS
+loc      eth1:192.168.1.0/24
+mgmt     eth1:10.0.99.0/24
+.fi
+.RE
+.PP
+IPv6 zone on a shared interface:
+.RS
+.nf
+loc      eth1:192.168.1.0/24
+loc6     eth1:fd00::/64
+.fi
+.RE
+.PP
+IPSEC zone restricted to a VPN peer:
+.RS
+.nf
+vpn      eth0:203.0.113.5
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-zones (5),
+.BR shorewall\-nft\-interfaces (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

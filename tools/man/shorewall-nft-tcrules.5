@@ -1,0 +1,77 @@
+.TH SHOREWALL-NFT-TCRULES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-tcrules \- mark-setting rules for traffic control for shorewall-nft
+.SH DESCRIPTION
+The
+.I tcrules
+file sets packet marks used to classify traffic into
+.I tcclasses
+traffic shaping classes.  The compiler processes this file together with
+.I mangle
+and emits
+.B meta mark set
+rules in the nft mangle chain.
+
+For new configurations prefer
+.IR shorewall\-nft\-mangle (5),
+which has an expanded column set.
+.I tcrules
+is retained for Shorewall compatibility.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/tcrules
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+MARK	yes	Mark value to set (or SAVE/RESTORE/CONTINUE)
+SOURCE	yes	Source address, zone:address, or CIDR
+DEST	yes	Destination address, zone:address, or CIDR
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+USER	no	User/group match
+TEST	no	Connmark test expression
+LENGTH	no	Packet length range
+TOS	no	TOS value match
+CONNBYTES	no	Conntrack bytes matched
+HELPER	no	Conntrack helper match
+HEADERS	no	IPv6 extension header match
+.TE
+
+.SH EXAMPLES
+.PP
+Mark VoIP traffic with mark 1 (highest priority class):
+.RS
+.nf
+#MARK  SOURCE  DEST  PROTO  DPORT
+1      all     all   udp    5060,10000:20000
+.fi
+.RE
+.PP
+Mark bulk FTP data with mark 3 (lowest priority):
+.RS
+.nf
+3      all     all   tcp    21
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-mangle (5),
+.BR shorewall\-nft\-tcdevices (5),
+.BR shorewall\-nft\-tcclasses (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

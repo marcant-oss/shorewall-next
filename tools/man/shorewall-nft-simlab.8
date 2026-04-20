@@ -1,0 +1,243 @@
+.TH SHOREWALL-NFT-SIMLAB 8 "2026-04-20" "shorewall-nft 1.10.0" "System Administration"
+.SH NAME
+shorewall\-nft\-simlab \- packet-level firewall simulation lab for shorewall-nft
+.SH SYNOPSIS
+.B shorewall\-nft\-simlab
+.RI [ GLOBAL\-OPTIONS ]
+.I SUBCOMMAND
+.RI [ SUBCOMMAND\-OPTIONS ]
+.SH DESCRIPTION
+.B shorewall\-nft\-simlab
+(also invoked as
+.BR simlab\-smoketest )
+is the packet-level simulation lab for
+.BR shorewall\-nft (8).
+It builds three isolated Linux network namespaces (NS_SRC, NS_FW, NS_DST),
+loads the compiled nft ruleset into NS_FW, and injects real Scapy packets
+across TUN/TAP interfaces to verify firewall behaviour against an iptables
+baseline.
+
+The tool reports mismatches in two categories:
+.TP
+.B fail_drops
+Packets that the iptables baseline accepted but the nft ruleset dropped.
+These are potential false negatives — traffic that should be allowed is
+being blocked.
+.TP
+.B fail_accepts
+Packets that the iptables baseline dropped but the nft ruleset accepted.
+These are potential false positives — traffic that should be blocked is
+being allowed.
+
+The simlab topology is derived from the
+.I /etc/shorewall46
+config directory (or the directory passed with
+.BR \-\-config )
+and from the network address dumps
+.RI ( ip4add ,
+.IR ip4routes ,
+.IR ip6add ,
+.IR ip6routes )
+under
+.BR \-\-data .
+
+.SH GLOBAL OPTIONS
+.TP
+.BI \-\-data " DIR"
+Directory containing
+.IR ip4add ,
+.IR ip4routes ,
+.IR ip6add ,
+.I ip6routes
+network-state dumps (as produced by
+.B ip addr show
+and
+.BR "ip route show" ).
+These files populate the NS_FW namespace's address and route tables so the
+simlab topology mirrors the real host.
+.TP
+.BI \-\-config " DIR"
+shorewall46 config directory (default:
+.IR /etc/shorewall46 ).
+.TP
+.BI \-\-load\-limit " LIMIT"
+Pause new work while the 1-minute load average is at or above
+.I LIMIT
+or while the CPU/IO PSI avg10 is ≥ 40 (default: no limit).  Useful when
+running on a shared host.
+.TP
+.BI \-\-report\-dir " DIR"
+Override the default archive directory for run reports.
+.TP
+.B \-\-no\-dump\-config
+Disable the automatic
+.B ip addr
+and
+.B ip route
+dump from NS_FW after the ruleset is loaded.
+.TP
+.BI \-\-pcap\-dir " DIR"
+Write one pcap file per interface to
+.I DIR
+during the run.  Useful for debugging probes with Wireshark.
+
+.SH SUBCOMMANDS
+
+.SS smoke [\fIOPTIONS\fR]
+Quick sanity check: one build, one representative probe per src/dst pair.
+Intended to confirm the topology boots and basic forwarding works.
+
+.RS
+.TP
+.B \-\-no\-auto\-sysctl
+Skip automatic sysctl tuning (ip_forward, rp_filter, socket buffer sizes).
+Use inside containers or when sysctls are managed externally.
+.TP
+.BI \-\-output\-json " PATH"
+Write a machine-readable
+.I simlab.json
+report to
+.I PATH
+in the format consumed by
+.B shorewall\-nft\-stagelab audit
+.RB ( \-\-simlab\-report ).
+.RE
+
+.SS stress [\fIITERATIONS\fR]
+Repeated build-and-destroy cycles to catch namespace teardown races and
+resource leaks.
+.I ITERATIONS
+is the number of cycles (default: 10).
+
+.SS limit
+Push build-and-destroy cycles until the process fails, measuring the
+maximum safe concurrency.  Useful for CI infrastructure sizing.
+
+.SS full [\fIOPTIONS\fR]
+Full verification: every rule covered by at least one positive and one
+negative probe, plus a configurable number of random probes.  Produces
+an archived run report under
+.BR \-\-report\-dir .
+
+.RS
+.TP
+.BI \-\-max\-per\-pair " N"
+Cap probes per (src, dst) chain.  A high value (the default) means test all
+rules.
+.TP
+.BI \-\-random " N"
+Number of random probes to add on top of rule coverage.
+.TP
+.BI \-\-seed " N"
+Seed for the random probe generator (default: wall clock time, producing a
+non-reproducible run).
+.TP
+.BI \-\-random\-per\-rule " N"
+Number of random variants sampled per rule within that rule's own
+src/dst/port constraints (default: 64).
+.TP
+.BI \-\-batch\-size " N"
+Maximum probes in flight per batch (default: 512).  Higher values increase
+throughput at the cost of transient memory for the ProbeSpec batch.
+.TP
+.BI \-\-probe\-timeout " SECS"
+Per-probe timeout in seconds (default: 0.25).  IPv6 forwarding needs NDP
+neighbour resolution, which adds 100-150 ms on top of the base TUN/TAP
+round-trip.  Raise to 0.5 or 1.0 if false
+.I fail_drops
+persist.  Lower to 0.15 for IPv4-only configs.
+.TP
+.B \-v
+Dump raw sysctl values before the run.
+.TP
+.B \-\-no\-auto\-sysctl
+Skip automatic sysctl tuning.
+.TP
+.B \-\-keep\-namespace
+Preserve the simulator namespace after the run for interactive debugging.
+The operator must clean it up manually:
+.RS
+.nf
+sudo ip netns delete <name>
+.fi
+.RE
+.TP
+.BI \-\-sleep\-before\-shutdown " SECONDS"
+Sleep N seconds before shutting down the namespace.  Gives the operator
+time to attach debuggers or capture traffic without a TTY.
+.RE
+
+.SH ENVIRONMENT
+.TP
+.B SIMLAB_REPORT_DIR
+Override the default archive directory for run reports (equivalent to
+.BR \-\-report-dir ).
+
+.SH FILES
+.TP
+.I /etc/shorewall46/
+Default shorewall-nft config directory.
+.TP
+.I simlab.json
+Machine-readable result file written by
+.B full \-\-output\-json
+and consumed by
+.B shorewall\-nft\-stagelab audit \-\-simlab\-report .
+
+.SH NOTES
+The simlab topology models a single firewall host with two external interfaces.
+It does
+.B not
+model a second HA peer.  VRRP exchange (IP protocol 112, multicast 224.0.0.18)
+and conntrackd sync traffic (UDP/3780) cannot be validated by simlab.  Use
+.B shorewall\-nft verify \-\-iptables
+for rule-level coverage of those paths, and a manual failover drill for
+behavioural validation.
+
+The simlab requires root privileges to create network namespaces and TUN/TAP
+interfaces.
+
+.SH EXAMPLES
+.PP
+Quick smoke test against the current config using real network state:
+.RS
+.nf
+shorewall\-nft\-simlab \-\-data /etc/shorewall46/netstate \e
+    \-\-config /etc/shorewall46 \e
+    smoke
+.fi
+.RE
+.PP
+Full verification run with 1000 random probes, saving a machine-readable
+report:
+.RS
+.nf
+shorewall\-nft\-simlab \-\-config /etc/shorewall46 \e
+    full \e
+    \-\-random 1000 \e
+    \-\-seed 42 \e
+    \-\-output\-json /tmp/simlab.json
+.fi
+.RE
+.PP
+Stress test with 50 build-destroy cycles:
+.RS
+.nf
+shorewall\-nft\-simlab stress 50
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-stagelab (8),
+.BR shorewall\-nft\-zones (5),
+.BR nft (8),
+.BR ip\-netns (8)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.
+For security vulnerabilities see
+.IR SECURITY.md .

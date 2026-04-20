@@ -1,0 +1,51 @@
+.TH SHOREWALL-NFT-TCINTERFACES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-tcinterfaces \- simplified traffic shaping interface declarations for shorewall-nft
+.SH DESCRIPTION
+The
+.I tcinterfaces
+file provides a simpler alternative to
+.I tcdevices
+for declaring interfaces used in traffic shaping.  shorewall-nft generates
+.BR tc (8)
+commands from this file via
+.BR "shorewall\-nft generate\-tc" .
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/tcinterfaces
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+INTERFACE	yes	Interface name
+TYPE	yes	Interface type (Ethernet, …)
+IN_BANDWIDTH	yes	Ingress bandwidth
+OUT_BANDWIDTH	yes	Egress bandwidth
+.TE
+
+.SH EXAMPLES
+.RS
+.nf
+#INTERFACE  TYPE      IN_BANDWIDTH  OUT_BANDWIDTH
+eth0        Ethernet  100mbit       10mbit
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-tcdevices (5),
+.BR shorewall\-nft\-tcclasses (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

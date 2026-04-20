@@ -1,0 +1,65 @@
+.TH SHOREWALL-NFT-NFACCT 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-nfacct \- named nftables counter objects for shorewall-nft
+.SH DESCRIPTION
+The
+.I nfacct
+file declares named packet/byte counter objects in the
+.I inet shorewall
+nft table.  Named counters survive firewall restarts (unlike per-rule
+counters) and can be reset independently.  They are visible via
+.B shorewall\-nft counters
+and the
+.BR shorewalld (8)
+Prometheus exporter.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/nfacct
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+NAME	yes	Counter name (alphanumeric and underscores)
+PACKETS	no	Initial packet count (default: 0)
+BYTES	no	Initial byte count (default: 0)
+.TE
+
+Counter names must be unique within the config.  They are referenced from
+.I rules
+using the
+.B counter
+option in the
+.B ACTION
+column.
+
+.SH EXAMPLES
+.PP
+Declare named counters for different traffic classes:
+.RS
+.nf
+#NAME           PACKETS  BYTES
+web_traffic     0        0
+ssh_inbound     0        0
+icmp_traffic    0        0
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewalld (8),
+.BR shorewall\-nft\-accounting (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

@@ -1,0 +1,77 @@
+.TH SHOREWALL-NFT-ACCOUNTING 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-accounting \- traffic accounting rules for shorewall-nft
+.SH DESCRIPTION
+The
+.I accounting
+file defines packet/byte counters for specific traffic flows.  Each row
+inserts a counting rule into a named accounting chain in the
+.I inet shorewall
+nft table.  Counter values are visible via
+.B shorewall\-nft counters
+and via the
+.BR shorewalld (8)
+Prometheus exporter.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/accounting
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ACTION	yes	ACCEPT, DROP, or COUNT (count and continue)
+CHAIN	yes	Accounting chain name to place the rule in
+SOURCE	yes	Source address, zone:address, or CIDR
+DEST	yes	Destination address, zone:address, or CIDR
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+USER	no	User/group match
+MARK	no	Packet mark match
+IPSEC	no	IPSEC state (ipsec or !ipsec)
+HEADERS	no	IPv6 extension header match
+.TE
+
+.SH EXAMPLES
+.PP
+Count all outbound HTTP/HTTPS traffic:
+.RS
+.nf
+#ACTION  CHAIN     SOURCE  DEST  PROTO  DPORT
+COUNT    accounting all     net   tcp    80,443
+.fi
+.RE
+.PP
+Count inbound traffic per source network:
+.RS
+.nf
+COUNT    acct\-in   net:192.168.0.0/16   fw
+COUNT    acct\-in   net:10.0.0.0/8       fw
+.fi
+.RE
+.PP
+Count ICMP for monitoring:
+.RS
+.nf
+COUNT    icmp\-count  all   all   icmp
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewalld (8),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

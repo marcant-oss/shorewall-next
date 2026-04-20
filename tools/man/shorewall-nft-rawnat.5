@@ -1,0 +1,62 @@
+.TH SHOREWALL-NFT-RAWNAT 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-rawnat \- raw (pre-conntrack) NAT rules for shorewall-nft
+.SH DESCRIPTION
+The
+.I rawnat
+file defines NAT rules that are applied in the
+.B prerouting raw
+chain, before conntrack.  Use this for NAT that must occur before conntrack
+records the connection (e.g. for traffic that must not be tracked).
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/rawnat
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ACTION	yes	DNAT or SNAT
+SOURCE	yes	Source address or CIDR (or - for any)
+DEST	yes	Destination address or CIDR (or - for any)
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+USER	no	User/group match
+.TE
+
+.SH EXAMPLES
+.PP
+Raw DNAT — redirect inbound traffic before conntrack:
+.RS
+.nf
+#ACTION  SOURCE          DEST           PROTO  DPORT
+DNAT     -               203.0.113.10   tcp    80    198.51.100.20:8080
+.fi
+.RE
+.PP
+Raw SNAT — rewrite source before conntrack:
+.RS
+.nf
+SNAT     192.168.1.100   -              -      -     203.0.113.5
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-masq (5),
+.BR shorewall\-nft\-rules (5),
+.BR shorewall\-nft\-notrack (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

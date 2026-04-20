@@ -1,0 +1,59 @@
+.TH SHOREWALL-NFT-ROUTES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-routes \- provider-specific static routes for shorewall-nft
+.SH DESCRIPTION
+The
+.I routes
+file defines static routes to be added to provider routing tables defined in
+.IR shorewall\-nft\-providers (5).
+These routes are installed in the named provider table by the firewall
+start script, not by the nft compiler directly.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/routes
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+PROVIDER	yes	Provider name (from providers file) or table number
+DEST	yes	Destination network (CIDR) or default
+GATEWAY	no	Next-hop gateway (or - for directly connected)
+DEVICE	no	Interface to use for this route
+.TE
+
+.SH EXAMPLES
+.PP
+Default route in provider table:
+.RS
+.nf
+#PROVIDER  DEST     GATEWAY
+isp1       default  203.0.113.1
+isp2       default  198.51.100.1
+.fi
+.RE
+.PP
+Specific route for management traffic via ISP1:
+.RS
+.nf
+isp1       10.0.99.0/24   203.0.113.1
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-providers (5),
+.BR shorewall\-nft\-rtrules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

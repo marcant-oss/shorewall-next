@@ -1,0 +1,61 @@
+.TH SHOREWALL-NFT-RTRULES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-rtrules \- policy routing rules (ip rule) for shorewall-nft
+.SH DESCRIPTION
+The
+.I rtrules
+file defines
+.BR "ip rule" (8)
+entries that direct traffic from specific sources or marks into a provider's
+routing table.  These rules supplement the provider tracking done by
+.IR shorewall\-nft\-providers (5).
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/rtrules
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+SOURCE	yes	Source address, CIDR, or interface name (or -)
+DEST	yes	Destination CIDR (or -)
+PROVIDER	yes	Provider name or table number
+PRIORITY	no	ip rule priority (default: automatic)
+MARK	no	Packet mark to match
+.TE
+
+.SH EXAMPLES
+.PP
+Route a server subnet through ISP2:
+.RS
+.nf
+#SOURCE          DEST  PROVIDER  PRIORITY
+192.168.2.0/24   -     isp2      1000
+.fi
+.RE
+.PP
+Route marked packets through ISP1:
+.RS
+.nf
+-                -     isp1      2000     1
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-providers (5),
+.BR shorewall\-nft\-routes (5),
+.BR ip\-rule (8)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

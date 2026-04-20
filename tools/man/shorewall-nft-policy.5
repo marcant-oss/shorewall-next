@@ -1,0 +1,106 @@
+.TH SHOREWALL-NFT-POLICY 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-policy \- default inter-zone traffic policies for shorewall-nft
+.SH DESCRIPTION
+The
+.I policy
+file defines the default action (verdict) when no explicit rule in
+.I rules
+matches a packet crossing a particular source/destination zone pair.
+
+The compiler reads the policy file during IR construction and emits a default
+verdict at the tail of every zone-pair chain.  Policies are evaluated after
+all explicit rules have been checked.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/policy
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+SOURCE	yes	Source zone or \fBall\fR
+DEST	yes	Destination zone or \fBall\fR
+POLICY	yes	Default action (ACCEPT/DROP/REJECT/CONTINUE/QUEUE/NFQUEUE)
+LOG_LEVEL	no	Log level for the default action (info, warn, …)
+BURST	no	Rate-limit burst count
+CONNLIMIT	no	Connection limit per source
+.TE
+
+.SS Policy actions
+.TP
+.B ACCEPT
+Pass the packet.
+.TP
+.B DROP
+Silently discard the packet.
+.TP
+.B REJECT
+Discard and send TCP RST or ICMP unreachable back to the sender.
+.TP
+.B CONTINUE
+Fall through to the next matching policy (used with
+.B all
+source/dest).
+.TP
+.B QUEUE
+Queue the packet to userspace via nfqueue.
+.TP
+.B NFQUEUE[\fIn\fR]
+Queue to nfqueue number
+.IR n .
+
+.SH EXAMPLES
+.PP
+Typical restrictive default policy — block all inter-zone traffic except
+what the
+.I rules
+file explicitly allows:
+.RS
+.nf
+#SOURCE  DEST    POLICY  LOG_LEVEL
+fw       all     ACCEPT
+all      fw      DROP    info
+net      all     DROP    info
+all      all     DROP
+.fi
+.RE
+.PP
+Allow outbound from loc, drop everything else:
+.RS
+.nf
+fw       all     ACCEPT
+loc      net     ACCEPT
+loc      fw      ACCEPT
+all      all     DROP    info
+.fi
+.RE
+.PP
+DMZ policy — allow DMZ outbound to internet, block DMZ to internal:
+.RS
+.nf
+fw       all     ACCEPT
+loc      net     ACCEPT
+loc      dmz     ACCEPT
+dmz      net     ACCEPT
+all      all     DROP    info
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-zones (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

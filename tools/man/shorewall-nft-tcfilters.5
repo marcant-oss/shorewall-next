@@ -1,0 +1,63 @@
+.TH SHOREWALL-NFT-TCFILTERS 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-tcfilters \- traffic shaping filters (tc filter) for shorewall-nft
+.SH DESCRIPTION
+The
+.I tcfilters
+file defines
+.BR tc (8)
+classifier filters that classify packets into traffic classes without relying
+on packet marks.  shorewall-nft generates the corresponding
+.B tc filter add
+commands via
+.BR "shorewall\-nft generate\-tc" .
+
+For mark-based classification (the recommended approach) use
+.I mangle
+or
+.I tcrules
+instead.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/tcfilters
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+CLASS	yes	Target class (INTERFACE:CLASSID)
+SOURCE	yes	Source address/CIDR (or - for any)
+DEST	yes	Destination address/CIDR (or - for any)
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+.TE
+
+.SH EXAMPLES
+.PP
+Classify DNS traffic directly into the high-priority class:
+.RS
+.nf
+#CLASS    SOURCE  DEST  PROTO  DPORT
+eth0:1    -       -     udp    53
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-tcdevices (5),
+.BR shorewall\-nft\-tcclasses (5),
+.BR shorewall\-nft\-mangle (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

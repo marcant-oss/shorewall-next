@@ -1,5 +1,3 @@
-<!-- TODO W5: companion shorewall-nfsets(5) manpage -->
-
 # nfsets — Named Dynamic nft Sets
 
 **Audience**: operators  

@@ -1,0 +1,59 @@
+.TH SHOREWALL-NFT-SCFILTER 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-scfilter \- source CIDR sanity filter for shorewall-nft
+.SH DESCRIPTION
+The
+.I scfilter
+file declares per-interface allowlists for source IP addresses.  Packets
+arriving on a listed interface whose source address does not match the
+allowlist are dropped before any zone-pair rules are evaluated.
+
+Use this as a lightweight anti-spoofing mechanism on interfaces where the
+set of valid source addresses is known.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/scfilter
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+INTERFACE	yes	Interface name to filter
+HOSTS	yes	Allowed source addresses or CIDRs (comma-separated)
+OPTIONS	no	Log level or other options
+.TE
+
+.SH EXAMPLES
+.PP
+Only allow RFC 1918 addresses on the internal interface:
+.RS
+.nf
+#INTERFACE  HOSTS
+eth1        192.168.0.0/16,10.0.0.0/8,172.16.0.0/12
+.fi
+.RE
+.PP
+Allow only the management subnet on the mgmt interface:
+.RS
+.nf
+bond0.99    10.0.99.0/24
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-interfaces (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

@@ -1,0 +1,73 @@
+.TH SHOREWALL-NFT-CONNTRACK 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-conntrack \- conntrack helper and state assignment for shorewall-nft
+.SH DESCRIPTION
+The
+.I conntrack
+file assigns conntrack helpers or overrides connection tracking state for
+specific traffic flows.  Rows emit rules in the
+.B prerouting
+chain that call
+.B ct helper set
+or
+.B ct state set
+on matching packets.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/conntrack
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ACTION	yes	helper name (e.g. ftp, tftp, sip) or CT target keyword
+SOURCE	yes	Source address or zone:address (or - for any)
+DEST	yes	Destination address or zone:address (or - for any)
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+USER	no	User/group match
+SWITCH	no	Runtime switch name
+.TE
+
+.SH EXAMPLES
+.PP
+Assign the FTP conntrack helper to inbound FTP traffic:
+.RS
+.nf
+#ACTION  SOURCE  DEST            PROTO  DPORT
+ftp      net     fw              tcp    21
+.fi
+.RE
+.PP
+Assign the SIP helper for VoIP:
+.RS
+.nf
+sip      loc     net             udp    5060
+.fi
+.RE
+.PP
+Conntrack helper for TFTP:
+.RS
+.nf
+tftp     loc     198.51.100.0/24 udp    69
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-notrack (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

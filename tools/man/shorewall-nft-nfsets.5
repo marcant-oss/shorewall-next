@@ -1,0 +1,351 @@
+.TH SHOREWALL-NFT-NFSETS 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-nfsets \- named dynamic nft sets for shorewall-nft
+.SH DESCRIPTION
+The
+.I nfsets
+file declares named dynamic nft sets that are populated at runtime by
+.BR shorewalld (8).
+Each row names a set and selects the backend that will keep it populated.
+
+Declared sets can be referenced in the
+.I rules
+file using
+.IB zone : nfset: name
+syntax.  The compiler emits the nft set declarations (type, flags, size);
+shorewalld provides the elements.
+
+Use
+.I nfsets
+instead of inline
+.B dns:hostname
+syntax when you need:
+.IP \(bu 2
+Multiple hostnames merged into a single set.
+.IP \(bu 2
+Non-DNS backends (URL blocklists, cloud provider prefix lists).
+.IP \(bu 2
+Explicit set naming for tooling and monitoring.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/nfsets
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+NAME	yes	Logical set name; used in nfset:<name> rule syntax
+HOSTS	yes	Hostname(s), URL, file path, or cloud-provider keyword
+OPTIONS	yes	Backend keyword + per-backend options (comma-separated)
+.TE
+
+Multiple rows with the same
+.I NAME
+are merged: their
+.I HOSTS
+lists are concatenated and the backend must be the same in all rows.
+
+.SS Brace expansion
+The
+.I HOSTS
+column supports simple (non-nested) brace expansion:
+.PP
+.RS
+.nf
+{a,b,c}.cdn.example.com
+  \(->  a.cdn.example.com  b.cdn.example.com  c.cdn.example.com
+.fi
+.RE
+
+.SH BACKENDS
+
+.SS dnstap
+shorewalld intercepts DNS answers from a dnstap or PowerDNS protobuf
+stream and installs the resolved A/AAAA records into the nft set with
+the answer's TTL as the element timeout.
+
+.I HOSTS
+entries must be DNS hostnames (qnames).
+
+.I Options:
+.TP
+.BI dnstype= a | aaaa
+Restrict to one address family only.
+.PP
+.RS
+Example:
+.nf
+web   {cdn,static}.example.com   dnstap
+web   api.example.com            dnstap,dnstype=a
+.fi
+.RE
+
+Emits:
+.RS
+.nf
+set nfset_web_v4 { type ipv4_addr; flags timeout; size 512; }
+set nfset_web_v6 { type ipv6_addr; flags timeout; size 512; }
+.fi
+.RE
+
+.SS resolver
+shorewalld actively resolves each hostname on a TTL-driven schedule and
+installs the resolved IPs with the answer's TTL as an element timeout.
+Use this backend when you cannot deploy dnstap (e.g. an upstream resolver
+you do not control).
+
+.I HOSTS
+entries must be DNS hostnames.
+
+.I Options:
+.TP
+.BI dns= IP
+DNS server to query.  Can be specified multiple times for multiple servers.
+.TP
+.BI refresh= DURATION
+Minimum re-resolve interval (e.g.
+.BR 5m ,
+.BR 1h ).
+.TP
+.BI dnstype= a | aaaa
+Restrict to one address family.
+.PP
+.RS
+Example:
+.nf
+cdn  api.example.com www.example.com  resolver,dns=198.51.100.53,refresh=5m
+.fi
+.RE
+
+.SS ip-list
+shorewalld fetches a structured prefix list from a registered cloud
+provider (AWS, GCP, …) and installs the prefixes/CIDRs into an interval nft
+set.
+
+.I HOSTS
+must be the registered provider keyword (e.g.
+.BR aws ,
+.BR gcp ).
+
+.I Options:
+.TP
+.BI filter= dim = val
+Provider-specific filter dimension, for example
+.BR filter=region=us\-east\-1 .
+.TP
+.BI refresh= DURATION
+Re-fetch interval (default: 1 h).
+.PP
+.RS
+Example:
+.nf
+aws\-ec2  aws  ip\-list,filter=region=us\-east\-1,refresh=6h
+.fi
+.RE
+
+Emits:
+.RS
+.nf
+set nfset_aws_ec2_v4 { type ipv4_addr; flags interval; size 65536; }
+set nfset_aws_ec2_v6 { type ipv6_addr; flags interval; size 65536; }
+.fi
+.RE
+
+.SS ip-list-plain
+shorewalld reads one IP or CIDR per line from an HTTP(S) URL, an absolute
+file path, or a script whose stdout is the list.
+
+.I HOSTS
+must be exactly one source: a URL beginning with
+.BR http:// " or " https:// ,
+an absolute path (beginning with
+.BR / ),
+or a command prefixed with
+.BR exec: .
+
+.I Options:
+.TP
+.BI refresh= DURATION
+Re-fetch interval (default: 1 h).
+.TP
+.B inotify
+For file paths only: trigger an immediate reload when the file changes
+(via inotify).
+.PP
+.RS
+Examples:
+.nf
+# URL-backed blocklist
+blocklist   https://example.org/block.txt  ip\-list\-plain
+
+# Local file, reload on change
+localblock  /var/lib/lists/blocked.txt     ip\-list\-plain,inotify
+
+# Script-generated list, refresh every 15 minutes
+dynblock    exec:/usr/local/bin/gen\-list   ip\-list\-plain,refresh=15m
+.fi
+.RE
+
+.SH OPTIONS REFERENCE
+.TS
+l l l.
+Option	Backends	Description
+_
+dnstap	\(em	Backend keyword
+resolver	\(em	Backend keyword
+ip-list	\(em	Backend keyword
+ip-list-plain	\(em	Backend keyword
+dns=IP	resolver	DNS server; repeatable
+filter=dim=val	ip-list	Provider filter dimension
+refresh=DURATION	resolver, ip-list, ip-list-plain	Re-fetch/re-resolve interval
+inotify	ip-list-plain	Watch file via inotify
+dnstype=a/aaaa	dnstap, resolver	Address family restriction
+.TE
+
+Duration syntax: integer seconds, or integer followed by
+.BR s ,
+.BR m ,
+.BR h ,
+or
+.BR d .
+Examples:
+.BR 300 ,
+.BR 5m ,
+.BR 1h ,
+.BR 2d .
+
+.SH nft SET NAMING
+Each declared set produces two nft sets — one for IPv4 and one for IPv6:
+.RS
+.nf
+nfset_<name>_v4
+nfset_<name>_v6
+.fi
+.RE
+
+Name sanitisation: the logical name is lowercased; non-alphanumeric
+characters become
+.BR _ ;
+consecutive underscores are collapsed; the body is truncated to 22
+characters with a SHA-1 collision guard appended if needed.  The maximum
+total identifier length is 31 characters.
+
+.SH REFERENCING SETS IN RULES
+
+.TP
+.IB zone : nfset: name
+Match packets whose source or destination address is in the set.
+.TP
+.IB zone :! nfset: name
+Match packets whose address is
+.I not
+in the set.
+.TP
+.IB zone : nfset: name1 , name2
+Comma-separated list: expands to one rule per set.
+
+.SS Example rules
+.RS
+.nf
+#ACTION  SOURCE               DEST   PROTO  DPORT
+ACCEPT   net:nfset:cdn        loc
+ACCEPT   loc                  net:nfset:allowlist
+DROP     net:!nfset:trusted   fw
+.fi
+.RE
+
+.SH nft SET FLAGS
+The compiler selects
+.B flags
+based on the mix of backends:
+
+.TS
+l l.
+Backend mix	nft flags
+_
+All dnstap / resolver	flags timeout
+All ip-list / ip-list-plain	flags interval
+Mixed DNS + ip-list	flags timeout, interval
+.TE
+
+Default
+.BR size :
+512 for DNS-only sets; 65536 when any ip-list backend is present.
+
+.SH RELATIONSHIP TO shorewalld
+.PP
+The compiler (1) emits the nft set declarations in the compiled ruleset, and
+(2) serialises the nfsets registry inside the
+.B register-instance
+control-socket payload that
+.B shorewall\-nft start
+sends to shorewalld.
+
+shorewalld's NfSetsManager receives the payload and:
+.IP \(bu 2
+Routes
+.B dnstap
+/
+.B resolver
+entries into the DnsSetTracker pipeline.
+.IP \(bu 2
+Starts a PlainListTracker for
+.B ip-list-plain
+sources.
+.IP \(bu 2
+Passes
+.B ip-list
+configs to IpListTracker.
+
+Multiple instances in different network namespaces can each declare a set
+named
+.BR nfset:web
+— shorewalld routes DNS answers into the correct nft set in the correct
+netns.
+
+.SH INLINE dns: AND dnsr: ALTERNATIVES
+Instead of declaring a named set, rules may use inline syntax:
+.TP
+.IB zone : dns: hostname
+Single-hostname tap-driven set (one set per hostname).
+.TP
+.IB zone : dnsr: hostname
+Single-hostname pull-resolver-driven set.
+.PP
+Use
+.B nfset:
+when multiple hostnames must share one set or when a non-DNS backend is
+needed.
+
+.SH FILES
+.TP
+.I /etc/shorewall/nfsets
+The nfsets config file.
+.TP
+.I /etc/shorewall/dnsnames.compiled
+Written by
+.B shorewall\-nft start
+from the set declarations; read by shorewalld as its DNS allowlist.
+.TP
+.I /var/lib/shorewalld/
+shorewalld state directory where DNS set contents are persisted across
+daemon restarts.
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewalld (8),
+.BR shorewall\-nft\-rules (5),
+.BR shorewall\-nft\-zones (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

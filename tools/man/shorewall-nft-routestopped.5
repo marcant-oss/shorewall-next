@@ -1,0 +1,64 @@
+.TH SHOREWALL-NFT-ROUTESTOPPED 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-routestopped \- legacy stopped-state access list for shorewall-nft
+.SH DESCRIPTION
+The
+.I routestopped
+file is the legacy mechanism for keeping specific (interface, host) pairs
+reachable when the firewall is in the stopped state (after
+.BR "shorewall\-nft stop" ).
+
+For new configurations prefer
+.IR shorewall\-nft\-stoppedrules (5),
+which supports the full rule grammar.
+.I routestopped
+is retained for backward compatibility.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/routestopped
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+INTERFACE	yes	Interface name
+HOSTS	yes	Host IP or CIDR reachable via this interface
+OPTIONS	no	notrack, routeback
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+.TE
+
+.SH EXAMPLES
+.PP
+Keep the management interface reachable while stopped:
+.RS
+.nf
+#INTERFACE  HOSTS
+eth1        10.0.99.0/24
+.fi
+.RE
+.PP
+Keep SSH access from a specific host:
+.RS
+.nf
+eth0        10.0.1.5     -  tcp  22
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-stoppedrules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

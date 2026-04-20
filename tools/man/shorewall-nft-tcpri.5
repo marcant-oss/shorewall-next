@@ -1,0 +1,58 @@
+.TH SHOREWALL-NFT-TCPRI 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-tcpri \- PRIO qdisc band assignments for traffic shaping in shorewall-nft
+.SH DESCRIPTION
+The
+.I tcpri
+file assigns traffic to bands in a PRIO qdisc (or similar priority-based
+qdisc) based on protocol, port, address, or interface.  shorewall-nft
+generates the corresponding
+.BR tc (8)
+commands via
+.BR "shorewall\-nft generate\-tc" .
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/tcpri
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+BAND	yes	Priority band number (1=highest)
+PROTO	no	Protocol filter
+PORT	no	Destination port filter
+ADDRESS	no	Destination address/CIDR filter
+INTERFACE	no	Interface filter
+HELPER	no	Conntrack helper match
+.TE
+
+.SH EXAMPLES
+.PP
+Assign interactive traffic to the highest band:
+.RS
+.nf
+#BAND  PROTO  PORT
+1      tcp    22,23
+1      udp    53
+2      tcp    80,443
+3
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-tcdevices (5),
+.BR shorewall\-nft\-tcclasses (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

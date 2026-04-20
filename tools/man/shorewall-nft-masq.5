@@ -1,0 +1,76 @@
+.TH SHOREWALL-NFT-MASQ 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-masq \- masquerading and SNAT rules for shorewall-nft
+.SH DESCRIPTION
+The
+.I masq
+file defines masquerading (dynamic SNAT) and static SNAT rules.
+Each row tells the compiler to emit a masquerade or snat rule in the
+.I inet shorewall
+nft table's
+.B postrouting
+chain.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/masq
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+INTERFACE	yes	Outbound interface (masquerade on this interface)
+SOURCE	yes	Source address or CIDR to masquerade
+ADDRESS	no	Static SNAT address (empty = dynamic masquerade)
+PROTO	no	Protocol filter
+PORT	no	Destination port filter
+IPSEC	no	IPSEC match (ipsec or !ipsec)
+MARK	no	Connection mark match
+USER	no	User/group match
+SWITCH	no	Runtime switch
+ORIG_DEST	no	Original destination filter
+PROBABILITY	no	Probability for probabilistic SNAT (0.0\(en1.0)
+.TE
+
+.SH EXAMPLES
+.PP
+Masquerade all traffic from the local network on the outbound interface:
+.RS
+.nf
+#INTERFACE  SOURCE
+eth0        192.168.1.0/24
+.fi
+.RE
+.PP
+Static SNAT to a fixed public IP:
+.RS
+.nf
+eth0        192.168.1.0/24   203.0.113.10
+.fi
+.RE
+.PP
+Masquerade only TCP/UDP, leave other protocols unmasqueraded:
+.RS
+.nf
+eth0        10.0.0.0/8       -   tcp
+eth0        10.0.0.0/8       -   udp
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-rules (5),
+.BR shorewall\-nft\-netmap (5),
+.BR shorewall\-nft\-rawnat (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

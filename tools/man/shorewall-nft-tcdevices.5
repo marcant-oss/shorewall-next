@@ -1,0 +1,71 @@
+.TH SHOREWALL-NFT-TCDEVICES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-tcdevices \- traffic shaping device declarations for shorewall-nft
+.SH DESCRIPTION
+The
+.I tcdevices
+file declares the interfaces used for traffic shaping.  shorewall-nft does
+not emit nft rules for traffic shaping directly; instead it generates
+.BR tc (8)
+commands via
+.B shorewall\-nft generate\-tc
+that configure the kernel qdiscs and classes declared in this file together
+with
+.I tcclasses
+and
+.IR tcfilters .
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/tcdevices
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+INTERFACE	yes	Interface name
+IN_BANDWIDTH	yes	Ingress bandwidth (e.g. 100mbit)
+OUT_BANDWIDTH	yes	Egress bandwidth (e.g. 100mbit)
+OPTIONS	no	Comma-separated options (classify, …)
+REDIRECT	no	Redirect device for ingress shaping
+.TE
+
+Bandwidth values use tc notation:
+.BR kbit ,
+.BR mbit ,
+.BR gbit .
+
+.SH EXAMPLES
+.PP
+Declare a 100 Mbit uplink with a known egress rate:
+.RS
+.nf
+#INTERFACE  IN_BANDWIDTH  OUT_BANDWIDTH
+eth0        100mbit       10mbit
+.fi
+.RE
+.PP
+Asymmetric ADSL-style link:
+.RS
+.nf
+eth0        8mbit         768kbit
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-tcclasses (5),
+.BR shorewall\-nft\-tcfilters (5),
+.BR tc (8)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.
