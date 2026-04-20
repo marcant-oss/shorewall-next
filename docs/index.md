@@ -6,13 +6,18 @@ description: nftables-native firewall compiler with Shorewall-compatible configu
 # shorewall-nft
 
 nftables-native firewall compiler with Shorewall-compatible configuration.
-Three installable packages — pick what you need:
+Four installable packages — pick what you need:
 
 | Package | What it does |
 |---------|-------------|
 | **shorewall-nft** | Compiler + CLI: turns Shorewall config into nft rulesets |
 | **shorewalld** | Prometheus exporter + DNS-driven nft set daemon |
 | **shorewall-nft-simlab** | Packet-level firewall validation lab (netns + scapy) |
+| **shorewall-nft-stagelab** | Distributed bridge-lab: performance, DPDK, advisor, readiness review |
+
+`shorewall-nft-netkit` is a shared-primitives package (TUN/TAP, netns stub,
+packet builders) used by both simlab and stagelab; install it first when
+bootstrapping.
 
 → **[Quick Start](quick-start.md)** — get running in minutes, beginner and pro paths
 
@@ -80,6 +85,25 @@ iptables baseline.
 
 ---
 
+## shorewall-nft-stagelab
+
+Distributed bridge-lab for performance and readiness testing against real
+firewall hardware. Drives iperf3, nmap, scapy, or TRex traffic through a
+VLAN-trunked interface, collects Prometheus/SNMP metrics, and runs a
+rule-based advisor that emits tiered tuning recommendations.
+
+Three endpoint modes:
+
+- **probe** — scapy frames via TAP, ~1 Gbps, correctness smoke without
+  a line-rate NIC
+- **native** — physical NIC VLAN sub-interface, iperf3/nmap, 10–25 Gbps
+- **dpdk** — NIC bound to vfio-pci, TRex STL/ASTF, 40–100 Gbps / 10 M+
+  concurrent sessions
+
+→ [Stagelab reference](testing/stagelab.md)
+
+---
+
 ## Reference
 
 - [CLI commands](cli/commands.md)
@@ -101,6 +125,7 @@ iptables baseline.
 - [Debugging a packet](testing/debugging.md)
 - [Verification tools](testing/verification.md)
 - [Simlab](testing/simlab.md)
+- [Stagelab](testing/stagelab.md)
 - [Point of truth](testing/point-of-truth.md)
 
 ---

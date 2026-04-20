@@ -7,9 +7,11 @@ Shorewall-compatible configuration surface.
 
 ```
 packages/
-  shorewall-nft/          Core: compiler, emitter, config, runtime
-  shorewalld/             Prometheus exporter + DNS-based dynamic sets
-  shorewall-nft-simlab/   Packet-level simulation lab (netns + scapy)
+  shorewall-nft/              Core: compiler, emitter, config, runtime
+  shorewalld/                 Prometheus exporter + DNS-based dynamic sets
+  shorewall-nft-simlab/       Packet-level simulation lab (netns + scapy)
+  shorewall-nft-stagelab/     Distributed bridge-lab: perf, DPDK, advisor, review (NEW)
+  shorewall-nft-netkit/       Shared primitives (tundev, nsstub, packet builders) (NEW)
 docs/
   quick-start.md          Onboarding guide (beginner + migration paths)
   index.md                Doc entry point with 3-package overview
@@ -25,6 +27,12 @@ packaging/                .deb / .rpm / systemd units
 Each package has its own `CLAUDE.md` — open it before touching that code.
 `HOWTO-CLAUDE.md` in the repo root maps problem types to starting directories.
 
+`shorewall-nft-stagelab` is the performance/readiness side of validation:
+kernel-stack (iperf3/nmap), DPDK/TRex line-rate (stateless + ASTF),
+Prometheus/SNMP ingest, a rule-based advisor that emits tiered optimization
+hints. It shares `shorewall-nft-netkit` with simlab for TUN/TAP + netns
+primitives.
+
 ## Bootstrap
 
 **Project venv lives at the repo root: `.venv/` (Python 3.13).**
@@ -35,16 +43,20 @@ no per-package venvs. Re-use across sessions; don't create new ones.
 # From the repo root:
 source .venv/bin/activate          # or call .venv/bin/python / .venv/bin/pytest directly
 
-# Install all three sub-packages editably (first-time bootstrap):
-pip install -e 'packages/shorewall-nft[dev]' \
+# Install all sub-packages editably (first-time bootstrap):
+# Install order is load-bearing: netkit must come before simlab and stagelab.
+pip install -e 'packages/shorewall-nft-netkit[dev]' \
+            -e 'packages/shorewall-nft[dev]' \
             -e 'packages/shorewalld[dev]' \
-            -e 'packages/shorewall-nft-simlab[dev]'
+            -e 'packages/shorewall-nft-simlab[dev]' \
+            -e 'packages/shorewall-nft-stagelab[dev]'
 # `pip install -e .` in the repo root installs the empty monorepo stub only.
 
 # Run tests (per package):
 pytest packages/shorewall-nft/tests -q
 pytest packages/shorewalld/tests -q
 pytest packages/shorewall-nft-simlab/tests -q
+pytest packages/shorewall-nft-stagelab/tests/unit -q
 ```
 
 ## Release state

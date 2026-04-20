@@ -42,6 +42,8 @@ If everything is green, you're ready to hack.
 - [Test suite](test-suite.md) — pytest layout, running, fixtures
 - [Debugging firewall rules](debugging.md) — how to trace a packet through a loaded ruleset
 - [Verification tools](verification.md) — triangle verifier, simulator, connstate
+- [Simlab](simlab.md) — packet-level netns lab (correctness, oracle)
+- [Stagelab](stagelab.md) — distributed bridge-lab (performance, DPDK, advisor)
 - [Fuzz testing](fuzz.md) — random config generator
 - [Troubleshooting](troubleshooting.md) — common failures and fixes
 
