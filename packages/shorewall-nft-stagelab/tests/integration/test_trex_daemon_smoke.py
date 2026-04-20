@@ -38,18 +38,34 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def _trex_client_extracted(tmp_path_factory):
-    """Extract trex_client_pkg.tar.gz and inject the client library path."""
+    """Make trex_stl_lib importable: prefer the pre-extracted layout that
+    ships with TRex v3.x, fall back to extracting trex_client_pkg.tar.gz if
+    only the archived form is present."""
+    # Modern bundles (v3.x) ship the client already extracted under
+    # automation/trex_control_plane/interactive/trex_stl_lib/
+    pre_extracted = (
+        _TREX_BIN.parent / "automation" / "trex_control_plane" / "interactive"
+    )
+    if (pre_extracted / "trex_stl_lib").is_dir():
+        if str(pre_extracted) not in sys.path:
+            sys.path.insert(0, str(pre_extracted))
+        try:
+            import trex_stl_lib.api  # noqa: F401
+        except ImportError as exc:
+            pytest.skip(f"trex_stl_lib present but not importable: {exc}")
+        yield pre_extracted
+        return
+
     if not _TREX_CLIENT_PKG.exists():
         pytest.skip(
-            f"trex_client_pkg.tar.gz not found at {_TREX_CLIENT_PKG} "
-            "— cannot import trex_stl_lib"
+            f"Neither {pre_extracted}/trex_stl_lib nor {_TREX_CLIENT_PKG} exists"
+            " — cannot import trex_stl_lib"
         )
 
     dest = tmp_path_factory.mktemp("trex_client")
     with tarfile.open(_TREX_CLIENT_PKG) as tf:
         tf.extractall(dest)  # noqa: S202 — trusted local bundle
 
-    # Walk extracted tree: find the directory that contains trex_stl_lib/
     for candidate in dest.rglob("trex_stl_lib"):
         if candidate.is_dir():
             parent = str(candidate.parent)
@@ -57,14 +73,12 @@ def _trex_client_extracted(tmp_path_factory):
                 sys.path.insert(0, parent)
             break
 
-    # Verify the import works after path injection; skip if bundle layout differs.
     try:
         import trex_stl_lib.api  # noqa: F401
     except ImportError as exc:
-        pytest.skip(f"trex_stl_lib still not importable after path injection: {exc}")
+        pytest.skip(f"trex_stl_lib still not importable after extraction: {exc}")
 
     yield dest
-    # tmp_path_factory handles file cleanup; sys.path entry stays for test lifetime.
 
 
 # ---------------------------------------------------------------------------
