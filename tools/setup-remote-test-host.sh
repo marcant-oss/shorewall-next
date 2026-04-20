@@ -308,6 +308,75 @@ fi
 
 # ── stagelab-agent-dpdk: DPDK + TRex bootstrap ────────────────────
 if [ "$IS_DPDK" = "1" ]; then
+    # ── 0. Detach DPDK-candidate NICs from NetworkManager ───────
+    # Any NIC we will later bind to vfio-pci MUST be marked unmanaged in NM,
+    # otherwise NM will re-claim it on carrier change and fight the agent's
+    # DPDK setup/teardown. Idempotent: if the interface is already unmanaged
+    # (via netns-routing's pre-existing conf, via this script's own conf,
+    # or via no NM at all), we skip delete + reload.
+    _DPDK_IFACES="${STAGELAB_DPDK_IFACES:-eth1 eth2}"
+    info "stagelab-agent-dpdk: ensuring NM treats DPDK NICs as unmanaged ($_DPDK_IFACES)"
+    # shellcheck disable=SC2029
+    ssh "$REMOTE" "
+set -e
+DPDK_IFACES='$_DPDK_IFACES'
+if ! systemctl is-active --quiet NetworkManager; then
+    echo 'NetworkManager not active — nothing to do'
+    exit 0
+fi
+
+_changed=0
+for _if in \$DPDK_IFACES; do
+    # Only act on interfaces that actually exist
+    ip link show \"\$_if\" >/dev/null 2>&1 || { echo \"skip \$_if (not present)\"; continue; }
+
+    _state=\$(nmcli -t -f DEVICE,STATE device status 2>/dev/null | awk -F: -v d=\"\$_if\" '\$1==d{print \$2}')
+    if [ \"\$_state\" = 'unmanaged' ]; then
+        echo \"\$_if: already unmanaged\"
+        continue
+    fi
+
+    # Delete any NM connection profiles bound to this device (ifcfg or nmconnection)
+    nmcli -t -f NAME,DEVICE connection show 2>/dev/null \\
+        | awk -F: -v d=\"\$_if\" '\$2==d{print \$1}' \\
+        | while IFS= read -r _conn; do
+            [ -n \"\$_conn\" ] || continue
+            echo \"deleting NM connection \$_conn (device \$_if)\"
+            nmcli connection delete \"\$_conn\" || true
+        done
+    _changed=1
+done
+
+# Write our own keyfile so unmanaged persists across reboots.
+# Separate filename (stagelab-unmanaged.conf) so we don't collide with
+# pre-existing unmanaged-devices lists (e.g. netns-routing's
+# 10-netns-unmanaged.conf). NM merges all *.conf additively.
+mkdir -p /etc/NetworkManager/conf.d
+cat > /etc/NetworkManager/conf.d/20-stagelab-unmanaged.conf <<EOF
+# Written by tools/setup-remote-test-host.sh --role stagelab-agent-dpdk
+# Keeps DPDK-candidate NICs out of NetworkManager so vfio-pci binding
+# in topology_dpdk is not racing against NM autoconnect.
+[keyfile]
+unmanaged-devices=\$(echo \$DPDK_IFACES | tr ' ' ';' | sed 's/^/interface-name:/;s/;/;interface-name:/g')
+EOF
+
+if [ \"\$_changed\" -eq 1 ] || ! grep -q '20-stagelab-unmanaged' /proc/\$(pidof NetworkManager)/cmdline 2>/dev/null; then
+    echo 'reloading NetworkManager config'
+    systemctl reload NetworkManager || nmcli general reload 2>/dev/null || true
+fi
+
+# Final verify: every requested iface must now be unmanaged.
+for _if in \$DPDK_IFACES; do
+    ip link show \"\$_if\" >/dev/null 2>&1 || continue
+    _st=\$(nmcli -t -f DEVICE,STATE device status 2>/dev/null | awk -F: -v d=\"\$_if\" '\$1==d{print \$2}')
+    if [ \"\$_st\" != 'unmanaged' ]; then
+        echo \"ERROR: \$_if still not unmanaged after NM reload (state=\$_st)\" >&2
+        exit 1
+    fi
+    echo \"\$_if: unmanaged OK\"
+done
+"
+
     # ── 1. DPDK tooling install ──────────────────────────────────
     info "stagelab-agent-dpdk: installing DPDK tooling (primary target: AlmaLinux 10)"
     # Legacy: grml/Debian codepath, used for simlab-only test hosts. stagelab targets AlmaLinux 10.
