@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from . import config as _config
 from . import report as _report
+from . import review as _review
 from .controller import StagelabController
 
 
@@ -99,6 +100,56 @@ def inspect(report_dir: str) -> None:
         click.echo(f"Error: {summary} not found", err=True)
         sys.exit(1)
     click.echo(summary.read_text(), nl=False)
+
+
+# ---------------------------------------------------------------------------
+# review
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.argument("report_dir", type=click.Path(exists=True, file_okay=False))
+@click.option("--output", type=click.Path(file_okay=False), default=None,
+              help="Write review artifacts here (default: REPORT_DIR).")
+@click.option("--open-pr", "open_pr_flag", is_flag=True, default=False,
+              help="Open a PR on the remote FW-config repo (see --repo).")
+@click.option("--repo", default=None,
+              help="owner/name — required when --open-pr is set.")
+@click.option("--branch", default=None,
+              help="Branch name for the PR (default: stagelab/<run_id>).")
+def review(report_dir: str, output: str | None, open_pr_flag: bool,
+           repo: str | None, branch: str | None) -> None:
+    """Consolidate tier-B recommendations + rule-order hints into a
+    human-readable review bundle. Optionally open a PR."""
+    run_dir = Path(report_dir)
+    payload = _review.load_from_run_dir(run_dir)
+
+    if not payload.tier_b_recommendations and not payload.rule_order_hints:
+        click.echo("nothing to review")
+        return
+
+    out_dir = Path(output) if output else run_dir
+    try:
+        md_path, yaml_path = _review.write(payload, out_dir)
+    except FileExistsError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    click.echo(str(md_path))
+    click.echo(str(yaml_path))
+
+    if open_pr_flag:
+        if not repo:
+            click.echo("Error: --repo is required when --open-pr is set.", err=True)
+            sys.exit(1)
+        effective_branch = branch or f"stagelab/{payload.run_id}"
+        try:
+            url = _review.open_pr(payload, repo=repo, branch=effective_branch,
+                                  body_path=md_path)
+            click.echo(url)
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"Error opening PR: {exc}", err=True)
+            sys.exit(1)
 
 
 __all__ = ["main"]
