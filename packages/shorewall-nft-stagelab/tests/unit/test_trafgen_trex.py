@@ -164,6 +164,60 @@ def test_run_stl_uses_mocked_client():
 
 
 # ---------------------------------------------------------------------------
+# 6-new. run_trex_stl — profile_text takes priority over profile_py
+# ---------------------------------------------------------------------------
+
+def test_run_stl_prefers_profile_text_over_py():
+    """When both profile_text and profile_py are set, profile_text wins."""
+    canned_stats = {
+        "global": {
+            "total_tx_bps": 1e9,
+            "total_tx_pps": 100_000.0,
+            "err_counters": {},
+        }
+    }
+
+    loaded_paths: list[str] = []
+
+    fake_profile = MagicMock()
+    fake_profile.get_streams.return_value = []
+
+    fake_stl_profile = MagicMock()
+
+    def capture_load(path):
+        loaded_paths.append(path)
+        return fake_profile
+
+    fake_stl_profile.load.side_effect = capture_load
+
+    fake_client = MagicMock()
+    fake_client.get_stats.return_value = canned_stats
+
+    fake_api = SimpleNamespace(
+        STLClient=MagicMock(return_value=fake_client),
+        STLProfile=fake_stl_profile,
+    )
+
+    spec = TrexStatelessSpec(
+        ports=(0,),
+        duration_s=1,
+        profile_text="# test profile content",
+        profile_py="/ignored/path.py",
+    )
+
+    with patch("shorewall_nft_stagelab.trafgen_trex._import_stl", return_value=fake_api), \
+         patch("shorewall_nft_stagelab.trafgen_trex.time.sleep"):
+        run_trex_stl(spec)
+
+    assert len(loaded_paths) == 1
+    loaded_path = loaded_paths[0]
+    assert loaded_path != "/ignored/path.py"
+    assert loaded_path.endswith(".py")
+    # Temp file is cleaned up after run; verify profile was loaded from it
+    fake_profile.get_streams.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # 7. run_trex_astf — RuntimeError on RPC error
 # ---------------------------------------------------------------------------
 
