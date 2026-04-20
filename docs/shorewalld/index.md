@@ -147,6 +147,17 @@ All metrics carry a `netns` label (empty string = the daemon's own
 namespace). Scrape endpoint is Prometheus plain-text at
 `http://HOST:PORT/metrics`.
 
+For the complete metric reference — including nfsets observability,
+resolver per-set counters, and VRRP (keepalived D-Bus + SNMP) metrics —
+see **[docs/shorewalld/metrics.md](metrics.md)**.
+
+**VRRP observability** (`--enable-vrrp-collector`): the `VrrpCollector`
+scrapes keepalived instance state, priority, and master-transition counts
+from D-Bus (optionally augmented via SNMP with `--vrrp-snmp-enable`).
+On AlmaLinux 10 / RHEL 10 where keepalived ships without D-Bus support,
+enable SNMP-only mode. See [metrics.md](metrics.md) for the full flag
+reference and PromQL alert examples.
+
 ### Rule and set metrics (one per netns with a loaded ruleset)
 
 | Metric | Type | Labels |

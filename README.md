@@ -36,8 +36,14 @@ pip install -e 'packages/shorewall-nft[dev]' \
 - **Network namespace support**: `--netns <name>` on every command.
 - **DNS-driven nft sets**: `dns:github.com` in a rule → shorewalld keeps
   `dns_github_com_v4/v6` sets populated from pdns_recursor answers.
+- **Named dynamic nft sets (`nfsets`)**: declare multi-host, multi-backend
+  sets (dnstap, resolver, ip-list, ip-list-plain) in one config file; reference
+  by name in rules. See [docs/features/nfsets.md](docs/features/nfsets.md).
 - **Prometheus metrics**: per-rule packet/byte counters, per-interface stats,
-  conntrack fill level, across all namespaces.
+  conntrack fill level, nfsets observability, across all namespaces.
+- **VRRP observability**: `VrrpCollector` scrapes keepalived D-Bus + SNMP;
+  per-instance state, priority, and master-transition counters. See
+  [docs/shorewalld/metrics.md](docs/shorewalld/metrics.md).
 - **12 000+ LOC Python, 236 tests, 36 CLI commands.**
 
 ## Quick start

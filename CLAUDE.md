@@ -101,6 +101,11 @@ When bumping a version, update all of these in one commit:
 Tag with `git tag -a vX.Y.Z` and push the tag — the release workflow fires
 on `refs/tags/v*` and publishes wheels + .deb + .rpm to a GitHub Release.
 
+**Release-blocker invariants** (check before tagging):
+- `shorewalld` optional extras (`[inotify]`, `[vrrp]`, `[snmp]`) must remain
+  optional — the core daemon must start and export metrics without them.
+  Verify: `pip install shorewalld` (no extras) then `shorewalld --listen-prom :19748 &` completes without import errors.
+
 ## Sister projects
 
 Located at `/home/avalentin/projects/marcant-fw/`:

@@ -3,8 +3,7 @@
 Scrape endpoint: `http://HOST:PORT/metrics` (default `:9748`, Prometheus
 text format, UTF-8).
 
-This document lists every metric exposed by shorewalld.  Metrics added in
-Wave 6 (nfsets observability) are marked **(W6)**.
+This document lists every metric exposed by shorewalld.
 
 ---
 
@@ -112,13 +111,37 @@ Emitted when `--listen-api` is set.
 | `shorewalld_dns_set_dedup_misses_total` | counter | `set`, `family` | Proposals that became real writes |
 | `shorewalld_dns_set_expiries_total` | counter | `set`, `family` | Entries aged out |
 | `shorewalld_dns_set_last_update_age_seconds` | gauge | `set`, `family` | Seconds since last write |
-| `shorewalld_dns_set_shared_qnames` | gauge | `set_name`, `family` | **(W6)** Number of qnames feeding one shared nft set; >1 means N:1 grouping active |
+| `shorewalld_dns_set_shared_qnames` | gauge | `set_name`, `family` | Number of qnames feeding one shared nft set; >1 means N:1 grouping active |
 
 **Example alert** — alert if an nfset shared-set has not been updated in 10 minutes:
 
 ```promql
 (time() - shorewalld_dns_set_last_update_age_seconds{set="example.com"}) > 600
 ```
+
+### Resolver (pull-resolver) per-set counters
+
+Emitted by `PullResolverMetricsCollector` when at least one `resolver`-backend
+nfset entry is registered.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `shorewalld_dns_resolver_refresh_total` | counter | `set_name`, `outcome` | DNS resolver refresh cycles per nfset; `outcome` ∈ `success` \| `failure` |
+| `shorewalld_dns_resolver_refresh_duration_seconds_sum` | counter | `set_name` | Cumulative seconds spent in successful refresh cycles per nfset |
+| `shorewalld_dns_resolver_refresh_duration_seconds_count` | counter | `set_name` | Count of successful timed refresh cycles per nfset |
+
+Note: `set_name` is the logical nfset name (base name, no `_v4`/`_v6` suffix)
+and corresponds to the `NAME` column in the `nfsets` config file.
+The `qname` label is intentionally absent to avoid unbounded cardinality.
+
+**PromQL rate for resolver latency per set:**
+
+```promql
+rate(shorewalld_dns_resolver_refresh_duration_seconds_sum[5m])
+  / rate(shorewalld_dns_resolver_refresh_duration_seconds_count[5m])
+```
+
+---
 
 ## ip-list backend metrics
 
@@ -140,7 +163,7 @@ Emitted when `--listen-api` is set.
 > `nfset_` prefix in the `name` label distinguishes nfset-sourced lists
 > from standalone config-sourced ones.
 
-## nfsets instance metrics **(W6)**
+## nfsets instance metrics
 
 Emitted per registered nfsets instance.
 
@@ -158,7 +181,7 @@ Emitted per registered nfsets instance.
 shorewalld_nfsets_payload_bytes > 1048576
 ```
 
-### Plain-list tracker **(W6)**
+### Plain-list tracker
 
 Each `ip-list-plain` source gets its own per-list metrics:
 
@@ -214,7 +237,7 @@ rate(shorewalld_plainlist_refresh_duration_seconds_sum[5m])
 
 ---
 
-## VRRP (keepalived D-Bus + SNMP augmentation) **(W8/W9)**
+## VRRP (keepalived D-Bus + SNMP augmentation)
 
 Enabled with `--enable-vrrp-collector`.  Requires `jeepney>=0.8`
 (`pip install shorewalld[vrrp]`).  Degrades silently when jeepney is absent
@@ -229,13 +252,13 @@ or keepalived is not running.
 | `shorewalld_vrrp_effective_priority` | gauge | `bus_name`, `instance`, `vr_id` | Effective priority after track-script adjustments (SNMP; 0 if unavailable) |
 | `shorewalld_vrrp_last_transition_timestamp_seconds` | gauge | `bus_name`, `instance`, `vr_id` | Unix timestamp of last observed state change (0 — not exposed by D-Bus or SNMP) |
 | `shorewalld_vrrp_vip_count` | gauge | `bus_name`, `instance`, `vr_id`, `family` | `vrrpInstanceVipsStatus` proxy: 1=allSet, 2=notAllSet (SNMP; 0 if unavailable) |
-| `shorewalld_vrrp_master_transitions_total` | counter | `bus_name`, `instance`, `vr_id` | Cumulative transitions-to-MASTER (`vrrpInstanceBecomeMaster`; 0 if SNMP unavailable) **(W9)** |
+| `shorewalld_vrrp_master_transitions_total` | counter | `bus_name`, `instance`, `vr_id` | Cumulative transitions-to-MASTER (`vrrpInstanceBecomeMaster`; 0 if SNMP unavailable) |
 | `shorewalld_vrrp_scrape_errors_total` | counter | `reason` | Scrape errors by reason |
 
 `reason` values: `dbus_unavailable`, `timeout`, `properties_get`, `parse`,
 `snmp_timeout`, `snmp_parse`.
 
-### SNMP augmentation **(W9)**
+### SNMP augmentation
 
 Add `--vrrp-snmp-enable` to query the KEEPALIVED-MIB sub-agent alongside (or
 instead of) D-Bus.  This fills in the fields that D-Bus cannot expose.

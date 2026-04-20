@@ -2,7 +2,7 @@
 
 **Audience**: operators  
 **Requires**: shorewall-nft + shorewalld  
-**Status**: Wave 4 — compiler + emitter + shorewalld wiring complete
+**Status**: Shipped — compiler + emitter + shorewalld wiring + metrics complete
 
 ---
 

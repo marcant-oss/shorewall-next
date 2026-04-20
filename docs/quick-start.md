@@ -109,6 +109,8 @@ the ruleset is loaded in the kernel.
 - [Three-interface setup](reference/three-interface.md) — LAN + DMZ +
   internet example
 - [CLI reference](cli/commands.md) — all 36 commands
+- [Named dynamic nft sets (nfsets)](features/nfsets.md) — hostname-based
+  and IP-list rules without hardcoding addresses
 
 ---
 
