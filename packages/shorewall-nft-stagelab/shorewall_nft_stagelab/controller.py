@@ -164,6 +164,52 @@ class StagelabController:
                 )
             log.debug("agent %r alive (ping ACK received)", host.name)
 
+    async def setup_endpoints(self) -> None:
+        """Send SETUP_ENDPOINT for every configured endpoint to its host.
+
+        Must be called after connect() and before run_scenarios(). The agent
+        creates the netns and topology (native NIC-in-netns or probe bridge
+        + TAP) based on the endpoint spec.
+        """
+        from .ipc import SetupEndpointMessage
+
+        for ep in self._config.endpoints:
+            conn = self._connections.get(ep.host)
+            if conn is None:
+                raise RuntimeError(
+                    f"endpoint {ep.name!r}: host {ep.host!r} has no agent connection"
+                )
+            spec = ep.model_dump()
+            msg = SetupEndpointMessage(id=new_id(), endpoint_spec=spec)
+            await conn.channel.send(msg)
+            response = await asyncio.wait_for(conn.channel.recv(), timeout=30.0)
+            if not isinstance(response, AckMessage):
+                raise RuntimeError(
+                    f"endpoint {ep.name!r}: agent returned "
+                    f"{type(response).__name__} instead of ACK "
+                    f"(error: {getattr(response, 'message', '?')!r})"
+                )
+            log.debug("endpoint %r set up on host %r", ep.name, ep.host)
+
+    async def teardown_endpoints(self) -> None:
+        """Send TEARDOWN_ENDPOINT for every endpoint before SHUTDOWN. Best-effort
+        — log and continue on individual failures so cleanup proceeds."""
+        from .ipc import TeardownEndpointMessage
+
+        for ep in self._config.endpoints:
+            conn = self._connections.get(ep.host)
+            if conn is None:
+                continue
+            try:
+                msg = TeardownEndpointMessage(id=new_id(), endpoint_name=ep.name)
+                await conn.channel.send(msg)
+                await asyncio.wait_for(conn.channel.recv(), timeout=10.0)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "teardown of endpoint %r on host %r failed: %s",
+                    ep.name, ep.host, exc,
+                )
+
     async def run_scenarios(self) -> RunReport:
         """For each scenario: build_runner().plan(cfg) -> AgentCommands.
 
@@ -222,7 +268,11 @@ class StagelabController:
 
                 msg = RunScenarioMessage(
                     id=new_id(),
-                    scenario_spec={"kind": cmd.kind, **cmd.spec},
+                    scenario_spec={
+                        "endpoint_name": cmd.endpoint_name,
+                        "kind": cmd.kind,
+                        "spec": cmd.spec,
+                    },
                 )
                 log.debug(
                     "sending RUN_SCENARIO to host %r: kind=%r", host_name, cmd.kind
