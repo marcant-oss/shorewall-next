@@ -121,6 +121,8 @@ def run_cmd(config_path: str, output_dir: str | None) -> None:
                     duration_s=0.0,
                     raw={"setup_error": setup_error_msg},
                     criteria_results={},
+                    test_id=getattr(sc, "test_id", None),
+                    standard_refs=list(getattr(sc, "standard_refs", []) or []),
                 )
                 for sc in cfg.scenarios
             ]

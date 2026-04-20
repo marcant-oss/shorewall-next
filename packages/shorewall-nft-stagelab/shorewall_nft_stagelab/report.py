@@ -23,6 +23,8 @@ class ScenarioResult:
     duration_s: float
     raw: dict           # tool-specific result dict
     criteria_results: dict = field(default_factory=dict)  # criterion_name -> bool
+    test_id: str | None = None
+    standard_refs: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

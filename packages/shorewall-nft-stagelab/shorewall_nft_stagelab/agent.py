@@ -206,9 +206,39 @@ async def handle_run_scenario(
         i3_kwargs = {k: v for k, v in spec.items() if k in _IPERF3_FIELDS}
         i3_kwargs["mode"] = mode
         i3_spec = trafgen_iperf3.Iperf3Spec(**i3_kwargs)
-        proc = await asyncio.to_thread(
-            _exec_in_netns, netns, trafgen_iperf3.build_argv(i3_spec)
-        )
+        # Server mode: iperf3 -s --one-off blocks in accept() until a client
+        # connects. Without a hard timeout the agent thread is wedged for the
+        # full controller RUN_SCENARIO timeout (120 s) and cannot respond to
+        # subsequent messages including SHUTDOWN.
+        # Add a per-process timeout: scenario duration + 30 s grace for
+        # client-side setup lag. Clients have bounded runtime via -t, so the
+        # same guard also catches runaway client subprocesses.
+        _exec_timeout: int | None = None
+        if kind == "run_iperf3_server":
+            _exec_timeout = int(spec.get("duration_s", 60)) + 30
+        try:
+            proc = await asyncio.to_thread(
+                _exec_in_netns, netns, trafgen_iperf3.build_argv(i3_spec),
+                timeout=_exec_timeout,
+            )
+        except subprocess.TimeoutExpired:
+            # Kill the wedged iperf3 process and return a structured error so
+            # the scenario reports ok=False rather than the controller timing
+            # out and the agent becoming unresponsive to SHUTDOWN.
+            await asyncio.to_thread(
+                subprocess.run,
+                ["ip", "netns", "exec", netns, "pkill", "-9", "-x", "iperf3"],
+                check=False, capture_output=True, text=True,
+            )
+            result_timeout: dict[str, Any] = {
+                "tool": "iperf3", "ok": False,
+                "error": "iperf3 server timeout — no client connected within "
+                         f"{_exec_timeout}s",
+                "throughput_gbps": 0.0, "retransmits": 0, "duration_s": 0.0,
+            }
+            if spec.get("_sweep_point") is not None:
+                result_timeout["_sweep_point"] = spec["_sweep_point"]
+            return result_timeout
         r = trafgen_iperf3.parse_result(proc.stdout)
         result: dict[str, Any] = {
             "tool": "iperf3", "ok": r.ok, "throughput_gbps": r.throughput_gbps,
