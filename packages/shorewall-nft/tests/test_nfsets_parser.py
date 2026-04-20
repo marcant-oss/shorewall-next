@@ -12,6 +12,7 @@ import pytest
 from shorewall_nft.nft.nfsets import (
     NfSetEntry,
     NfSetRegistry,
+    _parse_size,
     build_nfset_registry,
     emit_nfset_declarations,
     nfset_registry_to_payload,
@@ -290,21 +291,23 @@ class TestEmitNfsetDeclarations:
         out = "\n".join(emit_nfset_declarations(reg))
         assert "flags timeout, interval;" in out
 
-    def test_dns_only_size_512(self):
+    def test_dns_only_size_4096(self):
         reg = self._reg(self._make_entry("a", "dnstap"))
         out = "\n".join(emit_nfset_declarations(reg))
-        assert "size 512;" in out
+        assert "size 4096;" in out
 
-    def test_iplist_size_65536(self):
+    def test_iplist_size_262144(self):
         reg = self._reg(self._make_entry("a", "ip-list"))
         out = "\n".join(emit_nfset_declarations(reg))
-        assert "size 65536;" in out
+        assert "size 262144;" in out
 
-    def test_mixed_size_65536(self):
+    def test_mixed_dns_gets_4096_iplist_gets_262144(self):
+        # In a mixed registry, each entry uses its own backend default.
         reg = self._reg(self._make_entry("a", "dnstap"),
                         self._make_entry("b", "ip-list"))
         out = "\n".join(emit_nfset_declarations(reg))
-        assert "size 65536;" in out
+        assert "size 4096;" in out
+        assert "size 262144;" in out
 
     def test_both_v4_and_v6_emitted(self):
         reg = self._reg(self._make_entry("myset", "dnstap"))
@@ -400,3 +403,153 @@ class TestPayloadRoundTrip:
         # Should not raise.
         serialised = json.dumps(payload)
         assert isinstance(serialised, str)
+
+    def test_round_trip_preserves_size(self):
+        rows = _lines(("bl", "/var/lib/bl.txt", "ip-list-plain,size=1M"))
+        reg = build_nfset_registry(rows)
+        payload = nfset_registry_to_payload(reg)
+        reg2 = payload_to_nfset_registry(payload)
+        assert reg2.entries[0].size == 1048576
+
+
+# ---------------------------------------------------------------------------
+# _parse_size — unit tests
+# ---------------------------------------------------------------------------
+
+class TestParseSize:
+    def test_plain_integer(self):
+        assert _parse_size("262144") == 262144
+
+    def test_k_suffix(self):
+        assert _parse_size("5k") == 5120
+
+    def test_M_suffix_10M(self):
+        assert _parse_size("10M") == 10 * 1024 * 1024
+
+    def test_M_suffix_1M(self):
+        assert _parse_size("1M") == 1048576
+
+    def test_256k(self):
+        assert _parse_size("256k") == 262144
+
+    def test_invalid_alpha_raises(self):
+        with pytest.raises(ValueError, match="unrecognised size format"):
+            _parse_size("abc")
+
+    def test_zero_raises(self):
+        with pytest.raises(ValueError, match="out of range"):
+            _parse_size("0")
+
+    def test_too_large_raises(self):
+        # 200M = 209715200 > 64M cap
+        with pytest.raises(ValueError, match="out of range"):
+            _parse_size("200M")
+
+    def test_boundary_min(self):
+        assert _parse_size("1") == 1
+
+    def test_boundary_max(self):
+        # 64M exactly should be accepted.
+        assert _parse_size("64M") == 64 * 1024 * 1024
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError, match="empty size value"):
+            _parse_size("")
+
+    def test_entry_name_in_error(self):
+        with pytest.raises(ValueError, match="myblocklist"):
+            _parse_size("0", entry_name="myblocklist")
+
+
+# ---------------------------------------------------------------------------
+# emit_nfset_declarations — explicit size override
+# ---------------------------------------------------------------------------
+
+class TestEmitNfsetDeclarationsExplicitSize:
+    def _make_entry(self, name, backend, size=None) -> NfSetEntry:
+        return NfSetEntry(
+            name=name, hosts=["h.example.org"], backend=backend, size=size
+        )
+
+    def _reg(self, *entries: NfSetEntry) -> NfSetRegistry:
+        return NfSetRegistry(entries=list(entries),
+                             set_names={e.name for e in entries})
+
+    def test_explicit_size_overrides_default(self):
+        reg = self._reg(self._make_entry("bl", "ip-list", size=1_000_000))
+        out = "\n".join(emit_nfset_declarations(reg))
+        assert "size 1000000;" in out
+        # Must NOT fall back to default.
+        assert "size 262144;" not in out
+
+    def test_explicit_size_on_dns_entry(self):
+        reg = self._reg(self._make_entry("dns", "dnstap", size=8192))
+        out = "\n".join(emit_nfset_declarations(reg))
+        assert "size 8192;" in out
+        assert "size 4096;" not in out
+
+    def test_no_override_iplist_uses_262144(self):
+        reg = self._reg(self._make_entry("bl", "ip-list-plain"))
+        out = "\n".join(emit_nfset_declarations(reg))
+        assert "size 262144;" in out
+
+    def test_no_override_dns_uses_4096(self):
+        reg = self._reg(self._make_entry("dns", "resolver"))
+        out = "\n".join(emit_nfset_declarations(reg))
+        assert "size 4096;" in out
+
+    def test_mixed_registry_global_flags_unchanged(self):
+        # Flags must remain registry-wide (not per-set) — global logic unchanged.
+        reg = self._reg(
+            self._make_entry("a", "dnstap"),
+            self._make_entry("b", "ip-list"),
+        )
+        out = "\n".join(emit_nfset_declarations(reg))
+        assert "flags timeout, interval;" in out
+
+
+# ---------------------------------------------------------------------------
+# size= option via build_nfset_registry
+# ---------------------------------------------------------------------------
+
+class TestSizeOptionParsedByRegistry:
+    def test_size_plain_integer(self):
+        rows = _lines(("bl", "/var/lib/bl.txt", "ip-list-plain,size=262144"))
+        e = build_nfset_registry(rows).entries[0]
+        assert e.size == 262144
+
+    def test_size_M_suffix(self):
+        rows = _lines(("bl", "/var/lib/bl.txt", "ip-list,size=10M"))
+        e = build_nfset_registry(rows).entries[0]
+        assert e.size == 10 * 1024 * 1024
+
+    def test_size_k_suffix(self):
+        rows = _lines(("bl", "/var/lib/bl.txt", "ip-list,size=5k"))
+        e = build_nfset_registry(rows).entries[0]
+        assert e.size == 5120
+
+    def test_size_zero_raises(self):
+        rows = _lines(("bl", "/var/lib/bl.txt", "ip-list,size=0"))
+        with pytest.raises(ValueError, match="out of range"):
+            build_nfset_registry(rows)
+
+    def test_size_too_large_raises(self):
+        rows = _lines(("bl", "/var/lib/bl.txt", "ip-list,size=200M"))
+        with pytest.raises(ValueError, match="out of range"):
+            build_nfset_registry(rows)
+
+    def test_size_invalid_value_raises(self):
+        rows = _lines(("bl", "/var/lib/bl.txt", "ip-list,size=abc"))
+        with pytest.raises(ValueError, match="unrecognised size format"):
+            build_nfset_registry(rows)
+
+    def test_no_size_option_defaults_to_none(self):
+        rows = _lines(("bl", "/var/lib/bl.txt", "ip-list-plain"))
+        e = build_nfset_registry(rows).entries[0]
+        assert e.size is None
+
+    def test_size_emitted_in_declaration(self):
+        rows = _lines(("bl", "/var/lib/bl.txt", "ip-list,size=1M"))
+        reg = build_nfset_registry(rows)
+        out = "\n".join(emit_nfset_declarations(reg))
+        assert "size 1048576;" in out

@@ -14,12 +14,50 @@ Key design choices:
 * ETag / Last-Modified caching per list to avoid unnecessary downloads.
 * ``max_prefixes`` safety cap: if the fetched list exceeds the cap, the
   write is skipped and an ERROR is logged.
+
+Large-set tuning
+----------------
+Five environment variables control the swap-rename path for large sets.
+All are read at module import time; a daemon restart is required to
+apply changes.
+
+``SHOREWALLD_IPLIST_CHUNK_SIZE`` (default ``2000``, clamped to [100, 10000]):
+  Maximum number of IP/CIDR elements per ``add element`` / ``delete element``
+  nft command.  Larger values reduce round-trips but produce longer scripts.
+  Applies to both the diff path and each ``add element`` chunk in the swap
+  script.
+
+``SHOREWALLD_IPLIST_SWAP_RENAME`` (default ``0``; set to ``1`` to enable):
+  Master gate for the atomic swap-rename path.  When ``0`` the diff path is
+  always used regardless of set size.  Flip to ``1`` only after observing
+  ``shorewalld_iplist_apply_path_total`` metrics and confirming that diff
+  performance is acceptable for your set sizes.
+
+``SHOREWALLD_IPLIST_SWAP_ABS`` (default ``50000``):
+  Absolute size threshold.  When the new element count is at or above this
+  value *and* ``SWAP_RENAME=1``, the swap path is chosen.  Sets smaller
+  than this always use the diff path (unless the fractional or autosize
+  trigger fires).
+
+``SHOREWALLD_IPLIST_SWAP_FRAC`` (default ``0.50``):
+  Fractional-churn threshold.  When the absolute delta between old and new
+  element counts exceeds this fraction of the current count (e.g. 50%
+  churn), the swap path is chosen.  Keeps fast churn on large sets from
+  generating huge diff scripts.
+
+``SHOREWALLD_IPLIST_AUTOSIZE_HEADROOM`` (default ``0.90``):
+  Fill-ratio autosize trigger.  When ``len(new) / declared_size`` is at or
+  above this value, the swap path recreates the set with a larger capacity
+  (next power-of-2 above ``max(len(new)*2, declared_size*2)``), capped at
+  2^26 (64 M).  A WARNING is logged with the old and new sizes so the
+  operator knows to raise ``size:`` in the nfsets config to match.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -38,7 +76,34 @@ log = logging.getLogger("shorewalld.iplist")
 # HTTP retry back-off schedule (seconds).
 _BACKOFF = (60, 120, 300, 3600)
 # Maximum prefixes per nft add/delete command.
-_CHUNK_SIZE = 200
+# Env-tunable: SHOREWALLD_IPLIST_CHUNK_SIZE (clamped to [100, 10000]).
+_CHUNK_SIZE = max(100, min(10_000, int(os.environ.get("SHOREWALLD_IPLIST_CHUNK_SIZE", "2000"))))
+
+# ── Swap-rename feature gate and thresholds ───────────────────────────────────
+# Master gate: off by default.  Operator opts in after observing metrics.
+_SWAP_ENABLED = os.environ.get("SHOREWALLD_IPLIST_SWAP_RENAME", "0") == "1"
+# Absolute new-element count above which swap is preferred.
+_SWAP_THRESHOLD_ABS = int(os.environ.get("SHOREWALLD_IPLIST_SWAP_ABS", "50000"))
+# Fractional churn threshold (0..1) relative to current element count.
+_SWAP_THRESHOLD_FRAC = float(os.environ.get("SHOREWALLD_IPLIST_SWAP_FRAC", "0.50"))
+# Fill-ratio that triggers autosize (resize to larger power-of-2).
+_AUTOSIZE_HEADROOM = float(os.environ.get("SHOREWALLD_IPLIST_AUTOSIZE_HEADROOM", "0.90"))
+# Minimum set size for the autosize-triggered swap path (elements).
+# Below this floor the proxy fill-ratio check is skipped to avoid spurious
+# swap attempts on medium-sized sets whose declared capacity exceeds len(new).
+# Set to match the default _SWAP_THRESHOLD_ABS so that only sets large enough
+# to warrant swap attention even get the autosize fill-ratio check.
+# Not exposed as an env var (operator uses SWAP_ABS for general size gating).
+_AUTOSIZE_MIN_ELEMS = 50_000
+# Hard cap on autosize upper bound: 2^26 = 64 M elements.
+_AUTOSIZE_MAX = 67_108_864
+
+
+def _next_pow2(n: int) -> int:
+    """Return the smallest power of 2 >= *n* (minimum 1)."""
+    if n <= 1:
+        return 1
+    return 1 << (n - 1).bit_length()
 
 
 @dataclass
@@ -68,6 +133,12 @@ class IpListMetrics:
         self._fetch_errors: dict[str, dict[str, int]] = {}
         # name -> {op: count}
         self._updates: dict[str, dict[str, int]] = {}
+        # (name, family) -> {sum: float, count: int}
+        self._apply_durations: dict[tuple[str, str], dict[str, float]] = {}
+        # (name, family) -> {path: count}
+        self._apply_paths: dict[tuple[str, str], dict[str, int]] = {}
+        # (name, family) -> {kind: value}  kind ∈ used/declared
+        self._apply_capacity: dict[tuple[str, str], dict[str, int]] = {}
 
     def set_prefixes(self, name: str, n_v4: int, n_v6: int) -> None:
         self._prefixes[name] = {"v4": n_v4, "v6": n_v6}
@@ -90,6 +161,40 @@ class IpListMetrics:
     def record_update(self, name: str, op: str, count: int) -> None:
         self._updates.setdefault(name, {})
         self._updates[name][op] = self._updates[name].get(op, 0) + count
+
+    def record_apply_duration(self, name: str, family: str, seconds: float) -> None:
+        """Wall-clock time spent in _apply_set for one (list, family) pair."""
+        key = (name, family)
+        entry = self._apply_durations.setdefault(key, {"sum": 0.0, "count": 0})
+        entry["sum"] += seconds
+        entry["count"] += 1
+
+    def record_apply_path(self, name: str, family: str, path: str) -> None:
+        """Code path taken: 'diff' | 'swap' | 'fallback-from-swap'.
+
+        Agent C will emit 'swap' and 'fallback-from-swap'; this module only
+        emits 'diff'.
+        """
+        key = (name, family)
+        entry = self._apply_paths.setdefault(key, {})
+        entry[path] = entry.get(path, 0) + 1
+
+    def record_apply_capacity(
+        self, name: str, family: str, used: int, declared: int
+    ) -> None:
+        """Post-apply capacity check.
+
+        Records how full the set is relative to its declared size.
+        Emits a WARN log when used/declared >= 0.8.
+        """
+        key = (name, family)
+        self._apply_capacity[key] = {"used": used, "declared": declared}
+        if declared and used / declared >= 0.8:
+            log.warning(
+                "iplist.%s: %s set at %.0f%% capacity (%d/%d) — "
+                "operator should raise `size:` in nfsets config",
+                name, family, used / declared * 100.0, used, declared,
+            )
 
     def collect(self) -> list[Any]:
         """Return metric families for ShorewalldRegistry."""
@@ -147,6 +252,63 @@ class IpListMetrics:
             for op, count in ops.items():
                 fam4.add([name, op], float(count))
         families.append(fam4)
+
+        # shorewalld_iplist_apply_duration_seconds_sum{list, family}
+        fam5 = _MetricFamily(
+            name="shorewalld_iplist_apply_duration_seconds_sum",
+            help_text="Cumulative wall-clock seconds spent in _apply_set per (list, family)",
+            mtype="counter",
+            labels=["list", "family"],
+        )
+        # shorewalld_iplist_apply_duration_seconds_count{list, family}
+        fam6 = _MetricFamily(
+            name="shorewalld_iplist_apply_duration_seconds_count",
+            help_text="Number of _apply_set calls per (list, family)",
+            mtype="counter",
+            labels=["list", "family"],
+        )
+        for (lname, fam_label), entry in self._apply_durations.items():
+            fam5.add([lname, fam_label], entry["sum"])
+            fam6.add([lname, fam_label], float(entry["count"]))
+        families.append(fam5)
+        families.append(fam6)
+
+        # shorewalld_iplist_apply_path_total{list, family, path}
+        fam7 = _MetricFamily(
+            name="shorewalld_iplist_apply_path_total",
+            help_text="Apply code-path counts per (list, family, path); path ∈ diff/swap/fallback/saturated",
+            mtype="counter",
+            labels=["list", "family", "path"],
+        )
+        for (lname, fam_label), paths in self._apply_paths.items():
+            for path, count in paths.items():
+                fam7.add([lname, fam_label, path], float(count))
+        families.append(fam7)
+
+        # shorewalld_iplist_set_capacity{list, family, kind}  kind ∈ used/declared
+        fam8 = _MetricFamily(
+            name="shorewalld_iplist_set_capacity",
+            help_text="nft set element count (used) and declared size per (list, family)",
+            mtype="gauge",
+            labels=["list", "family", "kind"],
+        )
+        # shorewalld_iplist_set_headroom_ratio{list, family}  — 1.0 means full
+        fam9 = _MetricFamily(
+            name="shorewalld_iplist_set_headroom_ratio",
+            help_text="Fraction of declared set capacity in use (1.0 = full) per (list, family)",
+            mtype="gauge",
+            labels=["list", "family"],
+        )
+        for (lname, fam_label), cap in self._apply_capacity.items():
+            fam8.add([lname, fam_label, "used"], float(cap["used"]))
+            fam8.add([lname, fam_label, "declared"], float(cap["declared"]))
+            if cap["declared"]:
+                ratio = cap["used"] / cap["declared"]
+            else:
+                ratio = 0.0
+            fam9.add([lname, fam_label], ratio)
+        families.append(fam8)
+        families.append(fam9)
 
         return families
 
@@ -434,6 +596,9 @@ class IpListTracker:
                 n_netns, elapsed, etag_note,
             )
 
+    # Kernel error substrings that indicate the nft set is full.
+    _SET_FULL_MARKERS = ("Set is full", "Cannot resize", "No space left on device")
+
     async def _apply_set(
         self,
         netns: str,
@@ -443,14 +608,56 @@ class IpListTracker:
         list_name: str,
         family: str,
     ) -> tuple[int, int]:
-        """Compute and apply the diff for one set in one netns.
+        """Compute and apply the diff (or atomic swap-rename) for one set in one netns.
 
         Returns ``(added, removed)`` counts, or ``(-1, 0)`` on error.
+
+        Path selection
+        ~~~~~~~~~~~~~~
+        When ``_SWAP_ENABLED`` is ``True`` and one of the three triggers fires
+        (absolute size, large churn fraction, or autosize headroom), the method
+        probes the existing set's metadata via libnftables JSON, constructs a
+        single atomic script (``add set`` → ``add element`` × N chunks →
+        ``delete set`` → ``rename set``), and submits it in one ``cmd()`` call.
+
+        On ANY failure during the swap path the method falls back to the
+        standard diff path, emits ``record_apply_path("fallback-from-swap")``,
+        and then emits ``record_apply_path("diff")`` to keep per-path totals
+        consistent.
         """
+        t_start = time.monotonic()
+        nft_netns = netns or None
+
+        # ── Decide whether to attempt the swap path ───────────────────────
+        total_delta = abs(len(new) - len(current))
+        # Proxy fill_ratio for the autosize trigger: use len(current) as the
+        # declared_size approximation (in steady state len(current) ≈ declared
+        # size).  Only computed when len(new) >= _AUTOSIZE_MIN_ELEMS to avoid
+        # spurious swap attempts on tiny sets.
+        _proxy_declared = max(len(current), 1) if current else max(len(new), 1)
+        _proxy_fill_ratio = (
+            len(new) / _proxy_declared if len(new) >= _AUTOSIZE_MIN_ELEMS else 0.0
+        )
+        use_swap = _SWAP_ENABLED and (
+            len(new) >= _SWAP_THRESHOLD_ABS
+            or (current and total_delta / max(1, len(current)) >= _SWAP_THRESHOLD_FRAC)
+            or _proxy_fill_ratio >= _AUTOSIZE_HEADROOM
+        )
+
+        if use_swap:
+            ok, added, removed, elapsed = await self._try_swap_rename(
+                nft_netns, set_name, current, new, list_name, family, t_start
+            )
+            if ok:
+                return added, removed
+            # Fallback: drop through to diff path below.
+            self._metrics.record_apply_path(list_name, family, "fallback-from-swap")
+            # Re-read t_start so diff timing excludes the failed swap attempt.
+            t_start = time.monotonic()
+
+        # ── Standard diff path ────────────────────────────────────────────
         to_add = new - current
         to_remove = current - new
-
-        nft_netns = netns or None
 
         if to_add:
             for chunk in _chunks(to_add, _CHUNK_SIZE):
@@ -462,11 +669,25 @@ class IpListTracker:
                 try:
                     self._nft.cmd(script, netns=nft_netns)
                 except Exception as e:
-                    log.error(
-                        "iplist.%s: nft add element to %s (netns=%r) failed: %s",
-                        list_name, set_name, netns, e,
-                    )
-                    self._metrics.record_fetch_error(list_name, "nft_write_error")
+                    err_str = str(e)
+                    if any(m in err_str for m in self._SET_FULL_MARKERS):
+                        log.error(
+                            "iplist.%s: set %s (netns=%r) is full — "
+                            "raise `size:` in nfsets config: %s",
+                            list_name, set_name, netns, e,
+                        )
+                        self._metrics.record_fetch_error(
+                            list_name, "set_capacity_exceeded"
+                        )
+                    else:
+                        log.error(
+                            "iplist.%s: nft add element to %s (netns=%r) failed: %s",
+                            list_name, set_name, netns, e,
+                        )
+                        self._metrics.record_fetch_error(list_name, "nft_write_error")
+                    elapsed = time.monotonic() - t_start
+                    self._metrics.record_apply_duration(list_name, family, elapsed)
+                    self._metrics.record_apply_path(list_name, family, "diff")
                     return -1, 0
 
         if to_remove:
@@ -485,7 +706,143 @@ class IpListTracker:
                         list_name, set_name, netns, e,
                     )
 
+        elapsed = time.monotonic() - t_start
+        self._metrics.record_apply_duration(list_name, family, elapsed)
+        self._metrics.record_apply_path(list_name, family, "diff")
+
+        # ── Capacity probe (non-fatal) ─────────────────────────────────────
+        try:
+            result = self._nft.cmd(
+                f"list set inet shorewall {set_name}",
+                netns=nft_netns,
+                json_output=True,
+            )
+            # libnftables JSON shape:
+            # {"nftables": [..., {"set": {"name": ..., "size": N, "elem": [...]}}]}
+            declared = 0
+            if isinstance(result, dict):
+                for entry in result.get("nftables", []):
+                    if isinstance(entry, dict) and "set" in entry:
+                        declared = entry["set"].get("size", 0)
+                        break
+            used = len(new)
+            self._metrics.record_apply_capacity(list_name, family, used, declared)
+        except Exception as exc:
+            log.debug(
+                "iplist.%s: capacity probe failed: %s (non-fatal)", list_name, exc
+            )
+
         return len(to_add), len(to_remove)
+
+    async def _try_swap_rename(
+        self,
+        nft_netns: str | None,
+        set_name: str,
+        current: set[str],
+        new: set[str],
+        list_name: str,
+        family: str,
+        t_start: float,
+    ) -> tuple[bool, int, int, float]:
+        """Attempt an atomic swap-rename for *set_name*.
+
+        Returns ``(success, added, removed, elapsed)``.  On any failure returns
+        ``(False, 0, 0, 0.0)`` so the caller can fall back to the diff path.
+        The caller is responsible for emitting ``fallback-from-swap`` when
+        ``success`` is ``False``.
+        """
+        # Step 1: probe current set metadata.
+        try:
+            probe = self._nft.cmd(
+                f"list set inet shorewall {set_name}",
+                netns=nft_netns,
+                json_output=True,
+            )
+        except Exception as exc:
+            log.warning(
+                "iplist.%s: swap probe failed for %s — will fall back to diff: %s",
+                list_name, set_name, exc,
+            )
+            return False, 0, 0, 0.0
+
+        # Step 2: parse the probe result.
+        try:
+            set_type, set_flags, declared_size = _parse_set_probe(probe)
+        except Exception as exc:
+            log.warning(
+                "iplist.%s: swap probe parse error for %s — will fall back to diff: %s",
+                list_name, set_name, exc,
+            )
+            return False, 0, 0, 0.0
+
+        # Step 3: re-evaluate autosize trigger with the real declared_size.
+        fill_ratio = len(new) / max(1, declared_size)
+        if fill_ratio >= _AUTOSIZE_HEADROOM:
+            new_size = min(
+                _next_pow2(max(len(new) * 2, declared_size * 2)),
+                _AUTOSIZE_MAX,
+            )
+            log.warning(
+                "iplist.%s: autosize %s %d → %d (fill %.0f%%, "
+                "operator should raise `size:` in nfsets config to match)",
+                list_name, set_name, declared_size, new_size, fill_ratio * 100,
+            )
+        else:
+            new_size = declared_size if declared_size else max(len(new) * 2, 65536)
+
+        # Step 4: build and submit one atomic script.
+        tmp_name = f"{set_name}_new"
+        flags_str = ", ".join(set_flags) if set_flags else ""
+        flags_line = f" flags {flags_str};" if flags_str else ""
+        script_lines = [
+            f"add set inet shorewall {tmp_name} {{ type {set_type};{flags_line} size {new_size}; }}",
+        ]
+        for chunk in _chunks(new, _CHUNK_SIZE):
+            elements = ", ".join(chunk)
+            script_lines.append(
+                f"add element inet shorewall {tmp_name} {{ {elements} }}"
+            )
+        script_lines.append(f"delete set inet shorewall {set_name}")
+        script_lines.append(f"rename set inet shorewall {tmp_name} {set_name}")
+        script = "\n".join(script_lines)
+
+        try:
+            self._nft.cmd(script, netns=nft_netns)
+        except Exception as exc:
+            log.warning(
+                "iplist.%s: swap script rejected for %s — will fall back to diff: %s",
+                list_name, set_name, exc,
+            )
+            return False, 0, 0, 0.0
+
+        elapsed = time.monotonic() - t_start
+        self._metrics.record_apply_duration(list_name, family, elapsed)
+        self._metrics.record_apply_path(list_name, family, "swap")
+        self._metrics.record_apply_capacity(list_name, family, len(new), new_size)
+
+        return True, len(new), len(current), elapsed
+
+
+def _parse_set_probe(probe: object) -> tuple[str, list[str], int]:
+    """Extract (type_str, flags_list, size) from a libnftables JSON probe result.
+
+    Raises ``ValueError`` if the probe result is not in the expected shape.
+    """
+    if not isinstance(probe, dict):
+        raise ValueError(f"probe result is not a dict: {type(probe)!r}")
+    nftables = probe.get("nftables", [])
+    for entry in nftables:
+        if isinstance(entry, dict) and "set" in entry:
+            s = entry["set"]
+            set_type = s.get("type", "ipv4_addr")
+            # flags may be a list or absent
+            raw_flags = s.get("flags", [])
+            if isinstance(raw_flags, str):
+                raw_flags = [raw_flags]
+            set_flags = list(raw_flags)
+            declared_size = int(s.get("size", 65536))
+            return set_type, set_flags, declared_size
+    raise ValueError("no 'set' entry found in probe result")
 
 
 def _chunks(items: set[str], size: int):
