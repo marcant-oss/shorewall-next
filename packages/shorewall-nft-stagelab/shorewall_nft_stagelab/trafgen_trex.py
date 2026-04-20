@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 
@@ -16,13 +18,15 @@ class TrexStatelessSpec:
     multiplier: str = "10gbps"       # "50%", "1000kpps", "5gbps", etc.
     pcap_files: tuple[str, ...] = () # optional .pcap replay files, one per port
     profile_py: str = ""             # path to STL profile .py
+    profile_text: str = ""           # inline profile source; priority over profile_py
     trex_daemon_port: int = 4501     # STL RPC port
     trex_host: str = "127.0.0.1"
 
 
 @dataclass(frozen=True)
 class TrexAstfSpec:
-    profile_py: str                  # path to ASTF profile .py (required)
+    profile_py: str = ""             # path to ASTF profile .py
+    profile_text: str = ""           # inline profile source; priority over profile_py
     duration_s: int = 30
     multiplier: float = 1.0          # scales base CPS in profile
     trex_daemon_port: int = 4502     # ASTF RPC port
@@ -158,12 +162,23 @@ def run_trex_stl(spec: TrexStatelessSpec) -> TrexResult:
         server=spec.trex_host,
         sync_port=spec.trex_daemon_port,
     )
+    _tmp_profile: str | None = None
     try:
         client.connect()
         client.reset(ports=list(spec.ports))
 
-        if spec.profile_py:
-            profile = api.STLProfile.load(spec.profile_py)
+        if spec.profile_text:
+            fd, _tmp_profile = tempfile.mkstemp(suffix=".py")
+            os.write(fd, spec.profile_text.encode())
+            os.close(fd)
+            profile_path = _tmp_profile
+        elif spec.profile_py:
+            profile_path = spec.profile_py
+        else:
+            profile_path = None
+
+        if profile_path:
+            profile = api.STLProfile.load(profile_path)
             streams = profile.get_streams()
             for port in spec.ports:
                 client.add_streams(streams, ports=[port])
@@ -193,6 +208,11 @@ def run_trex_stl(spec: TrexStatelessSpec) -> TrexResult:
             client.disconnect()
         except Exception:
             pass
+        if _tmp_profile is not None:
+            try:
+                os.unlink(_tmp_profile)
+            except OSError:
+                pass
 
     return parse_stl_stats(stats, float(spec.duration_s))
 
@@ -209,11 +229,22 @@ def run_trex_astf(spec: TrexAstfSpec) -> TrexResult:
         server=spec.trex_host,
         sync_port=spec.trex_daemon_port,
     )
+    _tmp_profile: str | None = None
     try:
         client.connect()
         client.reset()
 
-        profile = api.ASTFProfile.load(spec.profile_py)
+        if spec.profile_text:
+            fd, _tmp_profile = tempfile.mkstemp(suffix=".py")
+            os.write(fd, spec.profile_text.encode())
+            os.close(fd)
+            profile_path = _tmp_profile
+        elif spec.profile_py:
+            profile_path = spec.profile_py
+        else:
+            raise ValueError("TrexAstfSpec: either profile_text or profile_py must be set")
+
+        profile = api.ASTFProfile.load(profile_path)
         client.load_profile(profile)
 
         client.start(mult=spec.multiplier, duration=spec.duration_s)
@@ -231,5 +262,10 @@ def run_trex_astf(spec: TrexAstfSpec) -> TrexResult:
             client.disconnect()
         except Exception:
             pass
+        if _tmp_profile is not None:
+            try:
+                os.unlink(_tmp_profile)
+            except OSError:
+                pass
 
     return parse_astf_stats(stats, float(spec.duration_s))
