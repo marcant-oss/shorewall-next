@@ -1,0 +1,90 @@
+# Example stagelab config for the HA-pair test environment.
+#
+# Topology:
+#   fw-tester01 (192.168.203.93) — client side, native-mode on eth2.10
+#   fw-tester02 (192.168.203.74) — server side, native-mode on eth2.20
+#   elgar-test  (192.168.203.70) — firewall-under-test (primary, exposes /metrics)
+#   tropheus-test (192.168.203.87) — firewall-under-test (secondary)
+#
+# Traffic path:
+#   fw-tester01 eth2.10 (10.0.10.100) --VLAN 10--> FW --VLAN 20--> eth2.20 (10.0.20.100) on fw-tester02
+#
+# This YAML uses mode=native on virtio eth2 interfaces — DPDK (mode=dpdk) needs
+# SR-IOV hardware which is scheduled to be added later. Switch mode:native ->
+# mode:dpdk and add pci_addr + dpdk_cores + hugepages_gib once that's available.
+
+hosts:
+  - name: tester01
+    address: root@192.168.203.93
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+
+  - name: tester02
+    address: root@192.168.203.74
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+
+dut:
+  kind: external
+
+endpoints:
+  # Both endpoints live on VLAN 13 — that VID is carried by the existing
+  # br-trunk between tester01 and tester02. Switch to distinct VLANs (with a
+  # FW in the middle) once routing policy + FW config allow it.
+  - name: client-lan
+    host: tester01
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: 10.0.13.100/24
+    ipv4_gw: 10.0.13.200          # peer endpoint as surrogate GW
+    rss_queues: 4
+    irq_affinity: [2, 3]
+
+  - name: server-wan
+    host: tester02
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: 10.0.13.200/24
+    ipv4_gw: 10.0.13.100          # peer endpoint as surrogate GW
+    rss_queues: 4
+    irq_affinity: [2, 3]
+
+scenarios:
+  - id: baseline_throughput
+    kind: throughput
+    source: client-lan
+    sink: server-wan
+    proto: tcp
+    duration_s: 10
+    parallel: 4
+    expect_min_gbps: 0.5        # virtio realistic; raise to 8.0 on SR-IOV
+
+  - id: tune_sweep
+    kind: tuning_sweep
+    source: client-lan
+    sink: server-wan
+    proto: tcp
+    duration_per_point_s: 2
+    rss_queues: [1, 2, 4]
+    rmem_max: [1048576, 16777216, 67108864]
+
+metrics:
+  poll_interval_s: 5
+  collect: [nft_counters, conntrack_stats]
+  sources:
+    - kind: prometheus
+      name: elgar-fw
+      url: http://192.168.203.70:9748/metrics
+      timeout_s: 5.0
+      metric_prefix_allow: ["shorewalld_"]
+    - kind: prometheus
+      name: tropheus-fw
+      url: http://192.168.203.87:9748/metrics
+      timeout_s: 5.0
+      metric_prefix_allow: ["shorewalld_"]
+
+report:
+  output_dir: /tmp/stagelab-reports
+  keep_pcaps: failed_only
