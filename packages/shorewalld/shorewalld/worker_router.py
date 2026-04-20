@@ -245,8 +245,19 @@ class ParentWorker:
                 if entry is None:
                     return None
                 qname, family = entry
-                return qname_to_set_name(
-                    qname, "v4" if family == 4 else "v6")
+                fam_str = "v4" if family == 4 else "v6"
+                # Check whether the spec carries a set_name override.
+                # When set_name is a base name (no _v4/_v6 suffix), append
+                # the family suffix to get the real nft set name.
+                # When set_name already contains the suffix (legacy), use
+                # it verbatim.  Fall back to qname_to_set_name() when None.
+                state = tracker._states.get(tracker._by_name.get((qname, family), -1))
+                if state is not None and state.spec.set_name is not None:
+                    sn = state.spec.set_name
+                    if not sn.endswith("_v4") and not sn.endswith("_v6"):
+                        return f"{sn}_{fam_str}"
+                    return sn
+                return qname_to_set_name(qname, fam_str)
 
             rc = nft_worker_entrypoint(
                 self.netns, worker_t.fileno, lookup=_lookup)
@@ -726,8 +737,16 @@ class LocalWorker:
                 return None
             from shorewall_nft.nft.dns_sets import qname_to_set_name
             qname, family = entry
-            return qname_to_set_name(
-                qname, "v4" if family == 4 else "v6")
+            fam_str = "v4" if family == 4 else "v6"
+            # Honour set_name override (base name → append family suffix).
+            state = tracker._states.get(
+                tracker._by_name.get((qname, family), -1))
+            if state is not None and state.spec.set_name is not None:
+                sn = state.spec.set_name
+                if not sn.endswith("_v4") and not sn.endswith("_v6"):
+                    return f"{sn}_{fam_str}"
+                return sn
+            return qname_to_set_name(qname, fam_str)
 
         script = build_nft_script(
             ops, lookup, family=NFT_FAMILY, table=NFT_TABLE)

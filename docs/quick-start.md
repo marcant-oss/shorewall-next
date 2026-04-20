@@ -199,6 +199,11 @@ ACCEPT    fw    net:dns:github.com    tcp    443
 
 Requires the `shorewalld` companion daemon. See [shorewalld](shorewalld/index.md).
 
+> **See also**: [nfsets](features/nfsets.md) — named dynamic sets with multiple hostnames
+> per set, non-DNS backends (URL blocklists, cloud prefix lists), and explicit naming
+> for tooling/monitoring. Use `nfset:<name>` in rules instead of `dns:`/`dnsr:` when
+> you need any of those features.
+
 ### Prometheus metrics
 
 `shorewalld` also exports per-rule packet/byte counters to Prometheus:

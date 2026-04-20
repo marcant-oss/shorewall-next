@@ -184,6 +184,7 @@ class InstanceManager:
         self,
         config: InstanceConfig,
         dns_payload: dict | None = None,
+        nfsets_payload: dict | None = None,
     ) -> int:
         """Dynamically add or refresh an instance.
 
@@ -224,8 +225,15 @@ class InstanceManager:
             else:
                 await self._load_instance(state)
             await self._resync_instance_after_register(state)
+            # Persist nfsets_payload into the instance config so it survives
+            # a daemon restart (loaded back via InstanceCache in _restore_from_cache).
+            if nfsets_payload is not None:
+                config.nfsets_payload = nfsets_payload
             if self._cache is not None and config.name not in self._static_names:
-                self._cache.update(config, dns_payload)
+                self._cache.update(
+                    config, dns_payload,
+                    nfsets_payload=nfsets_payload or config.nfsets_payload,
+                )
             return state.last_n_qnames
 
     async def _resync_instance_after_register(
