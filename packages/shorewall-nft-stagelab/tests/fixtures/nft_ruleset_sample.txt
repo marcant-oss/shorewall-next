@@ -1,0 +1,29 @@
+table inet filter {
+	chain input {
+		type filter hook input priority 0; policy drop;
+		ct state established,related counter packets 50000 bytes 5000000 accept # handle 1
+		iifname "lo" accept # handle 2
+		ip protocol icmp counter packets 100 bytes 5000 accept # handle 3
+		tcp dport 22 counter packets 80 bytes 6400 accept # handle 4
+		counter packets 5 bytes 400 drop # handle 99
+	}
+
+	chain forward {
+		type filter hook forward priority 0; policy drop;
+		ct state established,related counter packets 900000 bytes 1000000000 accept # handle 10
+		ct state invalid counter packets 20 bytes 1600 drop # handle 11
+		tcp dport 443 counter packets 20000 bytes 30000000 accept # handle 12
+		tcp dport 80 counter packets 5000 bytes 4000000 accept # handle 13
+		tcp dport 53 counter packets 300 bytes 30000 accept # handle 14
+		udp dport 53 counter packets 800 bytes 50000 accept # handle 15
+		udp dport 123 counter packets 50 bytes 4000 accept # handle 16
+		counter packets 10 bytes 800 drop # handle 100
+	}
+}
+
+table ip nat {
+	chain postrouting {
+		type nat hook postrouting priority srcnat;
+		oifname "eth1" masquerade # handle 50
+	}
+}
