@@ -59,7 +59,7 @@ CHECK_TREX_UPDATES=0
 # TRex installation pin. Update TREX_VERSION_LATEST_KNOWN when a newer
 # release is verified to work. Set STAGELAB_TREX_VERSION in the env to
 # install a specific version without editing this file.
-TREX_VERSION_LATEST_KNOWN="v3.04"
+TREX_VERSION_LATEST_KNOWN="v3.08"
 TREX_VERSION="${STAGELAB_TREX_VERSION:-$TREX_VERSION_LATEST_KNOWN}"
 TREX_CDN_BASE="https://trex-tgn.cisco.com/trex/release"
 TREX_CA_PEM="$SCRIPT_DIR/trex-ca.pem"
