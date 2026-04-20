@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 from pathlib import Path
 from typing import Annotated, Literal, Union
@@ -11,6 +12,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _PCI_RE = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$")
+_ENV_VAR_RE = re.compile(r"^\$\{([A-Z_][A-Z0-9_]*)\}$")
 
 # TRex multiplier grammar: "<number><unit>" or "<percent>%".
 # Numbers: integer or decimal. Units (case-insensitive): bps, kbps, mbps,
@@ -510,6 +512,12 @@ class HaFailoverDrillScenario(BaseModel):
 
     All FW operations are runtime-only (``systemctl stop/start``).
     No disk writes, no ``systemctl enable/disable``.
+
+    When ``vrrp_snmp_source`` is set to a list of two metrics source names
+    ``[primary_source, secondary_source]``, the runner emits an extra
+    ``poll_vrrp_state`` AgentCommand that polls VRRP state on both FW nodes
+    via SNMP for the scenario duration, yielding precise downtime measurements.
+    Falls back to the retransmit heuristic when not set.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -525,6 +533,32 @@ class HaFailoverDrillScenario(BaseModel):
     restart_at_s: int = 60                          # seconds in, restart service
     service_name: str = "keepalived"                # limited vocabulary, see validator
     max_downtime_s: float = 5.0                     # flow must recover within this
+    # vrrp_snmp_source: list of exactly 2 metrics source names [primary, secondary].
+    # When set, enables VRRP-SNMP polling for precise downtime measurement.
+    vrrp_snmp_source: list[str] | None = None
+    vrrp_poll_interval_ms: int = 200                # must be >= 50 (pysnmp overhead floor)
+    vrrp_instance_name: str | None = None           # if None, pick first instance
+
+    @field_validator("vrrp_snmp_source")
+    @classmethod
+    def _check_vrrp_snmp_source(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        if len(v) != 2:
+            raise ValueError(
+                f"vrrp_snmp_source must be a list of exactly 2 source names "
+                f"[primary, secondary], got {len(v)} entries"
+            )
+        return v
+
+    @field_validator("vrrp_poll_interval_ms")
+    @classmethod
+    def _check_poll_interval(cls, v: int) -> int:
+        if v < 50:
+            raise ValueError(
+                f"vrrp_poll_interval_ms={v} must be >= 50 (pysnmp overhead floor)"
+            )
+        return v
 
     @field_validator("service_name")
     @classmethod
@@ -586,15 +620,57 @@ class PrometheusSourceSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def _expand_env_var(value: str, field_name: str) -> str:
+    """Expand ``${VARNAME}`` syntax; pass through literals unchanged.
+
+    Raises ValueError if the env var is unset.  The resolved value is
+    never included in the error message.
+    """
+    m = _ENV_VAR_RE.match(value)
+    if m is None:
+        return value
+    varname = m.group(1)
+    resolved = os.environ.get(varname)
+    if resolved is None:
+        raise ValueError(
+            f"{field_name}: env var ${{{varname}}} is not set"
+        )
+    return resolved
+
+
 class SNMPSourceSpec(BaseModel):
     kind: Literal["snmp"]
     name: str
     host: str
     community: str
-    oids: list[str]
+    oids: list[str] = []
     port: int = 161
     timeout_s: float = 3.0
+    bundles: list[str] = ["node_traffic"]
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("community", mode="before")
+    @classmethod
+    def _expand_community(cls, v: str) -> str:
+        return _expand_env_var(v, "community")
+
+    @field_validator("host", mode="before")
+    @classmethod
+    def _expand_host(cls, v: str) -> str:
+        return _expand_env_var(v, "host")
+
+    @field_validator("bundles")
+    @classmethod
+    def _validate_bundles(cls, v: list[str]) -> list[str]:
+        from .snmp_oids import BUNDLES
+        valid = sorted(BUNDLES.keys())
+        unknown = [name for name in v if name not in BUNDLES]
+        if unknown:
+            raise ValueError(
+                f"unknown bundle name(s) {unknown!r}; "
+                f"valid names: {valid}"
+            )
+        return v
 
 
 class NftSSHSourceSpec(BaseModel):

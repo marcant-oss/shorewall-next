@@ -37,6 +37,7 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
 | `scenarios.py` | Per-scenario runners (`ThroughputRunner`, `ConnStormRunner`, `RuleScanRunner`, `TuningSweepRunner`, `ThroughputDpdkRunner`, `ConnStormAstfRunner`) + `build_runner` factory |
 | `metrics.py` | `MetricRow` dataclass + local pollers: `poll_nft_counters`, `poll_conntrack`, `poll_ethtool`, `poll_softirq` |
 | `metrics_ingest.py` | `MetricSource`, `build_source`, `scrape_all` — Prometheus, SNMP, and `NftSSHScraper` (Phase 3: SSHes into FW, runs `nft list counters -j`, emits per-counter `MetricRow` triples tagged `:packets`/`:bytes`/`:counter`) |
+| `snmp_oids.py` | OID library with named bundles `node_traffic`, `system`, `vrrp`, `pdns`; `resolve_bundle()` expands a bundle name to `{metric_name: oid_string}` dict; used by `SNMPScraper` in `metrics_ingest.py` |
 | `advisor.py` | Rule-based advisor: 8 heuristics, `Recommendation` (tier A/B/C), `AdvisorInput`, `analyze()` entry point |
 | `rule_order.py` | nft rule-order analyzer: groups nft counters by chain, ranks by packet count, emits tier-C hints |
 | `review.py` | Consolidate tier-B/C recommendations + rule-order hints into `ReviewPayload`; render `review.md` + `review.yaml`; `open_pr` via `gh` CLI |
@@ -75,6 +76,11 @@ pytest packages/shorewall-nft-stagelab/tests/ -q --run-integration
 ```
 
 Integration tests are skipped automatically when `euid != 0`.
+
+The CI matrix runs both unit and integration tests: unit tests run on all
+Python versions; integration tests run in the root-path CI job (one
+controller smoke, bridge/TAP probe topology, agent runtime). Phase 5 added
+these CI gates — stagelab tests are no longer unit-only.
 
 ## Remote test host
 
@@ -213,13 +219,28 @@ Tier semantics:
   `_restore_master`. No manual operator intervention needed after a DPDK run
   on a bond- or bridge-enslaved NIC.
 
+- **pysnmp 7.x API break**: pysnmp 6→7 renamed and made async several core
+  APIs. Key changes required in `metrics_ingest.py`: `nextCmd` is gone —
+  use `walk_cmd` for table walks and `get_cmd` for scalar OID fetches.
+  `UdpTransportTarget(...)` is now `await UdpTransportTarget.create(...)`.
+  SNMPv2c requires `mpModel=1` (not `mpModel=0` which is v1 and lacks
+  Counter64 support). SNMP STRING values carrying numeric data (e.g.
+  UCD-SNMP `laLoad "0.02"`) must be decoded via `str(value)` before
+  `float()` conversion — `_coerce_value()` handles this. Do not downgrade
+  pysnmp to 6.x to work around the API change; the 7.x async API is
+  correct.
+
 ## Open items
 
 - **T17b** — compiler integration: feed tier-C rule-order hints from
   `rule_order.py` back into the shorewall-nft optimizer as ordering directives.
   `rule_order.py` produces the hints; the compiler side is TODO.
 - **Full HA-pair scenario** — model a second FW endpoint with VRRP failover
-  + conntrackd sync. Currently only a single FW DUT is supported.
+  + conntrackd sync. Currently only a single FW DUT is supported. The
+  VRRP-SNMP hook (S5) is now wired: `vrrp_snmp_source` on
+  `HaFailoverDrillScenario` polls keepalived-MIB state transitions to
+  compute real downtime. What remains is the full second-FW-endpoint topology
+  (conntrackd sync rules, VRRP exchange, failover orchestration).
 - **Hardware-offload flow-steering tests** — verify that nft flowtable
   `offload` actually moves flows to hardware. The `flowtable_stagnant` advisor
   heuristic (fires when `flowtable_*` counter == 0) is a proxy; a real offload
@@ -227,8 +248,18 @@ Tier semantics:
 - **tcpkali binary install** — `trafgen_tcpkali.py` is fully implemented but
   tcpkali is not in any distro repo. Add a source-build step to the bootstrap
   script so `conn_storm` kernel mode works out-of-the-box.
-- **CI gate** — add a minimal single-probe stagelab scenario to the CI
-  integration test matrix. Currently only unit tests run in CI.
+- **vrrp_extended bundle (S7-class)** — 5 additional OIDs to add to
+  `snmp_oids.py`: `vrrpInstanceEffectivePriority`, `VipsStatus`,
+  `VirtualRouterId`, `WantedState`, `PreemptDelay`. These expose
+  track-script-failure / partial-VIP-add / multi-VRID /
+  sub-second-failover / preempt-delay-context observability. Small (~50 LOC)
+  follow-up. Not blocking.
+- **pdns extend scripts on test appliances** — the `pdns` SNMP bundle
+  (`pdns-all-queries`, `pdns-cache-hits`, `pdns-answers-0-1`) requires
+  `extend` lines in `/etc/snmp/snmpd.conf` pointing at pdns-control scripts.
+  Until these are configured on the appliance, the `pdns` bundle returns 0
+  rows and the S6 advisor heuristic (`_h_dos_dns_latency_blowup`) never fires
+  on live data.
 - **Phase 4 enterprise validation** — DoS scenarios (D0–D4), extended HA
   scenarios (P4-1..P4-7), and audit-report generator: see
   `~/.claude/plans/stagelab-phase-4-enterprise-validation.md`.

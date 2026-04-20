@@ -281,7 +281,7 @@ if [ "$ROLE" = "stagelab-agent" ] || [ "$IS_DPDK" = "1" ]; then
     if [ "$TARGET_FAMILY" = "debian" ]; then
         ssh "$REMOTE" '
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    iperf3 nmap ethtool bridge-utils jq tcpdump curl vsftpd 2>&1 | tail -10
+    iperf3 nmap ethtool bridge-utils jq tcpdump curl vsftpd snmp 2>&1 | tail -10
 # TODO: tcpkali — add source-build step when needed (T8d)
 if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         linux-perf >/dev/null 2>&1; then
@@ -290,20 +290,26 @@ else
     echo "WARNING: linux-perf not available on this distro — skipping"
 fi
 '
-        verify_binaries "role=stagelab-agent (Debian)" iperf3 nmap ethtool tcpdump jq curl
+        verify_binaries "role=stagelab-agent (Debian)" iperf3 nmap ethtool tcpdump jq curl snmpget
+        ssh "$REMOTE" 'mkdir -p /etc/snmp && grep -q "^mibs +ALL" /etc/snmp/snmp.conf 2>/dev/null || echo "mibs +ALL" >> /etc/snmp/snmp.conf'
     else
         # AlmaLinux 10: iperf3 is in EPEL. bridge commands come from iproute
         # (no separate bridge-utils on EL). perf = "perf" package.
+        # net-snmp-utils provides snmpwalk/snmpget for operator debugging.
         # Single transaction for atomic rollback on partial failure.
         ssh "$REMOTE" '
 set -e
-dnf install -y iperf3 nmap ethtool jq tcpdump curl vsftpd
+dnf install -y iperf3 nmap ethtool jq tcpdump curl vsftpd net-snmp-utils
 # TODO: tcpkali — add source-build step when needed (T8d)
 '
         # perf is optional — warn but do not fail
         ssh "$REMOTE" 'dnf install -y perf >/dev/null 2>&1 && echo "perf installed" || echo "WARNING: perf not available — skipping"' || true
-        verify_binaries "role=stagelab-agent (AlmaLinux)" iperf3 nmap ethtool tcpdump jq curl
+        verify_binaries "role=stagelab-agent (AlmaLinux)" iperf3 nmap ethtool tcpdump jq curl snmpget
     fi
+    # Enable KEEPALIVED-MIB symbolic names without requiring -m +ALL on every command.
+    # Without this, snmpwalk returns raw OIDs (SNMPv2-SMI::enterprises.9586...) instead of
+    # KEEPALIVED-MIB::vrrpInstanceState etc. — unusable for operator debugging.
+    ssh "$REMOTE" 'mkdir -p /etc/snmp && grep -q "^mibs +ALL" /etc/snmp/snmp.conf 2>/dev/null || echo "mibs +ALL" >> /etc/snmp/snmp.conf'
     info "stagelab-agent: vsftpd installed but NOT enabled."
     info "  For stateful_helper_ftp scenarios:"
     info "    systemctl start vsftpd    # on the sink tester"
@@ -542,7 +548,7 @@ info "create venv + editable install (netkit first, then dependent packages)"
 # venv recreation and only upgrade deps as needed.
 STAGELAB_EXTRA=""
 if [ "$ROLE" = "stagelab-agent" ] || [ "$IS_DPDK" = "1" ]; then
-    STAGELAB_EXTRA=" -e 'packages/shorewall-nft-stagelab[dev]'"
+    STAGELAB_EXTRA=" -e 'packages/shorewall-nft-stagelab[dev,snmp]'"
 fi
 ssh "$REMOTE" "
 cd /root/shorewall-nft

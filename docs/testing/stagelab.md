@@ -243,6 +243,82 @@ more than 70% of total traffic across 10+ counters (tier-C rule-order hint).
 No Prometheus endpoint on the firewall is required for this source kind —
 only SSH access and a loaded nftables ruleset with named counters.
 
+### SNMP sources
+
+SNMP sources poll firewall nodes and switches directly using SNMP v2c.
+pysnmp runs on the **tester VM** (the stagelab agent), not on the firewall.
+
+#### Install
+
+```bash
+pip install 'shorewall-nft-stagelab[snmp]'
+```
+
+Run this on the controller host and on every tester VM that will poll SNMP.
+The `stagelab-agent` bootstrap role (`tools/setup-remote-test-host.sh --role stagelab-agent`)
+is the target; the SNMP extra must be added manually until the bootstrap script
+is updated.
+
+#### Set the community
+
+Store the community string in a secure location — never commit it:
+
+```bash
+# Secure options:
+#   systemd credential file
+#   sourced env file outside git (e.g. /etc/stagelab/env)
+export STAGELAB_SNMP_COMMUNITY_MON=<your-read-only-community>
+```
+
+stagelab reads it at config-load time from the environment. The `${…}` placeholder
+form is the only accepted syntax in YAML — a literal community string in YAML will
+be treated as a validation error if it does not match the `${VAR}` pattern.
+
+#### Bundle table
+
+| Bundle | What it exposes | Typical use |
+|--------|-----------------|-------------|
+| `node_traffic` | ifHCInOctets / ifHCOutOctets + discard counters (IF-MIB 64-bit) | Replacement for ethtool polling; works across switches and remote FW nodes |
+| `system` | UCD-SNMP load averages (1/5/15 min) + sysUpTime | CPU saturation signal during DoS scenarios |
+| `vrrp` | keepalived VRRP instance state + name (KEEPALIVED-MIB) | Sub-second HA-failover drill real downtime measurement |
+| `pdns` | PowerDNS-Recursor stats via NET-SNMP-EXTEND-MIB | DNS-DoS advisor signal: QPS increase ratio and cache-hit rate |
+
+Use `bundles: [node_traffic, system, vrrp, pdns]` to collect all four.
+The `oids` field must list the raw OIDs for the bundles you select — see
+`tools/stagelab-example-snmp.yaml` for the full list.
+
+#### Example config
+
+See `tools/stagelab-example-snmp.yaml` for a complete runnable example with
+two SNMP sources (one per HA node) alongside a Prometheus source.
+
+Minimal metrics block:
+
+```yaml
+metrics:
+  poll_interval_s: 5
+  sources:
+    - kind: snmp
+      name: fw-primary-snmp
+      host: 192.0.2.70
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      oids:
+        - "1.3.6.1.2.1.31.1.1.1.6"      # ifHCInOctets
+        - "1.3.6.1.2.1.31.1.1.1.10"     # ifHCOutOctets
+        - "1.3.6.1.4.1.9586.100.5.2.1.1.4"  # vrrpInstanceState
+      bundles: [node_traffic, vrrp]
+```
+
+#### Security note
+
+Communities are secrets. The `${VARNAME}` placeholder syntax is the **only** supported
+form in YAML. Never paste a resolved community into the config file or commit it to git.
+The `SNMPSourceSpec` validator raises an error if the env var referenced by `${…}` is
+unset at config-load time — the original placeholder (not the secret) appears in that
+error message.
+
+---
+
 ### ReportSpec
 
 ```yaml
@@ -406,6 +482,7 @@ Operator-ready YAML examples live under `tools/`:
 | File | Purpose |
 |------|---------|
 | `tools/stagelab-example-ha.yaml` | Two-host HA-pair native throughput + Prometheus metrics from both FW nodes |
+| `tools/stagelab-example-snmp.yaml` | HA-pair with SNMP sources (all four bundles) alongside a Prometheus source |
 | `tools/stagelab-example-dpdk.yaml` | DPDK smoke on virtio eth1/eth2 — validates NIC bind/unbind lifecycle |
 | `tools/stagelab-crash-test.yaml` | Crash-recovery test: SIGKILL controller mid-run, verify recovery on next start |
 | `tools/stagelab-crash-agent.yaml` | Probe-mode rule scan from a single host (correctness smoke) |

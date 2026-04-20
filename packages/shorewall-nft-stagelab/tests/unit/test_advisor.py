@@ -1,4 +1,4 @@
-"""Unit tests for shorewall_nft_stagelab.advisor — exactly 9 tests."""
+"""Unit tests for shorewall_nft_stagelab.advisor."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from shorewall_nft_stagelab.advisor import (
     AdvisorInput,
     _h_conntrack_headroom,
     _h_conntrack_search_restart,
+    _h_dos_dns_latency_blowup,
     _h_flat_parallel_scaling,
     _h_flowtable_stagnant,
     _h_rule_order_topN,
@@ -16,6 +17,7 @@ from shorewall_nft_stagelab.advisor import (
     _h_tcp_retrans,
     analyze,
 )
+from shorewall_nft_stagelab.controller import _aggregate_pdns_metrics
 from shorewall_nft_stagelab.metrics import MetricRow
 
 
@@ -231,3 +233,62 @@ def test_dos_dns_latency_blowup_triggers():
     matched = [r for r in recs if r.signal == "dos_dns_latency_blowup"]
     assert len(matched) == 1
     assert matched[0].tier == "B"
+
+
+# ---------------------------------------------------------------------------
+# 13. _aggregate_pdns_metrics — row parsing
+# ---------------------------------------------------------------------------
+
+def _pdns_row(extend_name: str, value: float, ts: float, source_name: str = "fw-primary-snmp") -> MetricRow:
+    """Build a fake SNMP pdns MetricRow with OID-encoded extend name in key."""
+    # Encode extend_name as OID suffix: <len>.<b1>.<b2>...
+    suffix = f"{len(extend_name)}." + ".".join(str(ord(c)) for c in extend_name)
+    key = f"pdns_extend_output.{suffix}"
+    return MetricRow(source=f"{source_name}:pdns", ts_unix=ts, key=key, value=value)
+
+
+def test_aggregate_pdns_metrics_computes_correctly() -> None:
+    """_aggregate_pdns_metrics returns correct qps/cache_hit_ratio/latency_approx."""
+    t0 = 1_000_000.0
+    t1 = t0 + 10.0  # 10-second window
+    rows = [
+        # all-queries: 0 → 500  (50 qps)
+        _pdns_row("pdns-all-queries", 0.0, t0),
+        _pdns_row("pdns-all-queries", 500.0, t1),
+        # cache-hits: 0 → 400  (80% hit rate)
+        _pdns_row("pdns-cache-hits", 0.0, t0),
+        _pdns_row("pdns-cache-hits", 400.0, t1),
+    ]
+    result = _aggregate_pdns_metrics(rows)
+    assert abs(result["pdns_qps"] - 50.0) < 0.1, result
+    assert abs(result["pdns_cache_hit_ratio"] - 0.8) < 1e-6, result
+    # latency_approx = 1 - 0.8 = 0.2
+    assert abs(result["pdns_latency_approx"] - 0.2) < 1e-6, result
+
+
+def test_aggregate_pdns_metrics_empty_returns_zeros() -> None:
+    """No pdns rows → all zeros (no crash)."""
+    result = _aggregate_pdns_metrics([])
+    assert result == {"pdns_qps": 0.0, "pdns_cache_hit_ratio": 0.0, "pdns_latency_approx": 0.0}
+
+
+# ---------------------------------------------------------------------------
+# 14. _h_dos_dns_latency_blowup fires on high pdns_qps_increase_ratio
+# ---------------------------------------------------------------------------
+
+
+def test_dos_dns_latency_blowup_fires_on_high_pdns_ratio() -> None:
+    """Heuristic fires when pdns_qps_increase_ratio > 10 (SNMP path)."""
+    inp = AdvisorInput(dos_scenario_ran=True, pdns_qps_increase_ratio=12.0)
+    rec = _h_dos_dns_latency_blowup(inp)
+    assert rec is not None
+    assert rec.tier == "B"
+    assert rec.signal == "dos_dns_latency_blowup"
+    assert "12.0" in rec.rationale
+
+
+def test_dos_dns_latency_blowup_no_fire_on_low_pdns_ratio() -> None:
+    """Heuristic does NOT fire when pdns_qps_increase_ratio <= 10 and no shorewalld signal."""
+    inp = AdvisorInput(dos_scenario_ran=True, pdns_qps_increase_ratio=5.0)
+    rec = _h_dos_dns_latency_blowup(inp)
+    assert rec is None
