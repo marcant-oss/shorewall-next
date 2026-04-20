@@ -13,6 +13,11 @@
 # Usage:
 #   tools/setup-remote-test-host.sh root@192.0.2.83
 #   tools/setup-remote-test-host.sh root@host --simulate-src /path/to/old
+#   tools/setup-remote-test-host.sh root@host --role stagelab-agent
+#
+# --role ROLE   choose bootstrap role: "default" (existing behaviour) or
+#               "stagelab-agent" (adds perf-test tooling + sysctls).
+#               Default: "default".
 #
 # The host must already accept passwordless SSH for the given user.
 # Idempotent: safe to re-run after the box is re-imaged.
@@ -26,11 +31,13 @@ SIMULATE_SRC="$SIMULATE_SRC_DEFAULT"
 DEPLOY_JSON_DEFAULT="$SCRIPT_DIR/deploy.json"
 DEPLOY_JSON="$DEPLOY_JSON_DEFAULT"
 REMOTE=""
+ROLE="default"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --simulate-src) SIMULATE_SRC="$2"; shift 2 ;;
         --deploy-json)  DEPLOY_JSON="$2"; shift 2 ;;
+        --role)         ROLE="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
@@ -47,11 +54,38 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$REMOTE" ] || { echo "usage: $0 user@host [--simulate-src DIR]" >&2; exit 1; }
+[ -n "$REMOTE" ] || { echo "usage: $0 user@host [--simulate-src DIR] [--role default|stagelab-agent]" >&2; exit 1; }
+
+case "$ROLE" in
+    default|stagelab-agent) ;;
+    *) echo "unknown role: $ROLE (expected: default or stagelab-agent)" >&2; exit 1 ;;
+esac
 
 info() { printf 'setup-remote-test-host: %s\n' "$1"; }
 
-info "rsync repo → $REMOTE:/root/shorewall-nft"
+# probe_nics: enumerate non-loopback NICs and print ethtool offload info.
+# Informational only — never fails the bootstrap.
+probe_nics() {
+    _ifaces=$(ssh "$REMOTE" \
+        'ip -o link show | awk -F: '"'"'{print $2}'"'"' | tr -d '"'"' '"'"' | grep -v "^lo$\|@"' \
+        2>/dev/null || true)
+    if [ -z "$_ifaces" ]; then
+        info "probe_nics: no non-loopback interfaces found"
+        return
+    fi
+    for _iface in $_ifaces; do
+        info "NIC $_iface — queue depths:"
+        ssh "$REMOTE" "ethtool -l '$_iface' 2>/dev/null | head -20 || true" | \
+            while IFS= read -r _line; do info "  $_line"; done
+        info "NIC $_iface — offload flags:"
+        ssh "$REMOTE" "ethtool -k '$_iface' 2>/dev/null \
+            | grep -E '^(tcp-segmentation-offload|generic-segmentation-offload|rx-vlan-filter|rx-vlan-hw-parse)' \
+            || true" | \
+            while IFS= read -r _line; do info "  $_line"; done
+    done
+}
+
+info "rsync repo → $REMOTE:/root/shorewall-nft (role=$ROLE)"
 ssh "$REMOTE" 'mkdir -p /root/shorewall-nft'
 rsync -a --delete \
     --exclude='.git' \
@@ -64,22 +98,114 @@ rsync -a --delete \
     --exclude='tools/deploy.json' \
     "$REPO_DIR/" "$REMOTE:/root/shorewall-nft/"
 
-info "install apt deps (idempotent)"
-ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip python3.12-venv \
-    python3-pytest python3-pytest-xdist python3-click python3-pyroute2 \
-    python3-nftables \
-    iproute2 sudo nftables conntrack ipset 2>&1 | tail -5 || true'
+# Detect package manager on remote. grml/Debian → apt, AlmaLinux/Fedora → dnf.
+PKG_MGR=$(ssh "$REMOTE" '
+if command -v apt-get >/dev/null 2>&1; then
+    echo apt
+elif command -v dnf >/dev/null 2>&1; then
+    echo dnf
+elif command -v yum >/dev/null 2>&1; then
+    echo yum
+else
+    echo unknown
+fi
+')
+info "package manager on remote: $PKG_MGR"
+case "$PKG_MGR" in
+    apt|dnf|yum) ;;
+    *) echo "unsupported remote: no apt/dnf/yum found" >&2; exit 1 ;;
+esac
 
-info "create venv + editable install (all three sub-packages)"
-ssh "$REMOTE" 'cd /root/shorewall-nft && \
+info "install base deps (idempotent)"
+if [ "$PKG_MGR" = "apt" ]; then
+    ssh "$REMOTE" 'DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-pip python3.12-venv \
+        python3-pytest python3-pytest-xdist python3-click python3-pyroute2 \
+        python3-nftables \
+        iproute2 sudo nftables conntrack ipset 2>&1 | tail -5 || true'
+else
+    # AlmaLinux 10 / Fedora: install via dnf. EPEL + CRB needed for several
+    # Python deps (python3-pyroute2, python3-pytest-xdist). Best-effort — if
+    # EPEL/CRB cannot be enabled, fall back to pip inside the venv.
+    ssh "$REMOTE" '
+set -e
+dnf install -y -q epel-release 2>/dev/null || true
+dnf config-manager --set-enabled crb 2>/dev/null || true
+dnf install -y -q \
+    python3 python3-pip \
+    python3-click python3-pyroute2 python3-nftables \
+    iproute nftables conntrack-tools ipset sudo 2>&1 | tail -5 || true
+# python3-pytest may live in CRB; try, ignore if not found
+dnf install -y -q python3-pytest python3-pytest-xdist 2>/dev/null || true
+'
+fi
+
+# ── stagelab-agent: extra tooling ─────────────────────────────────
+if [ "$ROLE" = "stagelab-agent" ]; then
+    info "stagelab-agent: installing perf-test tooling"
+    if [ "$PKG_MGR" = "apt" ]; then
+        ssh "$REMOTE" '
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    iperf3 nmap ethtool bridge-utils jq tcpdump 2>&1 | tail -5 || true
+# TODO: tcpkali — add source-build step when needed (T8d)
+if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        linux-perf >/dev/null 2>&1; then
+    echo "linux-perf installed"
+else
+    echo "WARNING: linux-perf not available on this distro — skipping"
+fi
+' || true
+    else
+        # dnf: iperf3 is in EPEL on EL10. bridge commands come from iproute
+        # (no separate bridge-utils package on EL). perf = "perf" package.
+        ssh "$REMOTE" '
+dnf install -y -q iperf3 nmap ethtool jq tcpdump 2>&1 | tail -5 || true
+# TODO: tcpkali — add source-build step when needed (T8d)
+if dnf install -y -q perf >/dev/null 2>&1; then
+    echo "perf installed"
+else
+    echo "WARNING: perf not available on this distro — skipping"
+fi
+' || true
+    fi
+
+    info "stagelab-agent: applying ephemeral sysctls (grml is RAM-only — not persistent across reboot)"
+    ssh "$REMOTE" 'sysctl -w net.netfilter.nf_conntrack_max=4194304' && \
+        info "  net.netfilter.nf_conntrack_max=4194304" || \
+        info "  WARNING: could not set nf_conntrack_max"
+    ssh "$REMOTE" 'sysctl -w net.core.rmem_max=134217728' && \
+        info "  net.core.rmem_max=134217728" || \
+        info "  WARNING: could not set rmem_max"
+    ssh "$REMOTE" 'sysctl -w net.core.wmem_max=134217728' && \
+        info "  net.core.wmem_max=134217728" || \
+        info "  WARNING: could not set wmem_max"
+
+    info "stagelab-agent: probing NIC offload capabilities"
+    probe_nics
+
+    info "stagelab role: grml is RAM-only; for persistent isolcpus/nohz_full pin, edit boot cmdline manually (note: rebooting wipes everything on grml)."
+fi
+# ──────────────────────────────────────────────────────────────────
+
+info "create venv + editable install (netkit first, then dependent packages)"
+# Install order is load-bearing: netkit must be installed before simlab
+# (which depends on shorewall-nft-netkit>=1.8.0). pip with -e does not
+# resolve local-path editables transitively — they must be installed in
+# dependency order.
+STAGELAB_EXTRA=""
+if [ "$ROLE" = "stagelab-agent" ]; then
+    STAGELAB_EXTRA=" -e packages/shorewall-nft-stagelab[dev]"
+fi
+ssh "$REMOTE" "cd /root/shorewall-nft && \
     python3 -m venv --system-site-packages .venv && \
+    .venv/bin/pip install -q --upgrade pip && \
     .venv/bin/pip install -q \
-        -e "packages/shorewall-nft[dev]" \
-        -e "packages/shorewalld[dev]" \
-        -e "packages/shorewall-nft-simlab[dev]" && \
-    .venv/bin/shorewall-nft --version'
+        -e packages/shorewall-nft-netkit[dev] \
+        -e 'packages/shorewall-nft[dev]' \
+        -e 'packages/shorewalld[dev]' \
+        -e 'packages/shorewall-nft-simlab[dev]'$STAGELAB_EXTRA && \
+    .venv/bin/shorewall-nft --version"
 
 info "verify libnftables Python bindings (required for production setns path)"
 ssh "$REMOTE" 'python3 -c "
