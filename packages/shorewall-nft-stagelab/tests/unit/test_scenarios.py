@@ -101,6 +101,10 @@ def test_conn_storm_plan_one_command():
     cmd = cmds[0]
     assert cmd.kind == "run_tcpkali"
     assert cmd.endpoint_name == "src"
+    assert cmd.spec["target"] == "192.168.1.20:5001"
+    assert cmd.spec["connections"] == 1000
+    assert cmd.spec["connect_rate"] == 200
+    assert cmd.spec["duration_s"] == 5
 
 
 # ---------------------------------------------------------------------------
