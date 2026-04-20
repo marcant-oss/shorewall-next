@@ -32,7 +32,7 @@ tests:
     maps_to_scenario:
       id: cis-5-2-1-default-deny-ingress
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 500
       test_id: cis-5-2-1-firewall-default-deny-ingress
@@ -64,7 +64,7 @@ tests:
     maps_to_scenario:
       id: cis-5-2-2-default-deny-egress
       kind: rule_scan
-      source: lan-endpoint
+      source_role: lan-downstream
       target_subnet: "203.0.113.0/24"
       random_count: 300
       test_id: cis-5-2-2-firewall-default-deny-egress
@@ -88,8 +88,8 @@ tests:
     maps_to_scenario:
       id: cis-5-4-1-long-flow
       kind: long_flow_survival
-      source: lan-endpoint
-      sink: wan-endpoint
+      source_role: lan-downstream
+      sink_role: wan-uplink
       fw_host: root@192.0.2.70
       duration_s: 120
       sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
@@ -116,7 +116,7 @@ tests:
     maps_to_scenario:
       id: cis-5-4-2-outbound-coverage
       kind: rule_coverage_matrix
-      source: lan-endpoint
+      source_role: lan-downstream
       zone_subnets:
         lan: "10.0.10.0/24"
         wan: "203.0.113.0/24"
@@ -144,7 +144,7 @@ tests:
     maps_to_scenario:
       id: cis-5-2-3-open-ports
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.20.0/24
       random_count: 200
       test_id: cis-5-2-3-open-ports-inventory
@@ -166,7 +166,7 @@ tests:
     maps_to_scenario:
       id: cis-5-2-4-rfc1918-block
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 100
       test_id: cis-5-2-4-ingress-rfc1918-from-wan
@@ -188,7 +188,7 @@ tests:
     maps_to_scenario:
       id: cis-5-2-5-bogon-block
       kind: evasion_probes
-      source: wan-probe
+      source_role: wan-uplink
       target_ip: "10.0.10.1"
       probe_types:
         - ip_spoof

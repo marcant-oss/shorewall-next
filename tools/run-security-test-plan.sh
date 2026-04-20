@@ -41,6 +41,7 @@ BASE_CONFIG=""
 OUT_DIR=""
 CATALOGUE_DIR="${REPO}/docs/testing"
 DO_SIMLAB=0
+SIMLAB_HOST=""
 DRY_RUN=0
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,10 @@ usage: run-security-test-plan.sh [options]
   --catalogue-dir DIR   Directory containing security-test-plan.<std>.yaml
                         fragments (default: docs/testing/).
   --simlab              Also run shorewall-nft-simlab smoke and embed report.
+  --simlab-host HOST    SSH target for simlab (if running from a workstation
+                        that lacks the /root/simulate-data reference dumps).
+                        Example: --simlab-host root@192.0.2.93.
+                        Requires --simlab.
   --dry-run             Print planned invocations without executing.
   -h, --help            Show this help and exit 0.
 USAGE
@@ -92,6 +97,10 @@ while [[ $# -gt 0 ]]; do
             DO_SIMLAB=1
             shift
             ;;
+        --simlab-host)
+            SIMLAB_HOST="$2"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN=1
             shift
@@ -114,6 +123,12 @@ done
 
 if [[ -z "${BASE_CONFIG}" ]]; then
     echo "ERROR: --config is required" >&2
+    usage >&2
+    exit 1
+fi
+
+if [[ -n "${SIMLAB_HOST}" && "${DO_SIMLAB}" -eq 0 ]]; then
+    echo "ERROR: --simlab-host requires --simlab" >&2
     usage >&2
     exit 1
 fi
@@ -214,9 +229,47 @@ report = dict(base.get("report", {}))
 report["output_dir"] = run_dir
 merged["report"] = report
 
+# Build endpoint role -> name index from base config.
+role_index: dict = {}
+for ep in base.get("endpoints", []):
+    r = ep.get("role")
+    if r:
+        if r in role_index:
+            print(
+                f"WARNING: duplicate endpoint role {r!r} — ignoring subsequent",
+                file=sys.stderr,
+            )
+            continue
+        role_index[r] = ep["name"]
+
+def _resolve(key_role, key_name, scenario):
+    """If scenario has `<kind>_role: X`, replace it with `<kind>: <endpoint-name>`."""
+    if key_role not in scenario:
+        return
+    role = scenario.pop(key_role)
+    if key_name in scenario:
+        # Explicit name takes precedence; warn and discard the role key.
+        print(
+            f"WARNING: scenario test_id={scenario.get('test_id')!r} has both "
+            f"{key_name!r} and {key_role!r}; using explicit {key_name!r} — "
+            f"remove {key_role!r} from catalogue entry",
+            file=sys.stderr,
+        )
+        return
+    if role not in role_index:
+        print(
+            f"WARNING: role {role!r} referenced in test_id={scenario.get('test_id')!r} "
+            f"but not defined by any endpoint — scenario will be skipped",
+            file=sys.stderr,
+        )
+        scenario["_skip_reason"] = f"role-unresolved:{role}"
+        return
+    scenario[key_name] = role_index[role]
+
 # Extract covered scenarios from fragment.
 raw_tests = fragment.get("tests", [])
 scenarios = []
+skipped_scenarios = []
 seen_ids = set()
 
 for entry in raw_tests:
@@ -245,7 +298,23 @@ for entry in raw_tests:
     if "acceptance_criteria" not in scenario and "acceptance_criteria" in entry:
         scenario["acceptance_criteria"] = entry["acceptance_criteria"]
 
+    # Role-based endpoint resolution: replace source_role/sink_role with names.
+    _resolve("source_role", "source", scenario)
+    _resolve("sink_role", "sink", scenario)
+
+    if "_skip_reason" in scenario:
+        skipped_scenarios.append(scenario)
+        continue
+
     scenarios.append(scenario)
+
+if skipped_scenarios:
+    skip_ids = [s.get("test_id", s.get("id", "?")) for s in skipped_scenarios]
+    print(
+        f"INFO: {len(skipped_scenarios)} scenario(s) skipped (role-unresolved): "
+        f"{', '.join(skip_ids)}",
+        file=sys.stderr,
+    )
 
 merged["scenarios"] = scenarios
 
@@ -326,14 +395,34 @@ if [[ "${DO_SIMLAB}" -eq 1 ]]; then
     echo ""
     echo "=== simlab smoke ==="
     if [[ "${DRY_RUN}" -eq 1 ]]; then
-        echo "[dry-run] python -m shorewall_nft_simlab.smoketest smoke --output ${SIMLAB_JSON}"
-    else
-        if "${PYTHON}" -m shorewall_nft_simlab.smoketest smoke \
-                --output "${SIMLAB_JSON}" 2>&1; then
-            echo "  simlab smoke passed: ${SIMLAB_JSON}"
-            SIMLAB_FLAG="--simlab-report ${SIMLAB_JSON}"
+        if [[ -n "${SIMLAB_HOST}" ]]; then
+            echo "[dry-run] ssh ${SIMLAB_HOST} cd /root/shorewall-nft && .venv/bin/python -m shorewall_nft_simlab.smoketest smoke --output-json <remote-tmp>"
+            echo "[dry-run] scp ${SIMLAB_HOST}:<remote-tmp> ${SIMLAB_JSON}"
         else
-            echo "WARNING: simlab smoke failed; embedding skipped" >&2
+            echo "[dry-run] python -m shorewall_nft_simlab.smoketest smoke --output-json ${SIMLAB_JSON}"
+        fi
+    else
+        if [[ -n "${SIMLAB_HOST}" ]]; then
+            echo "  running simlab on remote: ${SIMLAB_HOST}"
+            REMOTE_TMP="$(ssh "${SIMLAB_HOST}" 'mktemp /tmp/simlab-XXXXXX.json')"
+            if ssh "${SIMLAB_HOST}" "cd /root/shorewall-nft && \
+                    .venv/bin/python -m shorewall_nft_simlab.smoketest smoke \
+                        --output-json ${REMOTE_TMP}"; then
+                scp "${SIMLAB_HOST}:${REMOTE_TMP}" "${SIMLAB_JSON}"
+                ssh "${SIMLAB_HOST}" "rm -f ${REMOTE_TMP}"
+                SIMLAB_FLAG="--simlab-report ${SIMLAB_JSON}"
+                echo "  simlab.json fetched -> ${SIMLAB_JSON}"
+            else
+                echo "WARNING: simlab smoke failed on ${SIMLAB_HOST}; embedding skipped" >&2
+            fi
+        else
+            if "${PYTHON}" -m shorewall_nft_simlab.smoketest smoke \
+                    --output-json "${SIMLAB_JSON}" > "${OUT_DIR}/logs/simlab.log" 2>&1; then
+                echo "  simlab smoke passed: ${SIMLAB_JSON}"
+                SIMLAB_FLAG="--simlab-report ${SIMLAB_JSON}"
+            else
+                echo "WARNING: simlab smoke failed; embedding skipped" >&2
+            fi
         fi
     fi
 fi

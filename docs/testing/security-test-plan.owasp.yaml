@@ -27,6 +27,7 @@ tests:
       backed by live Prometheus counter data) and the HTML audit report.
     maps_to_scenario:
       kind: rule_coverage_matrix
+      source_role: wan-uplink
       # rule_coverage_matrix enumerates every zone-pair and reports
       # hit/miss counters, feeding the advisor with rule utilisation data.
     acceptance_criteria:
@@ -49,6 +50,7 @@ tests:
       volume and raises tier-C hints for ordering optimisations.
     maps_to_scenario:
       kind: rule_coverage_matrix
+      source_role: wan-uplink
     acceptance_criteria:
       unreachable_rule_count: 0
       over_permissive_zone_pairs: 0
@@ -67,6 +69,8 @@ tests:
       should exist for traffic that has no explicit ACCEPT rule.
     maps_to_scenario:
       kind: rule_scan
+      source_role: wan-uplink
+      target_subnet: 10.0.0.0/8
       random_count: 500
     acceptance_criteria:
       fail_accept_count: 0
@@ -86,6 +90,8 @@ tests:
       none must reach the protected zone.
     maps_to_scenario:
       kind: evasion_probes
+      source_role: wan-uplink
+      sink_role: lan-downstream
     acceptance_criteria:
       evasion_success_count: 0
     evidence:
@@ -105,6 +111,8 @@ tests:
       item: "simlab stateful oracle".
     maps_to_scenario:
       kind: conn_storm
+      source_role: wan-uplink
+      sink_role: lan-downstream
     acceptance_criteria:
       established_flows_dropped: 0
       conntrack_table_fill_fraction: "<= 0.80"
@@ -124,6 +132,8 @@ tests:
       and that VRRP/keepalived + Bird BGP reconnect within the SLA window.
     maps_to_scenario:
       kind: ha_failover_drill
+      source_role: wan-uplink
+      sink_role: lan-downstream
     acceptance_criteria:
       session_continuity: true
       failover_convergence_s: "<= 3"
@@ -144,6 +154,8 @@ tests:
       without performance degradation on legitimate traffic.
     maps_to_scenario:
       kind: dos_syn_flood
+      source_role: wan-uplink
+      sink_role: lan-downstream
     acceptance_criteria:
       legitimate_throughput_degradation_pct: "<= 5"
       malformed_frame_accepted: 0
@@ -163,6 +175,8 @@ tests:
       not reachable from any non-management zone.
     maps_to_scenario:
       kind: reload_atomicity
+      source_role: wan-uplink
+      sink_role: lan-downstream
     acceptance_criteria:
       traffic_gap_during_reload_ms: 0
       prometheus_scrape_ok: true

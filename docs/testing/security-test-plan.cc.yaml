@@ -14,7 +14,7 @@ tests:
       using random probes across the target subnet.
     maps_to_scenario:
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 500
       test_id: cc-fdp-iff-1-basic-flow
@@ -36,7 +36,7 @@ tests:
       Probes target IP ranges not covered by any policy rule.
     maps_to_scenario:
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 192.0.2.0/24
       random_count: 200
       test_id: cc-fdp-iff-1-default-deny
@@ -57,7 +57,7 @@ tests:
       IP-spoofed, and malformed-checksum UDP frames.
     maps_to_scenario:
       kind: evasion_probes
-      source: wan-endpoint
+      source_role: wan-uplink
       target_ip: 10.0.0.1
       probe_types:
         - tcp_null
@@ -85,7 +85,7 @@ tests:
       are not generated (partial coverage).
     maps_to_scenario:
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 200
       test_id: cc-fau-gen-1-audit-record
@@ -110,8 +110,8 @@ tests:
       below 80% of baseline.
     maps_to_scenario:
       kind: conn_storm
-      source: wan-endpoint
-      sink: lan-endpoint
+      source_role: wan-uplink
+      sink_role: lan-downstream
       target_conns: 100000
       rate_per_s: 10000
       hold_s: 30
@@ -133,8 +133,8 @@ tests:
       firewall must absorb or drop the remaining 95%+.
     maps_to_scenario:
       kind: dos_syn_flood
-      source: wan-endpoint
-      sink: dmz-endpoint
+      source_role: wan-uplink
+      sink_role: dmz-downstream
       duration_s: 10
       rate_pps: 50000
       src_ip_range: 100.64.0.0/10
@@ -161,8 +161,8 @@ tests:
       ENOMEM. The firewall must recover after the flood stops.
     maps_to_scenario:
       kind: dos_half_open
-      source: wan-endpoint
-      sink: dmz-endpoint
+      source_role: wan-uplink
+      sink_role: dmz-downstream
       duration_s: 30
       target_conns: 500000
       open_rate_per_s: 20000
@@ -188,7 +188,7 @@ tests:
       compile step succeeds without warnings.
     maps_to_scenario:
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 100
       test_id: cc-fmt-msa-3-default-values
@@ -210,8 +210,8 @@ tests:
       TCP flows. Retransmissions during the reload window must stay below 100.
     maps_to_scenario:
       kind: reload_atomicity
-      source: wan-endpoint
-      sink: lan-endpoint
+      source_role: wan-uplink
+      sink_role: lan-downstream
       fw_host: "root@fw-primary"
       duration_s: 60
       reload_at_s: 20
@@ -235,8 +235,8 @@ tests:
       within 5 seconds.
     maps_to_scenario:
       kind: ha_failover_drill
-      source: wan-endpoint
-      sink: lan-endpoint
+      source_role: wan-uplink
+      sink_role: lan-downstream
       primary_fw_host: "root@fw-primary"
       secondary_fw_host: "root@fw-secondary"
       duration_s: 90
@@ -263,8 +263,8 @@ tests:
       prematurely terminate established sessions.
     maps_to_scenario:
       kind: long_flow_survival
-      source: wan-endpoint
-      sink: lan-endpoint
+      source_role: wan-uplink
+      sink_role: lan-downstream
       fw_host: "root@fw-primary"
       duration_s: 300
       sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established

@@ -30,7 +30,7 @@ tests:
     maps_to_scenario:
       id: bsi-a2-function-separation
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 500
       test_id: bsi-net-3-2-a2-function-separation
@@ -60,7 +60,7 @@ tests:
     maps_to_scenario:
       id: bsi-a4-rule-coverage-matrix
       kind: rule_coverage_matrix
-      source: probe-endpoint
+      source_role: wan-uplink
       zone_subnets:
         lan: "10.0.10.0/24"
         dmz: "10.0.20.0/24"
@@ -89,8 +89,8 @@ tests:
     maps_to_scenario:
       id: bsi-a5-syn-flood
       kind: dos_syn_flood
-      source: dpdk-wan
-      sink: dpdk-lan
+      source_role: wan-uplink
+      sink_role: lan-downstream
       duration_s: 10
       rate_pps: 50000
       src_ip_range: "203.0.113.0/24"
@@ -117,8 +117,8 @@ tests:
     maps_to_scenario:
       id: bsi-a6-stateful-ftp
       kind: stateful_helper_ftp
-      source: lan-endpoint
-      sink: dmz-endpoint
+      source_role: lan-downstream
+      sink_role: dmz-downstream
       ftp_port: 21
       mode: passive
       user: ftpuser
@@ -144,7 +144,7 @@ tests:
     maps_to_scenario:
       id: bsi-a7-evasion-probes
       kind: evasion_probes
-      source: probe-endpoint
+      source_role: wan-uplink
       target_ip: "10.0.10.1"
       probe_types:
         - tcp_null
@@ -179,8 +179,8 @@ tests:
     maps_to_scenario:
       id: bsi-a10-throughput-metrics
       kind: throughput
-      source: lan-endpoint
-      sink: wan-endpoint
+      source_role: lan-downstream
+      sink_role: wan-uplink
       proto: tcp
       duration_s: 10
       parallel: 2
@@ -203,8 +203,8 @@ tests:
     maps_to_scenario:
       id: bsi-a12-ha-failover
       kind: ha_failover_drill
-      source: lan-endpoint
-      sink: wan-endpoint
+      source_role: lan-downstream
+      sink_role: wan-uplink
       primary_fw_host: root@192.0.2.70
       secondary_fw_host: root@192.0.2.87
       service_name: keepalived

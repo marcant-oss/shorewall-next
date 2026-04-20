@@ -14,6 +14,8 @@ tests:
       proto: tcp
       source: v6-client
       sink: v6-server
+      source_role: wan-uplink
+      sink_role: lan-downstream
       duration_s: 30
       parallel: 4
       expect_min_gbps: 8.0
@@ -40,6 +42,8 @@ tests:
       proto: udp
       source: v6-client
       sink: v6-server
+      source_role: wan-uplink
+      sink_role: lan-downstream
       duration_s: 20
       parallel: 2
       expect_min_gbps: 5.0

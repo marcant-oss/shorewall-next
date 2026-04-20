@@ -2,7 +2,7 @@ __comment__: Auto-generated (security-test-plan) — DO NOT edit by hand; regene
   via tools/merge-security-test-plan-yaml.py or the M1 merger.
 schema_version: 1
 generated_by: M1 merger (security-test-plan feature)
-generated_at: '2026-04-20T16:58:28+00:00'
+generated_at: '2026-04-20T18:02:09+00:00'
 standards:
 - id: cc-iso-15408
   title: Common Criteria (ISO/IEC 15408)
@@ -36,7 +36,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 500
     test_id: cc-fdp-iff-1-basic-flow
@@ -59,7 +59,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 192.0.2.0/24
     random_count: 200
     test_id: cc-fdp-iff-1-default-deny
@@ -81,7 +81,7 @@ tests:
     '
   maps_to_scenario:
     kind: evasion_probes
-    source: wan-endpoint
+    source_role: wan-uplink
     target_ip: 10.0.0.1
     probe_types:
     - tcp_null
@@ -110,7 +110,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 200
     test_id: cc-fau-gen-1-audit-record
@@ -137,8 +137,8 @@ tests:
     '
   maps_to_scenario:
     kind: conn_storm
-    source: wan-endpoint
-    sink: lan-endpoint
+    source_role: wan-uplink
+    sink_role: lan-downstream
     target_conns: 100000
     rate_per_s: 10000
     hold_s: 30
@@ -161,8 +161,8 @@ tests:
     '
   maps_to_scenario:
     kind: dos_syn_flood
-    source: wan-endpoint
-    sink: dmz-endpoint
+    source_role: wan-uplink
+    sink_role: dmz-downstream
     duration_s: 10
     rate_pps: 50000
     src_ip_range: 100.64.0.0/10
@@ -191,8 +191,8 @@ tests:
     '
   maps_to_scenario:
     kind: dos_half_open
-    source: wan-endpoint
-    sink: dmz-endpoint
+    source_role: wan-uplink
+    sink_role: dmz-downstream
     duration_s: 30
     target_conns: 500000
     open_rate_per_s: 20000
@@ -219,7 +219,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 100
     test_id: cc-fmt-msa-3-default-values
@@ -242,8 +242,8 @@ tests:
     '
   maps_to_scenario:
     kind: reload_atomicity
-    source: wan-endpoint
-    sink: lan-endpoint
+    source_role: wan-uplink
+    sink_role: lan-downstream
     fw_host: root@fw-primary
     duration_s: 60
     reload_at_s: 20
@@ -267,8 +267,8 @@ tests:
     '
   maps_to_scenario:
     kind: ha_failover_drill
-    source: wan-endpoint
-    sink: lan-endpoint
+    source_role: wan-uplink
+    sink_role: lan-downstream
     primary_fw_host: root@fw-primary
     secondary_fw_host: root@fw-secondary
     duration_s: 90
@@ -296,8 +296,8 @@ tests:
     '
   maps_to_scenario:
     kind: long_flow_survival
-    source: wan-endpoint
-    sink: lan-endpoint
+    source_role: wan-uplink
+    sink_role: lan-downstream
     fw_host: root@fw-primary
     duration_s: 300
     sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
@@ -322,7 +322,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 500
     test_id: nist-ac-4-info-flow
@@ -345,7 +345,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_coverage_matrix
-    source: wan-endpoint
+    source_role: wan-uplink
     zone_subnets:
       wan: 0.0.0.0/0
       lan: 10.0.10.0/24
@@ -380,8 +380,8 @@ tests:
     '
   maps_to_scenario:
     kind: dos_syn_flood
-    source: wan-endpoint
-    sink: dmz-endpoint
+    source_role: wan-uplink
+    sink_role: dmz-downstream
     duration_s: 10
     rate_pps: 50000
     src_ip_range: 100.64.0.0/10
@@ -409,8 +409,8 @@ tests:
     '
   maps_to_scenario:
     kind: conn_storm
-    source: wan-endpoint
-    sink: lan-endpoint
+    source_role: wan-uplink
+    sink_role: lan-downstream
     target_conns: 100000
     rate_per_s: 10000
     hold_s: 30
@@ -434,8 +434,8 @@ tests:
     '
   maps_to_scenario:
     kind: dos_dns_query
-    source: wan-endpoint
-    sink: dmz-endpoint
+    source_role: wan-uplink
+    sink_role: dmz-downstream
     duration_s: 10
     queries_per_s: 20000
     query_name_pattern: random
@@ -462,8 +462,8 @@ tests:
     '
   maps_to_scenario:
     kind: dos_half_open
-    source: wan-endpoint
-    sink: dmz-endpoint
+    source_role: wan-uplink
+    sink_role: dmz-downstream
     duration_s: 30
     target_conns: 500000
     open_rate_per_s: 20000
@@ -491,8 +491,8 @@ tests:
     '
   maps_to_scenario:
     kind: throughput
-    source: wan-endpoint
-    sink: lan-endpoint
+    source_role: wan-uplink
+    sink_role: lan-downstream
     proto: tcp
     duration_s: 30
     parallel: 4
@@ -516,7 +516,7 @@ tests:
     '
   maps_to_scenario:
     kind: evasion_probes
-    source: wan-endpoint
+    source_role: wan-uplink
     target_ip: 10.0.0.1
     probe_types:
     - tcp_null
@@ -544,7 +544,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 200
     test_id: nist-au-2-audit-events
@@ -571,7 +571,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 100
     test_id: nist-au-12-audit-generation
@@ -598,7 +598,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 50
     test_id: nist-si-4-monitoring
@@ -621,8 +621,8 @@ tests:
     '
   maps_to_scenario:
     kind: reload_atomicity
-    source: wan-endpoint
-    sink: lan-endpoint
+    source_role: wan-uplink
+    sink_role: lan-downstream
     fw_host: root@fw-primary
     duration_s: 60
     reload_at_s: 20
@@ -646,8 +646,8 @@ tests:
     '
   maps_to_scenario:
     kind: ha_failover_drill
-    source: wan-endpoint
-    sink: lan-endpoint
+    source_role: wan-uplink
+    sink_role: lan-downstream
     primary_fw_host: root@fw-primary
     secondary_fw_host: root@fw-secondary
     duration_s: 90
@@ -679,7 +679,7 @@ tests:
   maps_to_scenario:
     id: bsi-a2-function-separation
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 500
     test_id: bsi-net-3-2-a2-function-separation
@@ -712,7 +712,7 @@ tests:
   maps_to_scenario:
     id: bsi-a4-rule-coverage-matrix
     kind: rule_coverage_matrix
-    source: probe-endpoint
+    source_role: wan-uplink
     zone_subnets:
       lan: 10.0.10.0/24
       dmz: 10.0.20.0/24
@@ -754,8 +754,8 @@ tests:
   maps_to_scenario:
     id: bsi-a5-syn-flood
     kind: dos_syn_flood
-    source: dpdk-wan
-    sink: dpdk-lan
+    source_role: wan-uplink
+    sink_role: lan-downstream
     duration_s: 10
     rate_pps: 50000
     src_ip_range: 203.0.113.0/24
@@ -784,8 +784,8 @@ tests:
   maps_to_scenario:
     id: bsi-a6-stateful-ftp
     kind: stateful_helper_ftp
-    source: lan-endpoint
-    sink: dmz-endpoint
+    source_role: lan-downstream
+    sink_role: dmz-downstream
     ftp_port: 21
     mode: passive
     user: ftpuser
@@ -813,7 +813,7 @@ tests:
   maps_to_scenario:
     id: bsi-a7-evasion-probes
     kind: evasion_probes
-    source: probe-endpoint
+    source_role: wan-uplink
     target_ip: 10.0.10.1
     probe_types:
     - tcp_null
@@ -850,8 +850,8 @@ tests:
   maps_to_scenario:
     id: bsi-a10-throughput-metrics
     kind: throughput
-    source: lan-endpoint
-    sink: wan-endpoint
+    source_role: lan-downstream
+    sink_role: wan-uplink
     proto: tcp
     duration_s: 10
     parallel: 2
@@ -877,8 +877,8 @@ tests:
   maps_to_scenario:
     id: bsi-a12-ha-failover
     kind: ha_failover_drill
-    source: lan-endpoint
-    sink: wan-endpoint
+    source_role: lan-downstream
+    sink_role: wan-uplink
     primary_fw_host: root@192.0.2.70
     secondary_fw_host: root@192.0.2.87
     service_name: keepalived
@@ -930,7 +930,7 @@ tests:
   maps_to_scenario:
     id: cis-5-2-1-default-deny-ingress
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 500
     test_id: cis-5-2-1-firewall-default-deny-ingress
@@ -965,7 +965,7 @@ tests:
   maps_to_scenario:
     id: cis-5-2-2-default-deny-egress
     kind: rule_scan
-    source: lan-endpoint
+    source_role: lan-downstream
     target_subnet: 203.0.113.0/24
     random_count: 300
     test_id: cis-5-2-2-firewall-default-deny-egress
@@ -991,8 +991,8 @@ tests:
   maps_to_scenario:
     id: cis-5-4-1-long-flow
     kind: long_flow_survival
-    source: lan-endpoint
-    sink: wan-endpoint
+    source_role: lan-downstream
+    sink_role: wan-uplink
     fw_host: root@192.0.2.70
     duration_s: 120
     sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
@@ -1022,7 +1022,7 @@ tests:
   maps_to_scenario:
     id: cis-5-4-2-outbound-coverage
     kind: rule_coverage_matrix
-    source: lan-endpoint
+    source_role: lan-downstream
     zone_subnets:
       lan: 10.0.10.0/24
       wan: 203.0.113.0/24
@@ -1063,7 +1063,7 @@ tests:
   maps_to_scenario:
     id: cis-5-2-3-open-ports
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.20.0/24
     random_count: 200
     test_id: cis-5-2-3-open-ports-inventory
@@ -1088,7 +1088,7 @@ tests:
   maps_to_scenario:
     id: cis-5-2-4-rfc1918-block
     kind: rule_scan
-    source: wan-endpoint
+    source_role: wan-uplink
     target_subnet: 10.0.0.0/8
     random_count: 100
     test_id: cis-5-2-4-ingress-rfc1918-from-wan
@@ -1113,7 +1113,7 @@ tests:
   maps_to_scenario:
     id: cis-5-2-5-bogon-block
     kind: evasion_probes
-    source: wan-probe
+    source_role: wan-uplink
     target_ip: 10.0.10.1
     probe_types:
     - ip_spoof
@@ -1141,6 +1141,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_coverage_matrix
+    source_role: wan-uplink
   acceptance_criteria:
     advisor_tier_b_unresolved: 0
     advisor_tier_c_unresolved: <= 5
@@ -1166,6 +1167,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_coverage_matrix
+    source_role: wan-uplink
   acceptance_criteria:
     unreachable_rule_count: 0
     over_permissive_zone_pairs: 0
@@ -1190,6 +1192,8 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
+    source_role: wan-uplink
+    target_subnet: 10.0.0.0/8
     random_count: 500
   acceptance_criteria:
     fail_accept_count: 0
@@ -1213,6 +1217,8 @@ tests:
     '
   maps_to_scenario:
     kind: evasion_probes
+    source_role: wan-uplink
+    sink_role: lan-downstream
   acceptance_criteria:
     evasion_success_count: 0
   evidence:
@@ -1237,6 +1243,8 @@ tests:
     '
   maps_to_scenario:
     kind: conn_storm
+    source_role: wan-uplink
+    sink_role: lan-downstream
   acceptance_criteria:
     established_flows_dropped: 0
     conntrack_table_fill_fraction: <= 0.80
@@ -1261,6 +1269,8 @@ tests:
     '
   maps_to_scenario:
     kind: ha_failover_drill
+    source_role: wan-uplink
+    sink_role: lan-downstream
   acceptance_criteria:
     session_continuity: true
     failover_convergence_s: <= 3
@@ -1286,6 +1296,8 @@ tests:
     '
   maps_to_scenario:
     kind: dos_syn_flood
+    source_role: wan-uplink
+    sink_role: lan-downstream
   acceptance_criteria:
     legitimate_throughput_degradation_pct: <= 5
     malformed_frame_accepted: 0
@@ -1311,6 +1323,8 @@ tests:
     '
   maps_to_scenario:
     kind: reload_atomicity
+    source_role: wan-uplink
+    sink_role: lan-downstream
   acceptance_criteria:
     traffic_gap_during_reload_ms: 0
     prometheus_scrape_ok: true
@@ -1336,6 +1350,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
+    source_role: wan-uplink
     random_count: 500
   acceptance_criteria:
     fail_accept_count: 0
@@ -1362,6 +1377,8 @@ tests:
     '
   maps_to_scenario:
     kind: throughput
+    source_role: wan-uplink
+    sink_role: lan-downstream
   acceptance_criteria:
     throughput_degradation_pct: <= 5
   evidence:
@@ -1387,6 +1404,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_coverage_matrix
+    source_role: wan-uplink
   acceptance_criteria:
     implicit_accept_zone_pairs: 0
     uncovered_zone_pairs: 0
@@ -1412,6 +1430,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_coverage_matrix
+    source_role: wan-uplink
   acceptance_criteria:
     prometheus_scrape_ok: true
     nft_counter_gap_s: <= 30
@@ -1436,6 +1455,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_coverage_matrix
+    source_role: wan-uplink
   acceptance_criteria:
     advisor_tier_b_pr_created: true
   evidence:
@@ -1460,6 +1480,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_coverage_matrix
+    source_role: wan-uplink
   acceptance_criteria:
     audit_html_generated: true
     audit_json_generated: true
@@ -1486,6 +1507,8 @@ tests:
     '
   maps_to_scenario:
     kind: reload_atomicity
+    source_role: wan-uplink
+    sink_role: lan-downstream
   acceptance_criteria:
     run_exit_code: 0
     acceptance_criteria_failures: 0
@@ -1510,6 +1533,7 @@ tests:
     '
   maps_to_scenario:
     kind: rule_scan
+    source_role: wan-uplink
     random_count: 500
   acceptance_criteria:
     fail_accept_count: 0
@@ -1532,6 +1556,8 @@ tests:
     proto: tcp
     source: v6-client
     sink: v6-server
+    source_role: wan-uplink
+    sink_role: lan-downstream
     duration_s: 30
     parallel: 4
     expect_min_gbps: 8.0
@@ -1561,6 +1587,8 @@ tests:
     proto: udp
     source: v6-client
     sink: v6-server
+    source_role: wan-uplink
+    sink_role: lan-downstream
     duration_s: 20
     parallel: 2
     expect_min_gbps: 5.0
