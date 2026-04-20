@@ -1,15 +1,18 @@
 """External-metrics ingestion: Prometheus scrape + optional SNMP poll.
 
 Used by T15b advisor to correlate DUT-side signals with run windows.
-Public API: PrometheusScraper, SNMPScraper, scrape_all, parse_prometheus_exposition,
-build_source, PrometheusSource, SNMPSource, MetricSource.
+Public API: PrometheusScraper, SNMPScraper, NftSSHScraper, scrape_all,
+parse_prometheus_exposition, build_source, PrometheusSource, SNMPSource,
+NftSSHSource, MetricSource.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
+import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable
@@ -42,6 +45,14 @@ class SNMPSource:
     oids: tuple[str, ...]
     port: int = 161
     timeout_s: float = 3.0
+
+
+@dataclass(frozen=True)
+class NftSSHSource:
+    name: str                  # logical tag, e.g. "fw-nft"
+    ssh_target: str            # "root@10.0.0.1" — what ssh expects
+    timeout_s: float = 10.0
+    ssh_opts: tuple[str, ...] = ("-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no")
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +157,43 @@ class PrometheusScraper(MetricSource):
 
 
 # ---------------------------------------------------------------------------
+# NftSSHScraper
+# ---------------------------------------------------------------------------
+
+
+class NftSSHScraper(MetricSource):
+    """SSH into fw host, run `nft list counters -j`, emit 3 MetricRows per counter.
+
+    Sources: <name>:packets, <name>:bytes, <name>:counter (duplicate of packets
+    for the controller's advisor-aggregation `:counter` filter).
+    """
+
+    def __init__(self, source: NftSSHSource) -> None:
+        self._source = source
+
+    async def scrape(self, ts_unix: float) -> list[MetricRow]:
+        src = self._source
+
+        def _run() -> str:
+            return subprocess.run(
+                ["ssh", *src.ssh_opts, src.ssh_target, "nft", "list", "counters", "-j"],
+                check=True, text=True, capture_output=True, timeout=src.timeout_s,
+            ).stdout
+
+        stdout = await asyncio.to_thread(_run)
+        rows: list[MetricRow] = []
+        for entry in json.loads(stdout).get("nftables", []):
+            c = entry.get("counter")
+            if c is None:
+                continue
+            name, pkts, byt = c["name"], float(c["packets"]), float(c["bytes"])
+            rows.append(MetricRow(source=f"{src.name}:packets", ts_unix=ts_unix, key=name, value=pkts))
+            rows.append(MetricRow(source=f"{src.name}:bytes",   ts_unix=ts_unix, key=name, value=byt))
+            rows.append(MetricRow(source=f"{src.name}:counter", ts_unix=ts_unix, key=name, value=pkts))
+        return rows
+
+
+# ---------------------------------------------------------------------------
 # SNMPScraper (lazy import of pysnmp — may be absent)
 # ---------------------------------------------------------------------------
 
@@ -181,7 +229,7 @@ class SNMPScraper(MetricSource):
 
 
 def build_source(spec: "SourceSpec") -> MetricSource:
-    """Dispatch on spec.kind → PrometheusScraper / SNMPScraper."""
+    """Dispatch on spec.kind → PrometheusScraper / SNMPScraper / NftSSHScraper."""
     if spec.kind == "prometheus":
         return PrometheusScraper(
             PrometheusSource(
@@ -199,6 +247,14 @@ def build_source(spec: "SourceSpec") -> MetricSource:
                 community=spec.community,
                 oids=tuple(spec.oids),
                 port=spec.port,
+                timeout_s=spec.timeout_s,
+            )
+        )
+    if spec.kind == "nft_ssh":
+        return NftSSHScraper(
+            NftSSHSource(
+                name=spec.name,
+                ssh_target=spec.ssh_target,
                 timeout_s=spec.timeout_s,
             )
         )
@@ -251,8 +307,10 @@ __all__ = [
     "MetricRow",
     "PrometheusSource",
     "SNMPSource",
+    "NftSSHSource",
     "PrometheusScraper",
     "SNMPScraper",
+    "NftSSHScraper",
     "build_source",
     "parse_prometheus_exposition",
     "scrape_all",

@@ -1,0 +1,9 @@
+{"nftables": [
+  {"metainfo": {"version": "1.1.1", "release_name": "el10", "json_schema_version": 1}},
+  {"counter": {"family": "inet", "table": "filter", "name": "fw-drop-invalid", "handle": 1, "packets": 42, "bytes": 3360}},
+  {"counter": {"family": "inet", "table": "filter", "name": "fw-accept-ssh",   "handle": 2, "packets": 900000, "bytes": 72000000}},
+  {"counter": {"family": "inet", "table": "filter", "name": "fw-accept-https", "handle": 3, "packets": 20000,  "bytes": 30000000}},
+  {"counter": {"family": "inet", "table": "filter", "name": "fw-accept-dns",   "handle": 4, "packets": 8000,   "bytes": 600000}},
+  {"counter": {"family": "ip",   "table": "nat",    "name": "dnat-wan",        "handle": 1, "packets": 50000,  "bytes": 40000000}},
+  {"counter": {"family": "ip",   "table": "nat",    "name": "snat-wan",        "handle": 2, "packets": 50200,  "bytes": 41000000}}
+]}
