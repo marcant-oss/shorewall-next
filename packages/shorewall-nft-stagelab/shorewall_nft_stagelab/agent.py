@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import subprocess
 import sys
 from typing import Any
 
+from shorewall_nft_stagelab import metrics as _metrics
+from shorewall_nft_stagelab import trafgen_iperf3, trafgen_nmap, trafgen_scapy
 from shorewall_nft_stagelab.ipc import (
     AckMessage,
     ErrorMessage,
@@ -20,15 +23,61 @@ from shorewall_nft_stagelab.ipc import (
     decode,
     new_id,
 )
+from shorewall_nft_stagelab.topology_bridge import (
+    BridgeMemberSpec,
+    ProbeBridgeHandle,
+    ProbeBridgeSpec,
+    setup_probe_bridge,
+    teardown_probe_bridge,
+)
+from shorewall_nft_stagelab.topology_native import (
+    NativeEndpointHandle,
+    NativeEndpointSpec,
+    setup_native_endpoint,
+    teardown_native_endpoint,
+)
 
 # ── State type ────────────────────────────────────────────────────────────────
 
 # state dict keys:
 #   "host_name": str
-#   "stubs": dict[str, int]  — name → pid
+#   "stubs": dict[str, int]   — name → pid (legacy from T5; kept for back-compat)
+#   "endpoints": dict[str, NativeEndpointHandle | ProbeBridgeHandle]
 
 
-# ── Handler stubs ─────────────────────────────────────────────────────────────
+# ── netns exec helper ─────────────────────────────────────────────────────────
+
+
+def _exec_in_netns(
+    netns: str,
+    argv: list[str],
+    *,
+    check: bool = False,
+    text: bool = True,
+    capture_output: bool = True,
+    timeout: int | None = None,
+) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+    """Prepend ``ip netns exec <netns>`` to *argv* and run subprocess."""
+    full_argv = ["ip", "netns", "exec", netns] + argv
+    return subprocess.run(
+        full_argv,
+        check=check,
+        text=text,
+        capture_output=capture_output,
+        timeout=timeout,
+    )
+
+
+# ── Local metrics runner ──────────────────────────────────────────────────────
+
+
+def _local_runner(argv: list[str]) -> str:
+    """Run a command locally and return its stdout (agent is on the host)."""
+    proc = subprocess.run(argv, check=True, text=True, capture_output=True)
+    return proc.stdout
+
+
+# ── Handler implementations ───────────────────────────────────────────────────
 
 
 async def handle_ping(msg: Message, state: dict[str, Any]) -> dict[str, Any]:
@@ -36,44 +85,158 @@ async def handle_ping(msg: Message, state: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+_IPERF3_FIELDS = frozenset({
+    "mode", "bind", "server_ip", "duration_s", "parallel",
+    "proto", "udp_bandwidth_mbps", "port",
+})
+_NMAP_FIELDS = frozenset({
+    "target", "ports", "proto", "source_ip", "timing", "extra_args",
+})
+_PROBE_FIELDS = frozenset({
+    "proto", "src_ip", "dst_ip", "src_port", "dst_port", "family",
+    "flags", "payload_len", "vlan", "src_mac", "dst_mac",
+})
+
+
 async def handle_setup_endpoint(
     msg: SetupEndpointMessage, state: dict[str, Any]
 ) -> dict[str, Any]:
-    """Create a netns stub for the endpoint and record its pid."""
-    import shorewall_nft_netkit.nsstub as nsstub
-
+    """Create endpoint topology (native NIC or probe bridge) and record handle."""
     spec = msg.endpoint_spec
     name: str = spec["name"]
-    ns_name = f"NS_TEST_{name}"
-    pid = nsstub.spawn_nsstub(ns_name)
-    state["stubs"][name] = pid
-    return {"netns": ns_name, "pid": pid}
+    mode: str = spec.get("mode", "native")
+
+    if mode == "native":
+        ep_spec = NativeEndpointSpec(
+            name=name, nic=spec["nic"], vlan=int(spec["vlan"]),
+            ipv4=spec["ipv4"], ipv4_gw=spec["ipv4_gw"],
+            ipv6=spec.get("ipv6"), ipv6_gw=spec.get("ipv6_gw"),
+        )
+        h: NativeEndpointHandle = await asyncio.to_thread(setup_native_endpoint, ep_spec)
+        state["endpoints"][name] = h
+        return {
+            "mode": "native", "netns": h.netns,
+            "nsstub_pid": h.nsstub_pid, "vlan_iface": h.vlan_iface,
+        }
+
+    if mode == "probe":
+        vlan = int(spec.get("vlan", 1))
+        bridge = spec.get("bridge", f"br-{name}")
+        tap_name = f"{name}-tap"[:15]
+        members = (BridgeMemberSpec(kind="tap", name=tap_name, vlan=vlan),)
+        br_spec = ProbeBridgeSpec(netns=f"NS_TEST_{name}", bridge=bridge, members=members)
+        bh: ProbeBridgeHandle = await asyncio.to_thread(setup_probe_bridge, br_spec)
+        state["endpoints"][name] = bh
+        return {
+            "mode": "probe", "netns": bh.netns,
+            "nsstub_pid": bh.nsstub_pid, "bridge": bh.bridge,
+            "tap_count": len(bh.tap_fds),
+        }
+
+    raise ValueError(f"unknown endpoint mode: {mode!r}")
 
 
 async def handle_teardown_endpoint(
     msg: TeardownEndpointMessage, state: dict[str, Any]
 ) -> dict[str, Any]:
-    """Stop and remove the named netns stub."""
-    import shorewall_nft_netkit.nsstub as nsstub
-
+    """Teardown the endpoint and remove it from state."""
     name = msg.endpoint_name
-    if name not in state["stubs"]:
+    if name not in state["endpoints"]:
         raise ValueError(f"unknown endpoint: {name!r}")
-    pid = state["stubs"].pop(name)
-    nsstub.stop_nsstub(f"NS_TEST_{name}", pid)
+    handle = state["endpoints"].pop(name)
+    if isinstance(handle, NativeEndpointHandle):
+        await asyncio.to_thread(teardown_native_endpoint, handle)
+    else:
+        await asyncio.to_thread(teardown_probe_bridge, handle)
     return {"ok": True}
 
 
 async def handle_run_scenario(
     msg: RunScenarioMessage, state: dict[str, Any]
 ) -> dict[str, Any]:
-    raise NotImplementedError("agent scenario/metrics stubs — T9/T10/T11 will fill in")
+    """Execute the scenario action on the agent host."""
+    scenario = msg.scenario_spec
+    endpoint_name: str = scenario["endpoint_name"]
+    kind: str = scenario["kind"]
+    spec: dict[str, Any] = scenario.get("spec", {})
+
+    delay = spec.get("delay_before_s", 0)
+    if delay:
+        await asyncio.sleep(float(delay))
+
+    if kind in ("run_iperf3_server", "run_iperf3_client"):
+        netns = state["endpoints"][endpoint_name].netns
+        i3_spec = trafgen_iperf3.Iperf3Spec(
+            **{k: v for k, v in spec.items() if k in _IPERF3_FIELDS}
+        )
+        proc = await asyncio.to_thread(
+            _exec_in_netns, netns, trafgen_iperf3.build_argv(i3_spec)
+        )
+        r = trafgen_iperf3.parse_result(proc.stdout)
+        return {
+            "tool": "iperf3", "ok": r.ok, "throughput_gbps": r.throughput_gbps,
+            "retransmits": r.retransmits, "duration_s": r.duration_s,
+        }
+
+    if kind == "run_nmap":
+        netns = state["endpoints"][endpoint_name].netns
+        nm_spec = trafgen_nmap.NmapSpec(
+            **{k: v for k, v in spec.items() if k in _NMAP_FIELDS}
+        )
+        proc = await asyncio.to_thread(
+            _exec_in_netns, netns, trafgen_nmap.build_argv(nm_spec)
+        )
+        r = trafgen_nmap.parse_xml(proc.stdout, nm_spec.target)
+        return {
+            "tool": "nmap", "ok": r.ok,
+            "ports": [
+                {"port": p.port, "proto": p.proto, "state": p.state, "service": p.service}
+                for p in r.ports
+            ],
+        }
+
+    if kind == "send_probe":
+        handle = state["endpoints"][endpoint_name]
+        if not isinstance(handle, ProbeBridgeHandle):
+            raise TypeError(
+                f"send_probe requires probe endpoint; {endpoint_name!r} is {type(handle).__name__}"
+            )
+        frame = trafgen_scapy.build_frame(
+            trafgen_scapy.ProbeSpec(**{k: v for k, v in spec.items() if k in _PROBE_FIELDS})
+        )
+        if not handle.tap_fds:
+            raise RuntimeError(f"endpoint {endpoint_name!r} has no TAP fds")
+        nbytes = trafgen_scapy.send_tap(next(iter(handle.tap_fds.values())), frame)
+        return {"tool": "scapy", "ok": True, "bytes_sent": nbytes, "probe_id": spec.get("probe_id")}
+
+    if kind == "collect_oracle_verdict":
+        return {"tool": "oracle_marker", "ok": True}
+
+    raise ValueError(f"unknown scenario kind: {kind!r}")
 
 
 async def handle_poll_metrics(
     msg: PollMetricsMessage, state: dict[str, Any]
 ) -> dict[str, Any]:
-    raise NotImplementedError("agent scenario/metrics stubs — T9/T10/T11 will fill in")
+    """Poll a local metric source and return serialised MetricRows."""
+    kind = msg.kind
+    source = msg.source  # used as iface name for nic_ethtool
+
+    if kind == "nft_counters":
+        rows = await asyncio.to_thread(_metrics.poll_nft_counters, _local_runner)
+    elif kind == "conntrack_stats":
+        rows = await asyncio.to_thread(_metrics.poll_conntrack, _local_runner)
+    elif kind == "nic_ethtool":
+        rows = await asyncio.to_thread(_metrics.poll_ethtool, _local_runner, source)
+    elif kind == "cpu_softirq":
+        rows = await asyncio.to_thread(_metrics.poll_softirq, _local_runner)
+    else:
+        raise ValueError(f"unknown metrics kind: {kind!r}")
+
+    return {"rows": [
+        {"source": r.source, "ts_unix": r.ts_unix, "key": r.key, "value": r.value}
+        for r in rows
+    ]}
 
 
 # ── Dispatch table ────────────────────────────────────────────────────────────
@@ -87,19 +250,31 @@ _HANDLERS = {
 }
 
 
-# ── Cleanup helper ────────────────────────────────────────────────────────────
+# ── Cleanup helpers ───────────────────────────────────────────────────────────
 
 
 def _cleanup_stubs(state: dict[str, Any]) -> None:
-    """Stop all remaining nsstub processes."""
+    """Stop all remaining nsstub processes (legacy stubs dict)."""
     import shorewall_nft_netkit.nsstub as nsstub
-
     for name, pid in list(state["stubs"].items()):
         try:
             nsstub.stop_nsstub(f"NS_TEST_{name}", pid)
         except Exception:  # noqa: BLE001
             pass
     state["stubs"].clear()
+
+
+def _cleanup_endpoints(state: dict[str, Any]) -> None:
+    """Teardown all active endpoint handles, swallowing errors."""
+    for name, handle in list(state["endpoints"].items()):
+        try:
+            if isinstance(handle, NativeEndpointHandle):
+                teardown_native_endpoint(handle)
+            else:
+                teardown_probe_bridge(handle)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(f"agent: cleanup error for endpoint {name!r}: {exc}\n")
+    state["endpoints"].clear()
 
 
 # ── Async streams helper ──────────────────────────────────────────────────────
@@ -125,17 +300,12 @@ async def _make_stdio_channel() -> JsonLineChannel:
 
 
 async def run_agent(host_name: str) -> int:
-    """Main async loop.
-
-    Attach to stdin/stdout asyncio streams, dispatch messages until SHUTDOWN
-    (respond with ACK then exit 0) or EOF (exit 0) or fatal error (exit 1).
-    Returns exit code for sys.exit.
-
-    Tracks a registry of active netns stubs (name → pid) so
-    TEARDOWN_ENDPOINT can stop them; SHUTDOWN cleans up all remaining stubs
-    before ACK.
-    """
-    state: dict[str, Any] = {"host_name": host_name, "stubs": {}}
+    """Read JSON-line messages from stdin, dispatch, write ACK/ERROR to stdout."""
+    state: dict[str, Any] = {
+        "host_name": host_name,
+        "stubs": {},
+        "endpoints": {},
+    }
 
     try:
         channel = await _make_stdio_channel()
@@ -143,21 +313,20 @@ async def run_agent(host_name: str) -> int:
         sys.stderr.write(f"agent: failed to attach stdio streams: {exc}\n")
         return 1
 
+    import json
+
     while True:
-        # Read next message
         try:
             raw_line = await channel._reader.readline()
         except Exception:  # noqa: BLE001
+            _cleanup_endpoints(state)
             _cleanup_stubs(state)
             return 0
 
         if not raw_line:
-            # EOF
+            _cleanup_endpoints(state)
             _cleanup_stubs(state)
             return 0
-
-        # Decode
-        import json
 
         msg_id: str | None = None
         try:
@@ -167,48 +336,37 @@ async def run_agent(host_name: str) -> int:
             msg_id = data.get("id")
             msg = decode(data)
         except Exception as exc:  # noqa: BLE001
-            error = ErrorMessage(
-                id=new_id(),
-                reply_to=msg_id or "unknown",
-                error_type=type(exc).__name__,
-                message=str(exc),
-            )
-            await channel.send(error)
+            await channel.send(ErrorMessage(
+                id=new_id(), reply_to=msg_id or "unknown",
+                error_type=type(exc).__name__, message=str(exc),
+            ))
             continue
 
-        # SHUTDOWN — clean up and ack
         if isinstance(msg, ShutdownMessage):
+            _cleanup_endpoints(state)
             _cleanup_stubs(state)
-            ack = AckMessage(id=new_id(), reply_to=msg.id, result={})
-            await channel.send(ack)
+            await channel.send(AckMessage(id=new_id(), reply_to=msg.id, result={}))
             return 0
 
-        # Dispatch
         handler = _HANDLERS.get(msg.type)  # type: ignore[attr-defined]
         if handler is None:
-            error = ErrorMessage(
-                id=new_id(),
-                reply_to=msg.id,  # type: ignore[attr-defined]
+            await channel.send(ErrorMessage(
+                id=new_id(), reply_to=msg.id,  # type: ignore[attr-defined]
                 error_type="ValueError",
                 message=f"no handler for message type {msg.type!r}",  # type: ignore[attr-defined]
-            )
-            await channel.send(error)
+            ))
             continue
 
         try:
             result = await handler(msg, state)
         except Exception as exc:  # noqa: BLE001
-            error = ErrorMessage(
-                id=new_id(),
-                reply_to=msg.id,  # type: ignore[attr-defined]
-                error_type=type(exc).__name__,
-                message=str(exc),
-            )
-            await channel.send(error)
+            await channel.send(ErrorMessage(
+                id=new_id(), reply_to=msg.id,  # type: ignore[attr-defined]
+                error_type=type(exc).__name__, message=str(exc),
+            ))
             continue
 
-        ack = AckMessage(id=new_id(), reply_to=msg.id, result=result)  # type: ignore[attr-defined]
-        await channel.send(ack)
+        await channel.send(AckMessage(id=new_id(), reply_to=msg.id, result=result))  # type: ignore[attr-defined]
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -1,20 +1,34 @@
-"""Unit tests for agent handler stubs (no root, nsstub mocked)."""
+"""Unit tests for agent handlers (no root, topology/trafgen/nsstub mocked)."""
 
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from unittest.mock import patch
 
 from shorewall_nft_stagelab.agent import (
     handle_ping,
+    handle_poll_metrics,
+    handle_run_scenario,
     handle_setup_endpoint,
     handle_teardown_endpoint,
 )
-from shorewall_nft_stagelab.ipc import PingMessage, SetupEndpointMessage, TeardownEndpointMessage
+from shorewall_nft_stagelab.ipc import (
+    PingMessage,
+    PollMetricsMessage,
+    RunScenarioMessage,
+    SetupEndpointMessage,
+    TeardownEndpointMessage,
+)
+from shorewall_nft_stagelab.topology_bridge import ProbeBridgeHandle
+from shorewall_nft_stagelab.topology_native import NativeEndpointHandle
 
 
 def _state() -> dict:
-    return {"host_name": "test-host", "stubs": {}}
+    return {"host_name": "test-host", "stubs": {}, "endpoints": {}}
+
+
+# ── Existing tests (keep green) ───────────────────────────────────────────────
 
 
 def test_handle_ping_returns_empty() -> None:
@@ -26,21 +40,256 @@ def test_handle_ping_returns_empty() -> None:
 
 
 def test_setup_and_teardown_endpoint_uses_nsstub() -> None:
-    """handle_setup_endpoint / handle_teardown_endpoint wire through nsstub correctly."""
-    setup_msg = SetupEndpointMessage(id="setup-1", endpoint_spec={"name": "alpha"})
+    """Legacy path: setup/teardown with bare name (no mode) falls through to native."""
+    setup_msg = SetupEndpointMessage(
+        id="setup-1",
+        endpoint_spec={
+            "name": "alpha", "mode": "native",
+            "nic": "eth0", "vlan": 10,
+            "ipv4": "10.0.0.1/24", "ipv4_gw": "10.0.0.254",
+        },
+    )
     teardown_msg = TeardownEndpointMessage(id="teardown-1", endpoint_name="alpha")
     state = _state()
 
+    fake_handle = NativeEndpointHandle(
+        name="alpha", netns="NS_TEST_alpha", nsstub_pid=42, vlan_iface="eth0.10"
+    )
     with (
-        patch("shorewall_nft_netkit.nsstub.spawn_nsstub", return_value=42) as mock_spawn,
-        patch("shorewall_nft_netkit.nsstub.stop_nsstub") as mock_stop,
+        patch(
+            "shorewall_nft_stagelab.agent.setup_native_endpoint",
+            return_value=fake_handle,
+        ) as mock_setup,
+        patch("shorewall_nft_stagelab.agent.teardown_native_endpoint") as mock_tear,
     ):
         result = asyncio.run(handle_setup_endpoint(setup_msg, state))
-        assert result == {"netns": "NS_TEST_alpha", "pid": 42}
-        assert state["stubs"] == {"alpha": 42}
-        mock_spawn.assert_called_once_with("NS_TEST_alpha")
+        assert result["netns"] == "NS_TEST_alpha"
+        assert result["nsstub_pid"] == 42
+        assert state["endpoints"]["alpha"] is fake_handle
+        mock_setup.assert_called_once()
 
         result2 = asyncio.run(handle_teardown_endpoint(teardown_msg, state))
         assert result2 == {"ok": True}
-        assert state["stubs"] == {}
-        mock_stop.assert_called_once_with("NS_TEST_alpha", 42)
+        assert "alpha" not in state["endpoints"]
+        mock_tear.assert_called_once_with(fake_handle)
+
+
+# ── New tests (T14) ───────────────────────────────────────────────────────────
+
+
+def test_setup_native_stores_handle() -> None:
+    """handle_setup_endpoint(mode=native) stores NativeEndpointHandle in state."""
+    spec = {
+        "name": "ep1", "mode": "native",
+        "nic": "enp1s0f0", "vlan": 20,
+        "ipv4": "10.0.20.10/24", "ipv4_gw": "10.0.20.1",
+    }
+    msg = SetupEndpointMessage(id="s1", endpoint_spec=spec)
+    state = _state()
+
+    fake = NativeEndpointHandle(
+        name="ep1", netns="NS_TEST_ep1", nsstub_pid=99, vlan_iface="enp1s0f0.20"
+    )
+    with patch(
+        "shorewall_nft_stagelab.agent.setup_native_endpoint", return_value=fake
+    ):
+        resp = asyncio.run(handle_setup_endpoint(msg, state))
+
+    assert state["endpoints"]["ep1"] is fake
+    assert resp == {
+        "mode": "native",
+        "netns": "NS_TEST_ep1",
+        "nsstub_pid": 99,
+        "vlan_iface": "enp1s0f0.20",
+    }
+
+
+def test_setup_probe_stores_handle() -> None:
+    """handle_setup_endpoint(mode=probe) stores ProbeBridgeHandle in state."""
+    spec = {"name": "probe1", "mode": "probe", "vlan": 30, "bridge": "br-probes"}
+    msg = SetupEndpointMessage(id="s2", endpoint_spec=spec)
+    state = _state()
+
+    fake = ProbeBridgeHandle(
+        netns="NS_TEST_probe1", bridge="br-probes", nsstub_pid=77, tap_fds={"probe1-tap": 5}
+    )
+    with patch(
+        "shorewall_nft_stagelab.agent.setup_probe_bridge", return_value=fake
+    ):
+        resp = asyncio.run(handle_setup_endpoint(msg, state))
+
+    assert state["endpoints"]["probe1"] is fake
+    assert resp["mode"] == "probe"
+    assert resp["netns"] == "NS_TEST_probe1"
+    assert resp["tap_count"] == 1
+    assert "tap_fds" not in resp
+
+
+def test_teardown_dispatches_native() -> None:
+    """handle_teardown_endpoint calls teardown_native_endpoint for NativeEndpointHandle."""
+    handle = NativeEndpointHandle(
+        name="ep2", netns="NS_TEST_ep2", nsstub_pid=10, vlan_iface="eth0.5"
+    )
+    state = _state()
+    state["endpoints"]["ep2"] = handle
+    msg = TeardownEndpointMessage(id="t1", endpoint_name="ep2")
+
+    with patch("shorewall_nft_stagelab.agent.teardown_native_endpoint") as mock_tear:
+        resp = asyncio.run(handle_teardown_endpoint(msg, state))
+
+    assert resp == {"ok": True}
+    assert "ep2" not in state["endpoints"]
+    mock_tear.assert_called_once_with(handle)
+
+
+def test_teardown_dispatches_probe() -> None:
+    """handle_teardown_endpoint calls teardown_probe_bridge for ProbeBridgeHandle."""
+    handle = ProbeBridgeHandle(
+        netns="NS_TEST_pr", bridge="br-pr", nsstub_pid=20, tap_fds={}
+    )
+    state = _state()
+    state["endpoints"]["pr"] = handle
+    msg = TeardownEndpointMessage(id="t2", endpoint_name="pr")
+
+    with patch("shorewall_nft_stagelab.agent.teardown_probe_bridge") as mock_tear:
+        resp = asyncio.run(handle_teardown_endpoint(msg, state))
+
+    assert resp == {"ok": True}
+    assert "pr" not in state["endpoints"]
+    mock_tear.assert_called_once_with(handle)
+
+
+def test_run_scenario_send_probe_calls_scapy() -> None:
+    """send_probe scenario builds frame and writes to TAP fd."""
+    tap_fd = 99
+    handle = ProbeBridgeHandle(
+        netns="NS_TEST_pr2", bridge="br-pr2", nsstub_pid=30,
+        tap_fds={"pr2-tap": tap_fd},
+    )
+    state = _state()
+    state["endpoints"]["pr2"] = handle
+
+    msg = RunScenarioMessage(
+        id="r1",
+        scenario_spec={
+            "endpoint_name": "pr2",
+            "kind": "send_probe",
+            "spec": {
+                "proto": "tcp",
+                "src_ip": "10.0.1.1",
+                "dst_ip": "10.0.2.1",
+                "dst_port": 80,
+                "probe_id": "p-001",
+            },
+        },
+    )
+    fake_frame = b"\x00" * 60
+    with (
+        patch("shorewall_nft_stagelab.trafgen_scapy.build_frame", return_value=fake_frame) as mock_build,
+        patch("shorewall_nft_stagelab.trafgen_scapy.send_tap", return_value=60) as mock_send,
+    ):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    mock_build.assert_called_once()
+    mock_send.assert_called_once_with(tap_fd, fake_frame)
+    assert resp == {"tool": "scapy", "ok": True, "bytes_sent": 60, "probe_id": "p-001"}
+
+
+def test_run_scenario_iperf3_client_calls_netns_exec() -> None:
+    """iperf3 client scenario calls subprocess with 'ip netns exec <ns> iperf3 ...'."""
+    handle = NativeEndpointHandle(
+        name="ep3", netns="NS_TEST_ep3", nsstub_pid=50, vlan_iface="eth0.3"
+    )
+    state = _state()
+    state["endpoints"]["ep3"] = handle
+
+    fake_json = (
+        '{"end":{"sum_received":{"bits_per_second":1e10,"seconds":10.0},'
+        '"sum_sent":{"retransmits":0}}}'
+    )
+    fake_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout=fake_json, stderr="")
+
+    msg = RunScenarioMessage(
+        id="r2",
+        scenario_spec={
+            "endpoint_name": "ep3",
+            "kind": "run_iperf3_client",
+            "spec": {
+                "mode": "client",
+                "bind": "10.0.3.10",
+                "server_ip": "10.0.3.1",
+                "duration_s": 10,
+                "parallel": 1,
+            },
+        },
+    )
+    captured_argv: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        captured_argv.append(argv)
+        return fake_proc
+
+    with patch("subprocess.run", side_effect=fake_run):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    assert captured_argv, "subprocess.run was not called"
+    argv = captured_argv[0]
+    assert argv[:4] == ["ip", "netns", "exec", "NS_TEST_ep3"]
+    assert "iperf3" in argv
+    assert resp["tool"] == "iperf3"
+    assert resp["ok"] is True
+    assert abs(resp["throughput_gbps"] - 10.0) < 0.01
+
+
+def test_run_scenario_oracle_marker_is_noop() -> None:
+    """collect_oracle_verdict returns oracle_marker ok without touching state."""
+    state = _state()
+    msg = RunScenarioMessage(
+        id="r3",
+        scenario_spec={
+            "endpoint_name": "irrelevant",
+            "kind": "collect_oracle_verdict",
+            "spec": {},
+        },
+    )
+    resp = asyncio.run(handle_run_scenario(msg, state))
+    assert resp == {"tool": "oracle_marker", "ok": True}
+
+
+def test_run_scenario_unknown_kind_raises() -> None:
+    """Unknown scenario kind raises ValueError."""
+    state = _state()
+    msg = RunScenarioMessage(
+        id="r4",
+        scenario_spec={
+            "endpoint_name": "x",
+            "kind": "does_not_exist",
+            "spec": {},
+        },
+    )
+    try:
+        asyncio.run(handle_run_scenario(msg, state))
+        raise AssertionError("Expected ValueError")
+    except ValueError as exc:
+        assert "does_not_exist" in str(exc)
+
+
+def test_poll_metrics_nft_counters() -> None:
+    """poll_metrics(kind=nft_counters) returns serialised rows from poll_nft_counters."""
+    from shorewall_nft_stagelab.metrics import MetricRow
+
+    fake_rows = [
+        MetricRow(source="nft-counters-packets", ts_unix=1000.0, key="cnt_accept", value=42.0),
+        MetricRow(source="nft-counters-bytes", ts_unix=1000.0, key="cnt_accept", value=5040.0),
+    ]
+    state = _state()
+    msg = PollMetricsMessage(id="m1", source="fw", kind="nft_counters")
+
+    with patch("shorewall_nft_stagelab.agent._metrics.poll_nft_counters", return_value=fake_rows):
+        resp = asyncio.run(handle_poll_metrics(msg, state))
+
+    rows = resp["rows"]
+    assert len(rows) == 2
+    assert rows[0]["key"] == "cnt_accept"
+    assert rows[0]["value"] == 42.0
+    assert rows[1]["value"] == 5040.0
