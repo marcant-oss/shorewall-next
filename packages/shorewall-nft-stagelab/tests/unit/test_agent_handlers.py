@@ -27,7 +27,7 @@ from shorewall_nft_stagelab.trafgen_trex import TrexResult
 
 
 def _state() -> dict:
-    return {"host_name": "test-host", "stubs": {}, "endpoints": {}}
+    return {"host_name": "test-host", "stubs": {}, "endpoints": {}, "trex_daemons": {}}
 
 
 # ── Existing tests (keep green) ───────────────────────────────────────────────
@@ -427,6 +427,74 @@ def test_run_scenario_tcpkali_calls_trafgen() -> None:
     assert resp["ok"] is True
     assert resp["connections_established"] == 998
     assert resp["connections_failed"] == 2
+
+
+def test_start_trex_daemon_dispatches_to_trex_module() -> None:
+    """start_trex_daemon scenario calls trex_daemon.ensure_running and stores handle."""
+    from pathlib import Path
+
+    from shorewall_nft_stagelab.trex_daemon import TrexDaemonHandle
+
+    fake_handle = TrexDaemonHandle(
+        mode="stl", port=4501, pid=42,
+        started_at_ts=1000.0, cfg_path=Path("/tmp/trex-stl-4501.yaml"),
+    )
+    state = _state()
+    msg = RunScenarioMessage(
+        id="r-trex-start",
+        scenario_spec={
+            "endpoint_name": "trex0",
+            "kind": "start_trex_daemon",
+            "spec": {
+                "mode": "stl",
+                "port": 4501,
+                "pci_ports": ["0000:01:00.0", "0000:01:00.1"],
+                "cores": [4, 5],
+            },
+        },
+    )
+    with patch(
+        "shorewall_nft_stagelab.trex_daemon.ensure_running",
+        return_value=fake_handle,
+    ):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    assert resp["tool"] == "trex_daemon"
+    assert resp["ok"] is True
+    assert resp["port"] == 4501
+    assert state["trex_daemons"][4501] is fake_handle
+
+
+def test_stop_trex_daemon_pops_and_stops() -> None:
+    """stop_trex_daemon pops handle from state and calls trex_daemon.stop."""
+    from pathlib import Path
+
+    from shorewall_nft_stagelab.trex_daemon import TrexDaemonHandle
+
+    fake_handle = TrexDaemonHandle(
+        mode="stl", port=4501, pid=42,
+        started_at_ts=1000.0, cfg_path=Path("/tmp/trex-stl-4501.yaml"),
+    )
+    state = _state()
+    state["trex_daemons"][4501] = fake_handle
+
+    msg = RunScenarioMessage(
+        id="r-trex-stop",
+        scenario_spec={
+            "endpoint_name": "trex0",
+            "kind": "stop_trex_daemon",
+            "spec": {"port": 4501},
+        },
+    )
+    with patch("shorewall_nft_stagelab.trex_daemon.stop") as mock_stop:
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    mock_stop.assert_called_once_with(fake_handle)
+    assert resp["tool"] == "trex_daemon"
+    assert resp["ok"] is True
+    assert resp["port"] == 4501
+    assert resp["pid"] == 42
+    assert 4501 not in state["trex_daemons"]
 
 
 def test_poll_metrics_nft_counters() -> None:
