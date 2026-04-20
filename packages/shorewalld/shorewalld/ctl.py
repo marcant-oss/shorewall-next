@@ -212,7 +212,7 @@ def _send_with_retry(socket_path: str, request: dict, retry_delay: float) -> dic
             )
             time.sleep(delay)
             delay *= _RETRY_FACTOR
-    raise AssertionError("unreachable")  # noqa: unreachable
+    raise AssertionError("unreachable")
 
 
 def main(argv: list[str] | None = None) -> int:
