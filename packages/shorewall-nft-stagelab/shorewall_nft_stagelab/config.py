@@ -213,8 +213,42 @@ class TuningSweepScenario(BaseModel):
     wmem_max: list[int] = []            # bytes; [] = skip axis
 
 
+class ThroughputDpdkScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["throughput_dpdk"]
+    source: str                         # dpdk endpoint name (TRex TX side)
+    sink: str                           # dpdk endpoint name (TRex RX / loopback)
+    proto: Literal["tcp", "udp"] = "udp"
+    duration_s: int = 10
+    multiplier: str = "10gbps"          # TRex DSL: "50%", "1000kpps", "5gbps", etc.
+    packet_size_b: int = 64             # for synthetic streams
+    pcap_file: str = ""                 # optional replay pcap (absolute path)
+
+
+class ConnStormAstfScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["conn_storm_astf"]
+    source: str                         # dpdk endpoint (ASTF-client side)
+    sink: str                           # dpdk endpoint (ASTF-server side)
+    profile_py: str                     # absolute path to ASTF profile
+    duration_s: int = 30
+    multiplier: float = 1.0
+    expect_min_concurrent: int = 0      # advisor signal threshold
+
+
 Scenario = Annotated[
-    Union[ThroughputScenario, ConnStormScenario, RuleScanScenario, TuningSweepScenario],
+    Union[
+        ThroughputScenario,
+        ConnStormScenario,
+        RuleScanScenario,
+        TuningSweepScenario,
+        ThroughputDpdkScenario,
+        ConnStormAstfScenario,
+    ],
     Field(discriminator="kind"),
 ]
 
@@ -327,6 +361,7 @@ class StagelabConfig(BaseModel):
                 )
 
         # 5. Scenario source/sink must exist in endpoints
+        ep_mode_map = {ep.name: ep.mode for ep in self.endpoints}
         for sc in self.scenarios:
             if sc.source not in ep_name_set:
                 raise ValueError(
@@ -336,6 +371,20 @@ class StagelabConfig(BaseModel):
                 raise ValueError(
                     f"scenario {sc.id!r} sink {sc.sink!r} not found in endpoints"
                 )
+
+        # 5b. throughput_dpdk and conn_storm_astf require dpdk endpoints
+        for sc in self.scenarios:
+            if sc.kind in {"throughput_dpdk", "conn_storm_astf"}:
+                if ep_mode_map.get(sc.source) != "dpdk":
+                    raise ValueError(
+                        f"scenario {sc.id!r} ({sc.kind}): source {sc.source!r} "
+                        "must reference a dpdk endpoint"
+                    )
+                if ep_mode_map.get(sc.sink) != "dpdk":  # type: ignore[union-attr]
+                    raise ValueError(
+                        f"scenario {sc.id!r} ({sc.kind}): sink {sc.sink!r} "  # type: ignore[union-attr]
+                        "must reference a dpdk endpoint"
+                    )
 
         # 6. Disjoint-mode rule: same (host, nic) cannot mix probe and native
         probe_nics: set[tuple[str, str]] = set()
@@ -467,6 +516,8 @@ __all__ = [
     "ConnStormScenario",
     "RuleScanScenario",
     "TuningSweepScenario",
+    "ThroughputDpdkScenario",
+    "ConnStormAstfScenario",
     "Scenario",
     "PrometheusSourceSpec",
     "SNMPSourceSpec",
