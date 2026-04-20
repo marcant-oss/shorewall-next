@@ -29,6 +29,7 @@ tests:
       confirm that every non-permitted zone pair is dropped.
     maps_to_scenario:
       kind: rule_scan
+      source_role: wan-uplink
       random_count: 500
     acceptance_criteria:
       fail_accept_count: 0
@@ -50,6 +51,8 @@ tests:
       requires per-service traffic shaping policy, which is not in scope.
     maps_to_scenario:
       kind: throughput
+      source_role: wan-uplink
+      sink_role: lan-downstream
     acceptance_criteria:
       throughput_degradation_pct: "<= 5"
     evidence:
@@ -70,6 +73,7 @@ tests:
       increments against the expected policy.
     maps_to_scenario:
       kind: rule_coverage_matrix
+      source_role: wan-uplink
     acceptance_criteria:
       implicit_accept_zone_pairs: 0
       uncovered_zone_pairs: 0
@@ -91,6 +95,7 @@ tests:
       separate shorewalld task in CLAUDE.md).
     maps_to_scenario:
       kind: rule_coverage_matrix
+      source_role: wan-uplink
       # Prometheus scrape is verified as part of the metrics-ingest path.
     acceptance_criteria:
       prometheus_scrape_ok: true
@@ -112,6 +117,7 @@ tests:
       configuration-drift aspect of A.12.6.1 but not the software-CVE aspect.
     maps_to_scenario:
       kind: rule_coverage_matrix
+      source_role: wan-uplink
     acceptance_criteria:
       advisor_tier_b_pr_created: true
     evidence:
@@ -131,6 +137,7 @@ tests:
       to an independent reviewer or compliance auditor.
     maps_to_scenario:
       kind: rule_coverage_matrix
+      source_role: wan-uplink
       # audit is the post-processing step over all scenario results.
     acceptance_criteria:
       audit_html_generated: true
@@ -153,6 +160,8 @@ tests:
       continuous compliance checking against the documented security policy.
     maps_to_scenario:
       kind: reload_atomicity
+      source_role: wan-uplink
+      sink_role: lan-downstream
       # reload_atomicity is the sentinel that the full policy-enforcement
       # pipeline (compile → load → verify) is functional.
     acceptance_criteria:
@@ -175,6 +184,7 @@ tests:
       (systematic enumeration of all flow directions).
     maps_to_scenario:
       kind: rule_scan
+      source_role: wan-uplink
       random_count: 500
     acceptance_criteria:
       fail_accept_count: 0

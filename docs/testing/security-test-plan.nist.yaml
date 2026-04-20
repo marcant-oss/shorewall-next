@@ -14,7 +14,7 @@ tests:
       random probes across a /8 target subnet.
     maps_to_scenario:
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 500
       test_id: nist-ac-4-info-flow
@@ -36,7 +36,7 @@ tests:
       UDP, and ICMP protocols.
     maps_to_scenario:
       kind: rule_coverage_matrix
-      source: wan-endpoint
+      source_role: wan-uplink
       zone_subnets:
         wan: "0.0.0.0/0"
         lan: "10.0.10.0/24"
@@ -70,8 +70,8 @@ tests:
       At most 5% of SYN packets from a controlled flood must reach the sink.
     maps_to_scenario:
       kind: dos_syn_flood
-      source: wan-endpoint
-      sink: dmz-endpoint
+      source_role: wan-uplink
+      sink_role: dmz-downstream
       duration_s: 10
       rate_pps: 50000
       src_ip_range: 100.64.0.0/10
@@ -98,8 +98,8 @@ tests:
       must keep throughput above 80% of baseline.
     maps_to_scenario:
       kind: conn_storm
-      source: wan-endpoint
-      sink: lan-endpoint
+      source_role: wan-uplink
+      sink_role: lan-downstream
       target_conns: 100000
       rate_per_s: 10000
       hold_s: 30
@@ -122,8 +122,8 @@ tests:
       rate-limiting must keep resolver reachable.
     maps_to_scenario:
       kind: dos_dns_query
-      source: wan-endpoint
-      sink: dmz-endpoint
+      source_role: wan-uplink
+      sink_role: dmz-downstream
       duration_s: 10
       queries_per_s: 20000
       query_name_pattern: random
@@ -149,8 +149,8 @@ tests:
       and the firewall must recover within 30 seconds after the flood stops.
     maps_to_scenario:
       kind: dos_half_open
-      source: wan-endpoint
-      sink: dmz-endpoint
+      source_role: wan-uplink
+      sink_role: dmz-downstream
       duration_s: 30
       target_conns: 500000
       open_rate_per_s: 20000
@@ -177,8 +177,8 @@ tests:
       configured minimum Gbps over the full duration.
     maps_to_scenario:
       kind: throughput
-      source: wan-endpoint
-      sink: lan-endpoint
+      source_role: wan-uplink
+      sink_role: lan-downstream
       proto: tcp
       duration_s: 30
       parallel: 4
@@ -201,7 +201,7 @@ tests:
       Zero packets must pass.
     maps_to_scenario:
       kind: evasion_probes
-      source: wan-endpoint
+      source_role: wan-uplink
       target_ip: 10.0.0.1
       probe_types:
         - tcp_null
@@ -228,7 +228,7 @@ tests:
       a rule_scan run. Partial coverage only (no per-packet syslog).
     maps_to_scenario:
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 200
       test_id: nist-au-2-audit-events
@@ -253,7 +253,7 @@ tests:
       return monotonically increasing nft counter values.
     maps_to_scenario:
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 100
       test_id: nist-au-12-audit-generation
@@ -278,7 +278,7 @@ tests:
       non-empty nft counter and conntrack metrics.
     maps_to_scenario:
       kind: rule_scan
-      source: wan-endpoint
+      source_role: wan-uplink
       target_subnet: 10.0.0.0/8
       random_count: 50
       test_id: nist-si-4-monitoring
@@ -300,8 +300,8 @@ tests:
       Retransmissions during reload must stay below 100.
     maps_to_scenario:
       kind: reload_atomicity
-      source: wan-endpoint
-      sink: lan-endpoint
+      source_role: wan-uplink
+      sink_role: lan-downstream
       fw_host: "root@fw-primary"
       duration_s: 60
       reload_at_s: 20
@@ -324,8 +324,8 @@ tests:
       downtime, confirm secondary assumes VIP within 5 seconds.
     maps_to_scenario:
       kind: ha_failover_drill
-      source: wan-endpoint
-      sink: lan-endpoint
+      source_role: wan-uplink
+      sink_role: lan-downstream
       primary_fw_host: "root@fw-primary"
       secondary_fw_host: "root@fw-secondary"
       duration_s: 90

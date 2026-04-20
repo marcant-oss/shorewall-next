@@ -12,33 +12,61 @@ firewalls — only the `-test` pair.
 ## Topology
 
 ```
-       ┌──────────────────────────────────────────────────┐
-       │  Test-bed VLAN trunk (Proxmox vmbr1, pvid 3999)  │
-       └──────┬──────┬──────────────────────┬──────┬──────┘
-              │ eth2 │ eth2             eth2│      │eth2
-              ▼      ▼                      ▼      ▼
-   ┌──────────────┐ ┌──────────────┐  ┌─────────┐ ┌──────────┐
-   │ fw-tester01  │ │ fw-tester02  │  │  elgar  │ │ tropheus │
-   │ 192.168.203. │ │ 192.168.203. │  │  -test  │ │  -test   │
-   │     .93      │ │     .74      │  │  .70    │ │   .87    │
-   │              │ │              │  │ mgmt    │ │ mgmt     │
-   │ netns        │ │ netns (TODO) │  │  ┌───┐  │ │  ┌───┐   │
-   │ sim-uplink   │ │ sim-uplink   │  │  │fw │  │ │  │fw │   │
-   │ 217.14.160.77│ │ 217.14.160.78│  │  │ns │  │ │  │ns │   │
-   │ OSPF area 0  │ │ OSPF area 0  │  │  └───┘  │ │  └───┘   │
-   │ → 0.0.0.0/0  │ │ → 0.0.0.0/0  │  │ .75/27  │ │ .76/27   │
-   │ via nft      │ │ via nft      │  │ bond1   │ │ bond1    │
-   │ masquerade   │ │ masquerade   │  │ VRRP VI_│ │ VRRP VI_ │
-   │ on eth0      │ │ on eth0      │  │  fw     │ │  fw      │
-   └──────────────┘ └──────────────┘  │ master  │ │ backup   │
-       mgmt 192.168.203/24             │ prio    │ │ prio     │
-                                       │ 200     │ │ 150      │
-                                       └─────────┘ └──────────┘
+   Backbone bridge (VLAN-transparent, eth2 on all VMs):
+       ┌───────────────────────────────────────────────────┐
+       │  backbone bridge (no pvid restriction)            │
+       │  217.14.160.64/27 — OSPF area 0                   │
+       └──────┬──────────────────────┬──────┬──────────────┘
+              │ eth2                 │eth2  │eth2
+              ▼                      ▼      ▼
+   ┌──────────────┐             ┌─────────┐ ┌──────────┐
+   │ fw-tester01  │             │  elgar  │ │ tropheus │
+   │ 192.168.203. │             │  -test  │ │  -test   │
+   │     .93      │             │  .70    │ │   .87    │
+   │              │             │ mgmt    │ │ mgmt     │
+   │ netns        │             │  ┌───┐  │ │  ┌───┐   │
+   │ sim-uplink   │             │  │fw │  │ │  │fw │   │
+   │ 217.14.160.77│             │  │ns │  │ │  │ns │   │
+   │ OSPF area 0  │             │  └───┘  │ │  └───┘   │
+   │ → 0.0.0.0/0  │             │ .75/27  │ │ .76/27   │
+   │ via nft      │             │ bond1   │ │ bond1    │
+   │ masquerade   │             │ VRRP    │ │ VRRP     │
+   │ on eth0      │             │ master  │ │ backup   │
+   └──────────────┘             │ prio200 │ │ prio150  │
+                                └────┬────┘ └──────────┘
+                                     │ bond0.10 (VLAN 10)
+   Customer-VLAN trunk bridge (eth1):│ 217.14.160.24/29
+       ┌───────────────────────────── │ ──────────────────┐
+       │  customer-VLAN trunk bridge  │ (VLAN-transparent)│
+       └──────┬───────────────────────┘                   │
+              │ eth1                                       │
+              ▼                                            │
+   ┌──────────────────┐                                   │
+   │  fw-tester02     │ eth1.10 = 217.14.160.30/29        │
+   │  192.168.203.74  │ GW      = 217.14.160.25 (VRRP VIP)│
+   │  (downstream     │                                   │
+   │   customer-VLAN  │ managed by tester02-downstream    │
+   │   endpoint)      │ .service at boot                  │
+   └──────────────────┘                                   │
+       mgmt 192.168.203/24
 ```
 
-Both testers' `eth2` sit on Proxmox `vmbr1` untagged with pvid=3999, which is
-the same L2 that elgar-test/tropheus-test `bond1` listens on for OSPF hellos
-(217.14.160.64/27 backbone subnet).
+The two testers use **different NICs for different purposes**:
+- `eth2` — backbone bridge (VLAN-transparent, shared with elgar/tropheus bond1
+  on the 217.14.160.64/27 OSPF segment). tester01 uses this for the sim-uplink
+  netns. tester02 does NOT use eth2 for the downstream endpoint.
+- `eth1` — customer-VLAN trunk bridge (VLAN-transparent, separate from eth2's
+  bridge). tester02 uses `eth1.10` (VLAN 10) for its downstream endpoint at
+  217.14.160.30/29. This bridge carries tagged customer-zone frames from elgar
+  bond0.* sub-interfaces.
+
+**Zone mapping for VLAN 10**: bond0.10 = **mgmt zone** on the reference
+firewall (217.14.160.24/29). Note that the FW policy enforces `net → all
+REJECT` and `mgmt → all REJECT`, so generic ICMP forwarding between the
+backbone (net zone, tester01 sim-uplink) and the mgmt zone (tester02) is
+blocked by default. Traffic-gen scenarios must use port/proto combinations
+permitted by explicit ACCEPT rules, or the operator must add a temporary
+test-only ACCEPT rule.
 
 ## Prerequisites
 
@@ -102,6 +130,68 @@ Expected: `217.14.160.75` (elgar bond1) state `Full/DR`, `217.14.160.76`
 - Outbound NAT via `nft table inet sim-uplink-nat` on tester01 eth0.
 - Egress allowlist: ICMP / traceroute-UDP / DNS / HTTP / HTTPS. Everything
   else is LOG+reject to prevent accidental test traffic leakage.
+
+## Phase 1b — tester02 downstream endpoint (eth1.10 / VLAN 10)
+
+**Purpose**: give the lab a second endpoint on the customer-VLAN trunk so
+stagelab native-mode scenarios can generate traffic that the FW must forward.
+tester02's `eth1` is on a VLAN-transparent bridge separate from the backbone
+bridge, and passes tagged customer-zone frames from elgar bond0.* sub-interfaces.
+
+### VLAN selection
+
+A preliminary tcpdump confirmed that only **VLAN 10** is visible on tester02
+eth1 (VRRP advertisements from 217.14.160.26, vrid 51). VLAN 20 (host zone,
+217.14.168.0/24) was not present. VLAN 10 corresponds to bond0.10 = **mgmt
+zone** (217.14.160.24/29) on the reference firewall. GW = VRRP VIP
+217.14.160.25 (elgar/tropheus master).
+
+### Deployed configuration
+
+```
+Interface:  eth1.10 (VLAN 10 on parent eth1)
+IP address: 217.14.160.30/29
+Gateway:    217.14.160.25 (VRRP VIP — elgar master / tropheus backup)
+Zone:       mgmt (firewall bond0.10)
+```
+
+### Setup script + service (already deployed)
+
+- Script: `/usr/local/sbin/tester02-downstream-setup`
+- Service: `/etc/systemd/system/tester02-downstream.service`
+  (`After=network.target`, `Type=oneshot`, `RemainAfterExit=yes`)
+- Enabled and active; reproduced idempotently at boot.
+
+To reproduce manually (idempotent):
+
+```bash
+ssh root@192.168.203.74 '/usr/local/sbin/tester02-downstream-setup'
+```
+
+### Verify after setup or reboot
+
+```bash
+ssh root@192.168.203.74 'systemctl is-active tester02-downstream.service'
+ssh root@192.168.203.74 'ip -br addr show eth1.10'
+# Expected: eth1.10@eth1  UP  217.14.160.30/29 ...
+```
+
+### Through-FW connectivity note
+
+A through-FW ping from tester01 sim-uplink (217.14.160.77, net zone) to
+tester02 (217.14.160.30, mgmt zone) is **rejected by the FW** — the policy
+`net → all REJECT` applies. The gateway on VLAN 10 (217.14.160.25) is
+reachable directly from tester02 (same L2), confirming bridge + VLAN
+sub-interface are working correctly.
+
+For native-mode traffic-gen scenarios to work end-to-end, either:
+1. Target specific host/port combos with existing ACCEPT rules (e.g. OSPF,
+   SSH from permitted sources, SNMP from monitoring hosts), or
+2. Add a temporary test-only ACCEPT rule on the reference firewall for the
+   test duration.
+
+A "gold signal" ICMP ping is **not** achievable with the current zone
+placement unless an explicit ACCEPT rule is added.
 
 ## Phase 2 — simlab correctness (tester01)
 
@@ -274,10 +364,13 @@ Archive the whole directory under a stable path for compliance evidence.
 
 ## Known limitations
 
-1. **Traffic-gen scenarios require a downstream endpoint** — until tester02
-   is configured on a bond0.X VLAN, `throughput`, `rule_scan`,
-   `rule_coverage_matrix`, `dos_*`, `evasion_probes`, etc. are catalogued
-   but not runnable end-to-end. Dry-run still validates the YAML/orchestrator.
+1. **FW policy limits through-FW traffic-gen** — tester02 is on the mgmt zone
+   (VLAN 10, 217.14.160.24/29); tester01 sim-uplink is on the net zone (bond1,
+   217.14.160.64/27). The FW policy `net → all REJECT` blocks generic ICMP
+   forwarding between them. Traffic-gen scenarios must target port/proto combos
+   with existing ACCEPT rules, or require a temporary test-only ACCEPT rule.
+   Probe-mode scenarios (rule_scan, evasion_probes, rule_coverage_matrix)
+   running locally on tester01 are not affected.
 2. **pdns advisor path is academic** — the `pdns` bundle requires NET-SNMP-EXTEND
    scripts on elgar/tropheus (`extend pdns-all-queries | cache-hits | answers-0-1`).
    Operator TODO on the firewall hosts.
@@ -315,23 +408,99 @@ Archive the whole directory under a stable path for compliance evidence.
 
 ## Scenario compatibility matrix
 
-| Scenario kind | Endpoint mode needed | Runnable today from tester01 |
-|---------------|----------------------|-------------------------------|
-| rule_scan, rule_coverage_matrix, evasion_probes | probe | ✓ (local netns+TAP) |
-| throughput, conn_storm, tuning_sweep | native | ✗ (eth2 owned by sim-uplink) |
+| Scenario kind | Endpoint mode needed | Runnable today |
+|---------------|----------------------|----------------|
+| rule_scan, rule_coverage_matrix, evasion_probes | probe | ✓ (tester01 local netns+TAP) |
+| throughput, conn_storm, tuning_sweep | native | ✓ (tester02 eth1.10 / VLAN 10) — limited by FW policy (see limitation 1) |
 | throughput_dpdk, conn_storm_astf, dos_* | dpdk | ✗ (virtio-net, no DPDK-capable NIC) |
 | ha_failover_drill | uses fw_host SSH only | ✓ (already validated live) |
-| conntrack_overflow | native + fw_host SSH | ✗ (native blocked; fw_host SSH OK) |
-| reload_atomicity, long_flow_survival | native + fw_host SSH | ✗ (native blocked) |
-| stateful_helper_ftp | native + vsftpd | ✗ (native blocked) |
+| conntrack_overflow | native + fw_host SSH | ✓ native available via tester02; fw_host SSH OK |
+| reload_atomicity, long_flow_survival | native + fw_host SSH | ✓ native available via tester02 |
+| stateful_helper_ftp | native + vsftpd | ✓ native available via tester02 (vsftpd install needed) |
 
-**Implication**: for a full live audit, the test-bed must include at least
-one tester-NIC in root-ns (for native mode) in addition to the
-sim-uplink-owning one. That's the point of Phase 2 (tester02 setup).
+**Status**: tester02 eth1.10 is deployed (Phase 1b); native-mode scenarios can
+now use `lan-downstream` endpoint. End-to-end FW forwarding requires permitted
+port/proto or a temporary test ACCEPT rule (see limitation 1).
+
+## Role-based endpoint mapping
+
+Catalogue fragments reference endpoints via logical **roles** instead of
+hard-coded names.  This decouples the test catalogue from any specific base
+config layout and lets you swap endpoint naming (e.g. tester01 vs. dedicated
+DUT testbed) without editing the catalogue files.
+
+### Convention
+
+| Role slug | Meaning |
+|-----------|---------|
+| `wan-uplink` | External network / backbone peer (WAN-side tester) |
+| `lan-downstream` | Customer-zone host behind the FW (LAN-side tester) |
+| `dmz-downstream` | DMZ zone, if present and distinct from LAN |
+| `client` / `server` | Generic traffic-direction fallback |
+
+Set the `role:` field on an `Endpoint` in your base config:
+
+```yaml
+endpoints:
+  - name: tester01-uplink
+    host: tester01
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: 10.0.13.100/24
+    ipv4_gw: 10.0.13.1
+    role: wan-uplink        # <-- catalogue will resolve source_role: wan-uplink here
+
+  - name: tester02-downstream
+    host: tester02
+    mode: native
+    nic: eth2
+    vlan: 14
+    ipv4: 10.0.14.100/24
+    ipv4_gw: 10.0.14.1
+    role: lan-downstream    # <-- catalogue will resolve sink_role: lan-downstream here
+```
+
+Catalogue entries use `source_role` / `sink_role` in `maps_to_scenario`:
+
+```yaml
+maps_to_scenario:
+  kind: rule_scan
+  source_role: wan-uplink
+  target_subnet: 10.0.0.0/8
+  random_count: 500
+```
+
+`run-security-test-plan.sh` resolves roles at merge time and replaces
+`source_role` / `sink_role` with the endpoint name from the base config.
+Scenarios whose role cannot be resolved are skipped with a warning; the
+log line shows `INFO: N scenario(s) skipped (role-unresolved): <ids>`.
+
+### Reference base config
+
+`tools/stagelab-lab-base.yaml` is the canonical example base config for the
+lab test-bed. It uses `tester01-uplink` (role `wan-uplink`) and
+`tester02-downstream` (role `lan-downstream`) against the elgar/tropheus
+Prometheus + SNMP metrics sources.
+
+To validate the reference config:
+
+```bash
+export STAGELAB_SNMP_COMMUNITY_MON=dummy
+.venv/bin/shorewall-nft-stagelab validate tools/stagelab-lab-base.yaml
+```
+
+### Back-compat
+
+Existing catalogue entries and base configs with explicit `source:` / `sink:`
+names continue to work unchanged.  If both `source:` and `source_role:` are
+present, `source:` takes precedence and a warning is emitted.
 
 ## Open items
 
-- tester02 setup (Task #28 — decide: second sim-uplink for ECMP, OR downstream endpoint on bond0.X VLAN).
+- **Temporary test-ACCEPT rule** — for through-FW native-mode traffic-gen to work
+  generically (not just permitted-port combos), add a time-boxed `ACCEPT net mgmt`
+  rule on the reference firewall during test windows. Operator TODO.
 - `run-security-test-plan.sh --simlab` integration (currently simlab must be run manually; flag wiring in D1 but not exercised end-to-end).
 - VRRP column-index cross-check on keepalived v2.2.8 MIB (follow-up).
 - pdns-extend configuration on firewall hosts (operator TODO).

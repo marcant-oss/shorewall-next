@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 _PCI_RE = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$")
 _ENV_VAR_RE = re.compile(r"^\$\{([A-Z_][A-Z0-9_]*)\}$")
+_SLUG_RE = re.compile(r"^[a-z0-9]+([-_][a-z0-9]+)*$")
 
 # TRex multiplier grammar: "<number><unit>" or "<percent>%".
 # Numbers: integer or decimal. Units (case-insensitive): bps, kbps, mbps,
@@ -68,6 +69,15 @@ class Endpoint(BaseModel):
     rss_queues: int | None = None
     irq_affinity: list[int] = []
     bridge: str | None = None
+    # --- Role-based endpoint binding ---
+    # Optional logical role that lets catalogue fragments reference endpoints
+    # without hard-coding endpoint names.  Recommended slugs:
+    #   wan-uplink        — external network / backbone peer
+    #   lan-downstream    — customer-zone behind the FW
+    #   dmz-downstream    — DMZ zone, if distinct from LAN
+    #   client / server   — generic traffic-direction (fallback)
+    # Default None means "no role; cannot be resolved via role-lookup".
+    role: str | None = None
     # --- DPDK-specific ---
     pci_addr: str | None = None            # "0000:01:00.0"
     dpdk_cores: list[int] = []             # CPU cores for DPDK poll mode
@@ -124,6 +134,16 @@ class Endpoint(BaseModel):
                 raise ValueError(f"invalid ipv6_gw address: {v!r}") from exc
         return v
 
+    @field_validator("role")
+    @classmethod
+    def _validate_role(cls, v: str | None) -> str | None:
+        if v is not None and not _SLUG_RE.match(v):
+            raise ValueError(
+                f"endpoint role {v!r} must match ^[a-z0-9]+([-_][a-z0-9]+)*$ "
+                "(lowercase alphanumeric, hyphens or underscores only)"
+            )
+        return v
+
     @model_validator(mode="after")
     def _check_dpdk_fields(self) -> "Endpoint":
         if self.mode == "dpdk":
@@ -174,8 +194,6 @@ class Endpoint(BaseModel):
 # ---------------------------------------------------------------------------
 # Standards-layer helpers
 # ---------------------------------------------------------------------------
-
-_SLUG_RE = re.compile(r"^[a-z0-9]+([-_][a-z0-9]+)*$")
 
 
 def _validate_test_id_slug(v: str) -> str:

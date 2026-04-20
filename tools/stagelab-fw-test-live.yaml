@@ -1,0 +1,94 @@
+# stagelab-fw-test-live.yaml — base config for full live FW test.
+#
+# Topology:
+#   tester01 (192.168.203.93) — WAN-side endpoint; sim-uplink netns is already
+#     up on eth2 for OSPF peering.  Stagelab uses probe mode on a fresh netns
+#     (TAP inside a VLAN-filtering bridge) so both coexist on the same host.
+#   tester02 (192.168.203.74) — downstream customer-zone endpoint on eth1.10
+#     (VLAN 10, mgmt zone, 217.14.160.30/29, GW 217.14.160.25).
+#   elgar / tropheus — reference HA firewall pair (external DUT; metrics only).
+#
+# VLAN selection rationale:
+#   VLAN 20 (host zone, 217.14.168.0/24) was NOT seen on tester02 eth1 during
+#   probing.  VLAN 10 was present (VRRP advertisements from elgar bond0.10).
+#   VLAN 10 = mgmt zone on the reference firewall; it is the only customer-VLAN
+#   reachable from tester02's eth1 trunk port today.
+#
+# Through-FW note:
+#   tester01 sim-uplink is on bond1 (net zone, 217.14.160.64/27).
+#   tester02 is on bond0.10 (mgmt zone, 217.14.160.24/29).
+#   The FW policy enforces "net → all REJECT" and "mgmt → all REJECT", so
+#   bidirectional ICMP across the net/mgmt zone boundary is blocked by default.
+#   Traffic-gen scenarios that require end-to-end FW forwarding must target
+#   specific port/proto combos permitted by explicit ACCEPT rules, or the
+#   operator must temporarily add a test-only ACCEPT rule.
+#
+# SNMP community string is read from the environment — NEVER commit a literal value.
+# Set it before running:
+#   export STAGELAB_SNMP_COMMUNITY_MON=<your-community>
+#   .venv/bin/shorewall-nft-stagelab validate tools/stagelab-fw-test-live.yaml
+#
+# Usage:
+#   STAGELAB_SNMP_COMMUNITY_MON=public \
+#       tools/run-security-test-plan.sh --standards all \
+#           --config tools/stagelab-fw-test-live.yaml \
+#           --simlab --simlab-host root@192.168.203.93 \
+#           --out /tmp/sec-plan-live
+
+hosts:
+  - name: tester01
+    address: root@192.168.203.93
+    work_dir: /root/shorewall-nft
+
+  - name: tester02
+    address: root@192.168.203.74
+    work_dir: /root/shorewall-nft
+
+dut:
+  kind: external
+
+endpoints:
+  # tester01 uplink endpoint — probe mode in a fresh netns alongside sim-uplink.
+  # sim-uplink owns eth2 in its own netns; stagelab probe-mode uses a TAP on a
+  # separate bridge and does NOT conflict with it.
+  - name: uplink-probe
+    host: tester01
+    mode: probe
+    bridge: br-uplink
+    role: wan-uplink
+
+  # tester02 downstream endpoint — native mode on VLAN sub-interface eth1.10.
+  # eth1 is on the customer-VLAN trunk bridge (VLAN-transparent; separate from
+  # eth2's backbone bridge).  tester02-downstream.service creates eth1.10 at boot.
+  - name: lan-downstream
+    host: tester02
+    mode: native
+    nic: eth1
+    vlan: 10
+    ipv4: 217.14.160.30/29
+    ipv4_gw: 217.14.160.25
+    role: lan-downstream
+
+metrics:
+  poll_interval_s: 10
+  sources:
+    - kind: snmp
+      name: elgar
+      host: 192.168.203.70
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp, vrrp_extended]
+
+    - kind: snmp
+      name: tropheus
+      host: 192.168.203.87
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp, vrrp_extended]
+
+scenarios: []   # catalogue provides them at merge time
+
+report:
+  output_dir: /tmp/stagelab-fw-live

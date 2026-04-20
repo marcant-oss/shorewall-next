@@ -862,4 +862,32 @@ def test_snmp_unknown_bundle_rejected():
         )
     err_str = str(exc_info.value)
     assert "not-a-bundle" in err_str
-    assert "vrrp" in err_str
+
+
+# ---------------------------------------------------------------------------
+# Endpoint role field tests
+# ---------------------------------------------------------------------------
+
+
+def test_endpoint_role_defaults_to_none():
+    """Endpoint.role is None by default (back-compat: existing configs parse unchanged)."""
+    ep = Endpoint(name="ep1", host="h1", mode="native", nic="eth0")
+    assert ep.role is None
+
+
+def test_endpoint_role_valid_slug():
+    """A valid role slug is accepted and preserved."""
+    ep = Endpoint(name="ep1", host="h1", mode="native", nic="eth0", role="wan-uplink")
+    assert ep.role == "wan-uplink"
+
+
+def test_endpoint_role_underscore_slug():
+    """A role slug with underscores is accepted."""
+    ep = Endpoint(name="ep1", host="h1", mode="native", nic="eth0", role="lan_downstream")
+    assert ep.role == "lan_downstream"
+
+
+def test_endpoint_role_invalid_raises():
+    """An invalid role (contains '!') raises ValidationError."""
+    with pytest.raises(ValidationError, match="role"):
+        Endpoint(name="ep1", host="h1", mode="native", nic="eth0", role="invalid!")

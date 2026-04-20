@@ -1,0 +1,91 @@
+# stagelab-lab-base.yaml — reference base config for the security test plan executor.
+#
+# Demonstrates the role-based endpoint pattern: catalogue fragments reference
+# endpoints via source_role / sink_role, not by name.  The executor resolves
+# roles to endpoint names at merge time.
+#
+# Topology:
+#   fw-tester01 (192.168.203.93) — WAN-side uplink endpoint
+#   fw-tester02 (192.168.203.74) — LAN-side downstream endpoint
+#   elgar-test / tropheus-test   — firewall HA pair (metrics only; DUT is external)
+#
+# SNMP community string is read from the environment — NEVER commit a literal value.
+# Set it before running:
+#   export STAGELAB_SNMP_COMMUNITY_MON=<your-community>
+#   stagelab validate tools/stagelab-lab-base.yaml
+#
+# Scenarios come from the catalogue fragments; the scenarios block is intentionally
+# empty here and is overwritten at merge time by run-security-test-plan.sh.
+
+hosts:
+  - name: tester01
+    address: root@192.168.203.93
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+
+  - name: tester02
+    address: root@192.168.203.74
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+
+dut:
+  kind: external
+
+endpoints:
+  # WAN-side endpoint: simulates external / backbone peers.
+  # Catalogues reference this via source_role: wan-uplink.
+  - name: tester01-uplink
+    host: tester01
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: 10.0.13.100/24
+    ipv4_gw: 10.0.13.1
+    rss_queues: 4
+    irq_affinity: [2, 3]
+    role: wan-uplink
+
+  # LAN-side endpoint: simulates customer-zone hosts behind the FW.
+  # Catalogues reference this via sink_role: lan-downstream.
+  - name: tester02-downstream
+    host: tester02
+    mode: native
+    nic: eth2
+    vlan: 14
+    ipv4: 10.0.14.100/24
+    ipv4_gw: 10.0.14.1
+    rss_queues: 4
+    irq_affinity: [2, 3]
+    role: lan-downstream
+
+metrics:
+  poll_interval_s: 5
+  collect: [nft_counters, conntrack_stats]
+  sources:
+    - kind: prometheus
+      name: elgar-shorewalld
+      url: http://192.168.203.70:9748/metrics
+      timeout_s: 5.0
+      metric_prefix_allow: ["shorewalld_"]
+
+    - kind: snmp
+      name: elgar-snmp
+      host: 192.168.203.70
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp]
+
+    - kind: snmp
+      name: tropheus-snmp
+      host: 192.168.203.87
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp]
+
+scenarios: []
+
+report:
+  output_dir: /tmp/stagelab-lab
+  keep_pcaps: failed_only
