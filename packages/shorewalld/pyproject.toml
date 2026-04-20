@@ -46,6 +46,7 @@ dev = [
 ]
 inotify = ["inotify_simple>=1.3"]
 vrrp = ["jeepney>=0.8"]
+snmp = ["pysnmp>=7.0"]
 
 [project.scripts]
 shorewalld = "shorewalld.cli:main"

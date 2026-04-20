@@ -1,4 +1,5 @@
-"""VrrpCollector — VRRP state scraper via keepalived D-Bus.
+"""VrrpCollector — VRRP state scraper via keepalived D-Bus, with optional
+SNMP augmentation via the KEEPALIVED-MIB sub-agent.
 
 Reads state from one or more keepalived processes on the system bus.
 Uses jeepney (pure-Python, asyncio-friendly, no GLib dependency) for
@@ -30,12 +31,53 @@ Degrades silently when:
   * no matching bus names are present
   * a per-instance property read times out or errors
 
+SNMP augmentation (Wave 9):
+
+When ``snmp_config`` is supplied, the collector additionally queries the
+KEEPALIVED-MIB sub-agent (SNMP community string, default 127.0.0.1:161)
+to fill the fields that D-Bus leaves at zero: ``priority``,
+``effective_priority``, ``vip_count``, and ``master_transitions``.
+
+Discovery/fallback modes:
+
+1. **D-Bus + SNMP**: D-Bus discovers instances; SNMP fills in the
+   numeric fields by correlating on ``vrrp_name`` ==
+   ``vrrpInstanceName`` (column 2 of the KEEPALIVED-MIB vrrpInstanceTable).
+
+2. **SNMP-only** (D-Bus unavailable): SNMP walks the full
+   vrrpInstanceTable; ``bus_name`` is set to ``""`` for all instances.
+   This is the only mode that works on AlmaLinux 10 / RHEL 10 where
+   keepalived 2.2.8 ships without ``--enable-dbus``.
+
+3. **D-Bus only** (SNMP disabled or failing): existing W8 behaviour.
+   Numeric fields remain at sentinel 0.
+
+SNMP errors count toward new reason labels on
+``shorewalld_vrrp_scrape_errors_total``:
+- ``snmp_timeout`` — SNMP request timed out (asyncio.TimeoutError)
+- ``snmp_parse`` — unexpected OID value type or walk error
+
+OIDs queried from KEEPALIVED-MIB root .1.3.6.1.4.1.9586.100.5:
+
+- ``.2.3.1.2``  vrrpInstanceName          — string, correlation key
+- ``.2.3.1.4``  vrrpInstanceState         — int (0=init, 1=backup, 2=master, 3=fault)
+- ``.2.3.1.6``  vrrpInstanceVirtualRouterId (VRID) — int
+- ``.2.3.1.7``  vrrpInstanceEffectivePriority     — int
+- ``.2.3.1.8``  vrrpInstanceVipsStatus            — int (1=allSet, 2=notAllSet; used as vip_count proxy)
+- ``.2.3.1.9``  vrrpInstanceBecomeMaster          — Counter32, transitions-to-master count
+
+Note on vrrpInstanceInitialPriority: it is not listed in the stagelab
+OID file.  Column 7 is effective priority in the live MIB; column 6 is
+the VRID (not initial priority).  ``initial_priority`` is therefore not
+queried; ``priority`` in VrrpInstance is filled from effective priority.
+
 Cardinality: bus_name × instance × vr_id × nic × family — bounded by
 the operator's keepalived config (typically < 20 label combinations).
 """
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import logging
 import time
@@ -45,7 +87,7 @@ from shorewalld.exporter import CollectorBase, _MetricFamily
 
 log = logging.getLogger("shorewalld.collectors.vrrp")
 
-# ── optional dependency ───────────────────────────────────────────────────────
+# ── optional dependency: jeepney (D-Bus) ─────────────────────────────────────
 
 try:
     import jeepney  # noqa: F401  (existence check only)
@@ -55,6 +97,42 @@ try:
 except ImportError:
     _jeepney_available = False
 
+# ── optional dependency: pysnmp (SNMP augmentation) ──────────────────────────
+
+try:
+    from pysnmp.hlapi.asyncio import (  # type: ignore[import-untyped]
+        CommunityData,
+        ContextData,
+        ObjectIdentity,
+        ObjectType,
+        SnmpEngine,
+        UdpTransportTarget,
+        walk_cmd,
+    )
+    from pysnmp.proto.rfc1905 import NoSuchInstance, NoSuchObject  # type: ignore[import-untyped]
+    _pysnmp_available = True
+except ImportError:
+    _pysnmp_available = False
+
+
+# ── SNMP / KEEPALIVED-MIB constants ──────────────────────────────────────────
+#
+# Root: .1.3.6.1.4.1.9586.100.5
+# vrrpInstanceTable: .1.3.6.1.4.1.9586.100.5.2.3.1
+#
+# Columns (as confirmed from snmp_oids.py + stagelab open-items note):
+_KA_MIB_INST_TABLE   = "1.3.6.1.4.1.9586.100.5.2.3.1"
+_KA_OID_NAME         = "1.3.6.1.4.1.9586.100.5.2.3.1.2"   # vrrpInstanceName (string)
+_KA_OID_STATE        = "1.3.6.1.4.1.9586.100.5.2.3.1.4"   # vrrpInstanceState (int, 0=init 1=backup 2=master 3=fault)
+_KA_OID_VRID         = "1.3.6.1.4.1.9586.100.5.2.3.1.6"   # vrrpInstanceVirtualRouterId (int)
+_KA_OID_EFF_PRIO     = "1.3.6.1.4.1.9586.100.5.2.3.1.7"   # vrrpInstanceEffectivePriority (int)
+_KA_OID_VIPS_STATUS  = "1.3.6.1.4.1.9586.100.5.2.3.1.8"   # vrrpInstanceVipsStatus (int: 1=allSet 2=notAllSet)
+_KA_OID_BECOME_MASTER= "1.3.6.1.4.1.9586.100.5.2.3.1.9"   # vrrpInstanceBecomeMaster (Counter32, transitions-to-master)
+
+# SNMP state mapping: KEEPALIVED-MIB uses 0=init, 1=backup, 2=master, 3=fault
+# D-Bus uses 1=BACKUP, 2=MASTER, 3=FAULT (no 0=init via D-Bus).
+# The SNMP value is stored as-is on VrrpInstance.state when coming from
+# SNMP-only mode.  The D-Bus state takes precedence when both paths succeed.
 
 # ── D-Bus constants ───────────────────────────────────────────────────────────
 
@@ -75,41 +153,69 @@ _DEFAULT_SYSTEM_BUS = "unix:path=/run/dbus/system_bus_socket"
 _DBUS_TIMEOUT = 1.0
 
 
-# ── Public dataclass ──────────────────────────────────────────────────────────
+# ── Public dataclasses ────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class VrrpSnmpConfig:
+    """Configuration for the optional SNMP augmentation path.
+
+    When supplied to :class:`VrrpCollector`, the collector queries the
+    keepalived SNMP sub-agent (KEEPALIVED-MIB) to fill in the numeric
+    fields that D-Bus leaves at zero.
+
+    Requires ``pysnmp>=7.0`` (``pip install shorewalld[snmp]``).
+    """
+
+    host: str = "127.0.0.1"
+    port: int = 161
+    community: str = "public"
+    timeout: float = 1.0
 
 
 @dataclass(frozen=True)
 class VrrpInstance:
-    """Snapshot of a single VRRP instance as read from D-Bus.
+    """Snapshot of a single VRRP instance.
 
     Properties are derived from two sources:
     - The D-Bus object path: ``nic``, ``vr_id``, ``family``
     - The ``Name`` and ``State`` D-Bus properties: ``vrrp_name``, ``state``
-    - Unavailable via D-Bus (sentinel 0): ``priority``, ``effective_priority``,
-      ``last_transition``, ``vip_count``
+    - Filled by SNMP augmentation when enabled: ``priority``,
+      ``effective_priority``, ``vip_count``, ``master_transitions``
+    - Unavailable (sentinel 0) without SNMP: ``priority``,
+      ``effective_priority``, ``last_transition``, ``vip_count``,
+      ``master_transitions``
+
+    When operating in SNMP-only mode (D-Bus unavailable), ``bus_name``
+    is ``""`` and ``nic``/``family`` are ``""`` (not exposed by SNMP).
+    ``state`` in SNMP mode follows KEEPALIVED-MIB: 0=init, 1=backup,
+    2=master, 3=fault (D-Bus omits the 0=init state).
     """
 
-    bus_name: str           # e.g. "org.keepalived.Vrrp1"
+    bus_name: str           # e.g. "org.keepalived.Vrrp1", or "" in SNMP-only mode
     vrrp_name: str          # the per-instance name keepalived exposes
-    nic: str                # interface name
+    nic: str                # interface name, or "" in SNMP-only mode
     vr_id: int
-    family: str             # "ipv4" or "ipv6"
-    state: int              # 1=BACKUP, 2=MASTER, 3=FAULT (raw)
-    priority: int           # 0 — not available via D-Bus
-    effective_priority: int # 0 — not available via D-Bus
-    last_transition: float  # 0 — not available via D-Bus
-    vip_count: int          # 0 — not available via D-Bus
+    family: str             # "ipv4" or "ipv6", or "" in SNMP-only mode
+    state: int              # D-Bus: 1=BACKUP, 2=MASTER, 3=FAULT; SNMP: 0=init also possible
+    priority: int           # effective priority (filled by SNMP; 0 if unavailable)
+    effective_priority: int # effective priority after track-script adjustments (SNMP; 0 if unavailable)
+    last_transition: float  # 0 — not available via D-Bus or SNMP
+    vip_count: int          # VIP count proxy (SNMP vrrpInstanceVipsStatus; 0 if unavailable)
+    master_transitions: int = 0  # transitions-to-master counter (SNMP; 0 if unavailable)
 
 
 # ── Scrape error counter ─────────────────────────────────────────────────────
 
-_REASONS = ("dbus_unavailable", "timeout", "properties_get", "parse")
+_REASONS = ("dbus_unavailable", "timeout", "properties_get", "parse",
+            "snmp_timeout", "snmp_parse")
 
 
 def _make_error_family() -> _MetricFamily:
     return _MetricFamily(
         "shorewalld_vrrp_scrape_errors_total",
-        "Total D-Bus scrape errors by reason",
+        "Total VRRP scrape errors by reason "
+        "(dbus_unavailable, timeout, properties_get, parse, snmp_timeout, snmp_parse)",
         ["reason"],
         mtype="counter",
     )
@@ -119,7 +225,8 @@ def _make_error_family() -> _MetricFamily:
 
 
 class VrrpCollector(CollectorBase):
-    """Scrape VRRP state from one or more keepalived processes via D-Bus.
+    """Scrape VRRP state from one or more keepalived processes via D-Bus,
+    optionally augmented with SNMP data from the KEEPALIVED-MIB sub-agent.
 
     Discovery: at each scrape (with TTL cache), list bus names on the
     system bus matching ``bus_name_glob`` (default ``org.keepalived.*``),
@@ -128,9 +235,20 @@ class VrrpCollector(CollectorBase):
     Read per-path properties via ``org.freedesktop.DBus.Properties.GetAll``
     on the ``org.keepalived.Vrrp1.Instance`` interface.
 
+    When ``snmp_config`` is supplied, after the D-Bus snapshot the collector
+    additionally walks the KEEPALIVED-MIB vrrpInstanceTable and merges
+    ``priority``, ``effective_priority``, ``vip_count``, and
+    ``master_transitions`` into each instance by matching ``vrrp_name`` ==
+    ``vrrpInstanceName``.
+
+    When D-Bus is unavailable but ``snmp_config`` is set, the collector
+    falls back to SNMP-only discovery: all instances come from the SNMP
+    table and ``bus_name`` is ``""`` for each.
+
     Degrades silently: if jeepney is not installed, if the system bus is
     unreachable, or if no matching bus names are present, ``collect()``
-    returns an empty list. Never raises to the scrape path.
+    returns an empty list (unless SNMP fallback is active).
+    Never raises to the scrape path.
 
     VRRP state is host-global (keepalived binds to the root network
     namespace), so this collector sets ``netns=""`` and emits no ``netns``
@@ -143,11 +261,13 @@ class VrrpCollector(CollectorBase):
         bus_name_glob: str = "org.keepalived.*",
         cache_ttl: float = 5.0,
         system_bus_path: str | None = None,
+        snmp_config: VrrpSnmpConfig | None = None,
     ) -> None:
         super().__init__(netns="")
         self._glob = bus_name_glob
         self._ttl = cache_ttl
         self._bus_path = system_bus_path or _DEFAULT_SYSTEM_BUS
+        self._snmp_config = snmp_config
         self._cache_ts: float = 0.0
         self._cache: list[VrrpInstance] = []
         # Persistent error counts (never reset — monotone counters).
@@ -158,10 +278,11 @@ class VrrpCollector(CollectorBase):
     def collect(self) -> list[_MetricFamily]:
         """Return Prometheus metric families for the current VRRP state.
 
-        Returned list is empty when jeepney is absent or the bus is
-        unreachable.  Never raises.
+        Returned list is empty when both jeepney and SNMP are absent/unconfigured
+        or when the bus is unreachable and no snmp_config is set.
+        Never raises.
         """
-        if not _jeepney_available:
+        if not _jeepney_available and self._snmp_config is None:
             return []
 
         instances = self._cached_snapshot()
@@ -169,7 +290,7 @@ class VrrpCollector(CollectorBase):
 
     def snapshot(self) -> list[VrrpInstance]:
         """Uncached current snapshot (still silent on error)."""
-        if not _jeepney_available:
+        if not _jeepney_available and self._snmp_config is None:
             return []
         return self._scrape()
 
@@ -185,24 +306,88 @@ class VrrpCollector(CollectorBase):
         return fresh
 
     def _scrape(self) -> list[VrrpInstance]:
-        """Open one D-Bus connection, discover bus names, read properties."""
-        try:
-            conn = open_dbus_connection(bus=self._bus_path, enable_fds=False)
-        except Exception as exc:
-            log.debug("vrrp: cannot connect to system bus %r: %s", self._bus_path, exc)
-            self._errors["dbus_unavailable"] += 1
-            return self._cache  # return stale if present
+        """Attempt D-Bus scrape; fall back to SNMP-only if D-Bus is down."""
+        dbus_instances: list[VrrpInstance] | None = None
+        dbus_failed = False
 
-        try:
-            return self._scrape_via(conn)
-        except Exception as exc:
-            log.debug("vrrp: unexpected scrape error: %s", exc)
-            return self._cache
-        finally:
+        if _jeepney_available:
             try:
-                conn.close()
-            except Exception:
-                pass
+                conn = open_dbus_connection(bus=self._bus_path, enable_fds=False)
+            except Exception as exc:
+                log.debug("vrrp: cannot connect to system bus %r: %s", self._bus_path, exc)
+                self._errors["dbus_unavailable"] += 1
+                dbus_failed = True
+            else:
+                try:
+                    dbus_instances = self._scrape_via(conn)
+                except Exception as exc:
+                    log.debug("vrrp: unexpected scrape error: %s", exc)
+                    dbus_instances = None
+                    dbus_failed = True
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        else:
+            dbus_failed = True
+
+        # No SNMP configured → return D-Bus result or stale cache.
+        if self._snmp_config is None:
+            if dbus_instances is None:
+                return self._cache
+            return dbus_instances
+
+        # SNMP is configured.  Run the SNMP walk synchronously.
+        snmp_rows = self._snmp_walk_sync()
+
+        if dbus_failed or dbus_instances is None:
+            # SNMP-only mode: synthesise VrrpInstance objects from SNMP table.
+            if snmp_rows is None:
+                return self._cache  # both paths failed — return stale
+            return _build_instances_from_snmp(snmp_rows)
+
+        # D-Bus + SNMP merge: augment D-Bus instances with SNMP numeric fields.
+        if snmp_rows is not None:
+            dbus_instances = _merge_snmp_into_instances(dbus_instances, snmp_rows)
+
+        return dbus_instances
+
+    def _snmp_walk_sync(self) -> dict[str, dict[str, object]] | None:
+        """Walk the KEEPALIVED-MIB vrrpInstanceTable via SNMP synchronously.
+
+        Runs the async pysnmp coroutine in a fresh event loop so the scrape
+        thread (which is NOT on the asyncio loop) can call it without
+        deadlocking.
+
+        Returns a dict mapping ``instance_index`` (the OID suffix) to a
+        dict of column values, or ``None`` on total failure.
+        """
+        if not _pysnmp_available:
+            log.debug("vrrp: pysnmp not installed — SNMP augmentation skipped")
+            return None
+        cfg = self._snmp_config
+        assert cfg is not None
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                rows = loop.run_until_complete(
+                    asyncio.wait_for(
+                        _snmp_walk_table(cfg),
+                        timeout=cfg.timeout,
+                    )
+                )
+            finally:
+                loop.close()
+        except asyncio.TimeoutError:
+            log.debug("vrrp: SNMP walk timed out after %.1fs", cfg.timeout)
+            self._errors["snmp_timeout"] += 1
+            return None
+        except Exception as exc:
+            log.debug("vrrp: SNMP walk error: %s", exc)
+            self._errors["snmp_parse"] += 1
+            return None
+        return rows
 
     def _scrape_via(self, conn: object) -> list[VrrpInstance]:
         """Perform the full scrape over an open connection."""
@@ -306,17 +491,19 @@ class VrrpCollector(CollectorBase):
     ) -> list[_MetricFamily]:
         state_fam = _MetricFamily(
             "shorewalld_vrrp_state",
-            "VRRP instance state (1=BACKUP 2=MASTER 3=FAULT)",
+            "VRRP instance state (D-Bus: 1=BACKUP 2=MASTER 3=FAULT; "
+            "SNMP: 0=init also possible)",
             ["bus_name", "instance", "vr_id", "nic", "family"],
         )
         priority_fam = _MetricFamily(
             "shorewalld_vrrp_priority",
-            "VRRP base priority (0 = unavailable via D-Bus)",
+            "VRRP base priority (filled by SNMP augmentation; 0 if unavailable)",
             ["bus_name", "instance", "vr_id"],
         )
         eff_prio_fam = _MetricFamily(
             "shorewalld_vrrp_effective_priority",
-            "VRRP effective priority (0 = unavailable via D-Bus)",
+            "VRRP effective priority after tracking adjustments "
+            "(filled by SNMP; 0 if unavailable)",
             ["bus_name", "instance", "vr_id"],
         )
         ts_fam = _MetricFamily(
@@ -326,8 +513,16 @@ class VrrpCollector(CollectorBase):
         )
         vip_fam = _MetricFamily(
             "shorewalld_vrrp_vip_count",
-            "Number of VIPs currently held (0 = unavailable via D-Bus)",
+            "VIP status proxy (filled by SNMP; 0 if unavailable); "
+            "maps vrrpInstanceVipsStatus: 1=allSet, 2=notAllSet",
             ["bus_name", "instance", "vr_id", "family"],
+        )
+        transitions_fam = _MetricFamily(
+            "shorewalld_vrrp_master_transitions_total",
+            "Cumulative transitions-to-MASTER count (vrrpInstanceBecomeMaster; "
+            "0 if SNMP unavailable)",
+            ["bus_name", "instance", "vr_id"],
+            mtype="counter",
         )
         err_fam = _make_error_family()
         for reason, count in self._errors.items():
@@ -355,8 +550,179 @@ class VrrpCollector(CollectorBase):
                 [inst.bus_name, inst.vrrp_name, vr_str, inst.family],
                 float(inst.vip_count),
             )
+            transitions_fam.add(
+                [inst.bus_name, inst.vrrp_name, vr_str],
+                float(inst.master_transitions),
+            )
 
-        return [state_fam, priority_fam, eff_prio_fam, ts_fam, vip_fam, err_fam]
+        return [
+            state_fam, priority_fam, eff_prio_fam, ts_fam,
+            vip_fam, transitions_fam, err_fam,
+        ]
+
+
+# ── SNMP helpers ─────────────────────────────────────────────────────────────
+
+
+async def _snmp_walk_table(
+    cfg: VrrpSnmpConfig,
+) -> dict[str, dict[str, object]]:
+    """Walk the KEEPALIVED-MIB vrrpInstanceTable and return a dict of rows.
+
+    The returned dict maps ``instance_index`` (the OID suffix after the
+    column prefix, e.g. ``"1"`` or ``"2"``) to a column-value dict with
+    keys ``name``, ``state``, ``vrid``, ``eff_prio``, ``vips_status``,
+    ``become_master``.
+
+    Missing or NoSuchObject columns are silently skipped (value stays 0).
+    """
+    engine = SnmpEngine()
+    auth = CommunityData(cfg.community, mpModel=1)  # mpModel=1 = SNMPv2c
+    transport = await UdpTransportTarget.create(
+        (cfg.host, cfg.port),
+        timeout=cfg.timeout,
+        retries=0,
+    )
+    ctx = ContextData()
+
+    # Walk each column OID we care about.
+    # Row index is the suffix of the OID after the column prefix.
+    col_oids = [
+        (_KA_OID_NAME,          "name"),
+        (_KA_OID_STATE,         "state"),
+        (_KA_OID_VRID,          "vrid"),
+        (_KA_OID_EFF_PRIO,      "eff_prio"),
+        (_KA_OID_VIPS_STATUS,   "vips_status"),
+        (_KA_OID_BECOME_MASTER, "become_master"),
+    ]
+
+    rows: dict[str, dict[str, object]] = {}
+
+    for base_oid, col_key in col_oids:
+        try:
+            async for (err_ind, err_status, _idx, var_binds) in walk_cmd(
+                engine, auth, transport, ctx,
+                ObjectType(ObjectIdentity(base_oid)),
+                lexicographicMode=False,
+            ):
+                if err_ind or err_status:
+                    log.debug(
+                        "vrrp SNMP: walk error on %s: %s",
+                        base_oid, err_ind or err_status,
+                    )
+                    break
+                for oid_obj, val in var_binds:
+                    # Check for NoSuchObject/NoSuchInstance — skip silently.
+                    if isinstance(val, (NoSuchObject, NoSuchInstance)):
+                        continue
+                    full_oid = str(oid_obj)
+                    if not full_oid.startswith(base_oid):
+                        continue
+                    idx = full_oid[len(base_oid):].lstrip(".")
+                    if not idx:
+                        idx = "0"
+                    if idx not in rows:
+                        rows[idx] = {}
+                    rows[idx][col_key] = val
+        except Exception as exc:
+            log.debug("vrrp SNMP: walk error on col %s: %s", base_oid, exc)
+            # Keep partial rows; don't abort the whole walk.
+
+    return rows
+
+
+def _coerce_snmp_int(val: object, default: int = 0) -> int:
+    """Convert a pysnmp value to int, returning ``default`` on failure."""
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_snmp_str(val: object) -> str:
+    """Convert a pysnmp OctetString / DisplayString to a Python str."""
+    if val is None:
+        return ""
+    try:
+        # pysnmp OctetString may have a prettyPrint() method.
+        return str(val)
+    except Exception:
+        return ""
+
+
+def _build_instances_from_snmp(
+    snmp_rows: dict[str, dict[str, object]],
+) -> list[VrrpInstance]:
+    """Build VrrpInstance objects from an SNMP-only walk (no D-Bus)."""
+    instances: list[VrrpInstance] = []
+    for _idx, cols in snmp_rows.items():
+        name = _coerce_snmp_str(cols.get("name"))
+        if not name:
+            continue
+        state = _coerce_snmp_int(cols.get("state"), 0)
+        vrid = _coerce_snmp_int(cols.get("vrid"), 0)
+        eff_prio = _coerce_snmp_int(cols.get("eff_prio"), 0)
+        vips_status = _coerce_snmp_int(cols.get("vips_status"), 0)
+        become_master = _coerce_snmp_int(cols.get("become_master"), 0)
+        instances.append(VrrpInstance(
+            bus_name="",
+            vrrp_name=name,
+            nic="",
+            vr_id=vrid,
+            family="",
+            state=state,
+            priority=eff_prio,
+            effective_priority=eff_prio,
+            last_transition=0.0,
+            vip_count=vips_status,
+            master_transitions=become_master,
+        ))
+    return instances
+
+
+def _merge_snmp_into_instances(
+    instances: list[VrrpInstance],
+    snmp_rows: dict[str, dict[str, object]],
+) -> list[VrrpInstance]:
+    """Merge SNMP numeric fields into D-Bus-discovered instances.
+
+    Correlation key: ``vrrp_name`` == ``vrrpInstanceName`` (the ``name``
+    column from the SNMP walk).  Unmatched instances are returned unchanged
+    (numeric fields stay at 0).  Extra SNMP rows with no D-Bus counterpart
+    are discarded — D-Bus is the authoritative discovery source.
+    """
+    # Build name → snmp_cols lookup (deduplicate: first row wins).
+    snmp_by_name: dict[str, dict[str, object]] = {}
+    for cols in snmp_rows.values():
+        name = _coerce_snmp_str(cols.get("name"))
+        if name and name not in snmp_by_name:
+            snmp_by_name[name] = cols
+
+    merged: list[VrrpInstance] = []
+    for inst in instances:
+        cols = snmp_by_name.get(inst.vrrp_name)
+        if cols is None:
+            merged.append(inst)
+            continue
+        eff_prio = _coerce_snmp_int(cols.get("eff_prio"), 0)
+        vips_status = _coerce_snmp_int(cols.get("vips_status"), 0)
+        become_master = _coerce_snmp_int(cols.get("become_master"), 0)
+        merged.append(VrrpInstance(
+            bus_name=inst.bus_name,
+            vrrp_name=inst.vrrp_name,
+            nic=inst.nic,
+            vr_id=inst.vr_id,
+            family=inst.family,
+            state=inst.state,
+            priority=eff_prio,
+            effective_priority=eff_prio,
+            last_transition=inst.last_transition,
+            vip_count=vips_status,
+            master_transitions=become_master,
+        ))
+    return merged
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -475,4 +841,5 @@ def _parse_instance_reply(
         effective_priority=0,
         last_transition=0.0,
         vip_count=0,
+        master_transitions=0,
     )

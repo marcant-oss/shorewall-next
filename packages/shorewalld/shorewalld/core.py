@@ -138,6 +138,11 @@ class Daemon:
         control_socket_netns: str | None = None,
         iplist_configs: list[Any] | None = None,
         enable_vrrp_collector: bool = False,
+        vrrp_snmp_enabled: bool = False,
+        vrrp_snmp_host: str = "127.0.0.1",
+        vrrp_snmp_port: int = 161,
+        vrrp_snmp_community: str = "public",
+        vrrp_snmp_timeout: float = 1.0,
     ) -> None:
         self.prom_host = prom_host
         self.prom_port = prom_port
@@ -170,6 +175,11 @@ class Daemon:
         self.control_socket_netns = control_socket_netns
         self.iplist_configs: list[Any] = iplist_configs or []
         self.enable_vrrp_collector = enable_vrrp_collector
+        self.vrrp_snmp_enabled = vrrp_snmp_enabled
+        self.vrrp_snmp_host = vrrp_snmp_host
+        self.vrrp_snmp_port = vrrp_snmp_port
+        self.vrrp_snmp_community = vrrp_snmp_community
+        self.vrrp_snmp_timeout = vrrp_snmp_timeout
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
@@ -247,7 +257,22 @@ class Daemon:
         # Optional VRRP D-Bus collector (opt-in, requires jeepney).
         if self.enable_vrrp_collector:
             from .collectors.vrrp import VrrpCollector as _VrrpCollector
-            _vc = _VrrpCollector()
+            from .collectors.vrrp import VrrpSnmpConfig as _VrrpSnmpConfig
+            _snmp_cfg: _VrrpSnmpConfig | None = None
+            if self.vrrp_snmp_enabled:
+                _snmp_cfg = _VrrpSnmpConfig(
+                    host=self.vrrp_snmp_host,
+                    port=self.vrrp_snmp_port,
+                    community=self.vrrp_snmp_community,
+                    timeout=self.vrrp_snmp_timeout,
+                )
+                log.info(
+                    "shorewalld VRRP SNMP augmentation enabled: "
+                    "%s:%d community=%r timeout=%.1fs",
+                    self.vrrp_snmp_host, self.vrrp_snmp_port,
+                    self.vrrp_snmp_community, self.vrrp_snmp_timeout,
+                )
+            _vc = _VrrpCollector(snmp_config=_snmp_cfg)
             self._registry.add(_vc)
             log.info("shorewalld VRRP D-Bus collector registered")
 
