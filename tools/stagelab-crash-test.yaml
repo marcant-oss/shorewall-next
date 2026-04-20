@@ -1,0 +1,53 @@
+# Crash-recovery test YAML: single host (tester01), two DPDK endpoints.
+# The scenario (throughput_dpdk) will fail with ImportError because TRex is
+# not staged on this VM — that is expected. The goal is to validate that:
+#   1. setup_endpoints binds eth1 + eth2 to vfio-pci and writes
+#      /var/lib/stagelab/dpdk-bindings.json with 2 entries.
+#   2. When the controller is SIGKILLed mid-run, the recovery file persists.
+#   3. The next stagelab run fires recover_from_crash() at agent startup,
+#      rebinds both NICs to virtio-pci, and truncates the recovery file.
+
+hosts:
+  - name: tester01
+    address: root@192.168.203.93
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+    hugepages_gib: 1
+
+dut:
+  kind: external
+
+endpoints:
+  - name: dpdk-crash-src
+    host: tester01
+    mode: dpdk
+    pci_addr: "0000:06:13.0"     # eth1 — virtio-pci
+    dpdk_cores: [2, 3]
+    hugepages_gib: 1
+    trex_role: client
+
+  - name: dpdk-crash-sink
+    host: tester01
+    mode: dpdk
+    pci_addr: "0000:06:14.0"     # eth2 — virtio-pci
+    dpdk_cores: [2, 3]
+    hugepages_gib: 1
+    trex_role: server
+
+scenarios:
+  - id: throughput_dpdk_crash
+    kind: throughput_dpdk
+    source: dpdk-crash-src
+    sink: dpdk-crash-sink
+    proto: udp
+    duration_s: 30
+    multiplier: "10mbps"
+    packet_size_b: 64
+
+metrics:
+  poll_interval_s: 5
+  collect: []
+
+report:
+  output_dir: /tmp/stagelab-crash-test-reports
+  keep_pcaps: none

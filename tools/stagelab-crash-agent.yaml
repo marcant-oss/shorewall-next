@@ -1,0 +1,28 @@
+hosts:
+  - name: t02
+    address: root@192.168.203.74
+    work_dir: /root/shorewall-nft
+
+dut:
+  kind: external
+
+endpoints:
+  - name: ep
+    host: t02
+    mode: probe
+    nic: eth2
+    vlan: 13
+    ipv4: 10.0.13.250/24
+    ipv4_gw: 10.0.13.1
+    bridge: br-probe
+
+scenarios:
+  - id: long_scan
+    kind: rule_scan
+    source: ep
+    target_subnet: 10.0.0.0/8
+    random_count: 200
+
+report:
+  output_dir: /tmp/stagelab-reports
+  keep_pcaps: none
