@@ -537,6 +537,235 @@ def test_throughput_dpdk_requires_dpdk_endpoints(tmp_path):
         load(p)
 
 
+# ---------------------------------------------------------------------------
+# trex_port_id assignment tests
+# ---------------------------------------------------------------------------
+
+
+def test_trex_port_ids_assigned_consecutively(tmp_path):
+    """3 DPDK endpoints on one host receive consecutive trex_port_ids 0, 1, 2."""
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: thx1
+            address: root@192.0.2.73
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: dpdk-a
+            host: thx1
+            mode: dpdk
+            pci_addr: "0000:01:00.0"
+            dpdk_cores: [2]
+            hugepages_gib: 2
+            trex_role: client
+          - name: dpdk-b
+            host: thx1
+            mode: dpdk
+            pci_addr: "0000:01:00.1"
+            dpdk_cores: [3]
+            hugepages_gib: 2
+            trex_role: server
+          - name: dpdk-c
+            host: thx1
+            mode: dpdk
+            pci_addr: "0000:01:00.2"
+            dpdk_cores: [4]
+            hugepages_gib: 2
+            trex_role: client
+
+        scenarios:
+          - id: tput-dpdk
+            kind: throughput_dpdk
+            source: dpdk-a
+            sink: dpdk-b
+            duration_s: 10
+            multiplier: "10gbps"
+
+        report:
+          output_dir: /tmp/out
+    """)
+    p = _write_yaml(tmp_path, yaml_text)
+    cfg = load(p)
+    ids = [ep.trex_port_id for ep in cfg.endpoints]
+    assert ids == [0, 1, 2]
+
+
+def test_trex_port_ids_per_host_independent(tmp_path):
+    """DPDK endpoints on different hosts get independent port-ID sequences."""
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: host-a
+            address: root@192.0.2.10
+          - name: host-b
+            address: root@192.0.2.11
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: a-ep0
+            host: host-a
+            mode: dpdk
+            pci_addr: "0000:01:00.0"
+            dpdk_cores: [2]
+            hugepages_gib: 2
+            trex_role: client
+          - name: a-ep1
+            host: host-a
+            mode: dpdk
+            pci_addr: "0000:01:00.1"
+            dpdk_cores: [3]
+            hugepages_gib: 2
+            trex_role: server
+          - name: b-ep0
+            host: host-b
+            mode: dpdk
+            pci_addr: "0000:02:00.0"
+            dpdk_cores: [2]
+            hugepages_gib: 2
+            trex_role: client
+
+        scenarios:
+          - id: tput-dpdk
+            kind: throughput_dpdk
+            source: a-ep0
+            sink: a-ep1
+            duration_s: 10
+            multiplier: "10gbps"
+
+        report:
+          output_dir: /tmp/out
+    """)
+    p = _write_yaml(tmp_path, yaml_text)
+    cfg = load(p)
+    ep_map = {ep.name: ep.trex_port_id for ep in cfg.endpoints}
+    assert ep_map["a-ep0"] == 0
+    assert ep_map["a-ep1"] == 1
+    assert ep_map["b-ep0"] == 0
+
+
+def test_non_dpdk_endpoints_trex_port_id_is_none(tmp_path):
+    """native and probe endpoints always have trex_port_id=None."""
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: thx1
+            address: root@192.0.2.73
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: dpdk-tx
+            host: thx1
+            mode: dpdk
+            pci_addr: "0000:01:00.0"
+            dpdk_cores: [2]
+            hugepages_gib: 2
+            trex_role: client
+          - name: native-ep
+            host: thx1
+            mode: native
+            nic: enp1s0f0
+            vlan: 10
+            ipv4: 10.0.10.100/24
+            ipv4_gw: 10.0.10.1
+          - name: probe-ep
+            host: thx1
+            mode: probe
+            bridge: br-probes
+            nic: enp1s0f1
+            vlan: 20
+            ipv6: 2001:db8:20::200/64
+
+        scenarios:
+          - id: tput-dpdk
+            kind: throughput_dpdk
+            source: dpdk-tx
+            sink: dpdk-tx
+            duration_s: 10
+            multiplier: "10gbps"
+
+        report:
+          output_dir: /tmp/out
+    """)
+    p = _write_yaml(tmp_path, yaml_text)
+    cfg = load(p)
+    ep_map = {ep.name: ep for ep in cfg.endpoints}
+    assert ep_map["dpdk-tx"].trex_port_id == 0
+    assert ep_map["native-ep"].trex_port_id is None
+    assert ep_map["probe-ep"].trex_port_id is None
+
+
+# ---------------------------------------------------------------------------
+# TRex multiplier validator tests
+# ---------------------------------------------------------------------------
+
+_DPDK_MULTIPLIER_YAML_TMPL = textwrap.dedent("""\
+    hosts:
+      - name: thx1
+        address: root@192.0.2.73
+
+    dut:
+      kind: external
+
+    endpoints:
+      - name: dpdk-client
+        host: thx1
+        mode: dpdk
+        pci_addr: "0000:01:00.0"
+        dpdk_cores: [2, 3]
+        hugepages_gib: 4
+        trex_role: client
+      - name: dpdk-server
+        host: thx1
+        mode: dpdk
+        pci_addr: "0000:01:00.1"
+        dpdk_cores: [4, 5]
+        hugepages_gib: 4
+        trex_role: server
+
+    scenarios:
+      - id: tput
+        kind: throughput_dpdk
+        source: dpdk-client
+        sink: dpdk-server
+        duration_s: 10
+        multiplier: "{multiplier}"
+
+    report:
+      output_dir: /tmp/out
+""")
+
+
+def test_multiplier_accepts_common_forms(tmp_path):
+    """Valid multiplier strings parse without error."""
+    for val in ("10gbps", "50%", "1.5mpps", "1000bps", "200KPPS"):
+        yaml_text = _DPDK_MULTIPLIER_YAML_TMPL.format(multiplier=val)
+        p = _write_yaml(tmp_path, yaml_text)
+        cfg = load(p)
+        assert cfg.scenarios[0].multiplier == val
+
+
+def test_multiplier_rejects_typos(tmp_path):
+    """Typo multiplier strings raise ValidationError mentioning 'multiplier'."""
+    for val in ("gbbps", "10 gbps", "10gb", "gbps"):
+        yaml_text = _DPDK_MULTIPLIER_YAML_TMPL.format(multiplier=val)
+        p = _write_yaml(tmp_path, yaml_text)
+        with pytest.raises(ValidationError, match="multiplier"):
+            load(p)
+
+
+def test_multiplier_rejects_unit_mismatch(tmp_path):
+    """Bare number or unknown unit raises ValidationError mentioning 'multiplier'."""
+    for val in ("mb", "0.5"):
+        yaml_text = _DPDK_MULTIPLIER_YAML_TMPL.format(multiplier=val)
+        p = _write_yaml(tmp_path, yaml_text)
+        with pytest.raises(ValidationError, match="multiplier"):
+            load(p)
+
+
 def test_conn_storm_astf_valid(tmp_path):
     """A conn_storm_astf scenario with two dpdk endpoints parses correctly."""
     yaml_text = textwrap.dedent("""\
