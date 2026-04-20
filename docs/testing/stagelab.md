@@ -80,6 +80,24 @@ These are honoured by `setup-remote-test-host.sh` with `--role stagelab-agent-dp
 |----------|---------|--------|
 | `STAGELAB_HUGEPAGES` | `512` (1 GiB) | Number of 2 MiB hugepages to allocate |
 | `STAGELAB_SKIP_SHA` | unset | Set to `1` to skip TRex tarball SHA-256 verification (dev/CI only) |
+| `STAGELAB_DPDK_IFACES` | `eth1 eth2` | Space-separated list of NIC names to mark unmanaged in NetworkManager before DPDK binding |
+
+Additional bootstrap behaviours (Phase 3):
+
+- **EPEL + CRB**: the script enables EPEL and CRB on AlmaLinux before installing
+  stagelab tools. It only runs `dnf install epel-release` when no enabled repo
+  already matches `/epel/` — hosts with a vendor overlay that ships EPEL are
+  handled gracefully.
+- **Binary verification**: after each install phase the script calls
+  `verify_binaries` (and `verify_sysctl` for tuning knobs) and fails fast with
+  a clear error if any required binary is missing. Missing binaries on AlmaLinux
+  are almost always caused by EPEL/CRB not being enabled.
+- **NM unmanaged block**: when `IS_DPDK=1`, any NIC listed in
+  `STAGELAB_DPDK_IFACES` that is currently managed by NetworkManager is
+  detached and a drop-in config is written to
+  `/etc/NetworkManager/conf.d/20-stagelab-unmanaged.conf`. Idempotent: if the
+  NIC is already unmanaged (via a pre-existing conf or no NM at all) the step
+  is skipped.
 
 ---
 
@@ -203,7 +221,27 @@ metrics:
       oids:
         - "1.3.6.1.2.1.2.2.1.10"   # ifInOctets
         - "1.3.6.1.2.1.2.2.1.16"   # ifOutOctets
+    - kind: nft_ssh
+      name: fw-nft
+      ssh_target: root@192.168.1.1
+      timeout_s: 10.0
 ```
+
+#### `nft_ssh` source (Phase 3)
+
+The `nft_ssh` source kind SSHes into the firewall and runs
+`nft list counters -j`, then ingests every named counter as `MetricRow`
+entries. For each counter three rows are emitted: `<name>:packets`,
+`<name>:bytes`, and `<name>:counter` (a duplicate of the packet count).
+
+The `:counter`-suffixed rows are what feeds the `_h_rule_order_topN`
+advisor heuristic: the controller aggregates all rows whose `source` ends
+with `:counter` into a ranked mapping `{counter_name: max_packet_count}`,
+which the advisor uses to detect when the top-3 counters account for
+more than 70% of total traffic across 10+ counters (tier-C rule-order hint).
+
+No Prometheus endpoint on the firewall is required for this source kind —
+only SSH access and a loaded nftables ruleset with named counters.
 
 ### ReportSpec
 
@@ -351,7 +389,7 @@ report:
 | Kind | Mode | Tool | Description |
 |------|------|------|-------------|
 | `throughput` | native | iperf3 | TCP or UDP throughput between two native endpoints. Pass/fail against `expect_min_gbps`. |
-| `conn_storm` | native | tcpkali | Ramp up to `target_conns` concurrent TCP connections at `rate_per_s` new connections per second. (tcpkali integration currently stubbed — T8d.) |
+| `conn_storm` | native | tcpkali | Ramp up to `target_conns` concurrent TCP connections at `rate_per_s` new connections per second. tcpkali subprocess wrapper shipped: spawns the binary in the source endpoint's netns, captures stdout, and parses the connections/bandwidth summary into a `TcpkaliResult`. |
 | `rule_scan` | probe | scapy + oracle | Fire `random_count` probes at `target_subnet`, compare observed verdicts against the oracle. Reports false-drop / false-accept split. |
 | `tuning_sweep` | native | iperf3 + ethtool/sysctl | Cartesian grid over `rss_queues`, `rmem_max`, `wmem_max`. Tier-A advisor signals applied automatically. Best-point CSV written to `sweep-<id>.csv`. |
 | `throughput_dpdk` | dpdk | TRex STL | Stateless TRex stream at `multiplier` rate for `duration_s` seconds. Supports `pcap_file` replay or synthetic frames at `packet_size_b`. |
@@ -360,6 +398,17 @@ report:
 ---
 
 ## CLI
+
+### Example configs
+
+Operator-ready YAML examples live under `tools/`:
+
+| File | Purpose |
+|------|---------|
+| `tools/stagelab-example-ha.yaml` | Two-host HA-pair native throughput + Prometheus metrics from both FW nodes |
+| `tools/stagelab-example-dpdk.yaml` | DPDK smoke on virtio eth1/eth2 — validates NIC bind/unbind lifecycle |
+| `tools/stagelab-crash-test.yaml` | Crash-recovery test: SIGKILL controller mid-run, verify recovery on next start |
+| `tools/stagelab-crash-agent.yaml` | Probe-mode rule scan from a single host (correctness smoke) |
 
 ### `stagelab validate`
 
@@ -489,18 +538,27 @@ for operator merge.
 ### Reversibility contract
 
 Before binding a NIC to `vfio-pci` the agent reads the current kernel driver
-from `/sys/bus/pci/devices/<pci_addr>/driver`. The original driver name, PCI
-address, and bind timestamp are written to
-`/var/lib/stagelab/dpdk-bindings.json` under an exclusive file lock before
+from `/sys/bus/pci/devices/<pci_addr>/driver` and also snapshots the NIC's
+current bond or bridge master (if any) via sysfs. The original driver name,
+PCI address, bind timestamp, `orig_master`, and `orig_master_kind` are written
+to `/var/lib/stagelab/dpdk-bindings.json` under an exclusive file lock before
 the bind call returns.
 
-On `teardown_dpdk_endpoint` the NIC is re-bound to the original driver and the
-entry is removed from the recovery file.
+On `teardown_dpdk_endpoint` the NIC is re-bound to the original driver and
+then automatically re-enslaved to its bond or bridge master (if one was
+snapshotted). No manual operator re-enslave step is needed after a DPDK run on
+a bond- or bridge-enslaved NIC.
 
 On agent startup (`run_agent`) the file is read and any recorded NICs are
-re-bound to their original drivers before the agent enters its main loop.
-This means a controller crash, SIGKILL, or host reboot leaves NICs recoverable
-on the next agent start.
+re-bound to their original drivers (and masters restored) before the agent
+enters its main loop. This means a controller crash, SIGKILL, or host reboot
+leaves NICs recoverable on the next agent start.
+
+**Corruption-tolerant recovery**: if a SIGKILL interrupts the JSON write,
+the recovery file may contain partial JSON. `_read_recovery()` catches
+`json.JSONDecodeError` and returns `[]` rather than refusing to start. The
+principle is "better to lose the stale entry than to leave the agent stuck
+unable to boot".
 
 ### Hardware requirements
 
@@ -556,10 +614,18 @@ correctness smoke; it is not suitable for DPDK line-rate testing.
   (conntrackd sync + keepalived handover) is not yet modelled. Use
   `verify --iptables` for rule coverage; manual failover drill for behavioural
   coverage.
-- **`conn_storm` (kernel tcpkali)** — the scenario type and config schema exist
-  but the tcpkali agent handler is stubbed pending a source-build step (T8d).
 - **Hardware-offload flow-steering** — no test yet verifies that flowtable
   `offload` actually moves flows to hardware. The `flowtable_stagnant` advisor
   heuristic fires if the counter stays at zero, which is a proxy signal only.
 - **Simlab integration gate in CI** — stagelab unit tests run in CI; a
   minimal stagelab single-probe integration scenario is not yet a CI gate.
+- **TRex tarball download** — cisco.com SSL certificate chain fails on some
+  hosts. Operator workaround: vendor the tarball manually to `/opt/trex/v3.04`
+  and set `STAGELAB_SKIP_SHA=1` to bypass the SHA-256 check.
+- **nsstub bind-mount after agent SIGKILL** — if the agent is killed with
+  SIGKILL while a netns stub is running, the `/run/netns/<name>` bind-mount
+  may persist and block the next run. Manual `umount /run/netns/<name>` or a
+  VM reboot clears it. Inherited from simlab; tester VMs are disposable.
+- **Phase 4 enterprise validation** — DoS scenarios (D0–D4), extended HA
+  scenarios (P4-1..P4-7), and an audit-report generator are planned in
+  `~/.claude/plans/stagelab-phase-4-enterprise-validation.md`.

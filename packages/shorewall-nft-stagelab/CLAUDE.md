@@ -32,11 +32,11 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
 | `trafgen_iperf3.py` | iperf3 spec builder + result parser |
 | `trafgen_nmap.py` | nmap spec builder + XML result parser |
 | `trafgen_scapy.py` | `ProbeSpec` + `build_frame` + `send_tap` — scapy frame injection for `probe` mode |
-| `trafgen_tcpkali.py` | tcpkali spec (stubbed pending T8d source-build step) |
+| `trafgen_tcpkali.py` | tcpkali wrapper: subprocess invocation + stdout parser; `TcpkaliSpec`, `TcpkaliResult`, `build_argv`, `parse_stdout`, `run_tcpkali` |
 | `trafgen_trex.py` | TRex STL (`run_trex_stl`) and ASTF (`run_trex_astf`) wrappers |
 | `scenarios.py` | Per-scenario runners (`ThroughputRunner`, `ConnStormRunner`, `RuleScanRunner`, `TuningSweepRunner`, `ThroughputDpdkRunner`, `ConnStormAstfRunner`) + `build_runner` factory |
 | `metrics.py` | `MetricRow` dataclass + local pollers: `poll_nft_counters`, `poll_conntrack`, `poll_ethtool`, `poll_softirq` |
-| `metrics_ingest.py` | `MetricSource`, `build_source`, `scrape_all` — Prometheus and SNMP scrape loop |
+| `metrics_ingest.py` | `MetricSource`, `build_source`, `scrape_all` — Prometheus, SNMP, and `NftSSHScraper` (Phase 3: SSHes into FW, runs `nft list counters -j`, emits per-counter `MetricRow` triples tagged `:packets`/`:bytes`/`:counter`) |
 | `advisor.py` | Rule-based advisor: 8 heuristics, `Recommendation` (tier A/B/C), `AdvisorInput`, `analyze()` entry point |
 | `rule_order.py` | nft rule-order analyzer: groups nft counters by chain, ranks by packet count, emits tier-C hints |
 | `review.py` | Consolidate tier-B/C recommendations + rule-order hints into `ReviewPayload`; render `review.md` + `review.yaml`; `open_pr` via `gh` CLI |
@@ -187,10 +187,31 @@ Tier semantics:
   `dnf install -y epel-release` ran first. Bootstrap does this, but manual
   runs sometimes miss it.
 
-- **`conn_storm` uses tcpkali**: tcpkali is not in any distro package repo at
-  this time. The scenario type and config schema are wired; the agent handler
-  calls `run_tcpkali` which is stubbed (T8d). If you need connection-storm
-  tests today, use `conn_storm_astf` with a DPDK endpoint instead.
+- **`conn_storm` uses tcpkali**: tcpkali is not in any distro package repo.
+  The agent handler calls `run_tcpkali` from `trafgen_tcpkali.py`, which
+  is a fully implemented subprocess wrapper + stdout parser. The binary must
+  be pre-installed on the test host (source-build). If the binary is absent
+  the agent raises `RuntimeError`. Use `conn_storm_astf` with a DPDK endpoint
+  as an alternative.
+
+- **Per-host concurrent dispatch is load-bearing**: `run_scenarios` groups
+  per-scenario `AgentCommand` objects by target host and dispatches the groups
+  via `asyncio.gather`. This is required because iperf3 `--one-off` blocks
+  in `accept()` until a client connects — if the controller sent server and
+  client commands sequentially (waiting for the server ACK before sending the
+  client command), the run would deadlock. See commit 22d30df18.
+
+- **`JsonLineChannel.send` normalises `ConnectionResetError`**: both
+  `ConnectionResetError` and `BrokenPipeError` from `drain()` are caught and
+  re-raised as `ConnectionClosedError`. This means the controller's single
+  `except ConnectionClosedError` clause covers agent-SIGKILL mid-scenario
+  without needing separate OS-level exception handling.
+
+- **DPDK teardown restores bond/bridge master**: `DpdkEndpointHandle` now
+  carries `orig_master` and `orig_master_kind` (snapshotted from sysfs before
+  unbind). `teardown_dpdk_endpoint` re-enslaves the NIC automatically via
+  `_restore_master`. No manual operator intervention needed after a DPDK run
+  on a bond- or bridge-enslaved NIC.
 
 ## Open items
 
@@ -203,7 +224,11 @@ Tier semantics:
   `offload` actually moves flows to hardware. The `flowtable_stagnant` advisor
   heuristic (fires when `flowtable_*` counter == 0) is a proxy; a real offload
   verification needs conntrack counter comparison before/after ruleset load.
-- **tcpkali source-build** (T8d) — add a source-build step to the bootstrap
-  script so `conn_storm` kernel mode is usable.
+- **tcpkali binary install** — `trafgen_tcpkali.py` is fully implemented but
+  tcpkali is not in any distro repo. Add a source-build step to the bootstrap
+  script so `conn_storm` kernel mode works out-of-the-box.
 - **CI gate** — add a minimal single-probe stagelab scenario to the CI
   integration test matrix. Currently only unit tests run in CI.
+- **Phase 4 enterprise validation** — DoS scenarios (D0–D4), extended HA
+  scenarios (P4-1..P4-7), and audit-report generator: see
+  `~/.claude/plans/stagelab-phase-4-enterprise-validation.md`.
