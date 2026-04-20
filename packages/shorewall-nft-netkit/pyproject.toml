@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "shorewall-nft-simlab"
+name = "shorewall-nft-netkit"
 version = "1.8.0"
-description = "Packet-level simulation lab for shorewall-nft firewall validation"
+description = "Low-level netns / TUN-TAP / packet-construction primitives for shorewall-nft tools"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "GPL-2.0-only"}
@@ -13,7 +13,7 @@ authors = [
     {name = "André Valentin", email = "avalentin@marcant.net"},
 ]
 keywords = [
-    "shorewall", "nftables", "firewall", "testing", "simulation", "netns",
+    "shorewall", "nftables", "firewall", "testing", "netns", "tuntap", "scapy",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -28,10 +28,7 @@ classifiers = [
     "Topic :: System :: Networking :: Firewalls",
 ]
 dependencies = [
-    "click>=8.0",
     "scapy>=2.5",
-    "shorewall-nft>=1.2.0",
-    "shorewall-nft-netkit>=1.8.0",
 ]
 
 [project.optional-dependencies]
@@ -40,15 +37,12 @@ dev = [
     "pytest-cov",
 ]
 
-[project.scripts]
-shorewall-nft-simlab = "shorewall_nft_simlab.smoketest:cli"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.setuptools.packages.find]
-include = ["shorewall_nft_simlab*"]
+include = ["shorewall_nft_netkit*"]
 
 [tool.ruff]
 line-length = 100
