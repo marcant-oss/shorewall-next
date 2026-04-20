@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+_PCI_RE = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$")
 
 # ---------------------------------------------------------------------------
 # Host
@@ -45,7 +48,7 @@ class Endpoint(BaseModel):
 
     name: str
     host: str
-    mode: Literal["probe", "native"]
+    mode: Literal["probe", "native", "dpdk"]
     nic: str | None = None
     vlan: int | None = None
     ipv4: str | None = None
@@ -55,6 +58,11 @@ class Endpoint(BaseModel):
     rss_queues: int | None = None
     irq_affinity: list[int] = []
     bridge: str | None = None
+    # --- DPDK-specific ---
+    pci_addr: str | None = None            # "0000:01:00.0"
+    dpdk_cores: list[int] = []             # CPU cores for DPDK poll mode
+    hugepages_gib: int = 0                 # memory footprint
+    trex_role: Literal["client", "server", ""] = ""
 
     @field_validator("vlan")
     @classmethod
@@ -102,6 +110,52 @@ class Endpoint(BaseModel):
             except ValueError as exc:
                 raise ValueError(f"invalid ipv6_gw address: {v!r}") from exc
         return v
+
+    @model_validator(mode="after")
+    def _check_dpdk_fields(self) -> "Endpoint":
+        if self.mode == "dpdk":
+            if not self.pci_addr or not _PCI_RE.match(self.pci_addr):
+                raise ValueError(
+                    f"dpdk endpoint {self.name!r}: pci_addr must be set and match "
+                    r"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$, "
+                    f"got {self.pci_addr!r}"
+                )
+            if not self.dpdk_cores:
+                raise ValueError(
+                    f"dpdk endpoint {self.name!r}: dpdk_cores must be non-empty"
+                )
+            if self.hugepages_gib < 1:
+                raise ValueError(
+                    f"dpdk endpoint {self.name!r}: hugepages_gib must be >= 1, "
+                    f"got {self.hugepages_gib}"
+                )
+            if self.trex_role not in {"client", "server"}:
+                raise ValueError(
+                    f"dpdk endpoint {self.name!r}: trex_role must be 'client' or "
+                    f"'server', got {self.trex_role!r}"
+                )
+            if self.bridge is not None:
+                raise ValueError(
+                    f"dpdk endpoint {self.name!r}: bridge must not be set "
+                    "(DPDK endpoints do not use Linux bridges)"
+                )
+        elif self.mode in {"probe", "native"}:
+            _dpdk_extras = {
+                "pci_addr": self.pci_addr,
+                "dpdk_cores": self.dpdk_cores,
+                "hugepages_gib": self.hugepages_gib,
+                "trex_role": self.trex_role,
+            }
+            set_dpdk = {
+                k for k, v in _dpdk_extras.items()
+                if v not in (None, [], 0, "")
+            }
+            if set_dpdk:
+                raise ValueError(
+                    f"{self.mode} endpoint {self.name!r}: DPDK-specific fields "
+                    f"{sorted(set_dpdk)} must not be set on non-dpdk endpoints"
+                )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +346,7 @@ class StagelabConfig(BaseModel):
             key = (ep.host, ep.nic)
             if ep.mode == "probe":
                 probe_nics.add(key)
-            else:
+            elif ep.mode == "native":
                 native_nics.add(key)
         overlap = probe_nics & native_nics
         if overlap:
@@ -303,13 +357,14 @@ class StagelabConfig(BaseModel):
 
         # 7. Probe endpoints must set bridge; native endpoints must NOT set bridge
         #    Native endpoints must set nic + vlan + ipv4
+        #    DPDK endpoints are validated by the Endpoint model_validator (skipped here)
         for ep in self.endpoints:
             if ep.mode == "probe":
                 if ep.bridge is None:
                     raise ValueError(
                         f"probe endpoint {ep.name!r} must set 'bridge'"
                     )
-            else:  # native
+            elif ep.mode == "native":
                 if ep.bridge is not None:
                     raise ValueError(
                         f"native endpoint {ep.name!r} must not set 'bridge'"
@@ -326,6 +381,7 @@ class StagelabConfig(BaseModel):
                     raise ValueError(
                         f"native endpoint {ep.name!r} must set 'ipv4'"
                     )
+            # mode == "dpdk": validated by Endpoint._check_dpdk_fields
 
         # 8. (host, nic, vlan) must be unique — two endpoints cannot claim the
         #    same VLAN on the same NIC on the same host
@@ -341,6 +397,40 @@ class StagelabConfig(BaseModel):
                 )
             seen_nic_vlan.add(key3)
 
+        # 9. DPDK: (host, pci_addr) must be unique — two DPDK endpoints on
+        #    the same host cannot bind the same PCI device
+        seen_pci: set[tuple[str, str]] = set()
+        for ep in self.endpoints:
+            if ep.mode != "dpdk" or ep.pci_addr is None:
+                continue
+            key_pci = (ep.host, ep.pci_addr)
+            if key_pci in seen_pci:
+                raise ValueError(
+                    f"duplicate pci_addr {ep.pci_addr!r} on host {ep.host!r} "
+                    f"for endpoint {ep.name!r}; two DPDK endpoints cannot bind "
+                    "the same PCI device"
+                )
+            seen_pci.add(key_pci)
+
+        # 10. Cross-mode NIC exclusion (best-effort / exact: pci_addr literal
+        #     match against nic field).  Full NIC<->PCI mapping is operator
+        #     responsibility; only the (host, pci_addr) uniqueness above is
+        #     enforced exactly.  If a kernel endpoint's nic field is literally
+        #     equal to a DPDK endpoint's pci_addr on the same host, reject it
+        #     as a clear operator error.
+        dpdk_pci_by_host: dict[str, set[str]] = {}
+        for ep in self.endpoints:
+            if ep.mode == "dpdk" and ep.pci_addr is not None:
+                dpdk_pci_by_host.setdefault(ep.host, set()).add(ep.pci_addr)
+        for ep in self.endpoints:
+            if ep.mode in {"probe", "native"} and ep.nic is not None:
+                if ep.nic in dpdk_pci_by_host.get(ep.host, set()):
+                    raise ValueError(
+                        f"endpoint {ep.name!r} has nic={ep.nic!r} which is also "
+                        f"bound as a DPDK pci_addr on host {ep.host!r}; "
+                        "a NIC cannot be used in both kernel and DPDK modes"
+                    )
+
         return self
 
 
@@ -354,6 +444,19 @@ def load(path: "str | Path") -> StagelabConfig:
     with open(path) as fh:
         data = yaml.safe_load(fh)
     return StagelabConfig.model_validate(data)
+
+
+def total_hugepages_per_host(cfg: StagelabConfig) -> dict[str, int]:
+    """Return sum of hugepages_gib across all DPDK endpoints per host.
+
+    Informational helper for the bootstrap task — no validation is performed.
+    Hosts with no DPDK endpoints are omitted from the result.
+    """
+    totals: dict[str, int] = {}
+    for ep in cfg.endpoints:
+        if ep.mode == "dpdk":
+            totals[ep.host] = totals.get(ep.host, 0) + ep.hugepages_gib
+    return totals
 
 
 __all__ = [
@@ -372,4 +475,5 @@ __all__ = [
     "ReportSpec",
     "StagelabConfig",
     "load",
+    "total_hugepages_per_host",
 ]
