@@ -5,7 +5,14 @@ import textwrap
 import pytest
 from pydantic import ValidationError
 
-from shorewall_nft_stagelab.config import Endpoint, Host, StagelabConfig, load  # noqa: F401
+from shorewall_nft_stagelab.config import (  # noqa: F401
+    Endpoint,
+    Host,
+    PrometheusSourceSpec,
+    SNMPSourceSpec,
+    StagelabConfig,
+    load,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -247,3 +254,65 @@ def test_native_and_probe_on_same_nic_rejected(tmp_path):
     p = _write_yaml(tmp_path, yaml_text)
     with pytest.raises(ValidationError, match="probe and native"):
         load(p)
+
+
+def test_metrics_sources_parse(tmp_path):
+    """metrics.sources with Prometheus + SNMP entries parses to correct types."""
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: thx1
+            address: root@192.168.4.73
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: client-lan-a
+            host: thx1
+            mode: native
+            nic: enp1s0f0
+            vlan: 10
+            ipv4: 10.0.10.100/24
+            ipv4_gw: 10.0.10.1
+
+        scenarios:
+          - id: rule_scan
+            kind: rule_scan
+            source: client-lan-a
+            target_subnet: 10.0.0.0/8
+            random_count: 5
+
+        metrics:
+          poll_interval_s: 2
+          sources:
+            - kind: prometheus
+              name: fw-shorewalld
+              url: http://192.168.4.73:9100/metrics
+              timeout_s: 4.0
+              metric_prefix_allow:
+                - shorewalld_
+            - kind: snmp
+              name: sw-core
+              host: 192.168.1.1
+              community: public
+              oids:
+                - "1.3.6.1.2.1.1.1.0"
+              port: 161
+
+        report:
+          output_dir: /tmp/out
+    """)
+    p = _write_yaml(tmp_path, yaml_text)
+    cfg = load(p)
+
+    assert len(cfg.metrics.sources) == 2
+    prom_src = cfg.metrics.sources[0]
+    snmp_src = cfg.metrics.sources[1]
+    assert isinstance(prom_src, PrometheusSourceSpec)
+    assert prom_src.name == "fw-shorewalld"
+    assert prom_src.url == "http://192.168.4.73:9100/metrics"
+    assert prom_src.metric_prefix_allow == ["shorewalld_"]
+    assert isinstance(snmp_src, SNMPSourceSpec)
+    assert snmp_src.host == "192.168.1.1"
+    assert snmp_src.community == "public"
+    assert snmp_src.oids == ["1.3.6.1.2.1.1.1.0"]
