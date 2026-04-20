@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from shorewall_nft_stagelab.config import (
     ConnStormScenario,
     Dut,
@@ -182,3 +184,18 @@ def test_summarize_throughput_ok_vs_fail():
     )
     assert fail_result.ok is False
     assert fail_result.raw["throughput_gbps"] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Test 6: build_runner unknown kind raises ValueError
+# ---------------------------------------------------------------------------
+
+
+def test_build_runner_unknown_kind_raises():
+    """build_runner with an unknown kind string must raise ValueError."""
+
+    class _FakeScenario:
+        kind = "does_not_exist"
+
+    with pytest.raises(ValueError, match="does_not_exist"):
+        build_runner(_FakeScenario())  # type: ignore[arg-type]

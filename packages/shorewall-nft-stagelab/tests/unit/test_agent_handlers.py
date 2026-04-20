@@ -274,6 +274,41 @@ def test_run_scenario_unknown_kind_raises() -> None:
         assert "does_not_exist" in str(exc)
 
 
+def test_run_scenario_apply_tuning_calls_tuning_module() -> None:
+    """apply_tuning scenario calls tuning.apply_rss and tuning.apply_sysctls."""
+    handle = NativeEndpointHandle(
+        name="ep_tune", netns="NS_TEST_ep_tune", nsstub_pid=55, vlan_iface="eth0.10"
+    )
+    state = _state()
+    state["endpoints"]["ep_tune"] = handle
+
+    msg = RunScenarioMessage(
+        id="r-tune",
+        scenario_spec={
+            "endpoint_name": "ep_tune",
+            "kind": "apply_tuning",
+            "spec": {
+                "iface": "eth0",
+                "rss_queues": 4,
+                "sysctls": {"net.core.rmem_max": "16777216"},
+            },
+        },
+    )
+
+    with (
+        patch("shorewall_nft_stagelab.agent.tuning.apply_rss") as mock_rss,
+        patch("shorewall_nft_stagelab.agent.tuning.apply_sysctls") as mock_sysctls,
+    ):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    mock_rss.assert_called_once_with("eth0", 4)
+    mock_sysctls.assert_called_once_with({"net.core.rmem_max": "16777216"})
+    assert resp["tool"] == "apply_tuning"
+    assert resp["ok"] is True
+    assert resp["applied"]["rss_queues"] == 4
+    assert resp["applied"]["sysctls"] == {"net.core.rmem_max": "16777216"}
+
+
 def test_poll_metrics_nft_counters() -> None:
     """poll_metrics(kind=nft_counters) returns serialised rows from poll_nft_counters."""
     from shorewall_nft_stagelab.metrics import MetricRow

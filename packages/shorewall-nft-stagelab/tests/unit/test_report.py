@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 from pathlib import Path
 
@@ -229,3 +231,70 @@ def test_recommendations_section_in_markdown() -> None:
     assert "## Recommendations" in md
     assert "rx_no_buffer" in md
     assert "ethtool -G eth0 rx 4096" in md
+
+
+# ---------------------------------------------------------------------------
+# New tests: tuning_sweep report rendering
+# ---------------------------------------------------------------------------
+
+
+def _sweep_result(scenario_id: str = "sweep-1") -> ScenarioResult:
+    points = [
+        {"point": {"rss_queues": 1, "rmem_max": 1048576}, "throughput_gbps": 5.2, "ok": True},
+        {"point": {"rss_queues": 8, "rmem_max": 16777216}, "throughput_gbps": 18.3, "ok": True},
+    ]
+    best = points[1]
+    return ScenarioResult(
+        scenario_id=scenario_id,
+        kind="tuning_sweep",
+        ok=True,
+        duration_s=0.0,
+        raw={"points": points, "optimum": best, "tool": "tuning_sweep"},
+    )
+
+
+def test_sweep_markdown_has_table() -> None:
+    """_render_markdown for tuning_sweep emits a Markdown table with axis columns."""
+    run = RunReport(
+        run_id="2026-04-20T19:00:00Z",
+        config_path="/etc/stagelab.yaml",
+        scenarios=[_sweep_result()],
+    )
+    md = _render_markdown(run)
+
+    assert "tuning_sweep" in md
+    assert "sweep-1" in md
+    # Table header row must be present
+    assert "| rss_queues |" in md
+    assert "| rmem_max |" in md
+    assert "throughput_gbps" in md
+    # Optimum line
+    assert "18.3 Gbps" in md
+
+
+def test_sweep_csv_written(tmp_path: Path) -> None:
+    """write() emits sweep-<id>.csv with correct header and data rows."""
+    run = RunReport(
+        run_id="2026-04-20T20:00:00Z",
+        config_path="/etc/stagelab.yaml",
+        scenarios=[_sweep_result("my-sweep")],
+    )
+    run_dir = write(run, tmp_path)
+
+    csv_path = run_dir / "sweep-my-sweep.csv"
+    assert csv_path.is_file(), "sweep CSV file must be written"
+
+    rows = list(csv.DictReader(io.StringIO(csv_path.read_text())))
+    assert len(rows) == 2
+
+    # Header must include the axes and metrics columns
+    fieldnames = list(rows[0].keys())
+    assert "rss_queues" in fieldnames
+    assert "rmem_max" in fieldnames
+    assert "throughput_gbps" in fieldnames
+    assert "ok" in fieldnames
+
+    # Verify values
+    assert rows[0]["rss_queues"] == "1"
+    assert rows[1]["throughput_gbps"] == "18.300"
+    assert rows[1]["ok"] == "true"
