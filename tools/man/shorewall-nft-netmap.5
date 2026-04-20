@@ -1,0 +1,60 @@
+.TH SHOREWALL-NFT-NETMAP 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-netmap \- network address mapping (NETMAP) for shorewall-nft
+.SH DESCRIPTION
+The
+.I netmap
+file defines network-address translation rules that map an entire subnet
+to another subnet of the same size (1:1 network mapping).  Both DNAT
+(inbound) and SNAT (outbound) variants are supported.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/netmap
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+TYPE	yes	DNAT or SNAT
+NET1	yes	Original network (CIDR)
+INTERFACE	yes	Interface the translation applies to
+NET2	yes	Translated network (CIDR, same prefix length as NET1)
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+.TE
+
+.SH EXAMPLES
+.PP
+Map an entire private subnet to a public subnet (inbound DNAT):
+.RS
+.nf
+#TYPE  NET1              INTERFACE  NET2
+DNAT   203.0.113.0/24   eth0       10.0.0.0/24
+.fi
+.RE
+.PP
+Map outbound source addresses from private to public:
+.RS
+.nf
+SNAT   192.168.1.0/24   eth0       203.0.113.128/24
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-masq (5),
+.BR shorewall\-nft\-rawnat (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

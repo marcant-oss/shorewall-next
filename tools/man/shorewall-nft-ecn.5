@@ -1,0 +1,54 @@
+.TH SHOREWALL-NFT-ECN 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-ecn \- ECN (Explicit Congestion Notification) bit clearing for shorewall-nft
+.SH DESCRIPTION
+The
+.I ecn
+file instructs the compiler to emit rules that clear the ECN bits in TCP
+headers on specific interfaces or for specific hosts.  This is used to work
+around broken middleboxes that drop packets with ECN bits set.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/ecn
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+INTERFACE	yes	Interface to apply ECN clearing on
+HOST	no	Specific host or CIDR to clear ECN for (default: all)
+.TE
+
+.SH EXAMPLES
+.PP
+Clear ECN bits on all traffic leaving the external interface:
+.RS
+.nf
+#INTERFACE  HOST
+eth0
+.fi
+.RE
+.PP
+Clear ECN only for traffic to a specific remote network:
+.RS
+.nf
+eth0        203.0.113.0/24
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-interfaces (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

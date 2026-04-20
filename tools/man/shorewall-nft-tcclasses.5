@@ -1,0 +1,64 @@
+.TH SHOREWALL-NFT-TCCLASSES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-tcclasses \- traffic shaping class definitions for shorewall-nft
+.SH DESCRIPTION
+The
+.I tcclasses
+file defines the traffic classes for the interfaces declared in
+.IR shorewall\-nft\-tcdevices (5).
+Each row defines a class with a guaranteed rate, a ceiling rate, and a
+priority.  shorewall-nft generates
+.BR tc (8)
+class commands via
+.BR "shorewall\-nft generate\-tc" .
+
+Packets are assigned to classes by nft mark rules derived from
+.I tcrules
+and
+.IR mangle .
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/tcclasses
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+INTERFACE	yes	Interface (must be declared in tcdevices)
+MARK	yes	Packet mark value that identifies this class
+RATE	yes	Guaranteed bandwidth (e.g. 1mbit)
+CEIL	no	Maximum bandwidth / ceiling (default: interface rate)
+PRIORITY	no	Class priority (1=highest; default: 1)
+OPTIONS	no	Comma-separated options (default, …)
+.TE
+
+.SH EXAMPLES
+.PP
+Three priority classes on a 10 Mbit uplink:
+.RS
+.nf
+#INTERFACE  MARK  RATE    CEIL    PRIORITY
+eth0        1     5mbit   10mbit  1
+eth0        2     3mbit   10mbit  2
+eth0        3     1mbit   10mbit  3
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-tcdevices (5),
+.BR shorewall\-nft\-tcfilters (5),
+.BR shorewall\-nft\-mangle (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

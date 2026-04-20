@@ -45,6 +45,22 @@ override_dh_auto_install:
 	    debian/shorewall-nft/usr/share/man/man8/shorewall-nft.8
 	install -D -m 0644 tools/man/shorewalld.8 \
 	    debian/shorewall-nft/usr/share/man/man8/shorewalld.8
+	install -D -m 0644 tools/man/shorewall-nft-migrate.8 \
+	    debian/shorewall-nft/usr/share/man/man8/shorewall-nft-migrate.8
+	install -D -m 0644 tools/man/shorewall-nft-simlab.8 \
+	    debian/shorewall-nft/usr/share/man/man8/shorewall-nft-simlab.8
+	install -D -m 0644 tools/man/shorewall-nft-stagelab.8 \
+	    debian/shorewall-nft/usr/share/man/man8/shorewall-nft-stagelab.8
+	for page in \
+	    zones interfaces hosts policy rules nfsets masq netmap rawnat \
+	    conntrack notrack providers routes rtrules tunnels mangle \
+	    accounting blacklist blrules stoppedrules routestopped maclist \
+	    proxyarp proxyndp arprules ecn nfacct scfilter \
+	    tcdevices tcclasses tcfilters tcrules tcinterfaces tcpri \
+	    secmarks; do \
+	    install -D -m 0644 "tools/man/shorewall-nft-$${page}.5" \
+	        "debian/shorewall-nft/usr/share/man/man5/shorewall-nft-$${page}.5"; \
+	done
 	install -D -m 0644 packaging/systemd/shorewall-nft.service \
 	    debian/shorewall-nft/lib/systemd/system/shorewall-nft.service
 	install -D -m 0644 packaging/systemd/shorewall-nft@.service \

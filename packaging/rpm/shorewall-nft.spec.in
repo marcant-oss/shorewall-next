@@ -87,11 +87,27 @@ install -Dm644 packaging/systemd/shorewalld.service \
 install -Dm644 packaging/systemd/shorewalld@.service \
     %{buildroot}%{_unitdir}/shorewalld@.service
 
-# man pages
+# man pages — section 8
 install -Dm644 tools/man/shorewall-nft.8 \
     %{buildroot}%{_mandir}/man8/shorewall-nft.8
 install -Dm644 tools/man/shorewalld.8 \
     %{buildroot}%{_mandir}/man8/shorewalld.8
+install -Dm644 tools/man/shorewall-nft-migrate.8 \
+    %{buildroot}%{_mandir}/man8/shorewall-nft-migrate.8
+install -Dm644 tools/man/shorewall-nft-simlab.8 \
+    %{buildroot}%{_mandir}/man8/shorewall-nft-simlab.8
+install -Dm644 tools/man/shorewall-nft-stagelab.8 \
+    %{buildroot}%{_mandir}/man8/shorewall-nft-stagelab.8
+# man pages — section 5
+for page in \
+    zones interfaces hosts policy rules nfsets masq netmap rawnat \
+    conntrack notrack providers routes rtrules tunnels mangle \
+    accounting blacklist blrules stoppedrules routestopped maclist \
+    proxyarp proxyndp arprules ecn nfacct scfilter \
+    tcdevices tcclasses tcfilters tcrules tcinterfaces tcpri secmarks; do
+    install -Dm644 "tools/man/shorewall-nft-${page}.5" \
+        "%{buildroot}%{_mandir}/man5/shorewall-nft-${page}.5"
+done
 
 # shell completions
 install -Dm644 tools/completions/shorewall-nft.bash \
@@ -149,6 +165,10 @@ fi
 %attr(0750,root,root) %dir %{_sharedstatedir}/shorewalld
 %{_mandir}/man8/shorewall-nft.8*
 %{_mandir}/man8/shorewalld.8*
+%{_mandir}/man8/shorewall-nft-migrate.8*
+%{_mandir}/man8/shorewall-nft-simlab.8*
+%{_mandir}/man8/shorewall-nft-stagelab.8*
+%{_mandir}/man5/shorewall-nft-*.5*
 %{_datadir}/bash-completion/completions/shorewall-nft
 %{_datadir}/zsh/site-functions/_shorewall-nft
 %{_datadir}/fish/vendor_completions.d/shorewall-nft.fish

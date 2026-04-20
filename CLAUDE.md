@@ -96,6 +96,7 @@ When bumping a version, update all of these in one commit:
 - `packaging/rpm/shorewall-nft.spec` (Version: field + %changelog entry)
 - `packaging/debian/changelog`
 - `CHANGELOG.md` (new `## [X.Y.Z]` section at the top)
+- `tools/man/*.8` and `tools/man/*.5` — update `.TH` version strings to match the new version.
 
 Tag with `git tag -a vX.Y.Z` and push the tag — the release workflow fires
 on `refs/tags/v*` and publishes wheels + .deb + .rpm to a GitHub Release.

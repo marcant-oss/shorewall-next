@@ -1,0 +1,120 @@
+.TH SHOREWALL-NFT-MIGRATE 8 "2026-04-20" "shorewall-nft 1.10.0" "System Administration"
+.SH NAME
+shorewall\-nft\-migrate \- verify and assist migration from Shorewall to shorewall-nft
+.SH SYNOPSIS
+.B shorewall\-nft\-migrate
+.RI [ OPTIONS ]
+.I CONFIG_DIR
+.SH DESCRIPTION
+.B shorewall\-nft\-migrate
+is the standalone migration tool for operators moving from classic Shorewall
+to
+.BR shorewall\-nft (8).
+Given a Shorewall configuration directory, it:
+
+.IP 1. 4
+Compiles the configuration through the shorewall-nft compiler and
+validates the resulting nft script with
+.B nft \-c
+(syntax check only, no kernel load).
+.IP 2. 4
+Optionally runs the triangle verifier to compare the compiled nft output
+against an
+.BR iptables\-save (8)
+baseline for semantic equivalence.
+.IP 3. 4
+Reports any config-language constructs that are not yet supported by
+shorewall-nft (TC rules without mangle equivalent, arprules family
+limitations, etc.).
+
+This command is functionally similar to
+.B shorewall\-nft migrate
+but accepts a mandatory positional argument and is designed to be scripted
+directly into migration checklists.
+
+.SH OPTIONS
+.TP
+.BI \-\-iptables " PATH"
+Path to an
+.B iptables\-save
+dump produced on the existing Shorewall host.  When supplied, the tool runs
+the triangle verifier and reports rule-level mismatches.  Strongly recommended
+for production migrations.
+.TP
+.BI \-o ", " \-\-output " PATH"
+Write the compiled nft script to
+.IR PATH .
+Without this flag the script is written to a temporary file and deleted after
+the check completes.
+.TP
+.B \-\-dry\-run
+Compile the configuration and validate with
+.B nft \-c \-f
+(syntax check only, no kernel load).  This is the default behaviour; the flag
+is accepted explicitly for script clarity.
+.TP
+.B \-\-help
+Show usage and exit.
+
+.SH ARGUMENTS
+.TP
+.I CONFIG_DIR
+Path to the Shorewall configuration directory to migrate.  May be an IPv4
+directory (auto-detects a v6 sibling), an IPv6-only directory, or a merged
+.I shorewall46
+directory.
+
+.SH EXIT STATUS
+.TP
+.B 0
+All checks passed.  The configuration compiles cleanly and (if
+.B \-\-iptables
+was given) the nft output is semantically equivalent to the baseline.
+.TP
+.B 1
+Compile error, nft syntax error, or verification mismatch detected.
+.TP
+.B 2
+Argument error.
+
+.SH EXAMPLES
+.PP
+Dry-run migration check against the current Shorewall config:
+.RS
+.nf
+shorewall\-nft\-migrate /etc/shorewall
+.fi
+.RE
+.PP
+Full migration check including triangle verification against the running
+iptables ruleset:
+.RS
+.nf
+iptables\-save > /tmp/baseline.txt
+shorewall\-nft\-migrate \-\-iptables /tmp/baseline.txt \e
+    \-o /tmp/shorewall.nft \e
+    /etc/shorewall
+.fi
+.RE
+.PP
+Check a merged dual-stack config directory and save the nft script:
+.RS
+.nf
+shorewall\-nft\-migrate \-o /tmp/merged.nft /etc/shorewall46
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-zones (5),
+.BR shorewall\-nft\-rules (5),
+.BR nft (8),
+.BR iptables\-save (8)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.
+For security vulnerabilities see
+.IR SECURITY.md .

@@ -1,0 +1,208 @@
+.TH SHOREWALL-NFT-STAGELAB 8 "2026-04-20" "shorewall-nft 1.10.0" "System Administration"
+.SH NAME
+shorewall\-nft\-stagelab \- distributed bridge-lab for performance and readiness testing of shorewall-nft
+.SH SYNOPSIS
+.B shorewall\-nft\-stagelab
+.I SUBCOMMAND
+.RI [ OPTIONS ]
+.RI [ ARGS ]
+.SH DESCRIPTION
+.B shorewall\-nft\-stagelab
+is the performance and operational-readiness validation tool for
+.BR shorewall\-nft (8).
+It connects to a distributed lab topology over SSH, executes a battery of
+scenarios (kernel-stack throughput via iperf3, DPDK line-rate with TRex,
+connection-rate stress, SNMP metric verification, VRRP failover), collects
+Prometheus metrics and rule-advisor hints, and produces a structured report.
+
+The stagelab operates in a network bridge topology rather than the three-netns
+topology of
+.BR shorewall\-nft\-simlab (8).
+Both tools share the
+.I shorewall-nft-netkit
+package for TUN/TAP and netns primitives.
+
+.SH SUBCOMMANDS
+
+.SS run \fICONFIG_PATH\fR [\fIOPTIONS\fR]
+Connect to the lab agents, execute all configured scenarios in order, and
+write a structured report to an output directory.
+
+.RS
+.TP
+.BI \-\-output\-dir " DIRECTORY"
+Override
+.I report.output_dir
+from the configuration file.  When given the report is written here;
+otherwise the config value is used.
+.RE
+
+.I CONFIG_PATH
+is a YAML or JSON stagelab configuration file validated by Pydantic.  It
+declares the lab topology (hosts, interfaces, scenario parameters) and
+report settings.
+
+.SS audit \fIREPORT_DIRS\fR [\fIOPTIONS\fR]
+Consolidate one or more stagelab run-directories into a signed-off audit
+report (single-file HTML and optionally PDF).
+
+.RS
+.TP
+.BI \-\-output " DIRECTORY"
+Write
+.I audit.html
+(and
+.I audit.pdf
+when PDF is selected) here.  Default: first
+.IR REPORT_DIR .
+.TP
+.BI \-\-format " FORMAT"
+Output format:
+.B html
+,
+.B pdf
+, or
+.B both
+(default: both; PDF requires
+.BR weasyprint ).
+.TP
+.BI \-\-operator " NAME"
+Operator name printed on the audit cover page (default:
+.BR $USER ).
+.TP
+.BI \-\-simlab\-report " FILE"
+Path to a
+.I simlab.json
+produced by
+.B shorewall\-nft\-simlab full \-\-output\-json .
+When given the packet-level simulation results are merged into the audit.
+.RE
+
+.SS inspect \fIREPORT_DIR\fR
+Print the
+.I summary.md
+from
+.I REPORT_DIR
+to stdout.  Useful for a quick text overview without opening the full HTML
+report.
+
+.SS review \fIREPORT_DIR\fR [\fIOPTIONS\fR]
+Consolidate tier-B rule-order recommendations and optimization hints into a
+human-readable review bundle.  Optionally open a pull request against a
+firewall-config repository.
+
+.RS
+.TP
+.BI \-\-output " DIRECTORY"
+Write the review artifacts here (default:
+.IR REPORT_DIR ).
+.TP
+.B \-\-open\-pr
+Open a pull request on the remote firewall-config repository.  Requires
+.B gh
+(GitHub CLI) to be authenticated.
+.TP
+.BI \-\-repo " OWNER/NAME"
+GitHub repository in
+.I owner/name
+format.  Required when
+.B \-\-open\-pr
+is set.
+.TP
+.BI \-\-branch " NAME"
+Branch name for the pull request (default:
+.BI stagelab/ run_id ).
+.RE
+
+.SS validate \fICONFIG_PATH\fR
+Load and Pydantic-validate the stagelab configuration file.  Exits 0 on
+success, 1 on validation error with a structured error message.  Useful for
+CI pre-flight checks before scheduling a
+.B run .
+
+.SH CONFIGURATION FILE FORMAT
+The stagelab configuration file is YAML (recommended) or JSON.  It is
+validated by Pydantic at load time.  Key top-level sections:
+
+.TP
+.B lab:
+Lab topology: hostnames, SSH connection parameters, interface names.
+.TP
+.B scenarios:
+List of scenario definitions.  Each entry declares a scenario name,
+parameters (packet sizes, rates, duration), and pass/fail thresholds.
+.TP
+.B report:
+.I output_dir
+and report metadata (title, operator, retention).
+.TP
+.B advisor:
+Rule-order advisor configuration (tier thresholds, maximum hints).
+
+Use
+.B shorewall\-nft\-stagelab validate
+to check a draft configuration before running.
+
+.SH EXAMPLES
+.PP
+Validate a stagelab configuration before scheduling a run:
+.RS
+.nf
+shorewall\-nft\-stagelab validate /etc/stagelab/prod\-fw.yaml
+.fi
+.RE
+.PP
+Run a full lab session and write the report:
+.RS
+.nf
+shorewall\-nft\-stagelab run /etc/stagelab/prod\-fw.yaml \e
+    \-\-output\-dir /var/lib/stagelab/runs/2026\-04\-20
+.fi
+.RE
+.PP
+Inspect the latest run report in the terminal:
+.RS
+.nf
+shorewall\-nft\-stagelab inspect /var/lib/stagelab/runs/2026\-04\-20
+.fi
+.RE
+.PP
+Generate a signed-off audit report from two run directories, merging
+simlab packet-level results:
+.RS
+.nf
+shorewall\-nft\-stagelab audit \e
+    /var/lib/stagelab/runs/2026\-04\-20 \e
+    /var/lib/stagelab/runs/2026\-04\-19 \e
+    \-\-simlab\-report /tmp/simlab.json \e
+    \-\-operator "A. Valentin" \e
+    \-\-output /var/lib/stagelab/audit\-2026\-04
+.fi
+.RE
+.PP
+Collect rule-order review artifacts and open a GitHub PR:
+.RS
+.nf
+shorewall\-nft\-stagelab review \e
+    /var/lib/stagelab/runs/2026\-04\-20 \e
+    \-\-open\-pr \-\-repo myorg/fw\-config
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-simlab (8),
+.BR shorewalld (8),
+.BR nft (8)
+
+Full stagelab documentation:
+.I docs/testing/stagelab.md
+in the project repository.
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.
+For security vulnerabilities see
+.IR SECURITY.md .

@@ -1,0 +1,67 @@
+.TH SHOREWALL-NFT-ARPRULES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-arprules \- ARP packet filtering rules for shorewall-nft
+.SH DESCRIPTION
+The
+.I arprules
+file defines ARP packet filtering rules.  The compiler emits these rules
+into a separate
+.B arp shorewall
+nft table (ARP family), which is distinct from the main
+.I inet shorewall
+table used for IP traffic.
+
+Use
+.I arprules
+to prevent ARP spoofing or to restrict which hosts may send ARP replies on
+a given interface.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/arprules
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ACTION	yes	ACCEPT or DROP
+SOURCE	yes	Source IP address or CIDR (or - for any)
+DEST	yes	Destination IP address or CIDR (or - for any)
+INTERFACE	no	Interface filter
+MAC	no	Source MAC address filter
+.TE
+
+.SH EXAMPLES
+.PP
+Allow ARP only from known subnets on the local interface:
+.RS
+.nf
+#ACTION  SOURCE           DEST  INTERFACE
+ACCEPT   192.168.1.0/24   -     eth1
+DROP     -                -     eth1
+.fi
+.RE
+.PP
+Allow ARP from a specific MAC address:
+.RS
+.nf
+ACCEPT   -   -   eth1   00:11:22:33:44:55
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-interfaces (5),
+.BR shorewall\-nft\-maclist (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

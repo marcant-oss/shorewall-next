@@ -1,0 +1,98 @@
+.TH SHOREWALL-NFT-INTERFACES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-interfaces \- network interface zone assignments for shorewall-nft
+.SH DESCRIPTION
+The
+.I interfaces
+file assigns network interfaces to zones.  The compiler uses this
+assignment to build the dispatch rules in the
+.I inet shorewall
+nft table that route packets into the correct zone-pair chains based on
+.B iifname
+and
+.BR oifname .
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/interfaces
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Lines beginning with
+.B #
+are comments.  Blank lines are ignored.  Columns are whitespace-separated.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ZONE	yes	Zone name (must be declared in zones file)
+INTERFACE	yes	Interface name or pattern (wildcards: +)
+BROADCAST	no	Broadcast address or detect or -
+OPTIONS	no	Comma-separated interface options
+.TE
+
+.SS Common options
+.TP
+.B dhcp
+Allow DHCP traffic on this interface.
+.TP
+.B nosmurfs
+Enable smurf attack filtering.
+.TP
+.B routeback
+Allow packets arriving and leaving on the same interface.
+.TP
+.B bridge
+Treat the interface as a bridge.
+.TP
+.B optional
+Do not fail if the interface does not exist.
+.TP
+.B tcpflags
+Check for TCP flag anomalies.
+.TP
+.BI maclist[= file ]
+Enable MAC-address filtering on this interface.
+.TP
+.BI nets= NETWORKS
+Restrict the zone to these networks on this interface.
+
+.SH EXAMPLES
+.PP
+Typical two-interface firewall:
+.RS
+.nf
+#ZONE   INTERFACE   BROADCAST   OPTIONS
+net     eth0        detect      tcpflags,nosmurfs
+loc     eth1        detect      dhcp
+.fi
+.RE
+.PP
+Bond interface with VLAN sub-interfaces:
+.RS
+.nf
+net     bond0.10    detect      tcpflags,nosmurfs
+loc     bond0.20    detect
+mgmt    bond0.99    detect
+.fi
+.RE
+.PP
+Wildcard interface pattern for PPP links:
+.RS
+.nf
+net     ppp+        detect      tcpflags
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-zones (5),
+.BR shorewall\-nft\-hosts (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

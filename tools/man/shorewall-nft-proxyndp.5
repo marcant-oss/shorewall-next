@@ -1,0 +1,55 @@
+.TH SHOREWALL-NFT-PROXYNDP 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-proxyndp \- proxy NDP (IPv6 neighbour discovery proxy) for shorewall-nft
+.SH DESCRIPTION
+The
+.I proxyndp
+file configures proxy NDP (Neighbour Discovery Protocol) entries for IPv6.
+Each row causes the firewall to answer NDP Neighbour Solicitations on behalf
+of the specified address on the named interface.
+
+The format is identical to
+.IR shorewall\-nft\-proxyarp (5)
+but applies to IPv6 addresses.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/proxyndp
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ADDRESS	yes	IPv6 address to proxy-NDP for
+INTERFACE	yes	Interface on which to answer NS messages
+EXTERNAL	yes	External interface facing the requester
+HAVEROUTE	no	Yes/No — whether a host route already exists
+PERSISTENT	no	Yes/No — whether to survive firewall restarts
+.TE
+
+.SH EXAMPLES
+.PP
+Proxy NDP for a DMZ IPv6 host:
+.RS
+.nf
+#ADDRESS              INTERFACE  EXTERNAL
+2001:db8::50          eth1       eth0
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-proxyarp (5),
+.BR shorewall\-nft\-interfaces (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

@@ -1,0 +1,84 @@
+.TH SHOREWALL-NFT-TUNNELS 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-tunnels \- VPN and tunnel definitions for shorewall-nft
+.SH DESCRIPTION
+The
+.I tunnels
+file defines VPN and encapsulation tunnels.  Each entry emits the protocol-
+specific rules (e.g. ESP, AH, IKE, GRE) in the appropriate chains to allow
+the tunnel control and data traffic to pass through the firewall.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/tunnels
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+TYPE	yes	Tunnel type keyword (see below)
+ZONE	yes	Zone where the tunnel endpoint resides
+GATEWAY	yes	IP address or CIDR of the tunnel gateway(s)
+GATEWAY_ZONES	no	Additional zone(s) at the remote end
+.TE
+
+.SS Tunnel types
+.TP
+.B ipsec
+Generic IPSEC (ESP/AH + IKE udp/500).
+.TP
+.B ipsecnat
+IPSEC with NAT traversal (adds udp/4500).
+.TP
+.B gre
+GRE tunnel (IP protocol 47).
+.TP
+.B ipip
+IPIP tunnel (IP protocol 4).
+.TP
+.B 6to4
+6to4 tunnel (IP protocol 41).
+.TP
+.B openvpn
+OpenVPN (UDP/1194 by default).
+
+.SH EXAMPLES
+.PP
+IPSEC tunnel to a remote gateway with NAT traversal:
+.RS
+.nf
+#TYPE     ZONE  GATEWAY          GATEWAY_ZONES
+ipsecnat  net   203.0.113.50     vpn
+.fi
+.RE
+.PP
+GRE tunnel to two remote sites:
+.RS
+.nf
+gre       net   198.51.100.0/24
+.fi
+.RE
+.PP
+OpenVPN server:
+.RS
+.nf
+openvpn   net   0.0.0.0/0
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-zones (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

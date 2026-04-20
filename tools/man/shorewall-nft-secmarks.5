@@ -1,0 +1,51 @@
+.TH SHOREWALL-NFT-SECMARKS 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-secmarks \- SELinux security mark labelling (configuration accepted, not emitted)
+.SH DESCRIPTION
+The
+.I secmarks
+file is accepted by the shorewall-nft parser for configuration compatibility
+with classic Shorewall.
+.B No nft output is emitted for this file in the current release.
+
+In classic Shorewall,
+.I secmarks
+labels connections with SELinux security marks
+.RB ( secmark )
+for use with SELinux Mandatory Access Control policies.  shorewall-nft does
+not currently implement secmark emit paths.
+
+If you rely on secmark functionality, continue to use classic Shorewall for
+that aspect of your policy, or open an issue in the project tracker.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/secmarks
+(or inside a merged
+.IR /etc/shorewall46/ ).
+
+The file is parsed but ignored.  Columns for reference:
+
+.TS
+l l l.
+Column	Description
+_
+SECMARK	SELinux security context string
+CHAIN	Chain to label in
+SOURCE	Source zone:address or CIDR
+DEST	Destination zone:address or CIDR
+PROTO	Protocol filter
+DPORT	Destination port filter
+SPORT	Source port filter
+STATE	Connection state filter
+.TE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

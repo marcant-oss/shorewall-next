@@ -1,0 +1,78 @@
+.TH SHOREWALL-NFT-PROVIDERS 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-providers \- multi-ISP provider definitions for shorewall-nft
+.SH DESCRIPTION
+The
+.I providers
+file defines multiple ISP uplinks (providers) for policy-based routing.
+Each provider is assigned a routing table number and an nft connection mark.
+Outbound traffic is marked and then routed into the provider's table using
+.B ip rule
+entries, which the compiler generates separately.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/providers
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+NAME	yes	Provider name (also the ip route table name)
+NUMBER	yes	Routing table number (2\(en252)
+MARK	yes	Connection mark value for this provider
+INTERFACE	yes	Outbound interface for this provider
+GATEWAY	no	Gateway IP address (or detect)
+OPTIONS	no	Comma-separated options (track, loose, …)
+.TE
+
+.SS Options
+.TP
+.B track
+Track connections and ensure replies follow the same provider.
+.TP
+.B loose
+Allow provider to be used even when the interface is down (load-balancing).
+.TP
+.B fallback
+Use as fallback when other providers are down.
+.TP
+.B balance
+Include in load-balancing pool.
+
+.SH EXAMPLES
+.PP
+Two-ISP configuration with tracking:
+.RS
+.nf
+#NAME   NUMBER  MARK  INTERFACE  GATEWAY     OPTIONS
+isp1    1       1     eth0       203.0.113.1  track
+isp2    2       2     eth1       198.51.100.1 track,fallback
+.fi
+.RE
+.PP
+Load-balanced dual-ISP:
+.RS
+.nf
+isp1    1       1     eth0       203.0.113.1  track,balance
+isp2    2       2     eth1       198.51.100.1 track,balance
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-routes (5),
+.BR shorewall\-nft\-rtrules (5),
+.BR ip\-rule (8)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

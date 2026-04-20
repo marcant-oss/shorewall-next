@@ -1,0 +1,77 @@
+.TH SHOREWALL-NFT-BLRULES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-blrules \- blacklist rules with full rule grammar for shorewall-nft
+.SH DESCRIPTION
+The
+.I blrules
+file provides blacklisting with the full rule grammar: action, source,
+destination, protocol, and port filtering.  Unlike the simpler
+.I blacklist
+file (which only lists source addresses),
+.I blrules
+lets you blacklist based on any combination of source and destination.
+
+The compiler processes this file separately from
+.I rules
+and emits the resulting nft rules early in the zone-pair chains, before
+the main rules are evaluated.  Rules support
+.B ?SECTION
+grouping (same as
+.IR rules ).
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/blrules
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ACTION	yes	DROP, REJECT, or WHITELIST
+SOURCE	yes	Source zone:address or CIDR
+DEST	yes	Destination zone:address or CIDR
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+.TE
+
+.SH EXAMPLES
+.PP
+Drop traffic from a known-bad network to the DMZ:
+.RS
+.nf
+#ACTION  SOURCE              DEST   PROTO  DPORT
+DROP     net:198.51.100.0/24 dmz
+.fi
+.RE
+.PP
+Reject inbound SSH from specific subnets:
+.RS
+.nf
+REJECT   net:203.0.113.0/24  fw     tcp    22
+.fi
+.RE
+.PP
+Whitelist a trusted host from the global block:
+.RS
+.nf
+WHITELIST net:198.51.100.1   fw
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-blacklist (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

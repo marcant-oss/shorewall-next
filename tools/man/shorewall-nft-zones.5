@@ -1,0 +1,110 @@
+.TH SHOREWALL-NFT-ZONES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-zones \- zone definitions for shorewall-nft
+.SH DESCRIPTION
+The
+.I zones
+file defines the network security zones used by the firewall.  Every other
+configuration file that references a zone name (interfaces, hosts, policy,
+rules, …) must use zone names declared here.
+
+The compiler reads this file during the IR-construction pass
+.RB ( build_ir()
+in
+.IR compiler/ir.py ).
+Each zone becomes a named chain group in the emitted
+.I inet shorewall
+nft table.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/zones
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Lines beginning with
+.B #
+are comments.  Blank lines are ignored.  Columns are whitespace-separated.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ZONE	yes	Zone name; up to 10 alphanumeric characters
+TYPE	yes	Zone type (see below)
+OPTIONS	no	Zone options (comma-separated)
+IN_OPTIONS	no	Interface ingress options for this zone
+OUT_OPTIONS	no	Interface egress options for this zone
+.TE
+
+.SS Zone types
+.TP
+.B firewall
+The firewall host itself.  There must be exactly one firewall zone (usually
+named
+.BR fw ).
+.TP
+.B ip
+Dual-stack zone (IPv4 and IPv6).  Use this in merged
+.I /etc/shorewall46
+configs.
+.TP
+.B ipv4
+IPv4-only zone.
+.TP
+.B ipv6
+IPv6-only zone.
+.TP
+.B bport[6]
+Bridge port zone.
+.TP
+.B ipsec[6]
+IPSEC zone.
+
+.SH EXAMPLES
+.PP
+Minimal dual-stack setup:
+.RS
+.nf
+#ZONE   TYPE    OPTIONS
+fw      firewall
+net     ip
+loc     ip
+dmz     ip
+.fi
+.RE
+.PP
+IPv4/IPv6 separate zones (legacy layout for
+.I /etc/shorewall
++
+.I /etc/shorewall6
+):
+.RS
+.nf
+fw      firewall
+net     ipv4
+loc     ipv4
+.fi
+.RE
+.PP
+Zone with IPSEC sub-zone:
+.RS
+.nf
+fw      firewall
+net     ip
+loc     ip
+vpn     ipsec
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-interfaces (5),
+.BR shorewall\-nft\-policy (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

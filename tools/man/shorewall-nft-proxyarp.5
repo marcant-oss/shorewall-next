@@ -1,0 +1,53 @@
+.TH SHOREWALL-NFT-PROXYARP 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-proxyarp \- proxy ARP configuration for shorewall-nft
+.SH DESCRIPTION
+The
+.I proxyarp
+file configures proxy ARP entries that allow the firewall to answer ARP
+requests on behalf of hosts behind it.  Each entry causes the compiler to
+emit the corresponding
+.I ip neigh add proxy
+commands (or equivalent) and to enable proxy_arp on the relevant interface.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/proxyarp
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ADDRESS	yes	IP address to proxy-ARP for
+INTERFACE	yes	Interface on which to answer ARP requests
+EXTERNAL	yes	External interface facing the requester
+HAVEROUTE	no	Yes/No — whether a host route already exists
+PERSISTENT	no	Yes/No — whether to survive firewall restarts
+.TE
+
+.SH EXAMPLES
+.PP
+Proxy ARP for a DMZ host visible on the external interface:
+.RS
+.nf
+#ADDRESS       INTERFACE  EXTERNAL  HAVEROUTE  PERSISTENT
+198.51.100.50  eth1       eth0      No         Yes
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-proxyndp (5),
+.BR shorewall\-nft\-interfaces (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

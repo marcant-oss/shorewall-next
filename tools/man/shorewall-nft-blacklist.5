@@ -1,0 +1,77 @@
+.TH SHOREWALL-NFT-BLACKLIST 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-blacklist \- static source address blocklist for shorewall-nft
+.SH DESCRIPTION
+The
+.I blacklist
+file declares a static list of source addresses or prefixes to block.
+Each entry is added to the
+.I shorewall_blacklist
+nft set.  Traffic from listed addresses is dropped before any zone-pair
+rules are evaluated.
+
+This file is for static, compile-time blocklisting.  For dynamic (runtime)
+blocking use
+.B shorewall\-nft drop
+/
+.B blacklist
+/
+.BR allow .
+For hostname-based or URL-backed blocklists use
+.IR shorewall\-nft\-nfsets (5).
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/blacklist
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ADDRESS	yes	IP address or CIDR prefix to block
+PROTO	no	Protocol filter (optional narrowing)
+PORT	no	Port filter (optional narrowing)
+.TE
+
+.SH EXAMPLES
+.PP
+Block an address range and a specific host:
+.RS
+.nf
+#ADDRESS            PROTO  PORT
+198.51.100.0/24
+203.0.113.5
+.fi
+.RE
+.PP
+Block a specific host only for TCP port 25 (spam):
+.RS
+.nf
+198.51.100.99       tcp    25
+.fi
+.RE
+.PP
+Block an IPv6 prefix:
+.RS
+.nf
+2001:db8:bad::/48
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-blrules (5),
+.BR shorewall\-nft\-nfsets (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

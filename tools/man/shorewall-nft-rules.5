@@ -1,0 +1,176 @@
+.TH SHOREWALL-NFT-RULES 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-rules \- firewall rules for shorewall-nft
+.SH DESCRIPTION
+The
+.I rules
+file is the primary place where you allow or deny specific traffic between
+zones.  Rules are checked before the default policy defined in
+.IR shorewall\-nft\-policy (5).
+
+The compiler reads this file during the IR-construction pass and emits one
+or more nft rules per row into the appropriate zone-pair chain.
+
+The
+.I rules
+file supports
+.B ?SECTION
+blocks:
+.B ?SECTION NEW
+(default),
+.BR "?SECTION ESTABLISHED" ,
+.BR "?SECTION RELATED" ,
+.BR "?SECTION INVALID" ,
+.BR "?SECTION UNTRACKED" .
+Most operators keep all rules in the
+.B NEW
+section.
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/rules
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.  Long lines may be continued with a trailing backslash.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ACTION	yes	What to do (ACCEPT, DROP, REJECT, DNAT, …)
+SOURCE	yes	Source zone or address
+DEST	yes	Destination zone or address
+PROTO	no	Protocol number or name (tcp, udp, icmp, …)
+DPORT	no	Destination port(s) or range
+SPORT	no	Source port(s) or range
+ORIG_DEST	no	Original destination for DNAT rules
+RATE	no	Rate limit (N/unit:burst)
+USER	no	User/group match
+MARK	no	Connection mark
+CONNLIMIT	no	Max concurrent connections from src
+TIME	no	Time range match
+HEADERS	no	IPv6 header match
+SWITCH	no	Runtime switch name
+HELPER	no	conntrack helper name
+.TE
+
+.SS ACTION syntax
+.TP
+.B ACCEPT
+Pass the packet.
+.TP
+.B DROP
+Silently discard.
+.TP
+.B REJECT
+Discard and notify sender.
+.TP
+.B DNAT[\fI:addr\fR][\fI:port\fR]
+Destination NAT.  Translates the destination to
+.IR addr : port .
+.TP
+.B SNAT[\fI:addr\fR]
+Source NAT.
+.TP
+.B LOG[\fI:level\fR][\fI:prefix\fR]
+Log and continue.
+.TP
+.BI Macro / name
+Built-in macro (e.g.
+.BR SSH ,
+.BR HTTP ,
+.BR HTTPS )
+or action file.
+
+.SS SOURCE / DEST syntax
+.TP
+.I zone
+Zone name (matches all hosts in that zone).
+.TP
+.IB zone : address
+Zone restricted to a specific address or CIDR prefix.
+.TP
+.IB zone : dns: hostname
+Zone with a DNS-driven nft set for
+.I hostname
+(populated by shorewalld).
+.TP
+.IB zone : dnsr: hostname
+Like
+.B dns:
+but uses the active pull resolver backend in shorewalld.
+.TP
+.IB zone : nfset: name
+Reference a named set declared in
+.IR shorewall\-nft\-nfsets (5).
+.TP
+.IB zone :! nfset: name
+Negated nfset reference — match packets whose address is
+.I not
+in the set.
+.TP
+.B $FW
+Shorthand for the firewall zone.
+.TP
+.B all
+Match any zone.
+.TP
+.B !
+address Negated address.
+
+.SH EXAMPLES
+.PP
+Basic service access rules:
+.RS
+.nf
+#ACTION  SOURCE  DEST    PROTO   DPORT
+ACCEPT   loc     fw      tcp     22
+ACCEPT   loc     net     tcp     80,443
+ACCEPT   fw      net     tcp     80,443,587
+.fi
+.RE
+.PP
+DNAT for inbound web traffic to a DMZ host:
+.RS
+.nf
+DNAT     net     dmz:198.51.100.10   tcp  80
+DNAT     net     dmz:198.51.100.10   tcp  443
+.fi
+.RE
+.PP
+DNS-driven rule — allow outbound to github.com only:
+.RS
+.nf
+ACCEPT   loc     net:dns:github.com  tcp  443
+.fi
+.RE
+.PP
+Rate-limited SSH to prevent brute-force:
+.RS
+.nf
+ACCEPT   net     fw      tcp     22      -   -  3/min:5
+.fi
+.RE
+.PP
+Named nfset reference for a CDN allowlist:
+.RS
+.nf
+ACCEPT   net:nfset:allowlist  loc
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-policy (5),
+.BR shorewall\-nft\-zones (5),
+.BR shorewall\-nft\-nfsets (5),
+.BR shorewall\-nft\-masq (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

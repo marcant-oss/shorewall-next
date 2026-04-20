@@ -1,0 +1,89 @@
+.TH SHOREWALL-NFT-MANGLE 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-mangle \- packet mark (mangle) rules for shorewall-nft
+.SH DESCRIPTION
+The
+.I mangle
+file defines rules that set packet marks or connection marks on matching
+traffic.  Marks are used to implement policy-based routing, traffic shaping,
+and quality-of-service classification.
+
+The compiler processes this file together with
+.I tcrules
+and emits
+.B meta mark set
+and
+.B ct mark set
+rules in the
+.B mangle
+chain (nft priority
+.BR \-150 ).
+
+.SH FILE FORMAT
+Location:
+.I /etc/shorewall/mangle
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ACTION	yes	Mark action: MARK, CONNMARK, SAVE, RESTORE, or mark value
+SOURCE	yes	Source zone:address or CIDR
+DEST	yes	Destination zone:address or CIDR
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+USER	no	User/group match
+TEST	no	Connmark test expression
+LENGTH	no	Packet length range
+TOS	no	TOS/DSCP value
+CONNBYTES	no	Conntrack bytes matched
+HELPER	no	Conntrack helper match
+HEADERS	no	IPv6 extension header match
+PROBABILITY	no	Probabilistic mark (0.0\(en1.0)
+DSCP	no	DSCP value to set
+STATE	no	Connection state match
+TIME	no	Time range
+SWITCH	no	Runtime switch name
+.TE
+
+.SH EXAMPLES
+.PP
+Mark all HTTP/HTTPS traffic for QoS:
+.RS
+.nf
+#ACTION  SOURCE  DEST  PROTO  DPORT
+1        all     all   tcp    80,443
+.fi
+.RE
+.PP
+Save connection mark on new connections:
+.RS
+.nf
+SAVE     all     all
+.fi
+.RE
+.PP
+Restore mark from connection on established traffic:
+.RS
+.nf
+RESTORE  all     all
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-rules (5),
+.BR shorewall\-nft\-providers (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

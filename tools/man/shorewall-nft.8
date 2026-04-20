@@ -1,228 +1,788 @@
-.TH SHOREWALL-NFT 8 "2026-04-12" "shorewall-nft 1.4.0" "System Administration"
+.TH SHOREWALL-NFT 8 "2026-04-20" "shorewall-nft 1.10.0" "System Administration"
 .SH NAME
 shorewall\-nft \- nftables-native firewall compiler with Shorewall-compatible configuration
 .SH SYNOPSIS
 .B shorewall\-nft
+.RI [ GLOBAL\-OPTIONS ]
 .I COMMAND
-.RI [ OPTIONS ]
-.RI [ DIRECTORY ]
+.RI [ COMMAND\-OPTIONS ]
+.RI [ ARGS ]
 .SH DESCRIPTION
 .B shorewall\-nft
-is a Python implementation of the Shorewall firewall compiler that
-emits native nftables rulesets instead of iptables. It is a drop\-in
-replacement for Shorewall that reads the same configuration files
-and produces semantically equivalent firewall behavior on modern
-Linux kernels.
+is a Python implementation of the Shorewall firewall compiler that emits
+native nftables rulesets instead of iptables rules.  It reads the same
+configuration file format as classic Shorewall and produces semantically
+equivalent firewall behaviour on modern Linux kernels (nft 0.9.6 / kernel
+5.10 or later).
 
-Configuration files live under \fI/etc/shorewall\fR (v4),
-\fI/etc/shorewall6\fR (v6), or \fI/etc/shorewall46\fR (merged
-dual\-stack, produced by \fBshorewall\-nft merge\-config\fR). The
-merged directory takes precedence when all three are present.
+Configuration lives under one of three directory trees:
+.TP
+.I /etc/shorewall/
+Legacy IPv4-only config directory (Shorewall v4 layout).
+.TP
+.I /etc/shorewall6/
+Legacy IPv6-only config directory (Shorewall v6 layout).
+.TP
+.I /etc/shorewall46/
+Merged dual-stack directory produced by
+.BR merge\-config .
+Takes precedence over the individual v4/v6 directories when present.
 
-.SH LIFECYCLE COMMANDS
-.TP
-.B start \fR[\fIDIRECTORY\fR] [\fB\-\-netns\fR \fINS\fR]
-Compile and apply the firewall ruleset.
-.TP
-.B stop \fR[\fB\-\-netns\fR \fINS\fR]
-Remove all rules from the inet shorewall table.
-.TP
-.B restart \fR[\fIDIRECTORY\fR] [\fB\-\-netns\fR \fINS\fR]
-Recompile and atomically replace the loaded ruleset.
-.TP
-.B reload \fR[\fIDIRECTORY\fR] [\fB\-\-netns\fR \fINS\fR]
-Alias for restart (nft does atomic replace natively).
-.TP
-.B status \fR[\fB\-\-netns\fR \fINS\fR]
-Show firewall status, chain/rule count, and config hash drift warning
-if the on-disk config differs from the loaded ruleset.
-.TP
-.B clear \fR[\fB\-\-netns\fR \fINS\fR]
-Remove all rules and install accept-all policies.
-.TP
-.B save \fR[\fIFILENAME\fR] [\fB\-C\fR] [\fB\-\-netns\fR \fINS\fR]
-Dump the current ruleset to file (\fB\-C\fR includes counter values).
-.TP
-.B restore \fIFILENAME\fR [\fB\-\-netns\fR \fINS\fR]
-Load a saved ruleset from file.
-.TP
-.B check \fR[\fIDIRECTORY\fR] [\fB\-\-skip\-caps\fR]
-Compile without applying. Validates config and kernel capabilities.
-.TP
-.B compile \fR[\fIDIRECTORY\fR] [\fB\-o\fR \fIFILE\fR]
-Compile the config to an nft script, print to stdout or \fB\-o\fR file.
+The tool emits a single
+.I inet shorewall
+nft table that carries both IPv4 and IPv6 rules.  No separate ip and ip6
+tables are created.
 
-.SH INSPECTION COMMANDS
-.TP
-.B show \fR[\fIWHAT\fR] [\fB\-x\fR] [\fB\-\-netns\fR \fINS\fR]
-Show firewall info. \fIWHAT\fR: \fBzones\fR, \fBpolicies\fR,
-\fBconfig\fR, \fBconnections\fR. \fB\-x\fR shows exact counter values.
-.TP
-.B counters \fR[\fB\-\-netns\fR \fINS\fR]
-List all named counter values (packets and bytes) for the loaded ruleset.
-.TP
-.B reset \fR[\fICHAINS\fR] [\fB\-\-netns\fR \fINS\fR]
-Reset packet/byte counters.
-.TP
-.B capabilities \fR[\fB\-\-netns\fR \fINS\fR] [\fB\-\-json\fR]
-Probe and report nftables capabilities of the running kernel.
-.TP
-.B explain\-nft\-features \fR[\fB\-\-probe\fR] [\fB\-\-category\fR \fICATEGORY\fR] [\fB\-\-json\fR]
-Show the nft feature catalog with syntax examples. \fB\-\-probe\fR tests
-kernel availability. \fB\-\-category\fR filters by name (e.g. Sets, NAT, IPv6).
-
-.SH DYNAMIC BLACKLIST
-.TP
-.B drop \fIADDRESSES\fR [\fB\-\-netns\fR \fINS\fR]
-Dynamically drop all traffic from the given addresses.
-.TP
-.B reject \fIADDRESSES\fR [\fB\-\-netns\fR \fINS\fR]
-Dynamically reject traffic from the given addresses (sends TCP RST or
-ICMP unreachable).
-.TP
-.B blacklist \fIADDRESS\fR [\fB\-t\fR \fITIMEOUT\fR] [\fB\-\-netns\fR \fINS\fR]
-Add address to the dynamic blacklist. \fB\-t\fR accepts duration
-strings: \fB1h\fR, \fB30m\fR, \fB1d\fR.
-.TP
-.B allow \fIADDRESSES\fR [\fB\-\-netns\fR \fINS\fR]
-Remove addresses from the dynamic blacklist.
-
-.SH NFT-NATIVE EXTENSIONS
-.TP
-.B debug \fR[\fIDIRECTORY\fR] [\fB\-\-netns\fR \fINS\fR] [\fB\-\-trace\fR \fIFILTER\fR] [\fB\-\-no\-restore\fR]
-Temporarily load a debug\-annotated ruleset with per\-rule named
-counters and source\-location comments. Ctrl+C restores the original
-ruleset. \fB\-\-trace\fR installs a \fBmeta nftrace set 1\fR rule
-(e.g. \fB'ip saddr 192.168.1.1'\fR) removed on exit.
-.TP
-.B trace \fR[\fB\-\-netns\fR \fINS\fR]
-Run \fBnft monitor trace\fR. Packets matched by a rule with
-\fBmeta nftrace set 1\fR produce trace events.
-.TP
-.B verify \fR[\fIDIRECTORY\fR] \fB\-\-iptables\fR \fIDUMP\fR
-Semantic comparison (triangle verifier) between the compiled nft output
-and an \fBiptables\-save\fR baseline.
-.TP
-.B simulate \fR[\fIDIRECTORY\fR] \fB\-\-iptables\fR \fIDUMP\fR [\fB\-\-target\fR \fIIP\fR] [\fB\-n\fR \fIN\fR] [\fB\-\-seed\fR \fIN\fR] [\fB\-j\fR \fIN\fR]
-Packet\-level verification in 3 network namespaces using Scapy.
-.TP
-.B migrate \fR[\fIDIRECTORY\fR] [\fB\-\-iptables\fR \fIDUMP\fR] [\fB\-\-dry\-run\fR]
-Verify migration readiness from Shorewall. \fB\-\-dry\-run\fR runs
-\fBnft \-c\fR syntax check only without loading rules.
-.TP
-.B lookup \fIIP\fR [\fB\-\-json\fR]
-Query all configured plugins for metadata about an IP address.
-.TP
-.B enrich \fR[\fIDIRECTORY\fR] [\fB\-\-dry\-run\fR] [\fB\-\-no\-backup\fR]
-Rewrite \fB?COMMENT\fR blocks in\-place with plugin annotations
-(creates \fI.bak\fR backup by default).
-.TP
-.B load\-sets \fR[\fIDIRECTORY\fR] [\fB\-\-netns\fR \fINS\fR] [\fB\-\-geoip\-dir\fR \fIDIR\fR]
-Load external sets (GeoIP prefix files, ipset exports) into nft after
-\fBstart\fR.
-.TP
-.B merge\-config \fIV4\fR [\fIV6\fR] [\fB\-o\fR \fIOUT\fR] [\fB\-\-guided\fR] [\fB\-\-no\-plugins\fR]
-Merge \fI/etc/shorewall\fR and \fI/etc/shorewall6\fR into a unified
-\fI/etc/shorewall46\fR directory. \fB\-\-guided\fR asks interactively
-on each naming collision.
-.TP
-.B plugins list
-Show loaded plugins with their names, versions, and priorities.
-
-.SH GENERATORS
-.TP
-.B generate\-systemd \fR[\fB\-\-netns\fR] [\fB\-o\fR \fIDIR\fR]
-Print a systemd service unit to stdout. \fB\-\-netns\fR produces a
-templated unit (\fBshorewall\-nft@.service\fR) for per\-netns instances.
-.TP
-.B generate\-sysctl \fR[\fIDIRECTORY\fR]
-Print a sysctl configuration script derived from interface options.
-.TP
-.B generate\-tc \fR[\fIDIRECTORY\fR]
-Print \fBtc\fR commands to set up traffic control classes.
-.TP
-.B generate\-set\-loader \fR[\fIDIRECTORY\fR]
-Print a shell script that loads external sets (GeoIP, ipset dumps)
-into nft at startup.
-
-.SH CONFIG DIRECTORY OVERRIDE FLAGS
-All commands that take a \fIDIRECTORY\fR also accept these mutually
-exclusive mode overrides:
-.TP
-.BR \-c ", " \-\-config\-dir " \fIDIR\fR"
-Explicit merged config directory (overrides \fI/etc/shorewall46\fR default).
-.TP
-.BI \-\-config\-dir4 " DIR"
-Explicit IPv4-only config directory.
-.TP
-.BI \-\-config6\-dir " DIR"
-Explicit IPv6-only config directory (combine with \fB\-\-config\-dir4\fR for
-explicit dual mode).
-.TP
-.B \-\-no\-auto\-v4
-Disable auto\-detection of a v4 sibling directory (v6\-only mode).
-.TP
-.B \-\-no\-auto\-v6
-Disable auto\-detection of a v6 sibling directory (v4\-only mode).
-
-The six supported config-dir modes are:
-.RS
-.IP \(bu 2
-Default: \fBshorewall\-nft start\fR — uses \fI/etc/shorewall46\fR if present, else \fI/etc/shorewall\fR
-.IP \(bu 2
-Merged explicit: \fBshorewall\-nft start \-c /srv/merged\fR
-.IP \(bu 2
-Dual auto\-sibling: \fBshorewall\-nft start /srv/v4\fR — detects /srv/v6 automatically
-.IP \(bu 2
-Dual explicit: \fBshorewall\-nft start \-\-config\-dir4 /srv/v4 \-\-config6\-dir /srv/v6\fR
-.IP \(bu 2
-v4\-only: \fBshorewall\-nft start \-\-config\-dir4 /srv/v4 \-\-no\-auto\-v6\fR
-.IP \(bu 2
-v6\-only: \fBshorewall\-nft start \-\-config6\-dir /srv/v6 \-\-no\-auto\-v4\fR
-.RE
-
-.SH COMMON OPTIONS
-.TP
-.BR \-\-netns " \fINAMESPACE\fR"
-Target a Linux network namespace. Requires
-\fB/usr/local/bin/run\-netns\fR (installed by \fBinstall\-test\-tooling.sh\fR
-or the \fBshorewall\-nft\-tests\fR package).
+.SH GLOBAL OPTIONS
 .TP
 .B \-\-version
-Print the version and exit.
+Print the installed version and exit.
+.TP
+.B \-q
+Quiet mode — suppress informational messages.
+.TP
+.B \-v
+Verbose mode.  Pass twice
+.RB ( \-vv )
+for debug-level output.
+.TP
+.BI \-\-override\-json " JSON_OR_@FILE"
+Structured JSON merged over every parsed config file at runtime.  Accepts a
+literal JSON string, an
+.B @path
+argument (reads JSON or YAML; YAML auto-detected by
+.I .yaml
+/
+.I .yml
+extension), or
+.B \-
+(reads from stdin).  See
+.IR docs/cli/override\-json.md .
+.TP
+.BI \-\-override " FILE=JSON_OR_@FILE"
+Per-file overlay entry, repeatable.  For example
+.B \-\-override rules=@extra.json
+merges the JSON in
+.I extra.json
+under the
+.B rules
+top-level key.  Mergeable with
+.B \-\-override\-json
+(later entry wins on key collision).
 .TP
 .B \-\-help
-Show help for the command and exit.
+Show a brief command listing and exit.
+
+.SH CONFIG DIRECTORY FLAGS
+Most commands that compile or read configuration accept the following
+mutually exclusive directory-selection flags.  When none are given the
+command uses
+.I /etc/shorewall46
+if it exists, else
+.IR /etc/shorewall .
+
+.TP
+.BR \-c ", " \-\-config\-dir " \fIDIR\fR"
+Explicit merged dual-stack config directory (overrides the
+.I /etc/shorewall46
+default).
+.TP
+.BI \-\-config\-dir\-v4 " DIR"
+Explicit IPv4-only config directory.  Auto-detects a v6 sibling
+unless
+.B \-\-no\-auto\-v6
+is also given.
+.TP
+.BI \-\-config\-dir\-v6 " DIR"
+Explicit IPv6-only config directory.  Combine with
+.B \-\-config\-dir\-v4
+for fully explicit dual-stack mode.
+.TP
+.B \-\-no\-auto\-v4
+Disable auto-detection of a v4 sibling directory (IPv6-only mode).
+.TP
+.B \-\-no\-auto\-v6
+Disable auto-detection of a v6 sibling directory (IPv4-only mode).
+
+.SH LIFECYCLE COMMANDS
+
+.SS start [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Compile the configuration and load it into the kernel using
+.BR nft (8).
+The loaded table is named
+.IR "inet shorewall" .
+On success the firewall is live.
+
+.PP
+.RS
+Options (in addition to the config directory flags):
+.TP
+.BI \-\-netns " NAMESPACE"
+Load the ruleset into the named network namespace instead of the current one.
+.TP
+.BI \-\-shorewalld\-socket " PATH"
+Path to the shorewalld control socket.  Default:
+.IR /run/shorewalld/control.sock .
+.TP
+.BI \-\-instance\-name " NAME"
+Override the shorewalld instance name (default: taken from
+.B INSTANCE_NAME
+in
+.IR shorewall.conf ,
+then the netns name, then the config directory basename).
+.TP
+.BR \-\-seed " / " \-\-no\-seed
+Request a seed from shorewalld so DNS-driven nft sets are pre-populated
+before traffic arrives.  Default: enabled if
+.B shorewall.conf
+does not specify
+.BR SHOREWALLD_SEED_ENABLED .
+.TP
+.BI \-\-seed\-timeout " DURATION"
+How long to wait for the seed response (e.g.
+.BR 10s ).
+Default: 10 s.
+.TP
+.BR \-\-seed\-wait\-passive " / " \-\-no\-seed\-wait\-passive
+Wait the full seed timeout for passive sources (dnstap/pbdns) to
+warm up before declaring the seed ready.  Default: enabled.
+.RE
+
+.SS restart [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Recompile the configuration and atomically replace the currently loaded
+ruleset.  Accepts the same flags as
+.BR start .
+
+.SS reload [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Alias for
+.BR restart .
+nftables performs atomic table replacement natively so there is no
+distinction between reload and restart.
+
+.SS stop [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Remove the running
+.I inet shorewall
+table.  If the configuration contains a
+.I routestopped
+file, the compiled
+.I inet shorewall_stopped
+table is loaded so that the listed (interface, host) pairs remain
+reachable while the firewall is down.  Without
+.I routestopped
+the kernel uses its default policy (typically wide-open).
+
+Accepts
+.BR \-\-netns ,
+.BR \-\-shorewalld\-socket ,
+.BR \-\-instance\-name ,
+and the config directory flags.
+
+.SS clear [\fB\-\-netns\fR \fINS\fR]
+Flush all firewall rules and set the forward policy to
+.BR ACCEPT .
+Useful for emergency access restoration without a full stop.
+
+.SS save [\fIFILENAME\fR] [\fIOPTIONS\fR]
+Save the currently loaded nft ruleset to
+.IR FILENAME .
+If no filename is given the output goes to stdout.
+
+.RS
+.TP
+.B \-\-counters
+Include current packet and byte counter values in the saved file.
+.TP
+.BI \-\-netns " NAMESPACE"
+Read the ruleset from the named network namespace.
+.RE
+
+.SS restore \fIFILENAME\fR [\fB\-\-netns\fR \fINS\fR]
+Atomically replace the loaded ruleset with the contents of
+.IR FILENAME ,
+which must be an nft script produced by
+.BR save .
+
+.SS status [\fB\-\-netns\fR \fINS\fR]
+Show whether the firewall is running, the chain and rule count, and a
+config-hash drift warning if the on-disk configuration has changed since
+the ruleset was loaded.
+
+.SH INSPECTION COMMANDS
+
+.SS show [\fIWHAT\fR] [\fIOPTIONS\fR]
+.SS list [\fIWHAT\fR] [\fIOPTIONS\fR]
+.SS dump [\fIWHAT\fR] [\fIOPTIONS\fR]
+.SS ls [\fIWHAT\fR] [\fIOPTIONS\fR]
+All four names are aliases for the same command.  Shows firewall
+information.
+.I WHAT
+selects the section:
+.B zones
+(default),
+.BR policies ,
+.BR config ,
+.BR connections .
+
+.RS
+.TP
+.B \-x
+Show exact counter values (packets and bytes) rather than human-friendly
+abbreviations.
+.TP
+.BI \-\-netns " NAMESPACE"
+Query the named network namespace.
+.RE
+
+.SS counters [\fB\-\-netns\fR \fINS\fR]
+List all named counter values (packets and bytes) for the currently loaded
+ruleset.  Named counters are inserted by
+.BR debug .
+
+.SS reset [\fICHAINS\fR] [\fB\-\-netns\fR \fINS\fR]
+Reset packet and byte counters.  If no chain names are given all counters
+are reset.
+
+.SS capabilities [\fIOPTIONS\fR]
+Probe and report the nftables capabilities of the running kernel: which
+statement types (flowtable, vmap, ct zone tag, concat-map DNAT) are
+available.
+
+.RS
+.TP
+.BI \-\-netns " NAMESPACE"
+Run the probe in the named network namespace.
+.TP
+.B \-\-json
+Output the capability report as JSON.
+.RE
+
+.SS explain\-nft\-features [\fIOPTIONS\fR]
+Show the built-in nft feature catalogue with syntax examples, categorised
+by area (Sets, NAT, IPv6, Conntrack, …).
+
+.RS
+.TP
+.B \-\-probe
+Test each feature against the running kernel and mark it as available or
+unavailable.
+.TP
+.BI \-\-category " NAME"
+Filter the catalogue to the named category (e.g.
+.BR Sets ,
+.BR NAT ,
+.BR IPv6 ).
+.TP
+.B \-\-json
+Emit the catalogue as JSON.
+.RE
+
+.SH COMPILATION COMMANDS
+
+.SS check [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Compile without applying.  Validates configuration syntax and checks
+kernel capability requirements.  Exits non-zero on error.
+
+.RS
+.TP
+.B \-\-skip\-caps
+Skip the kernel capability probe.  Use when running in a container or
+CI environment that does not have an active nftables instance.
+.RE
+
+Also accepts the config directory flags.
+
+.SS compile [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Compile the configuration to an nft script and print it to stdout or
+write it to a file.
+
+.RS
+.TP
+.BI \-o " FILE"
+Write the nft script to
+.I FILE
+instead of stdout.
+.RE
+
+Also accepts the config directory flags.
+
+.SS verify [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Run the triangle verifier: compile the configuration and compare the
+resulting nft ruleset against an
+.BR iptables\-save (8)
+baseline for semantic equivalence.
+
+.RS
+.TP
+.BI \-\-iptables " DUMP"
+Path to the
+.B iptables\-save
+dump to compare against.
+.RB ( Required .)
+.RE
+
+Also accepts the config directory flags.
+
+.SS simulate [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Run packet-level verification in three network namespaces using Scapy.
+Test cases are derived from the iptables baseline; the tool reports
+.I fail_drops
+(packets that the iptables baseline accepted but the nft ruleset dropped)
+and
+.I fail_accepts
+(packets that the iptables baseline dropped but the nft ruleset accepted)
+separately.
+
+.RS
+.TP
+.BI \-\-iptables " DUMP"
+Path to the
+.B iptables\-save
+dump (ground truth).
+.RB ( Required .)
+.TP
+.BI \-\-ip6tables " DUMP"
+Path to the
+.B ip6tables\-save
+dump for IPv6 tests.
+.TP
+.BI \-\-target " IP"
+Single target IP to test.
+.TP
+.BI \-\-targets " LIST"
+Comma-separated list of target IPs, or
+.B @FILE
+with one IP per line.
+.TP
+.BI \-\-targets\-v6 " LIST"
+Comma-separated list or
+.B @FILE
+of IPv6 target addresses.  Requires
+.BR \-\-ip6tables .
+.TP
+.BI \-\-src\-iface " IFACE"
+Override the source-zone interface name in the firewall netns (default:
+.BR bond1 ).
+.TP
+.BI \-\-dst\-iface " IFACE"
+Override the destination-zone interface name in the firewall netns
+(default:
+.BR bond0.20 ).
+.TP
+.B \-\-all\-zones
+Multi-zone topology: create one veth pair per zone and derive test cases
+across every src\(->dst chain in the iptables dump.
+.TP
+.BI \-n ", " \-\-max\-tests " N"
+Maximum test cases per target IP.
+.TP
+.BI \-\-seed " N"
+Random seed for sampling.
+.TP
+.B \-v
+Show all test results (not just failures).
+.TP
+.BI \-j ", " \-\-parallel " N"
+Run N test threads in parallel.
+.TP
+.B \-\-no\-trace
+Disable nft trace logging during the simulation run.
+.RE
+
+Also accepts the config directory flags.
+
+.SS migrate [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Verify migration readiness from classic Shorewall to shorewall-nft.
+
+.RS
+.TP
+.BI \-\-iptables " DUMP"
+Optional iptables-save dump for triangle verification during migration.
+.TP
+.BI \-o " FILE"
+Write the compiled nft script to
+.IR FILE .
+.TP
+.B \-\-dry\-run
+Compile and run
+.B nft \-c
+syntax check only; do not load rules into the kernel.
+.RE
+
+Also accepts the config directory flags.
+
+See also
+.BR shorewall\-nft\-migrate (8)
+for the standalone migration tool.
+
+.SH DYNAMIC BLACKLIST COMMANDS
+
+.SS drop \fIADDRESSES\fR [\fB\-\-netns\fR \fINS\fR]
+Silently drop all traffic from one or more addresses by adding them to
+the
+.I shorewall_blacklist
+nft set.
+
+.SS reject \fIADDRESSES\fR [\fB\-\-netns\fR \fINS\fR]
+Reject traffic from one or more addresses (sends a TCP RST or ICMP
+unreachable reply).
+
+.SS allow \fIADDRESSES\fR [\fB\-\-netns\fR \fINS\fR]
+Remove one or more addresses from the dynamic blacklist.
+
+.SS blacklist \fIADDRESS\fR [\fIOPTIONS\fR]
+Add an address to the dynamic blacklist with an optional expiry timeout.
+
+.RS
+.TP
+.BR \-t ", " \-\-timeout " \fIDURATION\fR"
+Expiry timeout.  Accepts duration strings such as
+.BR 1h ,
+.BR 30m ,
+.BR 1d .
+.TP
+.BI \-\-netns " NAMESPACE"
+Target the named network namespace.
+.RE
+
+.SH PLUGIN COMMANDS
+
+.SS plugins [list] [\fB\-c\fR \fIDIR\fR]
+List all loaded plugins with their names, versions, and priorities.  Uses
+the configuration directory to locate
+.IR plugins.conf .
+
+.SS lookup \fIIP\fR [\fIOPTIONS\fR]
+Query all configured plugins for metadata about an IP address (geolocation,
+device inventory, threat intelligence, etc.).
+
+.RS
+.TP
+.BI \-c ", " \-\-config\-dir " PATH"
+Config directory containing
+.IR plugins.conf .
+.TP
+.B \-\-json
+Output raw JSON for machine consumption.
+.RE
+
+.SS enrich [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Run plugin enrichment in-place on a config directory: rewrites
+.B ?COMMENT
+blocks with annotations from all configured plugins.  Creates
+.I .bak
+backups unless
+.B \-\-no\-backup
+is passed.
+
+.RS
+.TP
+.B \-\-no\-backup
+Skip
+.I .bak
+file creation.
+.TP
+.B \-\-dry\-run
+Preview changes without modifying disk (prints a unified diff).
+.RE
+
+.SH GENERATOR COMMANDS
+
+.SS generate\-systemd [\fIOPTIONS\fR]
+Print a systemd service unit to stdout (or write to a directory with
+.BR \-o ).
+
+.RS
+.TP
+.B \-\-with\-netns
+Generate a templated unit
+.RB ( shorewall\-nft@.service )
+for per-netns deployments instead of the single-instance unit.
+.TP
+.BI \-o ", " \-\-output\-dir " PATH"
+Write the generated unit file(s) to
+.I PATH
+instead of stdout.
+.RE
+
+.SS generate\-sysctl [\fIDIRECTORY\fR]
+Print a sysctl configuration script derived from interface options in the
+config (e.g. ip_forward, rp_filter).  Pipe to
+.B sysctl \-p \-
+or write to
+.IR /etc/sysctl.d/ .
+Accepts the config directory flags.
+
+.SS generate\-tc [\fIDIRECTORY\fR]
+Print
+.BR tc (8)
+commands to set up the traffic control classes and qdiscs declared in the
+.I tcdevices
+and
+.I tcclasses
+config files.  Accepts the config directory flags.
+
+.SS generate\-set\-loader [\fIDIRECTORY\fR]
+Print a shell script that loads external sets (GeoIP prefix files, ipset
+exports) into nft at startup.  Run this script after
+.BR start .
+Accepts the config directory flags.
+
+.SS generate\-conntrackd [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Print a conntrackd.conf fragment for an HA firewall pair.  Honours
+.B CT_ZONE_TAG_MASK
+to build a Mark filter that replicates only zone bits across the sync
+link, keeping routing and policy marks local to each node.
+
+.RS
+.TP
+.BI \-\-sync\-iface " IFACE"
+Interface used for the conntrackd sync link.  Defaults to
+.B CONNTRACKD_IFACE
+from
+.IR shorewall.conf .
+.TP
+.BI \-\-peer\-ip " IP"
+IPv4 address of the peer HA node on the sync link.
+.TP
+.BI \-\-local\-ip " IP"
+IPv4 address of this node on the sync link.
+.TP
+.BI \-\-cluster\-ip " IP"
+Shared virtual IP that HA failover moves between nodes.
+.RE
+
+Accepts the config directory flags.
+
+.SH STRUCTURED CONFIG COMMANDS
+
+.SS config export [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Dump a Shorewall config directory as a structured JSON or YAML blob.
+Columnar files emit one object per row; rules and policy are nested under
+their
+.B ?SECTION
+labels.
+
+.RS
+.TP
+.BI \-\-format " FORMAT"
+Output format:
+.B json
+(default) or
+.B yaml
+(requires PyYAML).
+.TP
+.BI \-o ", " \-\-output " PATH"
+Write to FILE instead of stdout.  Extension auto-selects the format when
+.B \-\-format
+is not given.
+.TP
+.B \-\-include\-trace
+Keep
+.BR _file ,
+.BR _lineno ,
+.B _comment
+diagnostic fields in the output.
+.TP
+.BI \-\-indent " N"
+JSON indent level (ignored for YAML; default: 2).
+.RE
+
+.SS config import \fISOURCE\fR [\fIOPTIONS\fR]
+Validate a structured JSON/YAML config blob.  With
+.B \-\-to
+it writes the parsed config back as on-disk Shorewall files.
+
+.RS
+.TP
+.BI \-\-format " FORMAT"
+.BR json ,
+.BR yaml ,
+or
+.B auto
+(selects by file extension; default).
+.TP
+.BI \-\-to " PATH"
+Target directory.  When given, the parsed blob is written back as
+on-disk Shorewall files.
+.TP
+.B \-\-force
+Overwrite the target directory even if it is not empty.
+.TP
+.B \-\-dry\-run
+Parse and validate only; print a summary.  Implied when
+.B \-\-to
+is absent.
+.RE
+
+.SS config merge \fISOURCES\fR [\fIOPTIONS\fR]
+Merge one or more Shorewall config directories into a single unified
+output directory.  Later sources extend earlier ones.
+
+.RS
+.TP
+.BI \-\-to " PATH"
+Target directory for the merged output.
+.RB ( Required .)
+.TP
+.B \-\-force
+Overwrite the target even if it exists and is non-empty.
+.TP
+.B \-\-provenance
+Interleave
+.B # from <file>:<lineno>
+comments before each rule for audit traceability.
+.TP
+.BI \-\-config\-dir\-v6 " DIRECTORY"
+Optional v6 sibling for the first source directory.
+.RE
+
+.SS config template \fISOURCE\fR [\fIOPTIONS\fR]
+Expand a multi-host text template: lines tagged with
+.B @hostname
+at column 1 are kept (with the tag stripped) only when the hostname
+matches
+.BR \-\-host ;
+lines without a tag pass through unchanged.
+
+.RS
+.TP
+.BI \-\-host " NAME"
+Target host name.
+.RB ( Required .)
+.TP
+.BI \-o ", " \-\-output " PATH"
+Write to FILE instead of stdout.
+.RE
+
+.SH DIAGNOSTIC COMMANDS
+
+.SS debug [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Temporarily load a debug-annotated ruleset: every rule receives a named
+counter and a source-location comment.  The current ruleset is saved,
+the debug ruleset is loaded, and a brief usage summary is printed.
+Press Ctrl+C to restore the original ruleset.
+
+.RS
+.TP
+.BI \-\-netns " NAMESPACE"
+Load the debug ruleset in the named network namespace.
+.TP
+.B \-\-no\-restore
+Do not restore the original ruleset on exit.
+.TP
+.BI \-\-trace " NFT_MATCH"
+Auto-install a
+.B meta nftrace set 1
+rule in the input chain for the given nft match (e.g.
+.BR "'ip saddr 198.51.100.1'" ).
+The trace rule is removed when debug exits.
+.RE
+
+Also accepts the config directory flags.
+
+.SS trace [\fB\-\-netns\fR \fINS\fR]
+Run
+.B nft monitor trace
+to follow live packet tracing events.  Packets matched by a rule that
+has
+.B meta nftrace set 1
+produce trace events on this stream.
+
+.SS load\-sets [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Load external sets (GeoIP prefix files, ipset exports) into nft after
+.BR start .
+
+.RS
+.TP
+.BI \-\-netns " NAMESPACE"
+Load sets into the named network namespace.
+.TP
+.BI \-\-geoip\-dir " DIR"
+Directory containing GeoIP prefix files.
+.RE
+
+Also accepts the config directory flags.
+
+.SS merge\-config \fISHOREWALL_DIR\fR [\fISHOREWALL6_DIR\fR] [\fIOPTIONS\fR]
+Merge
+.I /etc/shorewall
+and
+.I /etc/shorewall6
+into a unified
+.I /etc/shorewall46
+directory.  If only the v4 directory is given the v6 sibling is
+auto-detected by appending
+.B 6
+to the v4 directory name.
+
+.RS
+.TP
+.BI \-o ", " \-\-output " PATH"
+Output directory (default:
+.IR <parent>/shorewall46 ).
+.TP
+.B \-\-guided
+Interactive mode: prompt on each naming collision.
+.TP
+.B \-\-no\-plugins
+Disable plugin enrichment even when
+.I plugins.conf
+is present.
+.RE
 
 .SH FILES
 .TP
 .I /etc/shorewall/
-Legacy IPv4 Shorewall config directory.
+Legacy IPv4-only Shorewall config directory.
 .TP
 .I /etc/shorewall6/
-Legacy IPv6 Shorewall config directory.
+Legacy IPv6-only Shorewall config directory.
 .TP
 .I /etc/shorewall46/
-Merged dual\-stack config directory (takes precedence when present).
+Merged dual-stack config directory.  Takes precedence when present.
+.TP
+.I /etc/shorewall/shorewall.conf
+Primary settings file (FASTACCEPT, OPTIMIZE, LOGFILE, …).
 .TP
 .I /etc/shorewall/plugins.conf
-Plugin registry (TOML format).
+Plugin registry in TOML format.
 .TP
 .I /etc/shorewall/plugins/*.toml
-Per\-plugin configuration files.
+Per-plugin configuration files.
 .TP
 .I /etc/shorewall/dnsnames
-Optional per-hostname TTL/size overrides for DNS-driven nft sets.
+Optional per-hostname TTL and set-size overrides for DNS-driven nft sets.
 .TP
 .I /etc/shorewall/dnsnames.compiled
-Written by \fBshorewall\-nft start\fR; read by \fBshorewalld\fR as
-the set-population allowlist.
+Written by
+.B shorewall\-nft start
+from the
+.B dns:
+and
+.B dnsr:
+references in rules; read by
+.BR shorewalld (8)
+as its DNS-set allowlist.
+.TP
+.I /run/shorewalld/control.sock
+shorewalld control socket (default path for
+.BR \-\-shorewalld\-socket ).
+.TP
+.I /usr/share/doc/shorewall\-nft/
+Package documentation (Markdown).
+.TP
+.I /usr/share/doc/shorewall\-nft/docs/reference/commands.json
+Machine-readable CLI catalog (36 subcommands with help strings).
 
 .SH ENVIRONMENT
 .TP
 .B PYTHONPATH
-Standard Python module search path. Required when running from a
+Standard Python module search path.  Required when running from a
 development checkout without a system install.
+.TP
+.B NFT_LOG_LEVEL
+If set, overrides the log level for nftables library messages
+(debug, info, warning, error).
 
 .SH EXIT STATUS
 .TP
@@ -233,27 +793,36 @@ Success.
 Compile error, verification failure, or runtime error.
 .TP
 .B 2
-Argument parsing or usage error.
+Argument parsing or configuration error.
 
 .SH EXAMPLES
 .PP
-Start the firewall using the default config directory:
+Start the firewall using the default merged config directory:
 .RS
 .nf
 shorewall\-nft start
 .fi
 .RE
 .PP
-Debug a specific traffic flow in a netns:
+Compile to stdout and inspect the generated nft script before loading:
+.RS
+.nf
+shorewall\-nft compile \-c /etc/shorewall46 | less
+.fi
+.RE
+.PP
+Debug traffic from a specific host in a named network namespace:
 .RS
 .nf
 shorewall\-nft debug /etc/shorewall46 \e
     \-\-netns fw \e
-    \-\-trace 'ip saddr 192.168.1.100'
+    \-\-trace 'ip saddr 198.51.100.5'
+# (in another terminal)
+shorewall\-nft trace \-\-netns fw
 .fi
 .RE
 .PP
-Merge dual\-stack config, then verify against iptables baseline:
+Merge dual-stack configs, then verify against an iptables baseline:
 .RS
 .nf
 shorewall\-nft merge\-config /etc/shorewall /etc/shorewall6
@@ -261,30 +830,56 @@ shorewall\-nft verify \-\-iptables /tmp/iptables\-save.txt
 .fi
 .RE
 .PP
-Block an address temporarily, then release it:
+Block an address for two hours, then lift the block:
 .RS
 .nf
-shorewall\-nft blacklist 198.51.100.5 \-t 2h
-shorewall\-nft allow 198.51.100.5
+shorewall\-nft blacklist 198.51.100.7 \-t 2h
+# ... later ...
+shorewall\-nft allow 198.51.100.7
+.fi
+.RE
+.PP
+Export the active config as YAML, edit, and write back:
+.RS
+.nf
+shorewall\-nft config export \-\-format yaml \-o /tmp/fw\-config.yaml
+# ... edit /tmp/fw\-config.yaml ...
+shorewall\-nft config import \-\-to /etc/shorewall46 /tmp/fw\-config.yaml
+shorewall\-nft restart
+.fi
+.RE
+.PP
+Generate and install the systemd unit, then enable it:
+.RS
+.nf
+shorewall\-nft generate\-systemd \-o /etc/systemd/system/
+systemctl daemon\-reload
+systemctl enable \-\-now shorewall\-nft.service
 .fi
 .RE
 
 .SH SEE ALSO
 .BR shorewalld (8),
+.BR shorewall\-nft\-migrate (8),
+.BR shorewall\-nft\-simlab (8),
+.BR shorewall\-nft\-stagelab (8),
+.BR shorewall\-nft\-zones (5),
+.BR shorewall\-nft\-rules (5),
+.BR shorewall\-nft\-policy (5),
+.BR shorewall\-nft\-nfsets (5),
 .BR nft (8),
-.BR iptables (8),
-.BR ip-netns (8)
+.BR ip\-netns (8)
 
-Full documentation lives under \fIdocs/\fR in the project repository
-and at \fI/usr/share/doc/shorewall\-nft/\fR after installation.
-Machine\-readable CLI reference:
-.IR docs/reference/commands.json .
+Full documentation lives under
+.I docs/
+in the project repository and under
+.I /usr/share/doc/shorewall\-nft/
+after installation.
 
-.SH AUTHORS
-.B shorewall\-nft
-is maintained by the shorewall\-nft project. The original Shorewall
-toolkit was written by Tom Eastep.
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
 
 .SH BUGS
 Report bugs to the project issue tracker.
-For security issues see \fISECURITY.md\fR.
+For security vulnerabilities see
+.IR SECURITY.md .
