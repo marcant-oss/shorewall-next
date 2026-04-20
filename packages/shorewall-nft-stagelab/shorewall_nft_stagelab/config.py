@@ -280,8 +280,16 @@ class SNMPSourceSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class NftSSHSourceSpec(BaseModel):
+    kind: Literal["nft_ssh"]
+    name: str
+    ssh_target: str
+    timeout_s: float = 10.0
+    model_config = ConfigDict(extra="forbid")
+
+
 SourceSpec = Annotated[
-    Union[PrometheusSourceSpec, SNMPSourceSpec],
+    Union[PrometheusSourceSpec, SNMPSourceSpec, NftSSHSourceSpec],
     Field(discriminator="kind"),
 ]
 
@@ -521,6 +529,7 @@ __all__ = [
     "Scenario",
     "PrometheusSourceSpec",
     "SNMPSourceSpec",
+    "NftSSHSourceSpec",
     "SourceSpec",
     "MetricsSpec",
     "ReportSpec",

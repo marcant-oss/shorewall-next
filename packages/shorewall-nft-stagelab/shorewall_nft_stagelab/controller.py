@@ -349,9 +349,7 @@ class StagelabController:
         )
         cmap: dict[str, int] = {}
         for row in rows:
-            sl, kl = row.source.lower(), row.key.lower()
-            if (sl.startswith(("fw-nft-counters", "nft-counters"))
-                    or "counter" in kl or kl.startswith("shorewall_")):
+            if row.source.endswith(":counter"):
                 cmap[row.key] = max(cmap.get(row.key, 0), int(row.value))
         ranking = tuple(
             sorted(cmap.items(), key=lambda kv: kv[1], reverse=True)
