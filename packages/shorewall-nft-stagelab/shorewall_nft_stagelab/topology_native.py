@@ -72,8 +72,12 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
         )
         # Create VLAN sub-interface. If it already exists (e.g. created by a
         # systemd service at boot — tester02-downstream.service) we reuse it
-        # directly rather than failing; "File exists" from `ip link add` is
-        # the only safe-to-ignore CalledProcessError here.
+        # directly rather than failing. The kernel emits two distinct error
+        # strings for this depending on whether the interface exists in the
+        # current netns ("File exists" from RTNETLINK) or the 8021q layer
+        # remembers the VLAN-on-parent mapping from a previous setup in
+        # another netns ("8021q: VLAN device already exists"). Both are
+        # safe to ignore — we adopt the interface.
         try:
             subprocess.run(
                 ["ip", "link", "add", "link", spec.nic,
@@ -81,9 +85,16 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
                 check=True, text=True, capture_output=True,
             )
         except subprocess.CalledProcessError as exc:
-            if "File exists" not in exc.stderr:
-                raise RuntimeError(f"create VLAN iface failed: {exc.stderr}") from exc
+            err = exc.stderr or ""
+            if "File exists" not in err and "VLAN device already exists" not in err:
+                raise RuntimeError(f"create VLAN iface failed: {err}") from exc
             # Interface pre-exists; take it over by moving it to our netns.
+            # Flush any IPs that might have been configured in the root-ns
+            # (from the persistent service) so our IP assignment is clean.
+            subprocess.run(
+                ["ip", "addr", "flush", "dev", vlan_iface],
+                check=False, text=True, capture_output=True,
+            )
         _run(
             ["ip", "link", "set", vlan_iface, "netns", netns],
             "move VLAN iface to netns",

@@ -158,6 +158,67 @@ def test_rule_scan_is_deterministic_with_seed():
 
 
 # ---------------------------------------------------------------------------
+# Test 5: summarize propagates test_id + standard_refs from scenario config
+# ---------------------------------------------------------------------------
+
+
+def test_rule_scan_summarize_propagates_test_id():
+    sc = RuleScanScenario(
+        id="test-scan-1",
+        kind="rule_scan",
+        source="src",
+        target_subnet="10.10.0.0/24",
+        random_count=2,
+        test_id="test-scan-1",
+        standard_refs=["std-x"],
+    )
+    runner = build_runner(sc)
+    # Provide minimal results: two passing probes (no mismatches)
+    results = [
+        {"kind": "probe", "ok": True, "duration_s": 0.1},
+        {"kind": "probe", "ok": True, "duration_s": 0.1},
+    ]
+    result = runner.summarize(results)
+    assert result.test_id == "test-scan-1"
+    assert result.standard_refs == ["std-x"]
+
+
+def test_throughput_summarize_propagates_test_id():
+    sc = ThroughputScenario(
+        id="tput-tagged",
+        kind="throughput",
+        source="src",
+        sink="sink",
+        proto="tcp",
+        duration_s=10,
+        parallel=1,
+        expect_min_gbps=1.0,
+        test_id="owasp-fw-3-default-deny",
+        standard_refs=["owasp-fw-3"],
+    )
+    runner = build_runner(sc)
+    results = [{"role": "client", "throughput_gbps": 9.5, "duration_s": 10.0, "ok": True}]
+    result = runner.summarize(results)
+    assert result.test_id == "owasp-fw-3-default-deny"
+    assert result.standard_refs == ["owasp-fw-3"]
+
+
+def test_summarize_without_test_id_defaults_none():
+    sc = RuleScanScenario(
+        id="no-tag",
+        kind="rule_scan",
+        source="src",
+        target_subnet="10.10.0.0/24",
+        random_count=1,
+        # no test_id, no standard_refs
+    )
+    runner = build_runner(sc)
+    result = runner.summarize([{"kind": "probe", "ok": True, "duration_s": 0.1}])
+    assert result.test_id is None
+    assert result.standard_refs == []
+
+
+# ---------------------------------------------------------------------------
 # Test 5: summarize throughput ok vs fail
 # ---------------------------------------------------------------------------
 

@@ -272,6 +272,48 @@ def test_sweep_markdown_has_table() -> None:
     assert "18.3 Gbps" in md
 
 
+# ---------------------------------------------------------------------------
+# New tests: test_id + standard_refs round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_scenario_result_test_id_roundtrip(tmp_path: Path) -> None:
+    """ScenarioResult with test_id + standard_refs serialises to run.json and keeps the values."""
+    run = RunReport(
+        run_id="2026-04-20T21:00:00Z",
+        config_path="/etc/stagelab.yaml",
+        scenarios=[
+            ScenarioResult(
+                scenario_id="owasp-fw-1-config-review",
+                kind="rule_coverage_matrix",
+                ok=True,
+                duration_s=2.5,
+                raw={},
+                test_id="owasp-fw-1-config-review",
+                standard_refs=["owasp-fw-1"],
+            )
+        ],
+    )
+    run_dir = write(run, tmp_path)
+    data = json.loads((run_dir / "run.json").read_text())
+    sc = data["scenarios"][0]
+    assert sc["test_id"] == "owasp-fw-1-config-review"
+    assert sc["standard_refs"] == ["owasp-fw-1"]
+
+
+def test_scenario_result_defaults_to_none_and_empty() -> None:
+    """ScenarioResult without test_id/standard_refs defaults gracefully."""
+    sr = ScenarioResult(
+        scenario_id="anon",
+        kind="throughput",
+        ok=True,
+        duration_s=0.0,
+        raw={},
+    )
+    assert sr.test_id is None
+    assert sr.standard_refs == []
+
+
 def test_sweep_csv_written(tmp_path: Path) -> None:
     """write() emits sweep-<id>.csv with correct header and data rows."""
     run = RunReport(

@@ -360,6 +360,119 @@ def test_render_json_without_simlab_no_source_tag() -> None:
         assert s["source"] == "stagelab"
 
 
+# ---------------------------------------------------------------------------
+# 11. load_runs preserves test_id + standard_refs from run.json
+# ---------------------------------------------------------------------------
+
+
+def test_load_runs_preserves_test_id(tmp_path: Path) -> None:
+    """load_runs carries test_id and standard_refs from run.json into AuditPayload."""
+    d1 = tmp_path / "2026-04-20T12:00:00Z"
+    d1.mkdir()
+    (d1 / "run.json").write_text(json.dumps({
+        "run_id": "2026-04-20T12:00:00Z",
+        "config_path": "a.yaml",
+        "scenarios": [
+            {
+                "scenario_id": "owasp-fw-1-config-review",
+                "kind": "rule_coverage_matrix",
+                "ok": True,
+                "duration_s": 2.5,
+                "raw": {},
+                "test_id": "owasp-fw-1-config-review",
+                "standard_refs": ["owasp-fw-1"],
+            },
+        ],
+        "recommendations": [],
+    }))
+    payload = ar.load_runs([d1])
+    assert len(payload.scenarios) == 1
+    sc = payload.scenarios[0]
+    assert sc["test_id"] == "owasp-fw-1-config-review"
+    assert sc["standard_refs"] == ["owasp-fw-1"]
+
+
+def test_load_runs_backcompat_missing_fields(tmp_path: Path) -> None:
+    """Old run.json without test_id/standard_refs still loads (back-compat)."""
+    d1 = tmp_path / "2026-04-20T13:00:00Z"
+    d1.mkdir()
+    (d1 / "run.json").write_text(json.dumps({
+        "run_id": "2026-04-20T13:00:00Z",
+        "config_path": "old.yaml",
+        "scenarios": [
+            {
+                "scenario_id": "legacy-scan",
+                "kind": "rule_scan",
+                "ok": False,
+                "duration_s": 1.0,
+                "raw": {},
+                # no test_id, no standard_refs
+            },
+        ],
+        "recommendations": [],
+    }))
+    payload = ar.load_runs([d1])
+    sc = payload.scenarios[0]
+    assert sc["test_id"] is None
+    assert sc["standard_refs"] == []
+
+
+# ---------------------------------------------------------------------------
+# 12. render_json emits test_id + standard_refs per scenario
+# ---------------------------------------------------------------------------
+
+
+def test_render_json_emits_test_id_and_standard_refs() -> None:
+    """render_json must include test_id and standard_refs for each scenario."""
+    payload = _make_payload([
+        {
+            "scenario_id": "owasp-fw-3-default-deny",
+            "kind": "rule_scan",
+            "ok": True,
+            "duration_s": 3.0,
+            "raw": {},
+            "test_id": "owasp-fw-3-default-deny",
+            "standard_refs": ["owasp-fw-3"],
+        }
+    ])
+    d = json.loads(ar.render_json(payload))
+    sc = d["scenarios"][0]
+    assert sc["test_id"] == "owasp-fw-3-default-deny"
+    assert sc["standard_refs"] == ["owasp-fw-3"]
+
+
+# ---------------------------------------------------------------------------
+# 13. render_html contains test_id for a scenario loaded via load_runs
+# ---------------------------------------------------------------------------
+
+
+def test_render_html_test_id_from_load_runs(tmp_path: Path) -> None:
+    """End-to-end: run.json with test_id → load_runs → render_html contains test_id string."""
+    d1 = tmp_path / "2026-04-20T14:00:00Z"
+    d1.mkdir()
+    (d1 / "run.json").write_text(json.dumps({
+        "run_id": "2026-04-20T14:00:00Z",
+        "config_path": "a.yaml",
+        "scenarios": [
+            {
+                "scenario_id": "owasp-fw-1-config-review",
+                "kind": "rule_coverage_matrix",
+                "ok": True,
+                "duration_s": 2.5,
+                "raw": {},
+                "test_id": "owasp-fw-1-config-review",
+                "standard_refs": ["owasp-fw-1"],
+                "note": "",
+                "criteria_results": {},
+            },
+        ],
+        "recommendations": [],
+    }))
+    payload = ar.load_runs([d1])
+    html = ar.render_html(payload)
+    assert "owasp-fw-1-config-review" in html
+
+
 def test_render_json_valid():
     """render_json returns valid JSON; schema_version==1; scenarios have expected keys."""
     payload = _make_payload([

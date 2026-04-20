@@ -527,6 +527,142 @@ def test_run_ftp_helper_probe_invokes_curl_in_netns() -> None:
     assert argv[:2] == ["curl", "--silent"]
 
 
+def test_run_scenario_iperf3_server_timeout_returns_error() -> None:
+    """run_iperf3_server must return ok=False when iperf3 process times out.
+
+    The key invariant: the handler must NOT propagate the TimeoutExpired
+    exception — it must catch it, kill iperf3, and return a structured error
+    so the agent message loop stays responsive (SHUTDOWN can be processed).
+    """
+    handle = NativeEndpointHandle(
+        name="ep-srv", netns="NS_TEST_ep_srv", nsstub_pid=11, vlan_iface="eth0.10"
+    )
+    state = _state()
+    state["endpoints"]["ep-srv"] = handle
+
+    msg = RunScenarioMessage(
+        id="r-srv-timeout",
+        scenario_spec={
+            "endpoint_name": "ep-srv",
+            "kind": "run_iperf3_server",
+            "spec": {
+                "mode": "server",
+                "bind": "10.0.10.1",
+                "duration_s": 10,
+                "port": 5201,
+            },
+        },
+    )
+
+    # _exec_in_netns raises TimeoutExpired (subprocess level) when the
+    # iperf3 server sits in accept() past duration_s + 30 s grace.
+    def _raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["iperf3"], timeout=40)
+
+    pkill_calls: list = []
+
+    def _fake_pkill(argv, **kwargs):
+        pkill_calls.append(argv)
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+    with (
+        patch("shorewall_nft_stagelab.agent._exec_in_netns", side_effect=_raise_timeout),
+        patch("subprocess.run", side_effect=_fake_pkill),
+    ):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    assert resp["tool"] == "iperf3"
+    assert resp["ok"] is False
+    assert "timeout" in resp["error"].lower()
+    assert resp["throughput_gbps"] == 0.0
+    # pkill must have been invoked to clean up the wedged subprocess.
+    assert pkill_calls, "pkill was not called to clean up iperf3"
+    assert "iperf3" in pkill_calls[0]
+
+
+def test_run_scenario_iperf3_server_timeout_uses_duration_plus_grace() -> None:
+    """The server timeout is spec.duration_s + 30 s (not the raw duration alone)."""
+    handle = NativeEndpointHandle(
+        name="ep-grace", netns="NS_TEST_ep_grace", nsstub_pid=12, vlan_iface="eth0.10"
+    )
+    state = _state()
+    state["endpoints"]["ep-grace"] = handle
+
+    msg = RunScenarioMessage(
+        id="r-grace",
+        scenario_spec={
+            "endpoint_name": "ep-grace",
+            "kind": "run_iperf3_server",
+            "spec": {
+                "mode": "server",
+                "bind": "10.0.10.2",
+                "duration_s": 20,
+            },
+        },
+    )
+
+    captured_timeout: list = []
+
+    def _capture_and_raise(netns, argv, *, timeout=None, **kwargs):
+        captured_timeout.append(timeout)
+        raise subprocess.TimeoutExpired(cmd=["iperf3"], timeout=timeout or 0)
+
+    with (
+        patch("shorewall_nft_stagelab.agent._exec_in_netns", side_effect=_capture_and_raise),
+        patch("subprocess.run"),
+    ):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    assert captured_timeout, "_exec_in_netns was not called"
+    # Expected: 20 (duration_s) + 30 (grace) = 50 s
+    assert captured_timeout[0] == 50, f"expected timeout=50, got {captured_timeout[0]}"
+    assert resp["ok"] is False
+
+
+def test_run_scenario_iperf3_client_no_timeout_by_default() -> None:
+    """run_iperf3_client does not impose an extra process timeout (clients are self-bounded)."""
+    handle = NativeEndpointHandle(
+        name="ep-cli", netns="NS_TEST_ep_cli", nsstub_pid=13, vlan_iface="eth0.10"
+    )
+    state = _state()
+    state["endpoints"]["ep-cli"] = handle
+
+    fake_json = (
+        '{"end":{"sum_received":{"bits_per_second":5e9,"seconds":10.0},'
+        '"sum_sent":{"retransmits":2}}}'
+    )
+    fake_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout=fake_json, stderr="")
+
+    captured_timeout: list = []
+
+    def _capture(netns, argv, *, timeout=None, **kwargs):
+        captured_timeout.append(timeout)
+        return fake_proc
+
+    msg = RunScenarioMessage(
+        id="r-cli-notimeout",
+        scenario_spec={
+            "endpoint_name": "ep-cli",
+            "kind": "run_iperf3_client",
+            "spec": {
+                "mode": "client",
+                "bind": "10.0.10.3",
+                "server_ip": "10.0.10.1",
+                "duration_s": 10,
+                "parallel": 2,
+            },
+        },
+    )
+    with patch("shorewall_nft_stagelab.agent._exec_in_netns", side_effect=_capture):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    assert resp["ok"] is True
+    assert captured_timeout, "_exec_in_netns was not called"
+    assert captured_timeout[0] is None, (
+        f"client should pass timeout=None, got {captured_timeout[0]}"
+    )
+
+
 def test_poll_metrics_nft_counters() -> None:
     """poll_metrics(kind=nft_counters) returns serialised rows from poll_nft_counters."""
     from shorewall_nft_stagelab.metrics import MetricRow

@@ -169,6 +169,8 @@ class ThroughputRunner(Scenario):
             duration_s=total_duration,
             raw=raw,
             criteria_results=criteria_results,
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -224,6 +226,8 @@ class ConnStormRunner(Scenario):
                 "established": established,
                 "failed": failed,
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -310,6 +314,8 @@ class RuleScanRunner(Scenario):
                 "passed": passed,
                 "mismatches": mismatches,
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -423,6 +429,8 @@ class TuningSweepRunner(Scenario):
             ok=ok,
             duration_s=0.0,
             raw={"points": points, "optimum": best, "tool": "tuning_sweep"},
+            test_id=getattr(self._scen, "test_id", None),
+            standard_refs=list(getattr(self._scen, "standard_refs", []) or []),
         )
 
 
@@ -479,6 +487,8 @@ class ThroughputDpdkRunner(Scenario):
                 ok=False,
                 duration_s=float(r.get("duration_s", 0.0)),
                 raw=r,
+                test_id=getattr(self._sc, "test_id", None),
+                standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
             )
         throughput_gbps = float(r.get("throughput_gbps", 0.0))
         return ScenarioResult(
@@ -493,6 +503,8 @@ class ThroughputDpdkRunner(Scenario):
                 "tool": r.get("tool", "trex-stl"),
                 **r,
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -567,6 +579,8 @@ class ConnStormAstfRunner(Scenario):
                 "tool": r.get("tool", "trex-astf"),
                 **r,
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -662,6 +676,8 @@ class SynFloodDosRunner(Scenario):
                 "observed_tx_pps": r.get("pps", 0.0),
                 "errors": r.get("errors", 0),
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -742,6 +758,8 @@ class DnsDosRunner(Scenario):
                 "latency_increase_ratio": latency_increase_ratio,
                 "query_name_pattern": sc.query_name_pattern,
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -812,6 +830,8 @@ class HalfOpenDosRunner(Scenario):
                 "errors": r.get("errors", 0),
                 "conntrack_saturated": saturated,
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -913,6 +933,8 @@ class RuleCoverageMatrixRunner(Scenario):
                 "mismatches": len(mismatches),
                 "matrix": {f"{k[0]}\u2192{k[1]}/{k[2]}/{k[3]}": v for k, v in matrix.items()},
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -965,6 +987,8 @@ class StatefulHelperFtpRunner(Scenario):
                 "expected_data_connection": sc.expect_data_connection,
                 "mode": sc.mode,
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -1051,6 +1075,8 @@ class EvasionProbesRunner(Scenario):
                 "leaked_probe_types": [r.get("probe_type", "?") for r in leaked],
                 "probe_types_attempted": list(sc.probe_types),
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -1147,6 +1173,8 @@ class ReloadAtomicityRunner(Scenario):
                 "reload_triggered_ok": reload_ok,
                 "reload_at_s": sc.reload_at_s,
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -1255,6 +1283,8 @@ class LongFlowSurvivalRunner(Scenario):
                     "the FW; this scenario does not restore it automatically."
                 ),
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -1492,6 +1522,8 @@ class HaFailoverDrillRunner(Scenario):
             ok=ok,
             duration_s=client_r.get("duration_s", 0.0),
             raw=raw,
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
@@ -1594,6 +1626,8 @@ class ConntrackOverflowRunner(Scenario):
                 "probe_dropped": int(probe_r.get("dropped_count", 0)),
                 "criteria_results": criteria_results,
             },
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
 
 
