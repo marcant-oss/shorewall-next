@@ -308,11 +308,19 @@ def _run_devbind(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def _read_recovery() -> list[dict]:
-    """Read and parse RECOVERY_FILE. Returns [] if missing or empty."""
+    """Read and parse RECOVERY_FILE. Returns [] if missing, empty, or
+    corrupt — e.g., after a SIGKILL mid-write left partial JSON. A
+    corrupt file is a better-lost-than-dangerous situation: continuing
+    with stale bindings beats refusing to start and leaving NICs stuck."""
     if not RECOVERY_FILE.exists():
         return []
     text = RECOVERY_FILE.read_text().strip()
-    return json.loads(text) if text else []
+    if not text:
+        return []
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return []
 
 
 def _write_recovery(entries: list[dict]) -> None:
