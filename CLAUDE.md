@@ -3,6 +3,28 @@
 `shorewall-nft` — nftables-native firewall compiler with a
 Shorewall-compatible configuration surface.
 
+## Project principles (read this first)
+
+`docs/PRINCIPLES.md` is the load-bearing rulebook. Summary of the
+non-negotiables:
+
+1. **AI-discoverable tooling** — any AI agent must be able to determine
+   from the docs alone: what the tool can do, how to instruct it, what
+   it can't do, and how to verify success. If you have to `grep` a
+   Python file to know a CLI flag, the docs are incomplete — fix the
+   docs.
+2. **No secrets in git** — `${ENV_VAR}` placeholders only.
+3. **Deployment names are scoped** — public history (commits, CHANGELOG)
+   uses "reference HA firewall"; node-specific paths may use real names.
+4. **Point-of-truth ranking** — old/iptables.txt wins over compiler
+   output wins over simlab.
+5. **Test reports split false-drop vs false-accept** — never just
+   "N mismatches".
+6. **Two-scope edits**: core-first, then consumer.
+7. **Versions stay in sync** across all pyproject.toml + spec + changelog.
+
+See `docs/PRINCIPLES.md` for full text + practical PR checklist.
+
 ## Repo layout
 
 ```
