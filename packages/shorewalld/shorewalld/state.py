@@ -454,13 +454,13 @@ class InstanceCache:
                 result[name] = entry
         return result
 
-    def load(self) -> "list[tuple[str, str, str, str, dict | None]]":
+    def load(self) -> "list[tuple[str, str, str, str, dict | None, dict | None]]":
         """Return cached instances as raw tuples with warnings on errors.
 
         Each tuple is ``(name, netns, config_dir, allowlist_path,
-        dns_payload_or_None)``. Also syncs the in-memory dict so
-        subsequent ``update()`` calls preserve all cached entries.
-        Never raises — returns ``[]`` on any error.
+        dns_payload_or_None, nfsets_payload_or_None)``. Also syncs the
+        in-memory dict so subsequent ``update()`` calls preserve all
+        cached entries. Never raises — returns ``[]`` on any error.
         """
         if not self._path.exists():
             return []
@@ -484,16 +484,29 @@ class InstanceCache:
                 config_dir = entry["config_dir"]
                 allowlist_path = entry["allowlist_path"]
                 dns_payload = entry.get("dns_payload")
+                nfsets_payload = entry.get("nfsets_payload")
                 self._instances[name] = entry  # keep in-memory dict fresh
-                result.append((name, netns, config_dir, allowlist_path, dns_payload))
+                result.append(
+                    (name, netns, config_dir, allowlist_path, dns_payload, nfsets_payload)
+                )
             except (KeyError, TypeError) as e:
                 _log_inst.warning(
                     "instance cache: skipping malformed entry: %s", e)
         _log_inst.info("instance cache: loaded %d entry(ies)", len(result))
         return result
 
-    def update(self, config: "Any", dns_payload: "dict | None" = None) -> None:
-        """Add or update one instance and persist to disk atomically."""
+    def update(
+        self,
+        config: "Any",
+        dns_payload: "dict | None" = None,
+        nfsets_payload: "dict | None" = None,
+    ) -> None:
+        """Add or update one instance and persist to disk atomically.
+
+        *nfsets_payload* is the raw ``req["nfsets"]`` dict from the
+        ``register-instance`` message; ``None`` means the instance has no
+        nfsets config (pre-Wave-3 shorewall-nft or no ``nfsets`` file).
+        """
         entry: dict = {
             "name": config.name,
             "netns": config.netns,
@@ -502,6 +515,8 @@ class InstanceCache:
         }
         if dns_payload is not None:
             entry["dns_payload"] = dns_payload
+        if nfsets_payload is not None:
+            entry["nfsets_payload"] = nfsets_payload
         self._instances[config.name] = entry
         self._save()
 

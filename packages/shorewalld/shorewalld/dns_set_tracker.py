@@ -165,9 +165,16 @@ class DnsSetTracker:
 
         Called at startup from the compiled-allowlist file and again
         on control-socket reload. Assigns a stable integer
-        set_id per (qname, family) pair in deterministic sort order
-        so two shorewalld processes serving the same compiled file
-        agree on the mapping without explicit negotiation.
+        set_id per ``(effective_set_name, family)`` group in deterministic
+        sort order so two shorewalld processes serving the same compiled
+        file agree on the mapping without explicit negotiation.
+
+        **N→1 grouping**: when a :class:`~shorewall_nft.nft.dns_sets.DnsSetSpec`
+        carries a non-``None`` ``set_name``, multiple qnames that share the
+        same ``(set_name, family)`` are mapped to a single ``set_id``.  Their
+        resolved IPs all flow into the same nft set.  Qnames whose ``set_name``
+        is ``None`` each get their own ``set_id`` (identical to the old
+        behaviour).
 
         Any prior state for hostnames still in the registry is
         preserved — only removed hostnames lose their cached entries.
@@ -177,42 +184,92 @@ class DnsSetTracker:
         maintain a forked worker whose set-name lookup table was snapshotted
         at fork time must respawn that worker so it sees the new names.
         """
+        from shorewall_nft.nft.dns_sets import qname_to_set_name
+
         with self._lock:
             desired: dict[tuple[str, int], DnsSetSpec] = {}
             for spec in registry.iter_sorted():
                 desired[(spec.qname, FAMILY_V4)] = spec
                 desired[(spec.qname, FAMILY_V6)] = spec
 
-            # Evict set_ids for names no longer in the registry.
+            # Build the mapping: (effective_set_name, family) → representative
+            # spec. Used to assign one set_id per group.  For qnames without a
+            # set_name override the effective name is the auto-derived
+            # qname_to_set_name(), which is unique per qname — exactly the old
+            # behaviour.
+            # group_key → (representative_spec, sorted list of (qname, family) keys)
+            group_key_to_spec: dict[tuple[str, int], DnsSetSpec] = {}
+            group_key_to_members: dict[tuple[str, int], list[tuple[str, int]]] = {}
+            for (qname, family), spec in sorted(desired.items()):
+                if spec.set_name is not None:
+                    eff_name = spec.set_name
+                else:
+                    fam_str = "v4" if family == FAMILY_V4 else "v6"
+                    eff_name = qname_to_set_name(qname, fam_str)
+                gk = (eff_name, family)
+                if gk not in group_key_to_spec:
+                    group_key_to_spec[gk] = spec
+                    group_key_to_members[gk] = []
+                group_key_to_members[gk].append((qname, family))
+
+            # Evict (qname, family) keys that are no longer desired.
             to_evict = [
-                (name, fam) for (name, fam) in self._by_name
-                if (name, fam) not in desired
+                (qn, fam) for (qn, fam) in list(self._by_name)
+                if (qn, fam) not in desired
             ]
             for key in to_evict:
                 set_id = self._by_name.pop(key)
-                self._by_id.pop(set_id, None)
-                self._states.pop(set_id, None)
-
-            # Assign/keep set_ids for desired names in deterministic
-            # order so the reverse-map is stable across reloads.
-            new_names_added = False
-            for key in sorted(desired):
-                if key in self._by_name:
-                    existing = self._states.get(self._by_name[key])
-                    if existing is not None:
-                        # Refresh the cached spec so TTL-floor / size
-                        # changes take effect on the next write.
-                        existing.spec = desired[key]
-                    continue
-                set_id = self._next_id
-                self._next_id += 1
-                self._by_name[key] = set_id
-                self._by_id[set_id] = key
-                self._states[set_id] = _SetState(
-                    spec=desired[key],
-                    family=key[1],
+                # Only drop the _SetState if NO remaining (qname, family)
+                # entries still point to this set_id (N→1 sharing).
+                still_used = any(
+                    sid == set_id for sid in self._by_name.values()
                 )
-                new_names_added = True
+                if not still_used:
+                    self._by_id.pop(set_id, None)
+                    self._states.pop(set_id, None)
+
+            # Assign / reuse set_ids for each group in deterministic order.
+            new_names_added = False
+            for gk in sorted(group_key_to_spec):
+                rep_spec = group_key_to_spec[gk]
+                members = group_key_to_members[gk]
+                eff_name, family = gk
+
+                # Find an existing set_id for this group (any member that is
+                # already tracked).
+                existing_sid: int | None = None
+                for member_key in members:
+                    sid = self._by_name.get(member_key)
+                    if sid is not None:
+                        existing_sid = sid
+                        break
+
+                if existing_sid is not None:
+                    # Reuse the existing set_id; refresh the spec.
+                    state = self._states.get(existing_sid)
+                    if state is not None:
+                        state.spec = rep_spec
+                    # Wire any new members that aren't yet in _by_name.
+                    for member_key in members:
+                        if member_key not in self._by_name:
+                            self._by_name[member_key] = existing_sid
+                            new_names_added = True
+                else:
+                    # New group — allocate a fresh set_id and wire all members.
+                    set_id = self._next_id
+                    self._next_id += 1
+                    # Use the first member as the canonical _by_id entry so
+                    # snapshot() / name_for() returns a stable qname.
+                    canonical_member = members[0]
+                    self._by_id[set_id] = canonical_member
+                    self._states[set_id] = _SetState(
+                        spec=rep_spec,
+                        family=family,
+                    )
+                    for member_key in members:
+                        self._by_name[member_key] = set_id
+                    new_names_added = True
+
             self._allowlist_generation += 1
             return new_names_added
 

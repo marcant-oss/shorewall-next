@@ -51,6 +51,15 @@ class InstanceConfig:
     allowlist_path: Path
     """``config_dir / "dnsnames.compiled"`` — the compiled DNS allowlist."""
 
+    nfsets_payload: dict | None = None
+    """Raw ``nfsets`` dict from the ``register-instance`` control-socket
+    payload (``req["nfsets"]``).  ``None`` means the instance was
+    registered without an nfsets block (pre-Wave-3 shorewall-nft or a
+    config with no ``nfsets`` file).  Wave 4 passes this to
+    :class:`~shorewalld.nfsets_manager.NfSetsManager` during instance
+    wiring.  Persisted in ``instances.json`` so the nfsets config
+    survives a daemon restart."""
+
 
 def parse_instance_spec(spec: str) -> InstanceConfig:
     """Parse a ``[netns:]<dir>`` instance spec into an :class:`InstanceConfig`.
@@ -307,9 +316,13 @@ class InstanceManager:
         if self._cache is None:
             return
         restored = 0
-        for name, netns, config_dir_s, allowlist_path_s, dns_payload in (
-            self._cache.load()
-        ):
+        for row in self._cache.load():
+            # Support both the old 5-tuple (pre-Wave-3) and the new 6-tuple.
+            if len(row) == 6:
+                name, netns, config_dir_s, allowlist_path_s, dns_payload, nfsets_payload = row
+            else:
+                name, netns, config_dir_s, allowlist_path_s, dns_payload = row
+                nfsets_payload = None
             if name in self._static_names:
                 log.debug(
                     "instance cache: skipping static instance %r", name)
@@ -323,6 +336,7 @@ class InstanceManager:
                 netns=netns,
                 config_dir=Path(config_dir_s),
                 allowlist_path=Path(allowlist_path_s),
+                nfsets_payload=nfsets_payload,
             )
             self._states[name] = _InstanceState(cfg=cfg)
             state = self._states[name]
