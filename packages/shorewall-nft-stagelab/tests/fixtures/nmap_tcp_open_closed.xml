@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<nmaprun scanner="nmap" args="nmap -oX - -Pn -p 22,80,443 10.0.0.1" start="1700000000" version="7.94">
+  <host starttime="1700000000" endtime="1700000001">
+    <status state="up" reason="user-set"/>
+    <address addr="10.0.0.1" addrtype="ipv4"/>
+    <ports>
+      <port protocol="tcp" portid="22"><state state="open" reason="syn-ack"/><service name="ssh"/></port>
+      <port protocol="tcp" portid="80"><state state="closed" reason="reset"/><service name="http"/></port>
+      <port protocol="tcp" portid="443"><state state="filtered" reason="no-response"/></port>
+    </ports>
+  </host>
+</nmaprun>
