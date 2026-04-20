@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 from asyncio.subprocess import PIPE
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
+from .advisor import AdvisorInput, analyze
 from .config import Host, StagelabConfig
 from .ipc import (
     AckMessage,
@@ -21,8 +24,9 @@ from .ipc import (
     ShutdownMessage,
     new_id,
 )
+from .metrics import MetricRow
+from .metrics_ingest import MetricSource, build_source, scrape_all
 from .report import RunReport, ScenarioResult
-from .scenarios import build_runner
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +123,9 @@ class StagelabController:
         self._config_path = config_path
         self._factory = transport_factory if transport_factory is not None else _auto_factory
         self._connections: dict[str, AgentConnection] = {}
+        self._metric_rows: list[MetricRow] = []
+        self._scrape_task: asyncio.Task | None = None
+        self._scrape_sources: list[MetricSource] = []
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -210,6 +217,37 @@ class StagelabController:
                     ep.name, ep.host, exc,
                 )
 
+    async def start_scraping(self) -> None:
+        """Build MetricSource objects and start a background polling task.
+        No-op when config.metrics.sources is empty."""
+        specs = self._config.metrics.sources
+        if not specs:
+            return
+        self._scrape_sources = [build_source(s) for s in specs]
+        interval = self._config.metrics.poll_interval_s
+        log.info("scraping %d source(s) every %ds", len(self._scrape_sources), interval)
+
+        async def _poll_loop() -> None:
+            try:
+                while True:
+                    rows = await scrape_all(self._scrape_sources, time.time(), on_error="log")
+                    self._metric_rows.extend(rows)
+                    await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                pass
+
+        self._scrape_task = asyncio.create_task(_poll_loop())
+
+    async def stop_scraping(self) -> None:
+        """Cancel the background polling task. Idempotent."""
+        if self._scrape_task is None:
+            return
+        self._scrape_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._scrape_task
+        self._scrape_task = None
+        log.info("scraping stopped; collected %d metric rows", len(self._metric_rows))
+
     async def run_scenarios(self) -> RunReport:
         """For each scenario: build_runner().plan(cfg) -> AgentCommands.
 
@@ -224,7 +262,7 @@ class StagelabController:
         ScenarioResult(ok=False) without crashing. This is expected and
         documented.
         """
-        # TODO: wire metrics.py pollers for POLL_METRICS during scenarios
+        from .scenarios import build_runner
 
         # Build endpoint → host lookup table
         ep_to_host: dict[str, str] = {
@@ -325,10 +363,47 @@ class StagelabController:
             scenario_result = runner.summarize(cmd_results)
             scenario_results.append(scenario_result)
 
+        # ── Build AdvisorInput from scenario results + metric rows ─────────────
+        rows = tuple(self._metric_rows)
+        best_gbps, total_retrans, parallel = 0.0, 0, 1
+        for sr in scenario_results:
+            raw = sr.raw
+            if raw.get("tool") == "iperf3":
+                g = raw.get("gbps") or raw.get("throughput_gbps", 0.0)
+                if isinstance(g, (int, float)) and g > best_gbps:
+                    best_gbps = float(g)
+                total_retrans += int(raw.get("retransmits", 0) or 0)
+                parallel = int(raw.get("parallel", 1) or 1)
+        ct_count = max(
+            (int(r.value) for r in rows if r.key == "node_conntrack_count"), default=0
+        )
+        ct_max = max(
+            (int(r.value) for r in rows if r.key == "node_conntrack_max"), default=0
+        )
+        cmap: dict[str, int] = {}
+        for row in rows:
+            sl, kl = row.source.lower(), row.key.lower()
+            if (sl.startswith(("fw-nft-counters", "nft-counters"))
+                    or "counter" in kl or kl.startswith("shorewall_")):
+                cmap[row.key] = max(cmap.get(row.key, 0), int(row.value))
+        ranking = tuple(
+            sorted(cmap.items(), key=lambda kv: kv[1], reverse=True)
+        )[:20]
+        recommendations = tuple(analyze(AdvisorInput(
+            metric_rows=rows,
+            iperf3_throughput_gbps=best_gbps,
+            iperf3_parallel=parallel,
+            iperf3_retransmits=total_retrans,
+            conntrack_count=ct_count,
+            conntrack_max=ct_max,
+            nft_counter_ranking=ranking,
+        )))
+
         return RunReport(
             run_id=run_id,
             config_path=self._config_path,
             scenarios=scenario_results,
+            recommendations=recommendations,
         )
 
     async def close(self) -> None:

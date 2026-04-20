@@ -63,10 +63,12 @@ def run_cmd(config_path: str, output_dir: str | None) -> None:
         controller = StagelabController(cfg, config_path=config_path)
         try:
             await controller.connect()
+            await controller.start_scraping()
             await controller.setup_endpoints()
             try:
                 run = await controller.run_scenarios()
             finally:
+                await controller.stop_scraping()
                 await controller.teardown_endpoints()
         finally:
             await controller.close()
