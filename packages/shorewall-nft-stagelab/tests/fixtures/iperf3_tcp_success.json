@@ -1,0 +1,7 @@
+{
+  "start": {"version": "iperf 3.12"},
+  "end": {
+    "sum_sent": {"bytes": 1000000000, "bits_per_second": 8000000000.0, "retransmits": 42, "seconds": 10.0},
+    "sum_received": {"bytes": 1000000000, "bits_per_second": 7990000000.0, "seconds": 10.0}
+  }
+}
