@@ -62,6 +62,14 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
     )
 
     try:
+        # Parent NIC must be up before VLAN add, otherwise the subsequent
+        # `ip link set <vlan> up` inside the netns fails with
+        # "Network is down". This is common on hosts where the test NIC is
+        # NM-unmanaged and has no boot-time enslavement: eth2 starts DOWN.
+        _run(
+            ["ip", "link", "set", spec.nic, "up"],
+            "bring up parent NIC",
+        )
         _run(
             ["ip", "link", "add", "link", spec.nic,
              "name", vlan_iface, "type", "vlan", "id", str(spec.vlan)],
