@@ -177,6 +177,13 @@ _COLUMNS: dict[str, list[str]] = {
     "blacklist": [
         "address", "proto", "port",
     ],
+
+    # Named dynamic nft sets — backend-agnostic set declaration.
+    # Each row declares one named set; the options column carries
+    # the backend type and per-backend parameters.
+    "nfsets": [
+        "name", "hosts", "options",
+    ],
 }
 
 

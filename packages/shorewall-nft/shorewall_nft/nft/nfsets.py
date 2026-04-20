@@ -1,0 +1,448 @@
+"""Named dynamic nft sets — data model, parser, and emitter helpers.
+
+This module covers the *compiler side* of the ``nfsets`` config file:
+
+* :class:`NfSetEntry` — one logical named set with its backend and options.
+* :class:`NfSetRegistry` — the collection of all declared sets.
+* :func:`build_nfset_registry` — parse ``ConfigLine`` rows from the
+  ``nfsets`` file into a registry.
+* :func:`nfset_to_set_name` — deterministic ``name + family`` → nft set name.
+* :func:`emit_nfset_declarations` — produce nft ``set`` declaration lines.
+* :func:`nfset_registry_to_payload` / :func:`payload_to_nfset_registry` —
+  JSON-safe round-trip for the control-socket ``register-instance`` payload.
+
+shorewalld consumes the payload via ``NfSetsManager`` (Wave 2+).
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from shorewall_nft.nft.dns_sets import (
+    _SAFE_CHAR,  # noqa: PLC2701 — shared private constant, intentional
+    MAX_SET_NAME_LEN,
+    canonical_qname,
+)
+from shorewall_nft.util.brace_expand import expand_brace
+
+# ---------------------------------------------------------------------------
+# Naming constants
+# ---------------------------------------------------------------------------
+
+_NFSET_PREFIX = "nfset_"
+_SUFFIX_V4 = "_v4"
+_SUFFIX_V6 = "_v6"
+# Overhead: len("nfset_") + len("_v4") = 9 chars;  body limit = 31 - 9 = 22.
+_NFSET_BODY_LIMIT = MAX_SET_NAME_LEN - len(_NFSET_PREFIX) - len(_SUFFIX_V4)
+
+# Valid backend identifiers.
+_BACKENDS: frozenset[str] = frozenset({
+    "dnstap", "resolver", "ip-list", "ip-list-plain",
+})
+_DNS_BACKENDS: frozenset[str] = frozenset({"dnstap", "resolver"})
+_IPLIST_BACKENDS: frozenset[str] = frozenset({"ip-list", "ip-list-plain"})
+
+# Valid dnstype values (SRV is tracked but not implemented this wave).
+_DNS_TYPES: frozenset[str] = frozenset({"a", "aaaa", "srv"})
+
+# Duration suffix multipliers.
+_DURATION_UNITS: dict[str, int] = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+# ---------------------------------------------------------------------------
+# Data model
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class NfSetEntry:
+    """One logical named set declared in the ``nfsets`` config file.
+
+    Multiple ``nfsets`` rows with the **same** ``name`` are merged into one
+    entry: their ``hosts`` lists are concatenated (after brace expansion),
+    and options must be compatible (same backend, non-conflicting options).
+    A :exc:`ValueError` is raised on a conflicting option.
+    """
+
+    name: str
+    """User-defined logical set name (as written in the config file)."""
+
+    hosts: list[str]
+    """Resolved host entries (after brace expansion).
+
+    For ``dnstap`` / ``resolver`` backends these are DNS qnames.
+    For ``ip-list`` / ``ip-list-plain`` backends these are provider
+    identifiers, URLs, file paths, or ``exec:`` strings.
+    """
+
+    backend: str
+    """One of ``"dnstap"``, ``"resolver"``, ``"ip-list"``, ``"ip-list-plain"``."""
+
+    options: dict[str, list[str]] = field(default_factory=dict)
+    """Multi-valued options (e.g. ``{"filter": ["region=us-east-1"]}``)."""
+
+    refresh: int | None = None
+    """Refresh interval in seconds; ``None`` means use the backend default."""
+
+    dns_servers: list[str] = field(default_factory=list)
+    """Explicit DNS server IPs for the ``resolver`` backend (``dns=`` option)."""
+
+    inotify: bool = False
+    """Watch file for changes via inotify (``ip-list-plain`` only)."""
+
+    dnstype: str | None = None
+    """DNS record type filter: ``"a"``, ``"aaaa"``, or ``"srv"``; ``None``
+    means resolve both A and AAAA."""
+
+
+@dataclass
+class NfSetRegistry:
+    """Collection of all named sets declared in the ``nfsets`` config file."""
+
+    entries: list[NfSetEntry] = field(default_factory=list)
+    """Ordered list of entries (insertion order from the config file)."""
+
+    set_names: set[str] = field(default_factory=set)
+    """Logical set names already registered — used for duplicate detection."""
+
+
+# ---------------------------------------------------------------------------
+# Naming helpers
+# ---------------------------------------------------------------------------
+
+
+def nfset_to_set_name(name: str, family: str) -> str:
+    """Map a logical nfset name + family to a deterministic nft set name.
+
+    Uses the **same sanitisation algorithm** as ``qname_to_set_name()`` in
+    ``shorewall_nft.nft.dns_sets``:
+
+    * Lower-case the name.
+    * Replace every non-``[a-z0-9]`` character with ``_``.
+    * Collapse runs of ``_``.
+    * Truncate the body to ``MAX_SET_NAME_LEN - len("nfset__v4") = 22``
+      characters, using a SHA-1 prefix as a collision-safe tail when needed.
+    * Prepend ``nfset_`` and append ``_v4`` / ``_v6``.
+
+    ``family`` must be ``"v4"`` or ``"v6"``.
+    """
+    body = "".join(ch if _SAFE_CHAR.match(ch) else "_" for ch in name.lower())
+    while "__" in body:
+        body = body.replace("__", "_")
+    body = body.strip("_")
+    if not body:
+        body = "x"
+
+    if len(body) > _NFSET_BODY_LIMIT:
+        import hashlib
+        h = hashlib.sha1(name.encode()).hexdigest()[:6]
+        head_len = _NFSET_BODY_LIMIT - len(h) - 1
+        body = f"{body[:head_len]}_{h}"
+
+    suffix = _SUFFIX_V4 if family == "v4" else _SUFFIX_V6
+    return f"{_NFSET_PREFIX}{body}{suffix}"
+
+
+# ---------------------------------------------------------------------------
+# Duration parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_duration(value: str) -> int:
+    """Parse a duration string like ``5m``, ``1h``, ``30s``, or plain int.
+
+    Returns the equivalent number of seconds as an ``int``.
+
+    Raises :exc:`ValueError` on unrecognised input.
+    """
+    v = value.strip()
+    if not v:
+        raise ValueError(f"empty duration: {value!r}")
+    # Plain integer (seconds)?
+    m = re.fullmatch(r"(\d+)", v)
+    if m:
+        return int(m.group(1))
+    # Numeric with optional unit suffix.
+    m = re.fullmatch(r"(\d+)([smhd])", v)
+    if m:
+        return int(m.group(1)) * _DURATION_UNITS[m.group(2)]
+    raise ValueError(f"unrecognised duration format: {value!r}")
+
+
+# ---------------------------------------------------------------------------
+# Parser
+# ---------------------------------------------------------------------------
+
+
+def _parse_options(options_str: str) -> dict:
+    """Parse the options column of one ``nfsets`` row.
+
+    Returns a dict with these keys (all optional):
+
+    ``backend``
+        One of the backend strings.
+    ``dns_servers``
+        List of ``str`` from ``dns=<ip>`` tokens.
+    ``filter``
+        List of ``str`` from ``filter=<expr>`` tokens.
+    ``refresh``
+        ``int`` seconds, from ``refresh=<duration>``.
+    ``inotify``
+        ``bool``, ``True`` if the bare ``inotify`` token is present.
+    ``dnstype``
+        ``str`` or ``None``.
+
+    Raises :exc:`ValueError` for unknown tokens.
+    """
+    result: dict = {
+        "backend": None,
+        "dns_servers": [],
+        "filter": [],
+        "refresh": None,
+        "inotify": False,
+        "dnstype": None,
+    }
+    if not options_str or options_str == "-":
+        return result
+
+    for token in re.split(r"\s*,\s*", options_str.strip()):
+        token = token.strip()
+        if not token:
+            continue
+
+        # Backend keyword (bare token, no "=").
+        if token in _BACKENDS:
+            if result["backend"] is not None and result["backend"] != token:
+                raise ValueError(
+                    f"conflicting backends: {result['backend']!r} vs {token!r}")
+            result["backend"] = token
+            continue
+
+        # inotify flag.
+        if token == "inotify":
+            result["inotify"] = True
+            continue
+
+        # key=value tokens.
+        if "=" in token:
+            key, _, val = token.partition("=")
+            key = key.strip()
+            val = val.strip()
+            if key == "dns":
+                result["dns_servers"].append(val)
+            elif key == "filter":
+                result["filter"].append(val)
+            elif key == "refresh":
+                result["refresh"] = _parse_duration(val)
+            elif key == "dnstype":
+                if val not in _DNS_TYPES:
+                    raise ValueError(
+                        f"unknown dnstype {val!r}; valid: {sorted(_DNS_TYPES)}")
+                result["dnstype"] = val
+            else:
+                raise ValueError(
+                    f"unknown nfsets option: {token!r}")
+            continue
+
+        raise ValueError(f"unknown nfsets option token: {token!r}")
+
+    return result
+
+
+def build_nfset_registry(lines: list) -> NfSetRegistry:
+    """Parse ``ConfigLine`` rows from the ``nfsets`` file into an
+    :class:`NfSetRegistry`.
+
+    Rows with the same logical ``name`` are **merged** — their ``hosts``
+    lists are concatenated.  Options must be compatible (same backend).
+
+    Brace expansion (``{a,b}.host.org``) is applied to the ``hosts``
+    column at parse time.
+
+    ``lines`` is a list of ``ConfigLine`` objects (from the shorewall-nft
+    parser); each must have at least two columns (name, hosts).  The third
+    column (options) is optional and defaults to ``"-"`` when absent.
+
+    Raises :exc:`ValueError` on unknown option tokens, conflicting backends,
+    or other parse errors.
+    """
+    registry = NfSetRegistry()
+    # name → NfSetEntry for merging.
+    by_name: dict[str, NfSetEntry] = {}
+
+    for line in lines:
+        cols = list(line.columns) if hasattr(line, "columns") else list(line)
+        if not cols:
+            continue
+
+        name = cols[0].strip()
+        hosts_raw = cols[1].strip() if len(cols) > 1 else ""
+        options_str = cols[2].strip() if len(cols) > 2 else "-"
+
+        if not name or name == "-":
+            continue
+
+        # Expand brace patterns in hosts column.
+        expanded_hosts: list[str] = []
+        for host_token in re.split(r"\s+", hosts_raw.strip()):
+            if not host_token or host_token == "-":
+                continue
+            expanded_hosts.extend(expand_brace(host_token))
+        # Canonicalise qnames for dns backends (safe for all backends).
+        expanded_hosts = [canonical_qname(h) if "." in h else h
+                          for h in expanded_hosts]
+
+        opts = _parse_options(options_str)
+        backend = opts["backend"]
+        if backend is None:
+            raise ValueError(
+                f"nfsets entry {name!r}: no backend specified in options "
+                f"(must be one of {sorted(_BACKENDS)})")
+
+        # Merge with existing entry for same name, or create new.
+        if name in by_name:
+            entry = by_name[name]
+            if entry.backend != backend:
+                raise ValueError(
+                    f"nfsets entry {name!r}: conflicting backends "
+                    f"{entry.backend!r} vs {backend!r}")
+            entry.hosts.extend(expanded_hosts)
+            entry.dns_servers.extend(opts["dns_servers"])
+            if opts["filter"]:
+                entry.options.setdefault("filter", []).extend(opts["filter"])
+            if opts["refresh"] is not None:
+                entry.refresh = opts["refresh"]
+            if opts["inotify"]:
+                entry.inotify = True
+            if opts["dnstype"] is not None:
+                entry.dnstype = opts["dnstype"]
+        else:
+            entry = NfSetEntry(
+                name=name,
+                hosts=expanded_hosts,
+                backend=backend,
+                options={"filter": opts["filter"]} if opts["filter"] else {},
+                refresh=opts["refresh"],
+                dns_servers=opts["dns_servers"],
+                inotify=opts["inotify"],
+                dnstype=opts["dnstype"],
+            )
+            by_name[name] = entry
+            registry.entries.append(entry)
+            registry.set_names.add(name)
+
+    return registry
+
+
+# ---------------------------------------------------------------------------
+# Emitter
+# ---------------------------------------------------------------------------
+
+
+def emit_nfset_declarations(
+    registry: NfSetRegistry, indent: str = "\t"
+) -> list[str]:
+    """Return nft script lines declaring all named sets in *registry*.
+
+    Each entry produces two sets — one for ``ipv4_addr`` and one for
+    ``ipv6_addr``.
+
+    Set flags are determined by the backend mix across **all** entries:
+
+    * All ``dnstap`` / ``resolver`` → ``flags timeout``
+    * All ``ip-list`` / ``ip-list-plain`` → ``flags interval``
+    * Mixed → ``flags timeout, interval``
+
+    Default ``size``: 512 for dns-only; 65536 if any ip-list backend is
+    present.
+    """
+    if not registry.entries:
+        return []
+
+    backends = {e.backend for e in registry.entries}
+    has_dns = bool(backends & _DNS_BACKENDS)
+    has_ip = bool(backends & _IPLIST_BACKENDS)
+
+    if has_dns and has_ip:
+        flags_str = "timeout, interval"
+    elif has_ip:
+        flags_str = "interval"
+    else:
+        flags_str = "timeout"
+
+    default_size = 65536 if has_ip else 512
+
+    lines: list[str] = []
+    lines.append("")
+    lines.append(f"{indent}# Named nft sets (populated by shorewalld nfsets manager)")
+
+    for entry in registry.entries:
+        v4_name = nfset_to_set_name(entry.name, "v4")
+        v6_name = nfset_to_set_name(entry.name, "v6")
+        for set_name, nft_type in (
+            (v4_name, "ipv4_addr"),
+            (v6_name, "ipv6_addr"),
+        ):
+            lines.append(f"{indent}# nfset:{entry.name} ({entry.backend})")
+            lines.append(f"{indent}set {set_name} {{")
+            lines.append(f"{indent}\ttype {nft_type};")
+            lines.append(f"{indent}\tflags {flags_str};")
+            lines.append(f"{indent}\tsize {default_size};")
+            lines.append(f"{indent}}}")
+            lines.append("")
+
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Payload round-trip
+# ---------------------------------------------------------------------------
+
+
+def nfset_registry_to_payload(registry: NfSetRegistry) -> dict:
+    """Serialise *registry* to a JSON-safe dict for the control socket.
+
+    The returned dict can be merged into a ``register-instance`` payload
+    under the ``"nfsets"`` key.  Use :func:`payload_to_nfset_registry` on
+    the daemon side to reconstruct the registry.
+    """
+    return {
+        "entries": [
+            {
+                "name": e.name,
+                "hosts": list(e.hosts),
+                "backend": e.backend,
+                "options": {k: list(v) for k, v in e.options.items()},
+                "refresh": e.refresh,
+                "dns_servers": list(e.dns_servers),
+                "inotify": e.inotify,
+                "dnstype": e.dnstype,
+            }
+            for e in registry.entries
+        ],
+    }
+
+
+def payload_to_nfset_registry(payload: dict) -> NfSetRegistry:
+    """Reconstruct an :class:`NfSetRegistry` from a payload dict.
+
+    Counterpart to :func:`nfset_registry_to_payload`.  Round-trips
+    losslessly: ``payload_to_nfset_registry(nfset_registry_to_payload(r))``
+    returns a registry equal to *r*.
+    """
+    registry = NfSetRegistry()
+    for d in payload.get("entries", []):
+        entry = NfSetEntry(
+            name=d["name"],
+            hosts=list(d["hosts"]),
+            backend=d["backend"],
+            options={k: list(v) for k, v in d.get("options", {}).items()},
+            refresh=d.get("refresh"),
+            dns_servers=list(d.get("dns_servers", [])),
+            inotify=bool(d.get("inotify", False)),
+            dnstype=d.get("dnstype"),
+        )
+        registry.entries.append(entry)
+        registry.set_names.add(entry.name)
+    return registry
