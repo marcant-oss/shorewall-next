@@ -1,0 +1,70 @@
+meta:
+  standard: performance-ipv6
+  standard_title: "IPv6 throughput parity (performance addendum)"
+  fragment_owner: c3
+
+tests:
+  - test_id: perf-ipv6-tcp-throughput
+    title: "IPv6 TCP throughput meets SLO"
+    description: >
+      Single-directional TCP throughput over an IPv6-native endpoint pair.
+      Ensures throughput parity with the IPv4 baseline scenario.
+    maps_to_scenario:
+      kind: throughput
+      proto: tcp
+      source: v6-client
+      sink: v6-server
+      duration_s: 30
+      parallel: 4
+      expect_min_gbps: 8.0
+    acceptance_criteria:
+      min_gbps: 8.0
+      max_retrans_ratio: 0.005
+    standard_refs: [nist-800-53-sc-7]
+    status: covered
+    evidence:
+      human: "docs/testing/security-test-plan.md#perf-ipv6-tcp-throughput"
+      machine: "audit.json scenarios[].test_id == perf-ipv6-tcp-throughput"
+    rationale: >
+      NIST SP 800-53 SC-7 (boundary protection) applies equally to IPv6 and
+      IPv4 traffic paths.  Performance parity must be demonstrated so that
+      IPv6 deployment does not silently degrade throughput.
+
+  - test_id: perf-ipv6-udp-throughput
+    title: "IPv6 UDP throughput meets SLO"
+    description: >
+      Single-directional UDP throughput over an IPv6-native endpoint pair.
+      Ensures throughput parity with IPv4 UDP baseline.
+    maps_to_scenario:
+      kind: throughput
+      proto: udp
+      source: v6-client
+      sink: v6-server
+      duration_s: 20
+      parallel: 2
+      expect_min_gbps: 5.0
+    acceptance_criteria:
+      min_gbps: 5.0
+    standard_refs: [nist-800-53-sc-7]
+    status: covered
+    evidence:
+      human: "docs/testing/security-test-plan.md#perf-ipv6-udp-throughput"
+      machine: "audit.json scenarios[].test_id == perf-ipv6-udp-throughput"
+    rationale: >
+      UDP-based protocols (DNS, NTP, syslog, media) traverse the firewall over
+      IPv6 in dual-stack deployments.  Throughput parity reduces the risk of
+      a performance cliff when clients migrate to IPv6.
+
+out_of_scope:
+  - item: "IPv6-only transition / NAT64"
+    reason: >
+      The reference firewall is dual-stack; NAT64 is a separate appliance and
+      not in scope for throughput parity tests.
+  - item: "IPv6 flow-label QoS"
+    reason: >
+      Flow-label based QoS is not a firewall-level concern and is deferred to
+      the network-layer QoS test plan.
+  - item: "MLD (Multicast Listener Discovery)"
+    reason: >
+      MLD is handled by the CIS/OWASP protocol-stack test items; out of scope
+      for throughput parity.

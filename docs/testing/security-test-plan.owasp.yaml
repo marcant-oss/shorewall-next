@@ -1,0 +1,185 @@
+# security-test-plan.owasp.yaml
+# OWASP Firewall Checklist — structured test catalogue fragment (Stream B3)
+#
+# References:
+#   OWASP Testing Guide v4, OTG-CONFIG-009 "Test Network/Infrastructure Configuration"
+#   OWASP Firewall Checklist (2021 Community Edition)
+#
+# Each entry maps a stable test_id to an existing stagelab scenario kind.
+# status: covered | partial | out_of_scope
+#
+# This file is consumed by M1 (merger) and tools/run-security-test-plan.sh.
+
+standard: owasp
+standard_title: "OWASP Firewall Checklist (2021)"
+standard_url: "https://owasp.org/www-project-web-security-testing-guide/"
+
+tests:
+
+  - test_id: owasp-fw-1-config-review
+    standard_refs: ["owasp/FW-1"]
+    title: "Firewall configuration review"
+    status: covered
+    description: >
+      Review the active firewall ruleset for correctness, over-permission,
+      shadowed rules, and compliance with the deployment security policy.
+      Evidence is produced by `stagelab review` (tier-B advisor recommendations
+      backed by live Prometheus counter data) and the HTML audit report.
+    maps_to_scenario:
+      kind: rule_coverage_matrix
+      # rule_coverage_matrix enumerates every zone-pair and reports
+      # hit/miss counters, feeding the advisor with rule utilisation data.
+    acceptance_criteria:
+      advisor_tier_b_unresolved: 0
+      advisor_tier_c_unresolved: "<= 5"   # operator override per deployment
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-1-config-review"
+      machine: "audit.json scenarios[].test_id == owasp-fw-1-config-review"
+    tags: [config, advisor, review]
+
+  - test_id: owasp-fw-2-rulebase-audit
+    standard_refs: ["owasp/FW-2"]
+    title: "Rule-base audit (shadow / redundancy / over-permission)"
+    status: covered
+    description: >
+      Enumerate all zone-pair combinations to detect rules that are never
+      matched (dead rules), rules that shadow more-specific entries, and
+      zone pairs that are inadvertently open.  rule_coverage_matrix emits
+      per-zone-pair hit counters; rule_order.py groups chains by packet
+      volume and raises tier-C hints for ordering optimisations.
+    maps_to_scenario:
+      kind: rule_coverage_matrix
+    acceptance_criteria:
+      unreachable_rule_count: 0
+      over_permissive_zone_pairs: 0
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-2-rulebase-audit"
+      machine: "audit.json scenarios[].test_id == owasp-fw-2-rulebase-audit"
+    tags: [rule-order, coverage, advisor]
+
+  - test_id: owasp-fw-3-default-deny
+    standard_refs: ["owasp/FW-3", "iso27001/A.13.1.1"]
+    title: "Default-deny policy verification"
+    status: covered
+    description: >
+      Probe all unmapped zone pairs with random source/destination tuples
+      and verify that every packet is dropped.  No implicit accept path
+      should exist for traffic that has no explicit ACCEPT rule.
+    maps_to_scenario:
+      kind: rule_scan
+      random_count: 500
+    acceptance_criteria:
+      fail_accept_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-3-default-deny"
+      machine: "audit.json scenarios[].test_id == owasp-fw-3-default-deny"
+    tags: [default-deny, rule-scan]
+
+  - test_id: owasp-fw-4-evasion-bypass
+    standard_refs: ["owasp/FW-4"]
+    title: "Evasion and bypass probe suite"
+    status: covered
+    description: >
+      Send crafted packets designed to evade stateless ACLs: IP fragmentation,
+      overlapping fragment offsets, TCP RST-in-handshake, UDP bad checksum,
+      and IP-options stripping.  All probes must be dropped or normalised;
+      none must reach the protected zone.
+    maps_to_scenario:
+      kind: evasion_probes
+    acceptance_criteria:
+      evasion_success_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-4-evasion-bypass"
+      machine: "audit.json scenarios[].test_id == owasp-fw-4-evasion-bypass"
+    tags: [evasion, fragments, tcp-malform]
+
+  - test_id: owasp-fw-5-stateful-inspection
+    standard_refs: ["owasp/FW-5"]
+    title: "Stateful inspection under load (partial)"
+    status: partial
+    partial_reason: >
+      conn_storm and long_flow_survival exercise the conntrack code path under
+      high concurrency and over extended time, but the simlab correctness oracle
+      is stateless (iptables-equivalent; no conntrack model).  Out-of-state
+      packet injection is not validated at the oracle level.  Tracked as open
+      item: "simlab stateful oracle".
+    maps_to_scenario:
+      kind: conn_storm
+    acceptance_criteria:
+      established_flows_dropped: 0
+      conntrack_table_fill_fraction: "<= 0.80"
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-5-stateful-inspection"
+      machine: "audit.json scenarios[].test_id == owasp-fw-5-stateful-inspection"
+    tags: [stateful, conntrack, partial]
+
+  - test_id: owasp-fw-6-ha-failover
+    standard_refs: ["owasp/FW-6"]
+    title: "HA failover drill (VRRP + conntrackd)"
+    status: covered
+    description: >
+      Trigger a VRRP failover while traffic is flowing; verify that
+      established TCP sessions survive the switchover (conntrackd state
+      replication), that no traffic is forwarded without conntrack state,
+      and that VRRP/keepalived + Bird BGP reconnect within the SLA window.
+    maps_to_scenario:
+      kind: ha_failover_drill
+    acceptance_criteria:
+      session_continuity: true
+      failover_convergence_s: "<= 3"
+      bgp_reconvergence_s: "<= 10"
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-6-ha-failover"
+      machine: "audit.json scenarios[].test_id == owasp-fw-6-ha-failover"
+    tags: [ha, vrrp, conntrackd]
+
+  - test_id: owasp-fw-7-protocol-stack
+    standard_refs: ["owasp/FW-7"]
+    title: "Protocol-stack attack resistance"
+    status: covered
+    description: >
+      Combine evasion_probes (layer-3/4 malformations: bad TCP flags,
+      oversized packets, ICMP flood) with dos_syn_flood (TCP SYN
+      exhaustion).  The firewall must absorb or drop all malformed frames
+      without performance degradation on legitimate traffic.
+    maps_to_scenario:
+      kind: dos_syn_flood
+    acceptance_criteria:
+      legitimate_throughput_degradation_pct: "<= 5"
+      malformed_frame_accepted: 0
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-7-protocol-stack"
+      machine: "audit.json scenarios[].test_id == owasp-fw-7-protocol-stack"
+    tags: [protocol-stack, syn-flood, evasion]
+
+  - test_id: owasp-fw-8-operational-hardening
+    standard_refs: ["owasp/FW-8", "iso27001/A.18.2.2"]
+    title: "Operational hardening (reload atomicity + exporter health)"
+    status: covered
+    description: >
+      Verify that ruleset reloads are atomic (no window where policy is
+      absent), that the shorewalld Prometheus exporter is reachable and
+      returning well-formed metrics, and that the management interface is
+      not reachable from any non-management zone.
+    maps_to_scenario:
+      kind: reload_atomicity
+    acceptance_criteria:
+      traffic_gap_during_reload_ms: 0
+      prometheus_scrape_ok: true
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-8-operational-hardening"
+      machine: "audit.json scenarios[].test_id == owasp-fw-8-operational-hardening"
+    tags: [reload, atomicity, shorewalld]
+
+out_of_scope:
+  - id: owasp-tls-fingerprint
+    reason: >
+      TLS fingerprint / protocol-downgrade evasion requires a TLS-aware
+      proxy or DPI appliance.  nftables operates below the TLS layer;
+      this control is out of scope for a stateless/stateful packet firewall.
+
+  - id: owasp-fragment-reassembly-dos
+    reason: >
+      Fragment-reassembly DoS (Teardrop / Rose) is handled by the Linux
+      kernel before nftables sees the packet.  Effect is on the host stack,
+      not the ruleset.  Tracked as a separate open item in CLAUDE.md.

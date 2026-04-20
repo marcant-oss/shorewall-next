@@ -8,6 +8,8 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import standards as _standards
+
 # ---------------------------------------------------------------------------
 # Category / severity / grade constants
 # ---------------------------------------------------------------------------
@@ -79,6 +81,8 @@ class AuditPayload:
     sut_facts: dict                       # host info, ruleset git hash etc.
     # Test-setup facts:
     setup_facts: dict                     # tester hosts, versions, tool list
+    # Stream D2 integration (wired now, populated later):
+    simlab_report: Path | None = None
 
 
 def load_runs(run_dirs: list[Path]) -> AuditPayload:
@@ -115,6 +119,9 @@ def load_runs(run_dirs: list[Path]) -> AuditPayload:
             sc.setdefault("duration_s", 0.0)
             sc.setdefault("raw", {})
             sc.setdefault("note", "")
+            sc.setdefault("criteria_results", {})
+            sc.setdefault("test_id", None)
+            sc.setdefault("standard_refs", [])
             all_scenarios.append(sc)
 
         # Recommendations from run.json or separate recommendations.yaml
@@ -145,6 +152,34 @@ def load_runs(run_dirs: list[Path]) -> AuditPayload:
         sut_facts=sut_facts,
         setup_facts=setup_facts,
     )
+
+
+def _load_simlab_scenarios(simlab_path: Path) -> list[dict]:
+    """Parse a simlab.json (schema_version 1) and return its ``scenarios``
+    list with ``source: "simlab"`` injected into every entry.
+
+    Returns an empty list on any parse/IO error so callers don't need to
+    guard against bad files.
+    """
+    try:
+        data = json.loads(simlab_path.read_text())
+    except Exception:
+        return []
+    out: list[dict] = []
+    for s in data.get("scenarios", []):
+        sc = dict(s)
+        sc["source"] = "simlab"
+        sc.setdefault("scenario_id", sc.get("test_id", "simlab-unknown"))
+        sc.setdefault("kind", "simlab_correctness")
+        sc.setdefault("ok", False)
+        sc.setdefault("duration_s", 0.0)
+        sc.setdefault("raw", {})
+        sc.setdefault("note", "")
+        sc.setdefault("criteria_results", {})
+        sc.setdefault("test_id", None)
+        sc.setdefault("standard_refs", [])
+        out.append(sc)
+    return out
 
 
 def grade(pct: float) -> str:
@@ -209,24 +244,57 @@ def render_html(payload: AuditPayload, template_dir: Path | None = None) -> str:
         autoescape=select_autoescape(["html", "j2"]),
     )
 
-    total = len(payload.scenarios)
-    passed = sum(1 for s in payload.scenarios if s.get("ok", False))
+    # Load simlab scenarios if a simlab report was supplied.
+    simlab_scenarios: list[dict] = []
+    if payload.simlab_report is not None:
+        simlab_scenarios = _load_simlab_scenarios(payload.simlab_report)
+
+    total = len(payload.scenarios) + len(simlab_scenarios)
+    passed = (
+        sum(1 for s in payload.scenarios if s.get("ok", False))
+        + sum(1 for s in simlab_scenarios if s.get("ok", False))
+    )
     pass_pct = round((passed / total * 100) if total > 0 else 100.0, 1)
     g = grade(pass_pct)
     rs = risk_score(payload)
     rc = _risk_color(rs)
 
-    # Annotate each scenario with category
+    # Annotate each stagelab scenario with category and standards info.
     annotated: list[dict] = []
     for s in payload.scenarios:
         cat, _sev = classify(s)
-        annotated.append({**s, "category": cat})
+        test_id = s.get("test_id")
+        std_ref = _standards.lookup(test_id) if test_id else None
+        annotated.append({
+            **s,
+            "category": cat,
+            "std_ref": std_ref,
+            "source": s.get("source", "stagelab"),
+        })
 
-    # Group by category (preserve insertion order)
+    # Annotate simlab scenarios.
+    annotated_simlab: list[dict] = []
+    for s in simlab_scenarios:
+        test_id = s.get("test_id")
+        std_ref = _standards.lookup(test_id) if test_id else None
+        annotated_simlab.append({
+            **s,
+            "category": "Correctness (simlab)",
+            "std_ref": std_ref,
+            "source": "simlab",
+        })
+
+    # Group stagelab scenarios by category (preserve insertion order).
     scenarios_by_category: dict[str, list[dict]] = {}
     for s in annotated:
         cat = s["category"]
         scenarios_by_category.setdefault(cat, []).append(s)
+
+    # Simlab gets its own category bucket, rendered separately in the template.
+    if annotated_simlab:
+        scenarios_by_category["Correctness (simlab)"] = annotated_simlab
+
+    all_scenarios_combined = annotated + annotated_simlab
 
     tmpl = env.get_template("audit_report.html.j2")
     return tmpl.render(
@@ -240,9 +308,69 @@ def render_html(payload: AuditPayload, template_dir: Path | None = None) -> str:
         sut_facts=payload.sut_facts,
         setup_facts=payload.setup_facts,
         scenarios_by_category=scenarios_by_category,
-        all_scenarios=annotated,
+        all_scenarios=all_scenarios_combined,
         recommendations=list(payload.recommendations),
     )
+
+
+def render_json(payload: AuditPayload) -> str:
+    """Return a JSON string with the full audit payload.
+
+    Schema version 1. Use json.dumps(default=str) so Path/datetime objects
+    serialise gracefully.
+
+    When ``payload.simlab_report`` is set, simlab scenarios are merged into
+    the top-level ``scenarios`` list with ``source: "simlab"``.  Stagelab
+    scenarios carry ``source: "stagelab"``.
+    """
+    scenarios_out = []
+    for s in payload.scenarios:
+        test_id = s.get("test_id")
+        std_ref = _standards.lookup(test_id) if test_id else None
+        scenarios_out.append({
+            "scenario_id": s.get("scenario_id", ""),
+            "kind": s.get("kind", ""),
+            "ok": s.get("ok", False),
+            "duration_s": s.get("duration_s", 0.0),
+            "test_id": test_id,
+            "standard_refs": s.get("standard_refs", []),
+            "criteria_results": s.get("criteria_results", {}),
+            "standard": std_ref.standard if std_ref else None,
+            "control": std_ref.control if std_ref else None,
+            "raw": s.get("raw", {}),
+            "source": s.get("source", "stagelab"),
+        })
+
+    # Merge simlab scenarios if supplied.
+    if payload.simlab_report is not None:
+        for s in _load_simlab_scenarios(payload.simlab_report):
+            test_id = s.get("test_id")
+            std_ref = _standards.lookup(test_id) if test_id else None
+            scenarios_out.append({
+                "scenario_id": s.get("scenario_id", ""),
+                "kind": s.get("kind", ""),
+                "ok": s.get("ok", False),
+                "duration_s": s.get("duration_s", 0.0),
+                "test_id": test_id,
+                "standard_refs": s.get("standard_refs", []),
+                "criteria_results": s.get("criteria_results", {}),
+                "standard": std_ref.standard if std_ref else None,
+                "control": std_ref.control if std_ref else None,
+                "raw": s.get("raw", {}),
+                "source": "simlab",
+            })
+
+    doc = {
+        "schema_version": 1,
+        "run_id": payload.run_id,
+        "operator": payload.operator,
+        "config_path": payload.config_path,
+        "scenarios": scenarios_out,
+        "recommendations": list(payload.recommendations),
+        "sut_facts": payload.sut_facts,
+        "setup_facts": payload.setup_facts,
+    }
+    return json.dumps(doc, indent=2, sort_keys=True, default=str)
 
 
 def _render_pdf_to_file(html: str, out_path: Path) -> None:
@@ -266,13 +394,16 @@ def render_pdf(html: str, out_path: Path) -> None:
 
 
 def write(payload: AuditPayload, out_dir: Path, *, render_pdf: bool = True) -> dict:
-    """Write audit.html and (if weasyprint available + render_pdf=True)
-    audit.pdf to out_dir. Returns {"html": Path, "pdf": Path | None}.
+    """Write audit.html, audit.json and (if weasyprint available + render_pdf=True)
+    audit.pdf to out_dir. Returns {"html": Path, "json": Path, "pdf": Path | None}.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     html_content = render_html(payload)
     html_path = out_dir / "audit.html"
     html_path.write_text(html_content, encoding="utf-8")
+
+    json_path = out_dir / "audit.json"
+    json_path.write_text(render_json(payload), encoding="utf-8")
 
     pdf_path: Path | None = None
     if render_pdf:
@@ -286,7 +417,7 @@ def write(payload: AuditPayload, out_dir: Path, *, render_pdf: bool = True) -> d
                 stacklevel=2,
             )
 
-    return {"html": html_path, "pdf": pdf_path}
+    return {"html": html_path, "json": json_path, "pdf": pdf_path}
 
 
 __all__ = [
@@ -296,6 +427,7 @@ __all__ = [
     "risk_score",
     "classify",
     "render_html",
+    "render_json",
     "render_pdf",
     "write",
     "_CATEGORY_MAP",

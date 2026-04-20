@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from shorewall_nft_stagelab import audit_report as ar
+from shorewall_nft_stagelab import standards as _standards
 
 # ---------------------------------------------------------------------------
 # 1. Category mapping covers all known scenario kinds
@@ -161,3 +162,228 @@ def test_load_runs_multi_dir_merges(tmp_path: Path):
     assert len(payload.scenarios) == 2
     # run_id should be the most recent (last in sorted order)
     assert payload.run_id == "2026-04-20T11:00:00Z"
+
+
+# ---------------------------------------------------------------------------
+# 6. HTML renders Test-ID and Standard columns for known test_id
+# ---------------------------------------------------------------------------
+
+
+def test_render_html_test_id_and_standard_columns():
+    """When a scenario has test_id known to standards.TEST_ID, HTML includes both columns."""
+    test_id = "owasp-fw-3-default-deny"
+    assert test_id in _standards.TEST_ID, "precondition: test_id must exist in TEST_ID"
+
+    payload = _make_payload([
+        {
+            "scenario_id": "scan-wan",
+            "kind": "rule_scan",
+            "ok": True,
+            "duration_s": 3.0,
+            "raw": {},
+            "test_id": test_id,
+            "standard_refs": ["owasp/FW-3"],
+            "criteria_results": {},
+            "note": "",
+        }
+    ])
+    html = ar.render_html(payload)
+    assert "Test-ID" in html
+    assert "Standard" in html
+    assert test_id in html
+    ref = _standards.lookup(test_id)
+    assert ref.control in html
+
+
+# ---------------------------------------------------------------------------
+# 7. HTML gracefully handles test_id=None (empty cells, no exception)
+# ---------------------------------------------------------------------------
+
+
+def test_render_html_none_test_id_no_error():
+    """When test_id is None, HTML renders without error and leaves cells empty."""
+    payload = _make_payload([
+        {
+            "scenario_id": "anon-scan",
+            "kind": "rule_scan",
+            "ok": False,
+            "duration_s": 1.0,
+            "raw": {},
+            "test_id": None,
+            "standard_refs": [],
+            "criteria_results": {},
+            "note": "",
+        }
+    ])
+    html = ar.render_html(payload)
+    # No exception; Test-ID column still present in header
+    assert "Test-ID" in html
+    assert "Standard" in html
+    # No stray text from a None test_id
+    assert "None" not in html
+
+
+# ---------------------------------------------------------------------------
+# 8. render_json produces valid JSON with schema_version==1
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# 9. render_html with simlab_report: "Correctness (simlab)" heading present
+# ---------------------------------------------------------------------------
+
+
+def _make_simlab_json(tmp_path: Path, fail_accept: int = 0, fail_drop: int = 0) -> Path:
+    """Write a minimal simlab.json fixture and return the path."""
+    simlab_path = tmp_path / "simlab.json"
+    scenarios = [
+        {
+            "scenario_id": "simlab-fail-accept",
+            "kind": "simlab_correctness",
+            "ok": fail_accept == 0,
+            "duration_s": 0.0,
+            "test_id": "simlab-fail-accept",
+            "standard_refs": ["cc-iso-15408-fdp-iff-1"],
+            "criteria_results": {"fail_accept_is_zero": fail_accept == 0},
+            "raw": {"count": fail_accept},
+            "source": "simlab",
+        },
+        {
+            "scenario_id": "simlab-fail-drop",
+            "kind": "simlab_correctness",
+            "ok": fail_drop <= 2,
+            "duration_s": 0.0,
+            "test_id": "simlab-fail-drop",
+            "standard_refs": ["cc-iso-15408-fdp-iff-1"],
+            "criteria_results": {"fail_drop_within_tolerance": fail_drop <= 2},
+            "raw": {"count": fail_drop},
+            "source": "simlab",
+        },
+    ]
+    import json as _json
+    simlab_path.write_text(_json.dumps({
+        "schema_version": 1,
+        "kind": "simlab-correctness",
+        "run_name": "smoke",
+        "run_ts": None,
+        "summary": {
+            "pass_accept": 10,
+            "pass_drop": 5,
+            "fail_accept": fail_accept,
+            "fail_drop": fail_drop,
+            "total": 10 + 5 + fail_accept + fail_drop,
+            "mismatch_rate": 0.0,
+        },
+        "failures": [],
+        "scenarios": scenarios,
+    }, indent=2))
+    return simlab_path
+
+
+def test_render_html_simlab_section_present(tmp_path: Path) -> None:
+    """render_html with simlab_report set includes 'Correctness (simlab)' heading."""
+    simlab_path = _make_simlab_json(tmp_path)
+    payload = ar.AuditPayload(
+        run_id="test-run",
+        operator="test",
+        config_path="test.yaml",
+        scenarios=tuple([
+            {"scenario_id": "tp1", "kind": "throughput", "ok": True,
+             "duration_s": 5.0, "raw": {}, "note": ""},
+        ]),
+        recommendations=(),
+        sut_facts={},
+        setup_facts={},
+        simlab_report=simlab_path,
+    )
+    html = ar.render_html(payload)
+    assert "Correctness (simlab)" in html
+    assert "simlab-fail-accept" in html
+    assert "simlab-fail-drop" in html
+
+
+def test_render_html_no_simlab_no_section() -> None:
+    """render_html without simlab_report must NOT contain 'Correctness (simlab)'."""
+    payload = _make_payload([
+        {"scenario_id": "tp1", "kind": "throughput", "ok": True,
+         "duration_s": 5.0, "raw": {}, "note": ""},
+    ])
+    html = ar.render_html(payload)
+    assert "Correctness (simlab)" not in html
+
+
+# ---------------------------------------------------------------------------
+# 10. render_json with simlab_report: source tags present on all scenarios
+# ---------------------------------------------------------------------------
+
+
+def test_render_json_with_simlab(tmp_path: Path) -> None:
+    """render_json merges simlab scenarios tagged source='simlab'; stagelab ones
+    get source='stagelab'."""
+    simlab_path = _make_simlab_json(tmp_path)
+    payload = ar.AuditPayload(
+        run_id="test-run",
+        operator="test",
+        config_path="test.yaml",
+        scenarios=tuple([
+            {"scenario_id": "tp1", "kind": "throughput", "ok": True,
+             "duration_s": 5.0, "raw": {}, "note": ""},
+        ]),
+        recommendations=(),
+        sut_facts={},
+        setup_facts={},
+        simlab_report=simlab_path,
+    )
+    doc = json.loads(ar.render_json(payload))
+
+    all_sc = doc["scenarios"]
+    # Must have 1 stagelab + 2 simlab
+    assert len(all_sc) == 3
+
+    stagelab_sc = [s for s in all_sc if s["source"] == "stagelab"]
+    simlab_sc = [s for s in all_sc if s["source"] == "simlab"]
+    assert len(stagelab_sc) == 1
+    assert len(simlab_sc) == 2
+
+    simlab_ids = {s["scenario_id"] for s in simlab_sc}
+    assert simlab_ids == {"simlab-fail-accept", "simlab-fail-drop"}
+
+
+def test_render_json_without_simlab_no_source_tag() -> None:
+    """render_json without simlab_report: stagelab scenarios tagged 'stagelab'."""
+    payload = _make_payload([
+        {"scenario_id": "tp1", "kind": "throughput", "ok": True,
+         "duration_s": 5.0, "raw": {}},
+    ])
+    doc = json.loads(ar.render_json(payload))
+    for s in doc["scenarios"]:
+        assert s["source"] == "stagelab"
+
+
+def test_render_json_valid():
+    """render_json returns valid JSON; schema_version==1; scenarios have expected keys."""
+    payload = _make_payload([
+        {
+            "scenario_id": "tp1",
+            "kind": "throughput",
+            "ok": True,
+            "duration_s": 10.0,
+            "raw": {"gbps": 9.5},
+            "test_id": "owasp-fw-3-default-deny",
+            "standard_refs": ["owasp-fw-3"],
+            "criteria_results": {"min_gbps": True},
+            "note": "",
+        }
+    ])
+    j = ar.render_json(payload)
+    d = json.loads(j)
+
+    assert d["schema_version"] == 1
+    assert d["run_id"] == "test-run"
+    assert len(d["scenarios"]) == 1
+    sc = d["scenarios"][0]
+    assert sc["scenario_id"] == "tp1"
+    assert sc["test_id"] == "owasp-fw-3-default-deny"
+    assert sc["criteria_results"] == {"min_gbps": True}
+    assert sc["standard"] == "owasp"
+    assert sc["control"] == "FW-3"

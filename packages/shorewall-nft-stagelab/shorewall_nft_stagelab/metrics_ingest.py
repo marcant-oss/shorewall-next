@@ -149,9 +149,15 @@ _OID_NAMES: dict[str, str] = {
     "1.3.6.1.2.1.31.1.1.1.6": "if_hc_in_octets", "1.3.6.1.2.1.31.1.1.1.10": "if_hc_out_octets",
     "1.3.6.1.2.1.2.2.1.13": "if_in_discards",    "1.3.6.1.2.1.2.2.1.19": "if_out_discards",
     "1.3.6.1.4.1.2021.10.1.3": "la_load",         "1.3.6.1.2.1.1.3": "sys_uptime",
-    "1.3.6.1.4.1.9586.100.5.2.3.1.4": "vrrp_instance_state",
-    "1.3.6.1.4.1.9586.100.5.2.3.1.2": "vrrp_instance_name",
-    "1.3.6.1.4.1.8072.1.3.2.3.1.2": "pdns_extend_output",
+    "1.3.6.1.4.1.9586.100.5.2.3.1.4":  "vrrp_instance_state",
+    "1.3.6.1.4.1.9586.100.5.2.3.1.2":  "vrrp_instance_name",
+    "1.3.6.1.4.1.9586.100.5.2.3.1.3":  "vrrp_instance_vrid",
+    "1.3.6.1.4.1.9586.100.5.2.3.1.5":  "vrrp_instance_wanted_state",
+    "1.3.6.1.4.1.9586.100.5.2.3.1.7":  "vrrp_instance_effective_priority",
+    "1.3.6.1.4.1.9586.100.5.2.3.1.8":  "vrrp_instance_vips_status",
+    "1.3.6.1.4.1.9586.100.5.2.3.1.12": "vrrp_instance_preempt",
+    "1.3.6.1.4.1.9586.100.5.2.3.1.13": "vrrp_instance_preempt_delay",
+    "1.3.6.1.4.1.8072.1.3.2.3.1.2":    "pdns_extend_output",
 }
 
 

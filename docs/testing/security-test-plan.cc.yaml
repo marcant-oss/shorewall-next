@@ -1,0 +1,310 @@
+# CC (Common Criteria / ISO 15408) catalogue fragment — merged by M1.
+meta:
+  standard: cc-iso-15408
+  standard_title: "Common Criteria (ISO/IEC 15408) — Firewall Protection Profile"
+  profile_ref: "NDcPP v3.0, FWcPP"
+  fragment_owner: b1
+
+tests:
+  - test_id: cc-fdp-iff-1-basic-flow
+    title: "Basic information flow control"
+    sfr: FDP_IFF.1
+    description: >
+      Verify zone-pair accept/drop consistency versus the compiled ruleset
+      using random probes across the target subnet.
+    maps_to_scenario:
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 500
+      test_id: cc-fdp-iff-1-basic-flow
+      standard_refs:
+        - cc-iso-15408-fdp-iff-1
+      acceptance_criteria:
+        fail_accept_count: 0
+        fail_drop_count_max: 2
+    evidence:
+      human_ref: "security-test-plan.md#cc-fdp-iff-1-basic-flow"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fdp-iff-1-basic-flow"
+    status: covered
+
+  - test_id: cc-fdp-iff-1-default-deny
+    title: "Default deny on undefined zone pairs"
+    sfr: FDP_IFF.1.5
+    description: >
+      Traffic to zone pairs with no explicit ACCEPT rule must be dropped.
+      Probes target IP ranges not covered by any policy rule.
+    maps_to_scenario:
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 192.0.2.0/24
+      random_count: 200
+      test_id: cc-fdp-iff-1-default-deny
+      standard_refs:
+        - cc-iso-15408-fdp-iff-1
+      acceptance_criteria:
+        fail_accept_count: 0
+    evidence:
+      human_ref: "security-test-plan.md#cc-fdp-iff-1-default-deny"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fdp-iff-1-default-deny"
+    status: covered
+
+  - test_id: cc-fdp-iff-1-evasion-reject
+    title: "Reject evasion probes (malformed TCP, spoofed IPs)"
+    sfr: FDP_IFF.1
+    description: >
+      Firewall must silently drop TCP NULL, TCP XMAS, TCP FIN-without-SYN,
+      IP-spoofed, and malformed-checksum UDP frames.
+    maps_to_scenario:
+      kind: evasion_probes
+      source: wan-endpoint
+      target_ip: 10.0.0.1
+      probe_types:
+        - tcp_null
+        - tcp_xmas
+        - tcp_fin_no_syn
+        - ip_spoof
+        - udp_malformed_checksum
+      target_port: 80
+      test_id: cc-fdp-iff-1-evasion-reject
+      standard_refs:
+        - cc-iso-15408-fdp-iff-1
+      acceptance_criteria:
+        pass_count: 0
+    evidence:
+      human_ref: "security-test-plan.md#cc-fdp-iff-1-evasion-reject"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fdp-iff-1-evasion-reject"
+    status: covered
+
+  - test_id: cc-fau-gen-1-audit-record
+    title: "Audit record generation"
+    sfr: FAU_GEN.1
+    description: >
+      Per-rule Prometheus counter verification. Counters must increment for
+      each rule that fires during a rule_scan run. Per-packet syslog records
+      are not generated (partial coverage).
+    maps_to_scenario:
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 200
+      test_id: cc-fau-gen-1-audit-record
+      standard_refs:
+        - cc-iso-15408-fau-gen-1
+      acceptance_criteria:
+        prometheus_counter_incremented: true
+    evidence:
+      human_ref: "security-test-plan.md#cc-fau-gen-1-audit-record"
+      machine_ref: "audit.json[scenarios][].metrics"
+    status: partial
+    gap_reason: >
+      Only aggregate Prometheus counters are produced. Per-packet syslog/CEF
+      records are not emitted. A shorewalld CEF/syslog exporter is tracked
+      as a separate open task.
+
+  - test_id: cc-fru-rsa-1-conn-storm
+    title: "Minimum resource allocation under connection storm"
+    sfr: FRU_RSA.1
+    description: >
+      High connection-creation rate must not degrade legitimate throughput
+      below 80% of baseline.
+    maps_to_scenario:
+      kind: conn_storm
+      source: wan-endpoint
+      sink: lan-endpoint
+      target_conns: 100000
+      rate_per_s: 10000
+      hold_s: 30
+      test_id: cc-fru-rsa-1-conn-storm
+      standard_refs:
+        - cc-iso-15408-fru-rsa-1
+      acceptance_criteria:
+        throughput_ratio_min: 0.8
+    evidence:
+      human_ref: "security-test-plan.md#cc-fru-rsa-1-conn-storm"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fru-rsa-1-conn-storm"
+    status: covered
+
+  - test_id: cc-fru-rsa-1-dos-syn-flood
+    title: "Minimum resource allocation under SYN flood"
+    sfr: FRU_RSA.1
+    description: >
+      At most 5% of SYN packets from a flood must reach the sink. The
+      firewall must absorb or drop the remaining 95%+.
+    maps_to_scenario:
+      kind: dos_syn_flood
+      source: wan-endpoint
+      sink: dmz-endpoint
+      duration_s: 10
+      rate_pps: 50000
+      src_ip_range: 100.64.0.0/10
+      dst_port_range: "80,443"
+      expect_max_passed_ratio: 0.05
+      test_id: cc-fru-rsa-1-dos-syn-flood
+      standard_refs:
+        - cc-iso-15408-fru-rsa-1
+      acceptance_criteria:
+        passed_ratio_max: 0.05
+    evidence:
+      human_ref: "security-test-plan.md#cc-fru-rsa-1-dos-syn-flood"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fru-rsa-1-dos-syn-flood"
+    status: covered
+    note: >
+      rate_pps must not exceed STAGELAB_DOS_RATE_CAP_PPS (default 100000).
+      Requires dpdk endpoint. Adjust rate_pps for non-DPDK hardware.
+
+  - test_id: cc-fru-rsa-1-dos-conntrack
+    title: "Minimum resource allocation, conntrack saturation"
+    sfr: FRU_RSA.1
+    description: >
+      Half-open connection flood must not cause kernel OOM or conntrack
+      ENOMEM. The firewall must recover after the flood stops.
+    maps_to_scenario:
+      kind: dos_half_open
+      source: wan-endpoint
+      sink: dmz-endpoint
+      duration_s: 30
+      target_conns: 500000
+      open_rate_per_s: 20000
+      dst_port: 80
+      test_id: cc-fru-rsa-1-dos-conntrack
+      standard_refs:
+        - cc-iso-15408-fru-rsa-1
+      acceptance_criteria:
+        kernel_error_count: 0
+    evidence:
+      human_ref: "security-test-plan.md#cc-fru-rsa-1-dos-conntrack"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fru-rsa-1-dos-conntrack"
+    status: covered
+    note: >
+      Requires dpdk endpoint. open_rate_per_s must not exceed
+      STAGELAB_DOS_RATE_CAP_PPS.
+
+  - test_id: cc-fmt-msa-3-default-values
+    title: "Restrictive default attribute values"
+    sfr: FMT_MSA.3
+    description: >
+      Default-deny policy enforced at base chains; shorewall-nft check
+      compile step succeeds without warnings.
+    maps_to_scenario:
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 100
+      test_id: cc-fmt-msa-3-default-values
+      standard_refs:
+        - cc-iso-15408-fmt-msa-3
+      acceptance_criteria:
+        fail_accept_count: 0
+        base_chain_policy: drop
+    evidence:
+      human_ref: "security-test-plan.md#cc-fmt-msa-3-default-values"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fmt-msa-3-default-values"
+    status: covered
+
+  - test_id: cc-fpt-fls-1-reload-atomicity
+    title: "Preserve secure state during ruleset reload"
+    sfr: FPT_FLS.1
+    description: >
+      Atomic ruleset reload (nft atomic replace) must not disrupt established
+      TCP flows. Retransmissions during the reload window must stay below 100.
+    maps_to_scenario:
+      kind: reload_atomicity
+      source: wan-endpoint
+      sink: lan-endpoint
+      fw_host: "root@fw-primary"
+      duration_s: 60
+      reload_at_s: 20
+      max_retrans_during_reload: 100
+      test_id: cc-fpt-fls-1-reload-atomicity
+      standard_refs:
+        - cc-iso-15408-fpt-fls-1
+      acceptance_criteria:
+        max_retrans_during_reload: 100
+    evidence:
+      human_ref: "security-test-plan.md#cc-fpt-fls-1-reload-atomicity"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fpt-fls-1-reload-atomicity"
+    status: covered
+
+  - test_id: cc-fpt-rcv-3-ha-failover
+    title: "Automated recovery via HA failover"
+    sfr: FPT_RCV.3
+    description: >
+      VRRP failover drill: stop keepalived on the primary FW, measure
+      downtime until traffic flows via the secondary. Downtime must be
+      within 5 seconds.
+    maps_to_scenario:
+      kind: ha_failover_drill
+      source: wan-endpoint
+      sink: lan-endpoint
+      primary_fw_host: "root@fw-primary"
+      secondary_fw_host: "root@fw-secondary"
+      duration_s: 90
+      stop_at_s: 20
+      restart_at_s: 60
+      service_name: keepalived
+      max_downtime_s: 5.0
+      test_id: cc-fpt-rcv-3-ha-failover
+      standard_refs:
+        - cc-iso-15408-fpt-rcv-3
+      acceptance_criteria:
+        max_downtime_s: 5.0
+    evidence:
+      human_ref: "security-test-plan.md#cc-fpt-rcv-3-ha-failover"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fpt-rcv-3-ha-failover"
+    status: covered
+
+  - test_id: cc-fta-ssl-3-long-flow-survival
+    title: "Established-flow survival under conntrack timeout constraints"
+    sfr: FTA_SSL.3
+    description: >
+      Long TCP stream must survive the full duration when conntrack timeout
+      is set above the stream duration. Validates that the firewall does not
+      prematurely terminate established sessions.
+    maps_to_scenario:
+      kind: long_flow_survival
+      source: wan-endpoint
+      sink: lan-endpoint
+      fw_host: "root@fw-primary"
+      duration_s: 300
+      sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
+      sysctl_value: 600
+      expect_flow_dies: false
+      test_id: cc-fta-ssl-3-long-flow-survival
+      standard_refs:
+        - cc-iso-15408-fta-ssl-3
+      acceptance_criteria:
+        flow_survived: true
+    evidence:
+      human_ref: "security-test-plan.md#cc-fta-ssl-3-long-flow-survival"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fta-ssl-3-long-flow-survival"
+    status: covered
+
+out_of_scope:
+  - sfr_family: "FCS_* (Cryptographic support)"
+    reason: >
+      Firewall is a stateless/stateful packet filter. TLS/IPsec crypto stack
+      testing belongs to a separate component evaluation.
+  - sfr_family: "ADV_* (Development)"
+    reason: >
+      Requires formal design documentation review and developer correspondence
+      evidence. No test automation applies.
+  - sfr_family: "ATE_* (Tests)"
+    reason: >
+      Meta-level; covered by the existence of this framework, not by
+      individual scenarios.
+  - sfr_family: "FIA_* (Identification and authentication)"
+    reason: >
+      Management-plane concern. The firewall does not authenticate forwarded
+      flows.
+  - sfr_family: "FTP_ITC.1 (Inter-TSF channel)"
+    reason: >
+      VPN/IPsec between trust domains is not in scope for the packet-filter
+      test plan.
+  - sfr_family: "FPT_STM.1 (Reliable timestamps)"
+    reason: >
+      NTP synchronisation is an OS/kernel concern; not tested here.
+  - sfr_family: "AGD_* (Guidance documents)"
+    reason: "Documentation review; not automated."
+  - sfr_family: "ALC_* (Lifecycle support)"
+    reason: "Supply-chain and process concerns; not testable with this framework."

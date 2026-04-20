@@ -72,7 +72,7 @@
     <h3>{{ cat }}</h3>
     <table>
       <thead>
-        <tr><th>Scenario</th><th>Kind</th><th>Status</th><th>Note</th><th>Details</th></tr>
+        <tr><th>Scenario</th><th>Kind</th><th>Status</th><th>Test-ID</th><th>Standard</th><th>Note</th><th>Details</th></tr>
       </thead>
       <tbody>
         {% for s in cat_scenarios %}
@@ -80,6 +80,8 @@
             <td><code>{{ s.scenario_id }}</code></td>
             <td><code>{{ s.kind }}</code></td>
             <td class="{{ 'pass' if s.ok else 'fail' }}">{{ 'PASS' if s.ok else 'FAIL' }}</td>
+            <td>{% if s.test_id %}<code>{{ s.test_id }}</code>{% endif %}</td>
+            <td>{% if s.std_ref %}{{ s.std_ref.standard }}&nbsp;<code>{{ s.std_ref.control }}</code>{% endif %}</td>
             <td>{{ s.note }}</td>
             <td><a href="#detail-{{ s.scenario_id }}">see details</a></td>
           </tr>

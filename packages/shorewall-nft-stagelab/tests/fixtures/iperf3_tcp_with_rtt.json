@@ -1,0 +1,21 @@
+{
+  "start": {"version": "iperf 3.12"},
+  "intervals": [
+    {"streams": [{"rtt": 200, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 300, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 250, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 500, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 180, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 220, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 270, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 310, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 190, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 900, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 950, "bits_per_second": 1000000000.0}]},
+    {"streams": [{"rtt": 1800, "bits_per_second": 1000000000.0}]}
+  ],
+  "end": {
+    "sum_sent": {"bytes": 1200000000, "bits_per_second": 1000000000.0, "retransmits": 5, "seconds": 10.0},
+    "sum_received": {"bytes": 1200000000, "bits_per_second": 1000000000.0, "seconds": 10.0}
+  }
+}

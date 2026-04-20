@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from shorewall_nft_stagelab.config import StagelabConfig
+from shorewall_nft_stagelab.controller import _compute_syn_pass_ratio_delta
 from shorewall_nft_stagelab.scenarios import (
     AgentCommand,
     SynFloodDosRunner,
@@ -240,3 +241,147 @@ def test_syn_flood_summarize_fail_over_threshold():
     }])
     assert result.ok is False
     assert result.raw["passed_ratio"] == pytest.approx(0.10)
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — config parses with new baseline_window_s / dos_window_s fields
+# ---------------------------------------------------------------------------
+
+
+def test_syn_flood_windowed_config_parse():
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: tester
+            address: root@192.168.4.73
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: dpdk-src
+            host: tester
+            mode: dpdk
+            pci_addr: "0000:01:00.0"
+            dpdk_cores: [2, 3]
+            hugepages_gib: 4
+            trex_role: client
+            ipv4: 10.0.0.1/24
+          - name: dpdk-sink
+            host: tester
+            mode: dpdk
+            pci_addr: "0000:01:00.1"
+            dpdk_cores: [4, 5]
+            hugepages_gib: 4
+            trex_role: server
+            ipv4: 10.0.0.200/24
+
+        dos_target_allowlist:
+          - 10.0.0.0/24
+
+        scenarios:
+          - id: syn-flood-windowed
+            kind: dos_syn_flood
+            source: dpdk-src
+            sink: dpdk-sink
+            duration_s: 10
+            rate_pps: 500000
+            src_ip_range: 192.0.2.0/24
+            baseline_window_s: 5.0
+            dos_window_s: 10.0
+            acceptance_criteria:
+              syn_pass_ratio_delta_max: 0.05
+
+        report:
+          output_dir: /tmp/out
+    """)
+    cfg = _load(yaml_text)
+    sc = cfg.scenarios[0]
+    assert sc.baseline_window_s == pytest.approx(5.0)
+    assert sc.dos_window_s == pytest.approx(10.0)
+    assert sc.acceptance_criteria["syn_pass_ratio_delta_max"] == pytest.approx(0.05)
+
+
+def test_syn_flood_windowed_defaults():
+    """Without window fields, defaults of 10.0 are used."""
+    cfg = _load(_BASE_YAML)
+    sc = cfg.scenarios[0]
+    assert sc.baseline_window_s == pytest.approx(10.0)
+    assert sc.dos_window_s == pytest.approx(10.0)
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — syn_pass_ratio_delta: baseline=0.01, dos=0.20 → delta=0.19 (regressed)
+# ---------------------------------------------------------------------------
+
+
+def test_syn_pass_ratio_delta_regressed():
+    """baseline=0.01, dos=0.20 → delta=0.19; with threshold 0.05 → regressed=True."""
+    delta = _compute_syn_pass_ratio_delta(baseline_pass_ratio=0.01, dos_pass_ratio=0.20)
+    assert delta == pytest.approx(0.19)
+    threshold = 0.05
+    assert delta > threshold  # syn_pass_ratio_regressed would be True
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — syn_pass_ratio_delta: delta below threshold → not regressed
+# ---------------------------------------------------------------------------
+
+
+def test_syn_pass_ratio_delta_not_regressed():
+    """baseline=0.01, dos=0.02 → delta=0.01; below threshold 0.05 → regressed=False."""
+    delta = _compute_syn_pass_ratio_delta(baseline_pass_ratio=0.01, dos_pass_ratio=0.02)
+    assert delta == pytest.approx(0.01)
+    threshold = 0.05
+    assert delta <= threshold  # syn_pass_ratio_regressed would be False
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — window fields validate: <= 0 raises ValidationError
+# ---------------------------------------------------------------------------
+
+
+def test_syn_flood_window_zero_rejected():
+    from pydantic import ValidationError
+
+    yaml_text = textwrap.dedent("""\
+        hosts:
+          - name: tester
+            address: root@192.168.4.73
+
+        dut:
+          kind: external
+
+        endpoints:
+          - name: dpdk-src
+            host: tester
+            mode: dpdk
+            pci_addr: "0000:01:00.0"
+            dpdk_cores: [2, 3]
+            hugepages_gib: 4
+            trex_role: client
+          - name: dpdk-sink
+            host: tester
+            mode: dpdk
+            pci_addr: "0000:01:00.1"
+            dpdk_cores: [4, 5]
+            hugepages_gib: 4
+            trex_role: server
+
+        dos_target_allowlist:
+          - 0.0.0.0/0
+
+        scenarios:
+          - id: syn-bad-window
+            kind: dos_syn_flood
+            source: dpdk-src
+            sink: dpdk-sink
+            rate_pps: 100000
+            src_ip_range: 192.0.2.0/24
+            baseline_window_s: 0.0
+
+        report:
+          output_dir: /tmp/out
+    """)
+    with pytest.raises(ValidationError) as exc_info:
+        _load(yaml_text)
+    assert "window duration must be > 0" in str(exc_info.value)

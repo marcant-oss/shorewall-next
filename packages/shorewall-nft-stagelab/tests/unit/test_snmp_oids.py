@@ -55,6 +55,15 @@ def test_resolve_bundle_returns_correct_list() -> None:
     assert oids.resolve_bundle("system") is oids.BUNDLE_SYSTEM
     assert oids.resolve_bundle("vrrp") is oids.BUNDLE_VRRP
     assert oids.resolve_bundle("pdns") is oids.BUNDLE_PDNS
+    assert oids.resolve_bundle("vrrp_extended") is oids.BUNDLE_VRRP_EXTENDED
+
+
+def test_vrrp_extended_bundle_present_and_well_formed() -> None:
+    assert "vrrp_extended" in oids.BUNDLES
+    bundle = oids.BUNDLE_VRRP_EXTENDED
+    assert len(bundle) == 6, f"Expected 6 OIDs, got {len(bundle)}"
+    for oid in bundle:
+        assert _OID_RE.match(oid), f"OID {oid!r} does not match OID pattern"
 
 
 def test_resolve_bundle_unknown_raises_keyerror_with_valid_names() -> None:

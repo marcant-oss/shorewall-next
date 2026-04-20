@@ -1,4 +1,10 @@
-"""tcpkali wrapper: connection-storm generation and result parsing."""
+"""DEPRECATED — tcpkali wrapper kept for back-compat only.
+
+New code should use `trafgen_pyconn` (pure-Python asyncio). tcpkali is
+no longer a required external dependency. If tcpkali is present on the
+testhost, this module still works — but no scenario handler selects it
+by default.
+"""
 
 from __future__ import annotations
 

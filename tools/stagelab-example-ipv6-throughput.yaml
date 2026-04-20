@@ -1,0 +1,81 @@
+# Example: IPv6 throughput scenarios — security-test-plan, stream C3.
+# Exercises existing ThroughputScenario against an IPv6-only endpoint pair.
+# No code changes needed — Endpoint + ThroughputScenario already support IPv6.
+#
+# Topology:
+#   tester01 (192.168.203.93) — client side, native-mode on eth2 VLAN 13, IPv6 ULA
+#   tester02 (192.168.203.74) — server side, native-mode on eth2 VLAN 13, IPv6 ULA
+#
+# NOTE: This config requires physical interfaces on tester01/tester02 and will
+# not run in a local-only environment.  It is a TEMPLATE — adjust NIC names,
+# VLAN IDs, and ULA prefixes to match the deployment.
+
+hosts:
+  - name: tester01
+    address: root@192.168.203.93
+    work_dir: /root/shorewall-nft
+
+  - name: tester02
+    address: root@192.168.203.74
+    work_dir: /root/shorewall-nft
+
+dut:
+  kind: external
+
+endpoints:
+  # Dual-stack endpoints: native mode requires ipv4 to be set (topology validation).
+  # The iperf3 scenarios below bind to the IPv6 address so all traffic is IPv6-only.
+  - name: v6-client
+    host: tester01
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: "10.0.13.100/24"
+    ipv4_gw: "10.0.13.200"
+    ipv6: "fd00:10:0:13::100/64"
+    ipv6_gw: "fd00:10:0:13::200"
+    rss_queues: 4
+    irq_affinity: [2, 3]
+
+  - name: v6-server
+    host: tester02
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: "10.0.13.200/24"
+    ipv4_gw: "10.0.13.100"
+    ipv6: "fd00:10:0:13::200/64"
+    ipv6_gw: "fd00:10:0:13::100"
+    rss_queues: 4
+    irq_affinity: [2, 3]
+
+scenarios:
+  - id: ipv6-tcp-throughput
+    kind: throughput
+    source: v6-client
+    sink: v6-server
+    proto: tcp
+    duration_s: 30
+    parallel: 4
+    expect_min_gbps: 8.0
+    test_id: perf-ipv6-tcp-throughput
+    standard_refs: [nist-800-53-sc-7]
+    acceptance_criteria:
+      min_gbps: 8.0
+      max_retrans_ratio: 0.005
+
+  - id: ipv6-udp-throughput
+    kind: throughput
+    source: v6-client
+    sink: v6-server
+    proto: udp
+    duration_s: 20
+    parallel: 2
+    expect_min_gbps: 5.0
+    test_id: perf-ipv6-udp-throughput
+    standard_refs: [nist-800-53-sc-7]
+    acceptance_criteria:
+      min_gbps: 5.0
+
+report:
+  output_dir: /tmp/stagelab-ipv6-throughput
