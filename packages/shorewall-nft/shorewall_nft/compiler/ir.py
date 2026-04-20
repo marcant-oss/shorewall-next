@@ -24,6 +24,11 @@ from shorewall_nft.nft.dns_sets import (
     parse_dnsnames_file,
     qname_to_set_name,
 )
+from shorewall_nft.nft.nfsets import (
+    NfSetRegistry,
+    build_nfset_registry,
+    nfset_to_set_name,
+)
 
 
 class Verdict(Enum):
@@ -122,6 +127,11 @@ class FirewallIR:
     # registry carries the extra metadata (secondary qnames) needed by
     # shorewalld's PullResolver to actively maintain those sets.
     dnsr_registry: DnsrRegistry = field(default_factory=DnsrRegistry)
+    # Named dynamic nft sets from the ``nfsets`` config file.  Each entry
+    # declares a backend (dnstap, resolver, ip-list, ip-list-plain) and a
+    # list of hosts/providers.  The emitter declares the nft sets; shorewalld
+    # populates them at runtime via ``NfSetsManager``.
+    nfset_registry: NfSetRegistry = field(default_factory=NfSetRegistry)
 
     def add_chain(self, chain: Chain) -> None:
         self.chains[chain.name] = chain
@@ -267,6 +277,10 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
             default_size=ir.dns_registry.default_size,
         ):
             ir.dns_registry.add_spec(spec)
+
+    # Named dynamic nft sets from the ``nfsets`` config file, if present.
+    if getattr(config, "nfsets", None):
+        ir.nfset_registry = build_nfset_registry(config.nfsets)
 
     # Load custom macros (user-defined take precedence)
     _load_custom_macros(config.macros)
@@ -800,6 +814,82 @@ def _rewrite_dnsr_spec(
     return f"{prefix}{sentinel_negate}+{set_name}"
 
 
+def _spec_contains_nfset_token(spec: str) -> bool:
+    """True if *spec* contains an ``nfset:name`` token in any position.
+
+    Covers every shape the rule parser accepts:
+
+    * ``nfset:name``          — bare
+    * ``!nfset:name``         — whole-spec negation
+    * ``zone:nfset:name``     — zone-prefixed
+    * ``zone:!nfset:name``    — zone-prefixed with inner negation
+
+    Used as a cheap pre-filter so the rewriter below only runs when
+    actually needed.
+    """
+    return (
+        spec.startswith("nfset:")
+        or spec.startswith("!nfset:")
+        or ":nfset:" in spec
+        or ":!nfset:" in spec
+    )
+
+
+def _rewrite_nfset_spec(
+    spec: str,
+    registry: NfSetRegistry,
+    family: str,
+) -> str:
+    """Rewrite an ``nfset:name`` token in *spec* to the nft set sentinel.
+
+    Converts ``net:nfset:myname`` → ``net:+nfset_myname_v4`` (or ``_v6``
+    depending on *family*).  Preserves the zone prefix and any negation
+    marker in the same position they occupied in the original spec.
+
+    Multi-value ``nfset:a,b`` is **not** handled here — multi-set
+    expansion is done by the caller before invoking this function (one
+    clone per set name, each with a single name).
+
+    Raises :exc:`ValueError` if the logical name is not registered in
+    *registry*.
+    """
+    prefix = ""
+    body = spec
+    sentinel_negate = ""
+
+    if body.startswith("nfset:"):
+        name = body[6:]
+    elif body.startswith("!nfset:"):
+        sentinel_negate = "!"
+        name = body[7:]
+    else:
+        colon = body.find(":")
+        if colon < 0:
+            return spec
+        prefix = body[: colon + 1]
+        rest = body[colon + 1:]
+        if rest.startswith("nfset:"):
+            name = rest[6:]
+        elif rest.startswith("!nfset:"):
+            sentinel_negate = "!"
+            name = rest[7:]
+        else:
+            return spec
+
+    # Strip angle brackets (IPv6 shorewall6 syntax, rare but valid).
+    name = name.rstrip(">").lstrip("<")
+    if not name:
+        return spec
+
+    if name not in registry.set_names:
+        raise ValueError(
+            f"nfset:{name!r} is not declared in the nfsets config file "
+            f"(known sets: {sorted(registry.set_names)})")
+
+    set_name = nfset_to_set_name(name, family)
+    return f"{prefix}{sentinel_negate}+{set_name}"
+
+
 def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
                    zones: ZoneModel) -> None:
     """Process firewall rules into chain rules."""
@@ -811,6 +901,95 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
         action_str = cols[0]
         source_spec_raw = cols[1] if len(cols) > 1 else "all"
         dest_spec_raw = cols[2] if len(cols) > 2 else "all"
+
+        # nfset-token pre-pass: must run BEFORE the dns: pre-pass so that
+        # ``+nfset_*`` sentinels are already in place when the dns: rewriter
+        # runs (the dns: rewriter must not accidentally touch them).
+        #
+        # Two-phase expansion:
+        # 1. Multi-name ``nfset:a,b,c`` → one clone per name (same pattern as
+        #    zone-list expansion).  Each clone carries a single ``nfset:X``.
+        # 2. Single-name ``nfset:X`` → two family clones (v4, v6), rewritten
+        #    to ``+nfset_X_v4`` / ``+nfset_X_v6`` sentinels.  The recursive
+        #    call to _process_rules then sees no nfset token and falls through
+        #    to the dns: pre-pass unaffected.
+        _src_has_nfset = _spec_contains_nfset_token(source_spec_raw)
+        _dst_has_nfset = _spec_contains_nfset_token(dest_spec_raw)
+
+        if _src_has_nfset or _dst_has_nfset:
+            # Phase 1: extract comma-separated name list from each spec.
+            def _nfset_name_list(spec: str) -> list[str]:
+                """Return comma-separated names inside the nfset:... token."""
+                body = spec
+                for pfx in ("nfset:", "!nfset:"):
+                    if body.startswith(pfx):
+                        raw = body[len(pfx):]
+                        return [n.strip() for n in raw.split(",") if n.strip()]
+                colon = body.find(":")
+                if colon >= 0:
+                    rest = body[colon + 1:]
+                    for pfx in ("nfset:", "!nfset:"):
+                        if rest.startswith(pfx):
+                            raw = rest[len(pfx):]
+                            return [n.strip() for n in raw.split(",") if n.strip()]
+                return []
+
+            def _nfset_replace_names(spec: str, single_name: str) -> str:
+                """Replace the (possibly multi-name) nfset token with one name."""
+                return re.sub(
+                    r"((?:!?)nfset:)[^\s>:]+",
+                    lambda m: m.group(1) + single_name,
+                    spec,
+                )
+
+            src_names = _nfset_name_list(source_spec_raw) if _src_has_nfset else [None]
+            dst_names = _nfset_name_list(dest_spec_raw) if _dst_has_nfset else [None]
+
+            # Only expand if multi-name (>1 in either list) — single-name
+            # falls through to Phase 2 below (same iteration, one clone).
+            _needs_clone = len(src_names) > 1 or len(dst_names) > 1
+            if _needs_clone:
+                for sn in src_names:
+                    for dn in dst_names:
+                        new_cols = list(cols)
+                        if sn is not None:
+                            new_cols[1] = _nfset_replace_names(source_spec_raw, sn)
+                        if dn is not None:
+                            if len(new_cols) > 2:
+                                new_cols[2] = _nfset_replace_names(dest_spec_raw, dn)
+                            else:
+                                new_cols.append(_nfset_replace_names(dest_spec_raw, dn))
+                        expanded_line = ConfigLine(
+                            columns=new_cols,
+                            file=line.file,
+                            lineno=line.lineno,
+                            comment_tag=line.comment_tag,
+                            section=line.section,
+                            raw=line.raw,
+                            format_version=line.format_version,
+                        )
+                        _process_rules(ir, [expanded_line], zones)
+                continue
+
+            # Phase 2: single-name nfset token → family clone + rewrite.
+            for family in ("v4", "v6"):
+                new_cols = list(cols)
+                new_cols[1] = _rewrite_nfset_spec(
+                    source_spec_raw, ir.nfset_registry, family)
+                if len(new_cols) > 2:
+                    new_cols[2] = _rewrite_nfset_spec(
+                        dest_spec_raw, ir.nfset_registry, family)
+                expanded_line = ConfigLine(
+                    columns=new_cols,
+                    file=line.file,
+                    lineno=line.lineno,
+                    comment_tag=line.comment_tag,
+                    section=line.section,
+                    raw=line.raw,
+                    format_version=line.format_version,
+                )
+                _process_rules(ir, [expanded_line], zones)
+            continue
 
         # DNS-token pre-pass: if SOURCE or DEST carries a ``dns:HOST`` or
         # ``dnsr:HOST[,HOST…]`` token, clone the rule into two

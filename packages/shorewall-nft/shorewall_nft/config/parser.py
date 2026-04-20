@@ -74,6 +74,10 @@ class ShorewalConfig:
     # empty timeout sets and shorewalld populates at runtime from
     # dnstap/pbdns frames. See docs/roadmap/shorewalld.md.
     dnsnames: list[ConfigLine] = field(default_factory=list)
+    # Named dynamic nft sets backed by various providers (dnstap,
+    # resolver, ip-list, ip-list-plain). Declared once here and
+    # referenced in rules as ``nfset:name``.
+    nfsets: list[ConfigLine] = field(default_factory=list)
     macros: dict[str, list[ConfigLine]] = field(default_factory=dict)
     # Line-based extension scripts — raw line lists so the structured
     # blob can round-trip them without pretending they have columns.
@@ -154,7 +158,7 @@ class ConfigParser:
                      # - scfilter:   source CIDR filter
                      "arprules", "proxyarp", "proxyndp", "ecn",
                      "nfacct", "rawnat", "scfilter",
-                     "blacklist", "dnsnames"):
+                     "blacklist", "dnsnames", "nfsets"):
             path = self.config_dir / name
             if path.exists():
                 lines = self._parse_columnar(path)

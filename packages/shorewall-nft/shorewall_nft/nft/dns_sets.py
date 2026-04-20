@@ -29,6 +29,10 @@ import dataclasses
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from shorewall_nft.nft.nfsets import NfSetRegistry
 
 # nftables identifier limit: 31 chars including trailing NUL on older
 # kernels, 255 on modern ones. We target 31 for maximum compatibility.
@@ -68,6 +72,13 @@ class DnsSetSpec:
     materialise as an nft set, False for ``dnsr:`` secondaries that
     only need to be in the allowlist so the tap filter passes them
     through to the primary's set via tracker alias.
+
+    ``set_name`` overrides the nft set name for this qname.  When set,
+    shorewalld writes resolved IPs into the named nfset instead of the
+    auto-derived ``dns_<qname>_v4/v6`` sets.  Used by
+    :func:`nfset_registry_to_dns_registries` to bridge ``nfsets``
+    config entries into the DNS tracker pipeline.  ``None`` (default)
+    means use the standard ``qname_to_set_name()`` derivation.
     """
 
     qname: str                  # canonical lower-case form, no trailing dot
@@ -76,6 +87,7 @@ class DnsSetSpec:
     size: int = DEFAULT_SET_SIZE
     comment: str = ""
     declare_set: bool = True
+    set_name: str | None = None
 
 
 @dataclass
@@ -131,6 +143,41 @@ class DnsSetRegistry:
     def add_spec(self, spec: DnsSetSpec) -> None:
         """Register or replace a spec from the ``dnsnames`` config file."""
         self.specs[canonical_qname(spec.qname)] = spec
+
+    def add_with_target(
+        self,
+        qname: str,
+        set_name: str,
+        *,
+        ttl_floor: int | None = None,
+        ttl_ceil: int | None = None,
+        size: int | None = None,
+        comment: str = "",
+    ) -> DnsSetSpec:
+        """Register *qname* to populate a named nfset instead of its own set.
+
+        Creates a :class:`DnsSetSpec` with ``set_name`` overriding the nft
+        set that shorewalld writes resolved IPs into.  This allows multiple
+        qnames to share a single named nft set declared by the ``nfsets``
+        config file.
+
+        ``declare_set=False`` is used because the nft set is declared by
+        the nfsets emitter path, not the dns-set emitter path.
+
+        Returns the newly created (or replaced) spec.
+        """
+        qn = canonical_qname(qname)
+        spec = DnsSetSpec(
+            qname=qn,
+            ttl_floor=ttl_floor if ttl_floor is not None else self.default_ttl_floor,
+            ttl_ceil=ttl_ceil if ttl_ceil is not None else self.default_ttl_ceil,
+            size=size if size is not None else self.default_size,
+            comment=comment,
+            declare_set=False,
+            set_name=set_name,
+        )
+        self.specs[qn] = spec
+        return spec
 
     def set_names(self, qname: str) -> tuple[str, str]:
         """Return ``(v4_name, v6_name)`` for a hostname.
@@ -230,6 +277,54 @@ class DnsrRegistry:
                 ttl_floor=self.default_ttl_floor,
                 ttl_ceil=self.default_ttl_ceil,
                 size=self.default_size,
+                pull_enabled=pull_enabled,
+            )
+        else:
+            existing = self.groups[pqn]
+            seen = set(existing.qnames)
+            for q in qnames:
+                cq = canonical_qname(q)
+                if cq not in seen:
+                    existing.qnames.append(cq)
+                    seen.add(cq)
+            if pull_enabled and not existing.pull_enabled:
+                existing.pull_enabled = True
+        return self.groups[pqn]
+
+    def add_with_target(
+        self,
+        primary: str,
+        qnames: list[str],
+        set_name: str,
+        *,
+        pull_enabled: bool = True,
+        ttl_floor: int | None = None,
+        ttl_ceil: int | None = None,
+        size: int | None = None,
+        comment: str = "",
+    ) -> "DnsrGroup":
+        """Register a pull-resolver group that populates a named nfset.
+
+        Equivalent to :meth:`add_from_rule` but records ``set_name`` in
+        the group's ``comment`` field (as a ``nfset_target=<name>``
+        annotation) so the shorewalld-side tracker can route IPs into
+        the correct nft set instead of the default ``dns_<primary>``
+        set.
+
+        Returns the created or extended :class:`DnsrGroup`.
+        """
+        pqn = canonical_qname(primary)
+        annotated_comment = f"nfset_target={set_name}"
+        if comment:
+            annotated_comment = f"{annotated_comment} {comment}"
+        if pqn not in self.groups:
+            self.groups[pqn] = DnsrGroup(
+                primary_qname=pqn,
+                qnames=list(dict.fromkeys(canonical_qname(q) for q in qnames)),
+                ttl_floor=ttl_floor if ttl_floor is not None else self.default_ttl_floor,
+                ttl_ceil=ttl_ceil if ttl_ceil is not None else self.default_ttl_ceil,
+                size=size if size is not None else self.default_size,
+                comment=annotated_comment,
                 pull_enabled=pull_enabled,
             )
         else:
@@ -777,3 +872,61 @@ def _int_or_default(value: str, default: int) -> int:
         return int(v)
     except ValueError:
         return default
+
+
+# ---------------------------------------------------------------------------
+# nfset ↔ DNS registry bridge
+# ---------------------------------------------------------------------------
+
+
+def nfset_registry_to_dns_registries(
+    nfsets: "NfSetRegistry",
+) -> "tuple[DnsSetRegistry, DnsrRegistry]":
+    """Extract DNS-backed entries from *nfsets* into tracker-ready registries.
+
+    For each :class:`~shorewall_nft.nft.nfsets.NfSetEntry`:
+
+    * ``backend == "dnstap"`` → each host in ``entry.hosts`` is registered
+      via :meth:`DnsSetRegistry.add_with_target` with ``set_name`` pointing
+      to both the ``_v4`` and ``_v6`` nfset variants.
+    * ``backend == "resolver"`` → each host is registered via
+      :meth:`DnsrRegistry.add_with_target`, forwarding ``dns_servers``,
+      ``refresh``, and ``dnstype`` as the comment annotation.
+    * ``backend == "ip-list"`` / ``"ip-list-plain"`` → skipped; handled by
+      ``NfSetsManager`` in Wave 3.
+
+    Both registries use ``declare_set=False`` because the nft sets are
+    declared by :func:`~shorewall_nft.nft.nfsets.emit_nfset_declarations`,
+    not by the dns-set emitter.
+
+    Returns ``(DnsSetRegistry, DnsrRegistry)``.
+    """
+    # Import at call time to avoid circular import (nfsets.py imports from dns_sets.py)
+    from shorewall_nft.nft.nfsets import nfset_to_set_name
+
+    dns_reg = DnsSetRegistry()
+    dnsr_reg = DnsrRegistry()
+
+    for entry in nfsets.entries:
+        if entry.backend == "dnstap":
+            for host in entry.hosts:
+                for family in ("v4", "v6"):
+                    target = nfset_to_set_name(entry.name, family)
+                    dns_reg.add_with_target(
+                        qname=host,
+                        set_name=target,
+                        comment=f"nfset:{entry.name}",
+                    )
+        elif entry.backend == "resolver":
+            for family in ("v4", "v6"):
+                target = nfset_to_set_name(entry.name, family)
+                dnsr_reg.add_with_target(
+                    primary=entry.hosts[0] if entry.hosts else entry.name,
+                    qnames=entry.hosts,
+                    set_name=target,
+                    pull_enabled=True,
+                    comment=f"nfset:{entry.name}",
+                )
+        # ip-list / ip-list-plain: handled by NfSetsManager (Wave 3).
+
+    return dns_reg, dnsr_reg

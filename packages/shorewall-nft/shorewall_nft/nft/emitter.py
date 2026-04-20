@@ -109,6 +109,22 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
             declared_sets.add(qname_to_set_name(spec.qname, "v4"))
             declared_sets.add(qname_to_set_name(spec.qname, "v6"))
 
+    # Named dynamic nft sets from the ``nfsets`` config file, populated at
+    # runtime by shorewalld's NfSetsManager.  Declared here so the compiled
+    # ruleset can reference them via ``@nfset_<name>_v4`` / ``_v6``.
+    _nfset_registry = getattr(ir, "nfset_registry", None)
+    if _nfset_registry and _nfset_registry.entries:
+        from shorewall_nft.nft.nfsets import (
+            emit_nfset_declarations,
+            nfset_to_set_name,
+        )
+        nfset_lines = emit_nfset_declarations(_nfset_registry)
+        if nfset_lines:
+            lines.extend(nfset_lines)
+        for entry in _nfset_registry.entries:
+            declared_sets.add(nfset_to_set_name(entry.name, "v4"))
+            declared_sets.add(nfset_to_set_name(entry.name, "v6"))
+
     _declare_missing_sets(lines, ir, declared_sets)
 
     # Dynamic blacklist set (with timeout support)
