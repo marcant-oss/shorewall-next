@@ -539,6 +539,7 @@ def _notify_shorewalld(
     socket_path: str,
     dns_reg=None,
     dnsr_reg=None,
+    nfset_reg=None,
 ) -> dict:
     """Send register-instance or deregister-instance to shorewalld.
 
@@ -564,6 +565,13 @@ def _notify_shorewalld(
         if dns_reg is not None or dnsr_reg is not None:
             from shorewall_nft.nft.dns_sets import registry_to_payload
             req.update(registry_to_payload(dns_reg, dnsr_reg))
+        # Always include nfsets key so shorewalld can distinguish "empty
+        # registry" from "no nfsets support in this compiler version".
+        from shorewall_nft.nft.nfsets import nfset_registry_to_payload
+        _nfsets_payload: dict = {}
+        if nfset_reg is not None and nfset_reg.entries:
+            _nfsets_payload = nfset_registry_to_payload(nfset_reg)
+        req["nfsets"] = _nfsets_payload
     elif action == "deregister":
         req = {"cmd": "deregister-instance", "name": instance_name}
     else:
@@ -656,12 +664,13 @@ def _try_notify_shorewalld(
     has_dns_sets: bool,
     dns_reg=None,
     dnsr_reg=None,
+    nfset_reg=None,
 ) -> None:
     """Send notify + classify the outcome in one call."""
     try:
         resp = _notify_shorewalld(
             action, instance_name, config_dir, netns, socket_path,
-            dns_reg=dns_reg, dnsr_reg=dnsr_reg)
+            dns_reg=dns_reg, dnsr_reg=dnsr_reg, nfset_reg=nfset_reg)
         if not resp.get("ok", False):
             raise RuntimeError(resp.get("error", "unknown daemon error"))
         _report_shorewalld_result(
@@ -996,6 +1005,7 @@ def start(directory, netns, shorewalld_socket, instance_name,
     # ── Step 3b: register instance with shorewalld ───────────────────
     _dns_reg = getattr(ir, "dns_registry", None)
     _dnsr_reg = getattr(ir, "dnsr_registry", None)
+    _nfset_reg = getattr(ir, "nfset_registry", None)
     _has_dns = bool(
         (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups)
     )
@@ -1012,7 +1022,7 @@ def start(directory, netns, shorewalld_socket, instance_name,
         _try_notify_shorewalld(
             s, "register", _instance, cfg_primary, _reg_netns,
             shorewalld_socket, _has_dns,
-            dns_reg=_dns_reg, dnsr_reg=_dnsr_reg)
+            dns_reg=_dns_reg, dnsr_reg=_dnsr_reg, nfset_reg=_nfset_reg)
 
     # ── Step 4: proxy-ARP / NDP ───────────────────────────────────────
     with prog.step("Proxy-ARP / NDP") as s:
@@ -1199,6 +1209,7 @@ def _apply_and_register(
 
     _dns_reg = getattr(ir, "dns_registry", None)
     _dnsr_reg = getattr(ir, "dnsr_registry", None)
+    _nfset_reg = getattr(ir, "nfset_registry", None)
     _has_dns = bool(
         (_dns_reg and _dns_reg.specs) or (_dnsr_reg and _dnsr_reg.groups)
     )
@@ -1253,7 +1264,7 @@ def _apply_and_register(
     _try_notify_shorewalld(
         None, "register", _instance, cfg_primary, _reg_netns,
         shorewalld_socket, _has_dns,
-        dns_reg=_dns_reg, dnsr_reg=_dnsr_reg)
+        dns_reg=_dns_reg, dnsr_reg=_dnsr_reg, nfset_reg=_nfset_reg)
 
 
 @cli.command()
