@@ -43,6 +43,7 @@ def test_no_duplicate_test_ids():
         standards_cc_nist,
         standards_owasp_iso27001,
         standards_perf,
+        standards_simlab,
     )
     total = sum(
         len(f)
@@ -51,6 +52,7 @@ def test_no_duplicate_test_ids():
             standards_bsi_cis.TEST_ID_FRAGMENT,
             standards_owasp_iso27001.TEST_ID_FRAGMENT,
             standards_perf.TEST_ID_FRAGMENT,
+            standards_simlab.TEST_ID_FRAGMENT,
         )
     )
     assert len(TEST_ID) == total, (
