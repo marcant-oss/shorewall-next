@@ -9,7 +9,7 @@ import sys
 from typing import Any
 
 from shorewall_nft_stagelab import metrics as _metrics
-from shorewall_nft_stagelab import trafgen_iperf3, trafgen_nmap, trafgen_scapy
+from shorewall_nft_stagelab import trafgen_iperf3, trafgen_nmap, trafgen_scapy, tuning
 from shorewall_nft_stagelab.ipc import (
     AckMessage,
     ErrorMessage,
@@ -173,10 +173,29 @@ async def handle_run_scenario(
             _exec_in_netns, netns, trafgen_iperf3.build_argv(i3_spec)
         )
         r = trafgen_iperf3.parse_result(proc.stdout)
-        return {
+        result: dict[str, Any] = {
             "tool": "iperf3", "ok": r.ok, "throughput_gbps": r.throughput_gbps,
             "retransmits": r.retransmits, "duration_s": r.duration_s,
         }
+        if spec.get("_sweep_point") is not None:
+            result["_sweep_point"] = spec["_sweep_point"]
+        return result
+
+    if kind == "apply_tuning":
+        iface: str | None = spec.get("iface")
+        rss_queues: int | None = spec.get("rss_queues")
+        sysctls: dict[str, str] = spec.get("sysctls") or {}
+        if rss_queues is not None and iface:
+            await asyncio.to_thread(tuning.apply_rss, iface, rss_queues)
+        if sysctls:
+            await asyncio.to_thread(tuning.apply_sysctls, sysctls)
+        result_tuning: dict[str, Any] = {
+            "tool": "apply_tuning", "ok": True,
+            "applied": {"iface": iface, "rss_queues": rss_queues, "sysctls": sysctls},
+        }
+        if spec.get("_sweep_point") is not None:
+            result_tuning["_sweep_point"] = spec["_sweep_point"]
+        return result_tuning
 
     if kind == "run_nmap":
         netns = state["endpoints"][endpoint_name].netns

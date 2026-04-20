@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -53,6 +55,12 @@ def write(run: RunReport, output_dir: Path) -> Path:
     # Markdown summary
     (run_dir / "summary.md").write_text(_render_markdown(run))
 
+    # Sweep CSV files — one per tuning_sweep scenario
+    for s in run.scenarios:
+        if s.kind == "tuning_sweep":
+            csv_text = _render_sweep_csv(s)
+            (run_dir / f"sweep-{s.scenario_id}.csv").write_text(csv_text)
+
     # Recommendations YAML (only when non-empty)
     if run.recommendations:
         rec_list = [
@@ -100,6 +108,8 @@ def _render_markdown(run: RunReport) -> str:
             _render_conn_storm(lines, s.raw)
         elif s.kind == "rule_scan":
             _render_rule_scan(lines, s.raw)
+        elif s.kind == "tuning_sweep":
+            _render_tuning_sweep(lines, s.raw)
         else:
             # Generic fallback — dump raw keys
             for k, v in s.raw.items():
@@ -214,3 +224,70 @@ def _format_probe(m: dict) -> str:
     proto = m.get("proto", "?")
     actual = m.get("actual", "?")
     return f"probe {probe_id}: {src} → {dst} ({proto}) got={actual}"
+
+
+# ---------------------------------------------------------------------------
+# Tuning sweep renderer
+# ---------------------------------------------------------------------------
+
+_SWEEP_AXES = ("rss_queues", "rmem_max", "wmem_max")
+
+
+def _render_tuning_sweep(lines: list[str], raw: dict) -> None:
+    """Render a tuning_sweep section with optimum line + Markdown table."""
+    optimum: dict | None = raw.get("optimum")
+    points: list[dict] = raw.get("points", [])
+
+    if optimum:
+        opt_point = optimum.get("point", {})
+        opt_tput = optimum.get("throughput_gbps", 0.0)
+        opt_parts = "  ".join(f"{k}={v}" for k, v in opt_point.items()) if opt_point else "(baseline)"
+        lines.append(f"Optimum:  {opt_parts}  →  {opt_tput:.1f} Gbps")
+    else:
+        lines.append("Optimum:  (none — all points failed)")
+    lines.append("")
+
+    if not points:
+        lines.append("*(no data points)*")
+        lines.append("")
+        return
+
+    # Determine which axes are actually present in data.
+    present_axes = [ax for ax in _SWEEP_AXES if any(ax in p.get("point", {}) for p in points)]
+
+    # Table header
+    header_cols = present_axes + ["throughput_gbps", "ok"]
+    sep_cols = ["-" * max(len(c), 3) for c in header_cols]
+    lines.append("| " + " | ".join(header_cols) + " |")
+    lines.append("| " + " | ".join(sep_cols) + " |")
+
+    for p in points:
+        point_params = p.get("point", {})
+        row_vals: list[str] = []
+        for ax in present_axes:
+            row_vals.append(str(point_params[ax]) if ax in point_params else "—")
+        row_vals.append(f"{p.get('throughput_gbps', 0.0):.1f}")
+        row_vals.append("✓" if p.get("ok") else "✗")
+        lines.append("| " + " | ".join(row_vals) + " |")
+
+    lines.append("")
+
+
+def _render_sweep_csv(s: "ScenarioResult") -> str:
+    """Produce a CSV string for a tuning_sweep ScenarioResult."""
+    raw = s.raw
+    points: list[dict] = raw.get("points", [])
+
+    present_axes = [ax for ax in _SWEEP_AXES if any(ax in p.get("point", {}) for p in points)]
+    fieldnames = present_axes + ["throughput_gbps", "ok"]
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\n")
+    writer.writeheader()
+    for p in points:
+        point_params = p.get("point", {})
+        row: dict = {ax: point_params.get(ax, "") for ax in present_axes}
+        row["throughput_gbps"] = f"{p.get('throughput_gbps', 0.0):.3f}"
+        row["ok"] = "true" if p.get("ok") else "false"
+        writer.writerow(row)
+    return buf.getvalue()

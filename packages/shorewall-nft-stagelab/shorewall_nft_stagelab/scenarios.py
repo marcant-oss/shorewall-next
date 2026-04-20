@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import itertools
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from .config import (
     RuleScanScenario,
     StagelabConfig,
     ThroughputScenario,
+    TuningSweepScenario,
 )
 from .report import ScenarioResult
 
@@ -273,10 +275,119 @@ class RuleScanRunner(Scenario):
 
 
 # ---------------------------------------------------------------------------
+# TuningSweepRunner
+# ---------------------------------------------------------------------------
+
+
+class TuningSweepRunner(Scenario):
+    """Wraps ``config.TuningSweepScenario``.
+
+    ``plan()`` emits a triplet of (apply_tuning, run_iperf3_server,
+    run_iperf3_client) for every Cartesian-product grid point derived from
+    ``rss_queues``, ``rmem_max``, and ``wmem_max`` axes.
+    """
+
+    def __init__(self, scenario: TuningSweepScenario) -> None:
+        self._scen = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        scen = self._scen
+        src_ep = next(ep for ep in cfg.endpoints if ep.name == scen.source)
+        sink_ep = next(ep for ep in cfg.endpoints if ep.name == scen.sink)
+
+        sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else ""
+        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else ""
+
+        # Cartesian product of non-empty grid axes.
+        axes: list[tuple[str, list]] = []
+        if scen.rss_queues:
+            axes.append(("rss_queues", scen.rss_queues))
+        if scen.rmem_max:
+            axes.append(("rmem_max", scen.rmem_max))
+        if scen.wmem_max:
+            axes.append(("wmem_max", scen.wmem_max))
+
+        value_lists = [vs for _, vs in axes]
+        keys = [k for k, _ in axes]
+        combos: list[tuple] = list(itertools.product(*value_lists)) if value_lists else [()]
+
+        commands: list[AgentCommand] = []
+        for combo in combos:
+            params: dict = dict(zip(keys, combo))
+            sysctls: dict[str, str] = {}
+            if "rmem_max" in params:
+                sysctls["net.core.rmem_max"] = str(params["rmem_max"])
+            if "wmem_max" in params:
+                sysctls["net.core.wmem_max"] = str(params["wmem_max"])
+
+            commands.append(AgentCommand(
+                endpoint_name=scen.source,
+                kind="apply_tuning",
+                spec={
+                    "iface": src_ep.nic,
+                    "rss_queues": params.get("rss_queues"),
+                    "sysctls": sysctls,
+                    "_sweep_point": params,
+                },
+            ))
+            commands.append(AgentCommand(
+                endpoint_name=scen.sink,
+                kind="run_iperf3_server",
+                spec={
+                    "bind": sink_ip,
+                    "duration_s": scen.duration_per_point_s + 2,
+                    "port": 5201,
+                },
+            ))
+            commands.append(AgentCommand(
+                endpoint_name=scen.source,
+                kind="run_iperf3_client",
+                spec={
+                    "bind": src_ip,
+                    "server_ip": sink_ip,
+                    "duration_s": scen.duration_per_point_s,
+                    "parallel": 1,
+                    "proto": scen.proto,
+                    "delay_before_s": 0.5,
+                    "_sweep_point": params,
+                },
+            ))
+        return commands
+
+    def summarize(self, cmd_results: list[dict]) -> ScenarioResult:
+        scen = self._scen
+        points: list[dict] = []
+        for i in range(0, len(cmd_results), 3):
+            if i + 2 >= len(cmd_results):
+                break
+            client_res = cmd_results[i + 2]
+            point = client_res.get("_sweep_point") or {}
+            tput = float(client_res.get("throughput_gbps", 0.0))
+            points.append({
+                "point": point,
+                "throughput_gbps": tput,
+                "ok": client_res.get("ok", False),
+            })
+        best = max(
+            (p for p in points if p["ok"]),
+            key=lambda p: p["throughput_gbps"],
+            default=None,
+        )
+        ok = best is not None
+        return ScenarioResult(
+            scenario_id=scen.id,
+            kind="tuning_sweep",
+            ok=ok,
+            duration_s=0.0,
+            raw={"points": points, "optimum": best, "tool": "tuning_sweep"},
+        )
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
-_ScenarioCfg = Union[ThroughputScenario, ConnStormScenario, RuleScanScenario]
+_ScenarioCfg = Union[ThroughputScenario, ConnStormScenario, RuleScanScenario, TuningSweepScenario]
 
 
 def build_runner(scenario: _ScenarioCfg) -> Scenario:
@@ -287,6 +398,8 @@ def build_runner(scenario: _ScenarioCfg) -> Scenario:
         return ConnStormRunner(scenario)  # type: ignore[arg-type]
     if scenario.kind == "rule_scan":
         return RuleScanRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "tuning_sweep":
+        return TuningSweepRunner(scenario)  # type: ignore[arg-type]
     raise ValueError(f"Unknown scenario kind: {scenario.kind!r}")
 
 
@@ -296,5 +409,6 @@ __all__ = [
     "ThroughputRunner",
     "ConnStormRunner",
     "RuleScanRunner",
+    "TuningSweepRunner",
     "build_runner",
 ]

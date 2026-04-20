@@ -144,8 +144,23 @@ class RuleScanScenario(BaseModel):
     random_count: int
 
 
+class TuningSweepScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["tuning_sweep"]
+    source: str                         # endpoint name (native-mode)
+    sink: str                           # endpoint name (native-mode)
+    proto: Literal["tcp", "udp"] = "tcp"
+    duration_per_point_s: int = 2
+    # Grid axes — each is a list of values; runner does Cartesian product:
+    rss_queues: list[int] = []          # iface RX queues to try; [] = skip axis
+    rmem_max: list[int] = []            # bytes; [] = skip axis
+    wmem_max: list[int] = []            # bytes; [] = skip axis
+
+
 Scenario = Annotated[
-    Union[ThroughputScenario, ConnStormScenario, RuleScanScenario],
+    Union[ThroughputScenario, ConnStormScenario, RuleScanScenario, TuningSweepScenario],
     Field(discriminator="kind"),
 ]
 
@@ -348,6 +363,7 @@ __all__ = [
     "ThroughputScenario",
     "ConnStormScenario",
     "RuleScanScenario",
+    "TuningSweepScenario",
     "Scenario",
     "PrometheusSourceSpec",
     "SNMPSourceSpec",
