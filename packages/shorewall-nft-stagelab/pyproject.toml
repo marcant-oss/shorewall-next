@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shorewall-nft-stagelab"
-version = "1.9.0"
+version = "1.10.0"
 description = "Distributed bridge-lab for shorewall-nft performance and readiness testing"
 readme = "README.md"
 requires-python = ">=3.11"

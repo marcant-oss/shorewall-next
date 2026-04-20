@@ -20,6 +20,14 @@ SYS_UPTIME       = "1.3.6.1.2.1.1.3"
 VRRP_INSTANCE_STATE = "1.3.6.1.4.1.9586.100.5.2.3.1.4"
 VRRP_INSTANCE_NAME  = "1.3.6.1.4.1.9586.100.5.2.3.1.2"
 
+# Keepalived VRRP extended — richer HA-observability (S7)
+VRRP_INSTANCE_VRID           = "1.3.6.1.4.1.9586.100.5.2.3.1.3"   # Gauge32, VRID
+VRRP_INSTANCE_WANTED_STATE   = "1.3.6.1.4.1.9586.100.5.2.3.1.5"   # int enum, transitions before State
+VRRP_INSTANCE_EFFECTIVE_PRIO = "1.3.6.1.4.1.9586.100.5.2.3.1.7"   # int, drops on track-script failure
+VRRP_INSTANCE_VIPS_STATUS    = "1.3.6.1.4.1.9586.100.5.2.3.1.8"   # int: 1=allSet, 2=notAllSet
+VRRP_INSTANCE_PREEMPT        = "1.3.6.1.4.1.9586.100.5.2.3.1.12"  # int bool
+VRRP_INSTANCE_PREEMPT_DELAY  = "1.3.6.1.4.1.9586.100.5.2.3.1.13"  # Gauge32, seconds
+
 # PowerDNS-Recursor via NET-SNMP-EXTEND-MIB
 # Operator's pdns_recursor_stats.sh output under
 # .1.3.6.1.4.1.8072.1.3.2.3.1.2.<extend-name>
@@ -30,12 +38,21 @@ BUNDLE_NODE_TRAFFIC = [IF_HC_IN_OCTETS, IF_HC_OUT_OCTETS, IF_IN_DISCARDS, IF_OUT
 BUNDLE_SYSTEM       = [LA_LOAD, SYS_UPTIME]
 BUNDLE_VRRP         = [VRRP_INSTANCE_STATE, VRRP_INSTANCE_NAME]
 BUNDLE_PDNS         = [PDNS_EXTEND_OUTPUT]
+BUNDLE_VRRP_EXTENDED = [
+    VRRP_INSTANCE_VRID,
+    VRRP_INSTANCE_WANTED_STATE,
+    VRRP_INSTANCE_EFFECTIVE_PRIO,
+    VRRP_INSTANCE_VIPS_STATUS,
+    VRRP_INSTANCE_PREEMPT,
+    VRRP_INSTANCE_PREEMPT_DELAY,
+]
 
 BUNDLES: dict[str, list[str]] = {
-    "node_traffic": BUNDLE_NODE_TRAFFIC,
-    "system":       BUNDLE_SYSTEM,
-    "vrrp":         BUNDLE_VRRP,
-    "pdns":         BUNDLE_PDNS,
+    "node_traffic":  BUNDLE_NODE_TRAFFIC,
+    "system":        BUNDLE_SYSTEM,
+    "vrrp":          BUNDLE_VRRP,
+    "vrrp_extended": BUNDLE_VRRP_EXTENDED,
+    "pdns":          BUNDLE_PDNS,
 }
 
 

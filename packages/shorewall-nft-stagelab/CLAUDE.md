@@ -32,7 +32,8 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
 | `trafgen_iperf3.py` | iperf3 spec builder + result parser |
 | `trafgen_nmap.py` | nmap spec builder + XML result parser |
 | `trafgen_scapy.py` | `ProbeSpec` + `build_frame` + `send_tap` — scapy frame injection for `probe` mode |
-| `trafgen_tcpkali.py` | tcpkali wrapper: subprocess invocation + stdout parser; `TcpkaliSpec`, `TcpkaliResult`, `build_argv`, `parse_stdout`, `run_tcpkali` |
+| `trafgen_pyconn.py` | Pure-Python asyncio TCP burst generator; `PyConnSpec`, `PyConnResult`, `run_pyconn`, `run_pyconn_async` — replaces tcpkali; no external binary required |
+| `trafgen_tcpkali.py` | **DEPRECATED** — tcpkali wrapper kept for back-compat only; no scenario handler uses it by default |
 | `trafgen_trex.py` | TRex STL (`run_trex_stl`) and ASTF (`run_trex_astf`) wrappers |
 | `scenarios.py` | Per-scenario runners (`ThroughputRunner`, `ConnStormRunner`, `RuleScanRunner`, `TuningSweepRunner`, `ThroughputDpdkRunner`, `ConnStormAstfRunner`) + `build_runner` factory |
 | `metrics.py` | `MetricRow` dataclass + local pollers: `poll_nft_counters`, `poll_conntrack`, `poll_ethtool`, `poll_softirq` |
@@ -42,6 +43,35 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
 | `rule_order.py` | nft rule-order analyzer: groups nft counters by chain, ranks by packet count, emits tier-C hints |
 | `review.py` | Consolidate tier-B/C recommendations + rule-order hints into `ReviewPayload`; render `review.md` + `review.yaml`; `open_pr` via `gh` CLI |
 | `report.py` | `ScenarioResult`, `RunReport`, `write()` — creates run directory, writes `run.json`, `summary.md`, `recommendations.yaml`, `sweep-<id>.csv` |
+| `standards.py` | TEST_ID lookup + `StandardRef` / `lookup()` / `all_standards()` — aggregates 4 Python fragment modules with duplicate-check; 62 test IDs across 7 standards |
+| `standards_cc_nist.py` | CC/ISO-15408 + NIST 800-53 test-ID fragment |
+| `standards_bsi_cis.py` | BSI IT-Grundschutz + CIS Benchmarks test-ID fragment |
+| `standards_owasp_iso27001.py` | OWASP + ISO-27001 test-ID fragment |
+| `standards_perf.py` | IPv6-perf addendum test-ID fragment |
+| `trafgen_pyconn.py` | Pure-Python asyncio TCP burst generator; `PyConnSpec`, `PyConnResult`, `run_pyconn`, `run_pyconn_async` — replaces tcpkali; no external binary required |
+
+## Security test plan
+
+The security-test-plan feature ships a standards-driven catalogue of firewall
+validation tests covering 7 security standards (CC/ISO-15408, NIST 800-53,
+BSI IT-Grundschutz, CIS Benchmarks, OWASP, ISO-27001, IPv6-perf addendum).
+
+- **Canonical docs**: `docs/testing/security-test-plan.md` (human-readable,
+  62 test IDs) + `docs/testing/security-test-plan.yaml` (machine-readable,
+  57 tests). Generated from per-standard fragment files via
+  `tools/merge-security-test-plan.py` + `tools/merge-security-test-plan-yaml.py`.
+- **One-shot executor**: `tools/run-security-test-plan.sh` — expands the
+  catalogue into per-standard stagelab configs, runs them sequentially, and
+  feeds all results into `stagelab audit` to produce a unified HTML + JSON
+  report. Flags: `--standards list`, `--config base.yaml`, `--out DIR`,
+  `--dry-run`, `--simlab`.
+- **Schema integration**: every scenario kind gains optional `test_id`,
+  `standard_refs`, and `acceptance_criteria` fields. `ScenarioResult` gains
+  `criteria_results: dict[str, bool]` for per-criterion pass/fail tracking.
+- **Audit output**: `stagelab audit` emits `audit.json` alongside
+  `audit.html` / `audit.pdf`. The HTML gains Test-ID + Standard columns.
+  `--simlab-report PATH` merges a `simlab.json` correctness report into the
+  same audit output.
 
 ## Boot / venv
 
@@ -142,6 +172,17 @@ original driver and the entry is removed. On agent startup `recover_from_crash`
 replays any entries left by a prior crash. Never skip `teardown_dpdk_endpoint`
 — use `try/finally` around every `setup_dpdk_endpoint` call.
 
+### DoS window-delta
+
+`conntrack_overflow` and `dos_syn_flood` scenarios accept
+`baseline_window_s` and `dos_window_s` fields. The controller samples
+MetricRows in both windows and emits per-window deltas (e.g.
+`conntrack_count_increase_ratio`) into `ScenarioResult.criteria_results`.
+The advisor reads these alongside the scenario's `ok: bool` verdict.
+
+Not yet wired for `dos_dns_query` or `dos_half_open` (out of scope for
+Task #11); pdns advisor heuristic still uses a latency-proxy.
+
 ### Advisor is rule-based, not ML
 
 All 8 heuristics in `advisor.py` are threshold comparisons. Thresholds are
@@ -193,12 +234,11 @@ Tier semantics:
   `dnf install -y epel-release` ran first. Bootstrap does this, but manual
   runs sometimes miss it.
 
-- **`conn_storm` uses tcpkali**: tcpkali is not in any distro package repo.
-  The agent handler calls `run_tcpkali` from `trafgen_tcpkali.py`, which
-  is a fully implemented subprocess wrapper + stdout parser. The binary must
-  be pre-installed on the test host (source-build). If the binary is absent
-  the agent raises `RuntimeError`. Use `conn_storm_astf` with a DPDK endpoint
-  as an alternative.
+- **`conn_storm` uses `trafgen_pyconn`**: the `run_tcpkali` agent handler now
+  dispatches to `trafgen_pyconn.run_pyconn` (pure-Python asyncio). No external
+  binary required. `trafgen_tcpkali.py` is kept for back-compat but is no
+  longer selected by any handler. For line-rate / >1M concurrent sessions use
+  `conn_storm_astf` with a DPDK endpoint instead.
 
 - **Per-host concurrent dispatch is load-bearing**: `run_scenarios` groups
   per-scenario `AgentCommand` objects by target host and dispatches the groups
@@ -232,7 +272,7 @@ Tier semantics:
 
 ## Open items
 
-- **T17b** — compiler integration: feed tier-C rule-order hints from
+- **T17b — compiler integration**: feed tier-C rule-order hints from
   `rule_order.py` back into the shorewall-nft optimizer as ordering directives.
   `rule_order.py` produces the hints; the compiler side is TODO.
 - **Full HA-pair scenario** — model a second FW endpoint with VRRP failover
@@ -245,21 +285,16 @@ Tier semantics:
   `offload` actually moves flows to hardware. The `flowtable_stagnant` advisor
   heuristic (fires when `flowtable_*` counter == 0) is a proxy; a real offload
   verification needs conntrack counter comparison before/after ruleset load.
-- **tcpkali binary install** — `trafgen_tcpkali.py` is fully implemented but
-  tcpkali is not in any distro repo. Add a source-build step to the bootstrap
-  script so `conn_storm` kernel mode works out-of-the-box.
-- **vrrp_extended bundle (S7-class)** — 5 additional OIDs to add to
-  `snmp_oids.py`: `vrrpInstanceEffectivePriority`, `VipsStatus`,
-  `VirtualRouterId`, `WantedState`, `PreemptDelay`. These expose
-  track-script-failure / partial-VIP-add / multi-VRID /
-  sub-second-failover / preempt-delay-context observability. Small (~50 LOC)
-  follow-up. Not blocking.
 - **pdns extend scripts on test appliances** — the `pdns` SNMP bundle
   (`pdns-all-queries`, `pdns-cache-hits`, `pdns-answers-0-1`) requires
   `extend` lines in `/etc/snmp/snmpd.conf` pointing at pdns-control scripts.
   Until these are configured on the appliance, the `pdns` bundle returns 0
   rows and the S6 advisor heuristic (`_h_dos_dns_latency_blowup`) never fires
   on live data.
-- **Phase 4 enterprise validation** — DoS scenarios (D0–D4), extended HA
-  scenarios (P4-1..P4-7), and audit-report generator: see
-  `~/.claude/plans/stagelab-phase-4-enterprise-validation.md`.
+- **vrrp_extended column-index verification** — live-scrape against keepalived
+  v2.2.8 flagged a possible mismatch between `effective-priority` and
+  `vips-status` column indices in the vrrpInstanceTable MIB walk. The OID
+  path was corrected to `.2.3.1.x` (vrrpInstanceTable, was `.2.1.1.x`
+  vrrpSyncGroupTable), but the per-column index assignment for
+  `vrrpInstanceEffectivePriority` vs `vrrpInstanceVipsStatus` should be
+  re-verified against a live keepalived MIB walk on the reference appliance.

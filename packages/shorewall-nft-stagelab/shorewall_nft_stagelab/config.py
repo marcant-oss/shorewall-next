@@ -6,7 +6,7 @@ import ipaddress
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -172,6 +172,23 @@ class Endpoint(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Standards-layer helpers
+# ---------------------------------------------------------------------------
+
+_SLUG_RE = re.compile(r"^[a-z0-9]+([-_][a-z0-9]+)*$")
+
+
+def _validate_test_id_slug(v: str) -> str:
+    """Validate that *v* is a slug: lowercase alphanumeric with hyphens or underscores."""
+    if not _SLUG_RE.match(v):
+        raise ValueError(
+            f"test_id/standard_refs slug {v!r} must match ^[a-z0-9]+([-_][a-z0-9]+)*$ "
+            "(lowercase alphanumeric, hyphens or underscores only)"
+        )
+    return v
+
+
+# ---------------------------------------------------------------------------
 # Scenarios (discriminated union on `kind`)
 # ---------------------------------------------------------------------------
 
@@ -187,6 +204,26 @@ class ThroughputScenario(BaseModel):
     duration_s: int
     parallel: int
     expect_min_gbps: float
+    measure_latency: bool = False  # if True, extract per-interval TCP RTT from iperf3 JSON
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
 
 class ConnStormScenario(BaseModel):
@@ -199,6 +236,25 @@ class ConnStormScenario(BaseModel):
     target_conns: int
     rate_per_s: int
     hold_s: int
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
 
 class RuleScanScenario(BaseModel):
@@ -209,6 +265,25 @@ class RuleScanScenario(BaseModel):
     source: str
     target_subnet: str
     random_count: int
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
 
 class TuningSweepScenario(BaseModel):
@@ -224,6 +299,25 @@ class TuningSweepScenario(BaseModel):
     rss_queues: list[int] = []          # iface RX queues to try; [] = skip axis
     rmem_max: list[int] = []            # bytes; [] = skip axis
     wmem_max: list[int] = []            # bytes; [] = skip axis
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
 
 class ThroughputDpdkScenario(BaseModel):
@@ -238,6 +332,25 @@ class ThroughputDpdkScenario(BaseModel):
     multiplier: str = "10gbps"          # TRex DSL: "50%", "1000kpps", "5gbps", etc.
     packet_size_b: int = 64             # for synthetic streams
     pcap_file: str = ""                 # optional replay pcap (absolute path)
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("multiplier")
     @classmethod
@@ -262,6 +375,25 @@ class ConnStormAstfScenario(BaseModel):
     duration_s: int = 30
     multiplier: float = 1.0
     expect_min_concurrent: int = 0      # advisor signal threshold
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
 
 class SynFloodDosScenario(BaseModel):
@@ -276,6 +408,34 @@ class SynFloodDosScenario(BaseModel):
     src_ip_range: str                      # CIDR for spoofed src IPs
     dst_port_range: str = "80,443"         # comma-list or single port/range
     expect_max_passed_ratio: float = 0.05  # pass if ≤5% of SYNs reach sink
+    baseline_window_s: float = 10.0        # sample metrics this many seconds BEFORE DoS phase
+    dos_window_s: float = 10.0             # sample metrics this many seconds DURING/AFTER DoS
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("baseline_window_s", "dos_window_s")
+    @classmethod
+    def _check_window_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"window duration must be > 0, got {v}")
+        return v
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("src_ip_range")
     @classmethod
@@ -307,6 +467,25 @@ class DnsDosScenario(BaseModel):
     query_name_pattern: Literal["random", "fixed", "amplification"] = "random"
     target_resolver: str                   # IPv4 of the DNS server
     fixed_qname: str = "example.com"       # used when pattern=fixed
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("target_resolver")
     @classmethod
@@ -337,6 +516,25 @@ class HalfOpenDosScenario(BaseModel):
     target_conns: int                     # concurrent half-open TCP conns to reach
     open_rate_per_s: int                  # new-connection rate
     dst_port: int = 80
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("dst_port")
     @classmethod
@@ -357,6 +555,56 @@ class HalfOpenDosScenario(BaseModel):
         return v
 
 
+class ConntrackOverflowScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["conntrack_overflow"]
+    source: str              # endpoint name (native or dpdk)
+    sink: str                # endpoint name
+    fw_host: str             # SSH target for conntrack inspection
+    duration_s: int = 60
+    rate_new_per_s: int = 10000
+    expect_table_fill_pct_min: int = 95
+    expect_no_new_conntracks_when_full: bool = True
+    baseline_window_s: float = 10.0   # sample metrics this many seconds BEFORE DoS phase
+    dos_window_s: float = 10.0        # sample metrics this many seconds DURING/AFTER DoS
+
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("baseline_window_s", "dos_window_s")
+    @classmethod
+    def _check_window_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"window duration must be > 0, got {v}")
+        return v
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
+
+    @field_validator("expect_table_fill_pct_min")
+    @classmethod
+    def _check_fill_pct(cls, v: int) -> int:
+        if not 1 <= v <= 100:
+            raise ValueError(f"expect_table_fill_pct_min={v} must be in range 1-100")
+        return v
+
+
 class RuleCoverageMatrixScenario(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -368,6 +616,25 @@ class RuleCoverageMatrixScenario(BaseModel):
     tcp_ports: list[int] = [22, 80, 443]
     udp_ports: list[int] = [53, 123]
     probe_count_per_tuple: int = 1       # how many probes per (src-zone, dst-zone, proto, port)
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("zone_subnets")
     @classmethod
@@ -392,6 +659,25 @@ class StatefulHelperFtpScenario(BaseModel):
     password: str = "ftpuser"
     test_file: str = "/tmp/stagelab-ftp-test.txt"  # expected on vsftpd
     expect_data_connection: bool = True    # True = data xfer must succeed
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("ftp_port")
     @classmethod
@@ -419,6 +705,25 @@ class EvasionProbesScenario(BaseModel):
     ]
     spoof_src_ip: str = "10.255.255.255"    # used for ip_spoof probes
     target_port: int = 80
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("target_ip", "spoof_src_ip")
     @classmethod
@@ -453,6 +758,25 @@ class ReloadAtomicityScenario(BaseModel):
     duration_s: int = 60                  # total stream length
     reload_at_s: int = 20                 # fire the reload this many seconds in
     max_retrans_during_reload: int = 100  # pass threshold
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("reload_at_s")
     @classmethod
@@ -490,6 +814,25 @@ class LongFlowSurvivalScenario(BaseModel):
     sysctl_key: str = "net.netfilter.nf_conntrack_tcp_timeout_established"
     sysctl_value: int = 240                    # 4 minutes (less than duration_s → flow should die)
     expect_flow_dies: bool = False             # False = flow should SURVIVE the full duration
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("sysctl_key")
     @classmethod
@@ -538,6 +881,25 @@ class HaFailoverDrillScenario(BaseModel):
     vrrp_snmp_source: list[str] | None = None
     vrrp_poll_interval_ms: int = 200                # must be >= 50 (pysnmp overhead floor)
     vrrp_instance_name: str | None = None           # if None, pick first instance
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
 
     @field_validator("vrrp_snmp_source")
     @classmethod
@@ -593,6 +955,7 @@ Scenario = Annotated[
         SynFloodDosScenario,
         DnsDosScenario,
         HalfOpenDosScenario,
+        ConntrackOverflowScenario,
         RuleCoverageMatrixScenario,
         StatefulHelperFtpScenario,
         EvasionProbesScenario,
@@ -1021,6 +1384,7 @@ __all__ = [
     "SynFloodDosScenario",
     "DnsDosScenario",
     "HalfOpenDosScenario",
+    "ConntrackOverflowScenario",
     "RuleCoverageMatrixScenario",
     "StatefulHelperFtpScenario",
     "EvasionProbesScenario",

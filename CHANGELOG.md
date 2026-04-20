@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-04-20
+
+### Added (security-test-plan feature)
+- Standards-driven firewall security test plan — machine-readable catalogue
+  (`docs/testing/security-test-plan.yaml`, 57 tests) + human-readable doc
+  (`docs/testing/security-test-plan.md`) covering CC/ISO-15408, NIST 800-53,
+  BSI IT-Grundschutz, CIS Benchmarks, OWASP, ISO-27001, IPv6-perf addendum.
+- Scenario config gains optional `test_id`, `standard_refs`,
+  `acceptance_criteria` fields (applies to all 15 scenario kinds).
+- `ScenarioResult.criteria_results: dict[str, bool]` for per-criterion
+  pass/fail (beyond the existing `ok: bool`).
+- `audit.json` machine-readable output alongside `audit.html`/`audit.pdf`.
+  Audit HTML gains Test-ID + Standard columns.
+- `standards.py` TEST_ID lookup (62 ids across 7 standards) with
+  auto-aggregation from 4 Python fragment modules.
+- `tools/run-security-test-plan.sh` one-shot executor that expands the
+  catalogue into per-standard stagelab configs, runs them, and generates
+  a unified audit report.
+- `tools/merge-security-test-plan-yaml.py` + `merge-security-test-plan.py`
+  merger scripts (regenerate canonical docs from fragments).
+- New scenario `conntrack_overflow` — fills conntrack table to
+  `nf_conntrack_max`, observes drop cause via `/proc/sys/net/netfilter/*`
+  + `dmesg` grep for `nf_conntrack: table full`.
+- Latency percentiles on `ThroughputScenario`: `measure_latency: bool`
+  flag extracts p50/p95/p99 ms from iperf3 JSON RTT samples.
+- DoS window-delta: `baseline_window_s` / `dos_window_s` fields on
+  `SynFloodDosScenario` + `ConntrackOverflowScenario`; controller
+  computes per-window deltas and emits them into `criteria_results`.
+- New SNMP bundle `vrrp_extended` — 6 keepalived-MIB OIDs for richer
+  HA-observability (vrid, wanted-state, effective-priority, vips-status,
+  preempt, preempt-delay).
+- simlab emits machine-readable `simlab.json`; `stagelab audit
+  --simlab-report PATH` merges simlab correctness into the audit report.
+
+### Changed
+- Replaced tcpkali external dependency with pure-Python `trafgen_pyconn`
+  (asyncio-based TCP connection burst). tcpkali wrapper kept for
+  back-compat only; setup script no longer references a source-build step.
+- CI matrix (from v1.9.0) expanded: stagelab integration tests now run
+  against `test_topology_bridge.py` + `test_agent_runtime.py` in the
+  sudo-netns job.
+
+### Fixed
+- VRRP OIDs corrected from `.2.1.1.x` (vrrpSyncGroupTable) to `.2.3.1.x`
+  (vrrpInstanceTable) — regression fix from v1.9.0 initial
+  implementation.
+
+### Operations
+- HA-failover live-drill executed against the reference HA pair:
+  sub-second failover (SNMP-poll limited to 0.5s resolution), ~184s
+  preempt-back delay (matches configured 180s), no split-brain.
+
 ### Fixed
 
 - **shorewall-nft: implicit loopback accept in base input/output chains**

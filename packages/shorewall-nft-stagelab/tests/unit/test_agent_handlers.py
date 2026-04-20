@@ -377,8 +377,8 @@ def test_run_scenario_trex_stateless_calls_trafgen_trex() -> None:
 
 
 def test_run_scenario_tcpkali_calls_trafgen() -> None:
-    """run_tcpkali scenario calls trafgen_tcpkali.build_argv + parse_stdout via netns exec."""
-    from shorewall_nft_stagelab.trafgen_tcpkali import TcpkaliResult
+    """run_tcpkali scenario calls trafgen_pyconn.run_pyconn (pyconn backend)."""
+    from shorewall_nft_stagelab.trafgen_pyconn import PyConnResult
 
     handle = NativeEndpointHandle(
         name="ep_tk", netns="NS_TEST_ep_tk", nsstub_pid=88, vlan_iface="eth0.10"
@@ -386,13 +386,9 @@ def test_run_scenario_tcpkali_calls_trafgen() -> None:
     state = _state()
     state["endpoints"]["ep_tk"] = handle
 
-    fake_result = TcpkaliResult(
-        tool="tcpkali", ok=True, duration_s=30.0,
-        connections_established=998, connections_failed=2,
-        traffic_bits_per_sec=235e6, raw={},
-    )
-    fake_proc = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="", stderr=""
+    fake_result = PyConnResult(
+        ok=True, established_conns=998, failed_conns=2,
+        elapsed_s=30.0, connect_rate_observed=33.27, bytes_sent=0,
     )
 
     msg = RunScenarioMessage(
@@ -408,22 +404,14 @@ def test_run_scenario_tcpkali_calls_trafgen() -> None:
             },
         },
     )
-    with (
-        patch(
-            "shorewall_nft_stagelab.trafgen_tcpkali.build_argv",
-            return_value=["tcpkali", "-c", "1000"],
-        ) as mock_build,
-        patch("subprocess.run", return_value=fake_proc),
-        patch(
-            "shorewall_nft_stagelab.trafgen_tcpkali.parse_stdout",
-            return_value=fake_result,
-        ) as mock_parse,
-    ):
+    with patch(
+        "shorewall_nft_stagelab.trafgen_pyconn.run_pyconn",
+        return_value=fake_result,
+    ) as mock_run:
         resp = asyncio.run(handle_run_scenario(msg, state))
 
-    mock_build.assert_called_once()
-    mock_parse.assert_called_once()
-    assert resp["tool"] == "tcpkali"
+    mock_run.assert_called_once()
+    assert resp["tool"] == "pyconn"
     assert resp["ok"] is True
     assert resp["connections_established"] == 998
     assert resp["connections_failed"] == 2

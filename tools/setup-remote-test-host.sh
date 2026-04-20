@@ -282,7 +282,6 @@ if [ "$ROLE" = "stagelab-agent" ] || [ "$IS_DPDK" = "1" ]; then
         ssh "$REMOTE" '
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     iperf3 nmap ethtool bridge-utils jq tcpdump curl vsftpd snmp 2>&1 | tail -10
-# TODO: tcpkali — add source-build step when needed (T8d)
 if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         linux-perf >/dev/null 2>&1; then
     echo "linux-perf installed"
@@ -300,7 +299,6 @@ fi
         ssh "$REMOTE" '
 set -e
 dnf install -y iperf3 nmap ethtool jq tcpdump curl vsftpd net-snmp-utils
-# TODO: tcpkali — add source-build step when needed (T8d)
 '
         # perf is optional — warn but do not fail
         ssh "$REMOTE" 'dnf install -y perf >/dev/null 2>&1 && echo "perf installed" || echo "WARNING: perf not available — skipping"' || true

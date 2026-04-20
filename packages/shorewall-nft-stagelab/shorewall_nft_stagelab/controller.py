@@ -136,6 +136,78 @@ def _aggregate_pdns_metrics(rows: list["MetricRow"]) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# DoS window-delta helper
+# ---------------------------------------------------------------------------
+
+
+def _window_delta(
+    rows: "list[MetricRow]",
+    start_ts: float,
+    end_ts: float,
+    metric_key: str,
+) -> "list[MetricRow]":
+    """Return MetricRows whose ts_unix falls in [start_ts, end_ts] for the given key.
+
+    NOTE: If start_ts >= end_ts the window is empty and an empty list is returned.
+    Overlapping baseline/dos windows are not prevented here — callers should
+    ensure the windows are disjoint by construction.
+    """
+    if start_ts >= end_ts:
+        return []
+    return [r for r in rows if r.key == metric_key and start_ts <= r.ts_unix <= end_ts]
+
+
+def _compute_conntrack_window_delta(
+    rows: "list[MetricRow]",
+    scenario_start: float,
+    baseline_window_s: float,
+    dos_window_s: float,
+) -> "dict[str, object]":
+    """Compute conntrack_count increase ratio from two sampling windows.
+
+    Returns a dict with:
+      - conntrack_count_increase_ratio: float (dos_max / baseline_min; inf when baseline_min==0)
+      - conntrack_baseline_rows: int (sample count in baseline window)
+      - conntrack_dos_rows: int (sample count in DoS window)
+    """
+    baseline_end = scenario_start
+    baseline_start = scenario_start - baseline_window_s
+    dos_start = scenario_start
+    dos_end = scenario_start + dos_window_s
+
+    baseline = _window_delta(rows, baseline_start, baseline_end, "node_conntrack_count")
+    dos = _window_delta(rows, dos_start, dos_end, "node_conntrack_count")
+
+    result: dict[str, object] = {
+        "conntrack_baseline_rows": len(baseline),
+        "conntrack_dos_rows": len(dos),
+    }
+
+    if not baseline or not dos:
+        result["conntrack_count_increase_ratio"] = float("inf") if not baseline else 0.0
+        return result
+
+    baseline_min = min(r.value for r in baseline)
+    dos_max = max(r.value for r in dos)
+
+    if baseline_min == 0:
+        # Baseline is zero: ratio is undefined → use inf to signal "unbounded increase"
+        result["conntrack_count_increase_ratio"] = float("inf")
+    else:
+        result["conntrack_count_increase_ratio"] = dos_max / baseline_min
+
+    return result
+
+
+def _compute_syn_pass_ratio_delta(
+    baseline_pass_ratio: float,
+    dos_pass_ratio: float,
+) -> float:
+    """Return delta = dos_pass_ratio - baseline_pass_ratio."""
+    return dos_pass_ratio - baseline_pass_ratio
+
+
+# ---------------------------------------------------------------------------
 # AgentConnection
 # ---------------------------------------------------------------------------
 
@@ -419,6 +491,9 @@ class StagelabController:
             commands = runner.plan(self._config)
             log.debug("scenario %r: %d commands", scenario_cfg.id, len(commands))
 
+            # Capture wall-clock start time for DoS window-delta computation.
+            scenario_start_ts = time.time()
+
             # Group by host, preserving intra-host order via the global index.
             groups: dict[str, list[tuple[int, object]]] = {}
             for idx, cmd in enumerate(commands):
@@ -433,6 +508,75 @@ class StagelabController:
             cmd_results: list[dict] = [r for _, r in indexed]
 
             scenario_result = runner.summarize(cmd_results)
+
+            # ── Window-delta injection for DoS scenarios ──────────────────────
+            # Use getattr so scenarios without these fields are unaffected.
+            baseline_window_s: float | None = getattr(scenario_cfg, "baseline_window_s", None)
+            dos_window_s: float | None = getattr(scenario_cfg, "dos_window_s", None)
+            if baseline_window_s is not None and dos_window_s is not None:
+                current_rows = list(self._metric_rows)
+                ac = getattr(scenario_cfg, "acceptance_criteria", {}) or {}
+
+                if scenario_cfg.kind == "conntrack_overflow":
+                    delta_info = _compute_conntrack_window_delta(
+                        current_rows,
+                        scenario_start_ts,
+                        baseline_window_s,
+                        dos_window_s,
+                    )
+                    ratio = delta_info.get("conntrack_count_increase_ratio")
+                    if ratio is not None and "conntrack_count_increase_ratio_max" in ac:
+                        threshold = float(ac["conntrack_count_increase_ratio_max"])
+                        over = (
+                            ratio == float("inf") or float(ratio) > threshold  # type: ignore[arg-type]
+                        )
+                        extra_criteria = dict(scenario_result.criteria_results)
+                        extra_criteria["conntrack_count_increase_ratio"] = ratio
+                        extra_criteria["conntrack_count_increase_ratio_over_threshold"] = over
+                        scenario_result = scenario_result.__class__(
+                            scenario_id=scenario_result.scenario_id,
+                            kind=scenario_result.kind,
+                            ok=scenario_result.ok,
+                            duration_s=scenario_result.duration_s,
+                            raw=scenario_result.raw,
+                            criteria_results=extra_criteria,
+                        )
+                        log.debug(
+                            "scenario %r: conntrack_count_increase_ratio=%.3f "
+                            "over_threshold=%s",
+                            scenario_cfg.id,
+                            float("inf") if ratio == float("inf") else ratio,
+                            over,
+                        )
+
+                elif scenario_cfg.kind == "dos_syn_flood":
+                    # dos_pass_ratio from raw; baseline_pass_ratio defaults 0.0
+                    # (legitimate traffic before DoS is typically near-zero).
+                    dos_pass_ratio = float(scenario_result.raw.get("passed_ratio", 0.0))
+                    # Baseline pass ratio: use acceptance_criteria or default 0.0.
+                    baseline_pass_ratio = float(ac.get("syn_baseline_pass_ratio", 0.0))
+                    delta = _compute_syn_pass_ratio_delta(baseline_pass_ratio, dos_pass_ratio)
+                    threshold_max = float(ac.get("syn_pass_ratio_delta_max", 0.05))
+                    regressed = delta > threshold_max
+                    if "syn_pass_ratio_delta_max" in ac:
+                        extra_criteria = dict(scenario_result.criteria_results)
+                        extra_criteria["syn_pass_ratio_delta"] = delta
+                        extra_criteria["syn_pass_ratio_regressed"] = regressed
+                        scenario_result = scenario_result.__class__(
+                            scenario_id=scenario_result.scenario_id,
+                            kind=scenario_result.kind,
+                            ok=scenario_result.ok,
+                            duration_s=scenario_result.duration_s,
+                            raw=scenario_result.raw,
+                            criteria_results=extra_criteria,
+                        )
+                        log.debug(
+                            "scenario %r: syn_pass_ratio_delta=%.4f regressed=%s",
+                            scenario_cfg.id,
+                            delta,
+                            regressed,
+                        )
+
             scenario_results.append(scenario_result)
 
         # ── Build AdvisorInput from scenario results + metric rows ─────────────
@@ -538,4 +682,7 @@ __all__ = [
     "StagelabController",
     "spawn_local",
     "spawn_ssh",
+    "_window_delta",
+    "_compute_conntrack_window_delta",
+    "_compute_syn_pass_ratio_delta",
 ]

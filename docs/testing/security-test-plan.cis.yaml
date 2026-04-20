@@ -1,0 +1,233 @@
+# CIS Distribution Independent Linux v2.0 — Firewall test catalogue fragment
+# Relevant sections: 5.2 (nftables/iptables), 5.3 (loopback), 5.4 (outbound)
+#
+# Note: CIS does not publish a dedicated "Firewall Benchmark".  The firewall-
+# relevant items appear within the CIS Distribution Independent Linux Benchmark
+# v2.0 under Section 5 "Access, Authentication and Authorization".  Sections
+# 3.x (network parameters) and 6.x (kernel hardening) are explicitly out of
+# scope for firewall-rule testing.
+#
+# This file is a stream-B2 fragment; it is merged by the M1 agent into
+# docs/testing/security-test-plan.yaml alongside the CC/NIST (B1) and
+# OWASP/ISO-27001 (B3) fragments.
+
+standard: cis-benchmarks
+version: "CIS Distribution Independent Linux Benchmark v2.0.0"
+relevant_sections:
+  - "5.2 Configure nftables / iptables"
+  - "5.3 Configure loopback interface"
+  - "5.4 Configure outbound and established connections"
+
+tests:
+
+  - test_id: cis-5-2-1-firewall-default-deny-ingress
+    standard_refs: [cis-5-2-1-firewall-default-deny-ingress]
+    title: "CIS 5.2.1 — Default-deny ingress from WAN"
+    description: >
+      The default policy for inbound (ingress from WAN) traffic must be DROP.
+      Any packet not matched by an explicit allow rule must be silently
+      discarded.  This test performs a random-probe scan from the WAN zone
+      against the internal address space and verifies that no unsolicited
+      packet is accepted.
+    maps_to_scenario:
+      id: cis-5-2-1-default-deny-ingress
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 500
+      test_id: cis-5-2-1-firewall-default-deny-ingress
+      standard_refs: [cis-5-2-1-firewall-default-deny-ingress]
+      acceptance_criteria:
+        fail_accept_count: 0
+        fail_drop_count: "<= 2"
+    evidence:
+      human: "docs/testing/security-test-plan.cis.md#cis-5-2-1-firewall-default-deny-ingress"
+      machine: "audit.json scenarios[].test_id == cis-5-2-1-firewall-default-deny-ingress"
+
+  - test_id: cis-5-2-2-firewall-default-deny-egress
+    standard_refs: [cis-5-2-2-firewall-default-deny-egress]
+    title: "CIS 5.2.2 — Default-deny egress (outbound) policy"
+    description: >
+      The default policy for outbound traffic must also be DROP (or REJECT).
+      Only explicitly permitted egress flows are allowed.  This test performs
+      a rule scan from an internal zone toward external destinations, verifying
+      that only authorised services (HTTP/HTTPS, DNS, NTP, SMTP) pass.
+      Note: whether egress default-deny is applicable depends on zone policy
+      in the specific deployment; catalogue entries reference the policy
+      configuration as the evidence source.
+    status: partial
+    gap: >
+      The acceptance_criteria fail_drop_count threshold is deployment-specific.
+      The operator must review the shorewall-nft zone policy to confirm that
+      egress default-deny is configured.  stagelab validates the behaviour but
+      not the configuration intent.
+    maps_to_scenario:
+      id: cis-5-2-2-default-deny-egress
+      kind: rule_scan
+      source: lan-endpoint
+      target_subnet: "203.0.113.0/24"
+      random_count: 300
+      test_id: cis-5-2-2-firewall-default-deny-egress
+      standard_refs: [cis-5-2-2-firewall-default-deny-egress]
+      acceptance_criteria:
+        fail_accept_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.cis.md#cis-5-2-2-firewall-default-deny-egress"
+      machine: "audit.json scenarios[].test_id == cis-5-2-2-firewall-default-deny-egress"
+
+  - test_id: cis-5-4-1-established-traffic
+    standard_refs: [cis-5-4-1-established-traffic]
+    title: "CIS 5.4.1 — Accept outbound and established/related connections"
+    description: >
+      The firewall must accept return traffic for outbound connections
+      (ct state established,related accept).  A long-running TCP stream from
+      internal to external validates that return packets are not dropped after
+      the initial accept rule fires.  The long_flow_survival scenario exercises
+      this over an extended period to confirm that conntrack entries are not
+      prematurely expired.
+    maps_to_scenario:
+      id: cis-5-4-1-long-flow
+      kind: long_flow_survival
+      source: lan-endpoint
+      sink: wan-endpoint
+      fw_host: root@192.0.2.70
+      duration_s: 120
+      sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
+      sysctl_value: 300
+      expect_flow_dies: false
+      test_id: cis-5-4-1-established-traffic
+      standard_refs: [cis-5-4-1-established-traffic]
+      acceptance_criteria:
+        flow_survived: true
+        retransmit_count_max: 50
+    evidence:
+      human: "docs/testing/security-test-plan.cis.md#cis-5-4-1-established-traffic"
+      machine: "audit.json scenarios[].test_id == cis-5-4-1-established-traffic"
+
+  - test_id: cis-5-4-2-outbound-rules-coverage
+    standard_refs: [cis-5-4-2-outbound-rules-coverage]
+    title: "CIS 5.4.2 — Outbound rules coverage matrix"
+    description: >
+      All authorised outbound services must have explicit allow rules; no
+      rule should be a catch-all that opens broad egress.  The
+      rule_coverage_matrix scenario probes all zone-pair combinations with
+      the known-permitted services and verifies that only those services
+      (TCP 22, 80, 443, 25, 465, 587; UDP 53, 123) are accepted outbound.
+    maps_to_scenario:
+      id: cis-5-4-2-outbound-coverage
+      kind: rule_coverage_matrix
+      source: lan-endpoint
+      zone_subnets:
+        lan: "10.0.10.0/24"
+        wan: "203.0.113.0/24"
+      protos: [tcp, udp]
+      tcp_ports: [22, 25, 80, 443, 465, 587]
+      udp_ports: [53, 123]
+      probe_count_per_tuple: 1
+      test_id: cis-5-4-2-outbound-rules-coverage
+      standard_refs: [cis-5-4-2-outbound-rules-coverage]
+      acceptance_criteria:
+        unexpected_accept_count: 0
+        expected_services_reachable: true
+    evidence:
+      human: "docs/testing/security-test-plan.cis.md#cis-5-4-2-outbound-rules-coverage"
+      machine: "audit.json scenarios[].test_id == cis-5-4-2-outbound-rules-coverage"
+
+  - test_id: cis-5-2-3-open-ports-inventory
+    standard_refs: [cis-5-2-3-open-ports-inventory]
+    title: "CIS 5.2.3 — Open listening ports match expected rule set"
+    description: >
+      The set of ports reachable from outside must exactly match the set of
+      ports explicitly listed in the allow rules.  A rule scan with a wide
+      port range probes the expected-open ports and a random sample of
+      unexpected ports; unexpected-open ports fail the criterion.
+    maps_to_scenario:
+      id: cis-5-2-3-open-ports
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.20.0/24
+      random_count: 200
+      test_id: cis-5-2-3-open-ports-inventory
+      standard_refs: [cis-5-2-3-open-ports-inventory]
+      acceptance_criteria:
+        unexpected_open_port_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.cis.md#cis-5-2-3-open-ports-inventory"
+      machine: "audit.json scenarios[].test_id == cis-5-2-3-open-ports-inventory"
+
+  - test_id: cis-5-2-4-ingress-rfc1918-from-wan
+    standard_refs: [cis-5-2-4-ingress-rfc1918-from-wan]
+    title: "CIS 5.2.4 — RFC-1918 source addresses blocked from WAN ingress"
+    description: >
+      Packets arriving on the WAN interface with a RFC-1918 source address
+      (10/8, 172.16/12, 192.168/16) must be dropped (martian filtering /
+      reverse-path filtering).  A rule scan with RFC-1918 sources injected
+      from the WAN endpoint verifies the block is in place.
+    maps_to_scenario:
+      id: cis-5-2-4-rfc1918-block
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 100
+      test_id: cis-5-2-4-ingress-rfc1918-from-wan
+      standard_refs: [cis-5-2-4-ingress-rfc1918-from-wan]
+      acceptance_criteria:
+        fail_accept_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.cis.md#cis-5-2-4-ingress-rfc1918-from-wan"
+      machine: "audit.json scenarios[].test_id == cis-5-2-4-ingress-rfc1918-from-wan"
+
+  - test_id: cis-5-2-5-ingress-bogon-block
+    standard_refs: [cis-5-2-5-ingress-bogon-block]
+    title: "CIS 5.2.5 — Bogon/martian source address block on WAN ingress"
+    description: >
+      Beyond RFC-1918, packets with loopback (127/8), link-local (169.254/16),
+      multicast (224/4), or reserved-class-E (240/4) source addresses must be
+      dropped on the WAN ingress interface.  An evasion_probes run with
+      ip_spoof probes from those ranges verifies the block.
+    maps_to_scenario:
+      id: cis-5-2-5-bogon-block
+      kind: evasion_probes
+      source: wan-probe
+      target_ip: "10.0.10.1"
+      probe_types:
+        - ip_spoof
+      spoof_src_ip: "169.254.1.1"
+      target_port: 80
+      test_id: cis-5-2-5-ingress-bogon-block
+      standard_refs: [cis-5-2-5-ingress-bogon-block]
+      acceptance_criteria:
+        evasion_accepted_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.cis.md#cis-5-2-5-ingress-bogon-block"
+      machine: "audit.json scenarios[].test_id == cis-5-2-5-ingress-bogon-block"
+
+out_of_scope:
+  - test_id: cis-5-3-loopback-rules
+    control: "5.3"
+    reason: >
+      CIS 5.3 requires loopback interface rules (accept all lo traffic, drop
+      lo-source from non-lo).  These are system-hardening rules that belong in
+      the OS firewall configuration, not in the shorewall-nft firewall-rule
+      test suite.  Verified as a one-time configuration audit item, not by
+      repeated stagelab runs.
+
+  - test_id: cis-3-5-uncommon-protocols
+    control: "3.5"
+    reason: >
+      Disabling uncommon protocols (DCCP/SCTP) is a kernel module configuration
+      task (modprobe.d blacklist).  Not a firewall rule concern; out of scope
+      for shorewall-nft testing.
+
+  - test_id: cis-3-x-network-params
+    control: "3.x"
+    reason: >
+      CIS Section 3 network parameters (ip_forward, send_redirects,
+      accept_source_route, etc.) are kernel sysctl settings.  Applied at boot
+      by sysctl.d; verified by a separate hardening audit tool.  Out of scope
+      for the firewall-rule test suite.
+
+  - control: "6.x"
+    reason: >
+      CIS Section 6 (system hardening — auditd, file integrity, PAM, etc.)
+      is entirely out of scope for firewall testing.

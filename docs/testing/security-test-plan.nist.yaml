@@ -1,0 +1,368 @@
+# NIST SP 800-53 rev 5 catalogue fragment — merged by M1.
+meta:
+  standard: nist-800-53
+  standard_title: "NIST SP 800-53 rev 5 — Security and Privacy Controls"
+  profile_ref: "Rev 5, Moderate/High baselines (firewall-relevant controls)"
+  fragment_owner: b1
+
+tests:
+  - test_id: nist-ac-4-info-flow
+    title: "Information flow enforcement"
+    control: AC-4
+    description: >
+      Zone-pair accept/drop consistency versus the compiled ruleset using
+      random probes across a /8 target subnet.
+    maps_to_scenario:
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 500
+      test_id: nist-ac-4-info-flow
+      standard_refs:
+        - nist-800-53-ac-4
+      acceptance_criteria:
+        fail_accept_count: 0
+        fail_drop_count_max: 2
+    evidence:
+      human_ref: "security-test-plan.md#nist-ac-4-info-flow"
+      machine_ref: "audit.json[scenarios][].test_id == nist-ac-4-info-flow"
+    status: covered
+
+  - test_id: nist-ac-4-boundary-coverage
+    title: "Information flow enforcement — boundary coverage matrix"
+    control: AC-4
+    description: >
+      Systematic per-zone-pair coverage via rule_coverage_matrix across TCP,
+      UDP, and ICMP protocols.
+    maps_to_scenario:
+      kind: rule_coverage_matrix
+      source: wan-endpoint
+      zone_subnets:
+        wan: "0.0.0.0/0"
+        lan: "10.0.10.0/24"
+        dmz: "10.0.20.0/24"
+      protos:
+        - tcp
+        - udp
+        - icmp
+      tcp_ports:
+        - 22
+        - 80
+        - 443
+      udp_ports:
+        - 53
+        - 123
+      probe_count_per_tuple: 1
+      test_id: nist-ac-4-boundary-coverage
+      standard_refs:
+        - nist-800-53-ac-4
+      acceptance_criteria:
+        uncovered_zone_pairs: 0
+    evidence:
+      human_ref: "security-test-plan.md#nist-ac-4-boundary-coverage"
+      machine_ref: "audit.json[scenarios][].test_id == nist-ac-4-boundary-coverage"
+    status: covered
+
+  - test_id: nist-sc-5-dos-syn
+    title: "Resistance to SYN-flood DoS"
+    control: SC-5
+    description: >
+      At most 5% of SYN packets from a controlled flood must reach the sink.
+    maps_to_scenario:
+      kind: dos_syn_flood
+      source: wan-endpoint
+      sink: dmz-endpoint
+      duration_s: 10
+      rate_pps: 50000
+      src_ip_range: 100.64.0.0/10
+      dst_port_range: "80,443"
+      expect_max_passed_ratio: 0.05
+      test_id: nist-sc-5-dos-syn
+      standard_refs:
+        - nist-800-53-sc-5
+      acceptance_criteria:
+        passed_ratio_max: 0.05
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-5-dos-syn"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-5-dos-syn"
+    status: covered
+    note: >
+      Requires dpdk endpoint. rate_pps must not exceed
+      STAGELAB_DOS_RATE_CAP_PPS.
+
+  - test_id: nist-sc-5-dos-conntrack
+    title: "Resistance to conntrack saturation DoS"
+    control: SC-5
+    description: >
+      High connection-creation rate must not cause kernel OOM/ENOMEM and
+      must keep throughput above 80% of baseline.
+    maps_to_scenario:
+      kind: conn_storm
+      source: wan-endpoint
+      sink: lan-endpoint
+      target_conns: 100000
+      rate_per_s: 10000
+      hold_s: 30
+      test_id: nist-sc-5-dos-conntrack
+      standard_refs:
+        - nist-800-53-sc-5
+      acceptance_criteria:
+        throughput_ratio_min: 0.8
+        kernel_error_count: 0
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-5-dos-conntrack"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-5-dos-conntrack"
+    status: covered
+
+  - test_id: nist-sc-5-dos-dns
+    title: "Resistance to DNS query-rate DoS"
+    control: SC-5
+    description: >
+      DNS flood must not prevent legitimate resolver access. Firewall
+      rate-limiting must keep resolver reachable.
+    maps_to_scenario:
+      kind: dos_dns_query
+      source: wan-endpoint
+      sink: dmz-endpoint
+      duration_s: 10
+      queries_per_s: 20000
+      query_name_pattern: random
+      target_resolver: 10.0.20.53
+      test_id: nist-sc-5-dos-dns
+      standard_refs:
+        - nist-800-53-sc-5
+      acceptance_criteria:
+        resolver_reachable_during_flood: true
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-5-dos-dns"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-5-dos-dns"
+    status: covered
+    note: >
+      Requires dpdk endpoint. queries_per_s must not exceed
+      STAGELAB_DOS_RATE_CAP_PPS.
+
+  - test_id: nist-sc-5-dos-half-open
+    title: "Resistance to half-open TCP connection exhaustion"
+    control: SC-5
+    description: >
+      Half-open flood must not push conntrack table above 95% utilisation
+      and the firewall must recover within 30 seconds after the flood stops.
+    maps_to_scenario:
+      kind: dos_half_open
+      source: wan-endpoint
+      sink: dmz-endpoint
+      duration_s: 30
+      target_conns: 500000
+      open_rate_per_s: 20000
+      dst_port: 80
+      test_id: nist-sc-5-dos-half-open
+      standard_refs:
+        - nist-800-53-sc-5
+      acceptance_criteria:
+        conntrack_table_usage_peak_ratio_max: 0.95
+        recovery_within_s: 30
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-5-dos-half-open"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-5-dos-half-open"
+    status: covered
+    note: >
+      Requires dpdk endpoint. open_rate_per_s must not exceed
+      STAGELAB_DOS_RATE_CAP_PPS.
+
+  - test_id: nist-sc-7-boundary-throughput
+    title: "Boundary protection — sustained throughput under load"
+    control: SC-7
+    description: >
+      iperf3 throughput test through the firewall. Must sustain the
+      configured minimum Gbps over the full duration.
+    maps_to_scenario:
+      kind: throughput
+      source: wan-endpoint
+      sink: lan-endpoint
+      proto: tcp
+      duration_s: 30
+      parallel: 4
+      expect_min_gbps: 1.0
+      test_id: nist-sc-7-boundary-throughput
+      standard_refs:
+        - nist-800-53-sc-7
+      acceptance_criteria:
+        throughput_gbps_min: 1.0
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-7-boundary-throughput"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-7-boundary-throughput"
+    status: covered
+
+  - test_id: nist-sc-7-boundary-evasion
+    title: "Boundary protection — evasion probe rejection"
+    control: SC-7
+    description: >
+      Malformed and crafted frames across the boundary must be dropped.
+      Zero packets must pass.
+    maps_to_scenario:
+      kind: evasion_probes
+      source: wan-endpoint
+      target_ip: 10.0.0.1
+      probe_types:
+        - tcp_null
+        - tcp_xmas
+        - tcp_fin_no_syn
+        - ip_spoof
+        - udp_malformed_checksum
+      target_port: 80
+      test_id: nist-sc-7-boundary-evasion
+      standard_refs:
+        - nist-800-53-sc-7
+      acceptance_criteria:
+        pass_count: 0
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-7-boundary-evasion"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-7-boundary-evasion"
+    status: covered
+
+  - test_id: nist-au-2-audit-events
+    title: "Audit events — per-rule counter verification"
+    control: AU-2
+    description: >
+      Per-rule Prometheus counters must increment for rules that fire during
+      a rule_scan run. Partial coverage only (no per-packet syslog).
+    maps_to_scenario:
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 200
+      test_id: nist-au-2-audit-events
+      standard_refs:
+        - nist-800-53-au-2
+      acceptance_criteria:
+        prometheus_counter_incremented: true
+    evidence:
+      human_ref: "security-test-plan.md#nist-au-2-audit-events"
+      machine_ref: "audit.json[scenarios][].metrics"
+    status: partial
+    gap_reason: >
+      Only aggregate Prometheus counters. Per-packet records with timestamps
+      and structured fields are not produced. A shorewalld CEF/syslog
+      exporter is tracked as a separate open task.
+
+  - test_id: nist-au-12-audit-generation
+    title: "Audit record generation — shorewalld Prometheus scrape"
+    control: AU-12
+    description: >
+      shorewalld Prometheus endpoint must be reachable during a run and
+      return monotonically increasing nft counter values.
+    maps_to_scenario:
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 100
+      test_id: nist-au-12-audit-generation
+      standard_refs:
+        - nist-800-53-au-12
+      acceptance_criteria:
+        prometheus_counter_incremented: true
+        scrape_duration_s_max: 5.0
+    evidence:
+      human_ref: "security-test-plan.md#nist-au-12-audit-generation"
+      machine_ref: "audit.json[scenarios][].metrics"
+    status: partial
+    gap_reason: >
+      Per-packet structured audit records are not generated; Prometheus
+      counters only.
+
+  - test_id: nist-si-4-monitoring
+    title: "System monitoring via shorewalld Prometheus exporter"
+    control: SI-4
+    description: >
+      shorewalld Prometheus scrape must complete within 5 seconds and return
+      non-empty nft counter and conntrack metrics.
+    maps_to_scenario:
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 50
+      test_id: nist-si-4-monitoring
+      standard_refs:
+        - nist-800-53-si-4
+      acceptance_criteria:
+        scrape_duration_s_max: 5.0
+        metric_count_min: 1
+    evidence:
+      human_ref: "security-test-plan.md#nist-si-4-monitoring"
+      machine_ref: "audit.json[scenarios][].metrics"
+    status: covered
+
+  - test_id: nist-sc-5-reload-atomicity
+    title: "Service availability during ruleset reload"
+    control: SC-5(3)
+    description: >
+      Atomic nft ruleset reload must not interrupt established TCP flows.
+      Retransmissions during reload must stay below 100.
+    maps_to_scenario:
+      kind: reload_atomicity
+      source: wan-endpoint
+      sink: lan-endpoint
+      fw_host: "root@fw-primary"
+      duration_s: 60
+      reload_at_s: 20
+      max_retrans_during_reload: 100
+      test_id: nist-sc-5-reload-atomicity
+      standard_refs:
+        - nist-800-53-sc-5
+      acceptance_criteria:
+        max_retrans_during_reload: 100
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-5-reload-atomicity"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-5-reload-atomicity"
+    status: covered
+
+  - test_id: nist-sc-7-ha-failover
+    title: "Boundary protection — HA failover continuity"
+    control: SC-7(18)
+    description: >
+      VRRP failover drill: stop keepalived on the primary FW, measure
+      downtime, confirm secondary assumes VIP within 5 seconds.
+    maps_to_scenario:
+      kind: ha_failover_drill
+      source: wan-endpoint
+      sink: lan-endpoint
+      primary_fw_host: "root@fw-primary"
+      secondary_fw_host: "root@fw-secondary"
+      duration_s: 90
+      stop_at_s: 20
+      restart_at_s: 60
+      service_name: keepalived
+      max_downtime_s: 5.0
+      test_id: nist-sc-7-ha-failover
+      standard_refs:
+        - nist-800-53-sc-7
+      acceptance_criteria:
+        max_downtime_s: 5.0
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-7-ha-failover"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-7-ha-failover"
+    status: covered
+
+out_of_scope:
+  - control_family: "SC-6 (Resource Availability)"
+    reason: >
+      Kernel-level resource partitioning (cgroups, CPU pinning) is a platform
+      concern. Partially addressed by the advisor tuning_sweep heuristic.
+  - control_family: "IA-* (Identification and Authentication)"
+    reason: "Management-plane authentication; firewall does not authenticate forwarded flows."
+  - control_family: "CM-* (Configuration Management)"
+    reason: "Organisational configuration change control process; not automatable."
+  - control_family: "AT-*, PS-* (Awareness and Training / Personnel Security)"
+    reason: "Personnel controls; not testable by this framework."
+  - control_family: "PE-* (Physical and Environmental Protection)"
+    reason: "Data-centre physical access controls; outside scope."
+  - control_family: "SC-8 (Transmission Confidentiality and Integrity)"
+    reason: "TLS/MACsec crypto stack testing is a separate component concern."
+  - control_family: "SC-28 (Protection of Information at Rest)"
+    reason: "Disk encryption; outside scope of packet-filter testing."
+  - control_family: "AU-9 / AU-10 (Audit Protection / Non-repudiation)"
+    reason: >
+      Requires an independent audit store. Prometheus counters live on the
+      firewall node itself; dedicated SIEM integration is a separate task.
+  - control_family: "CA-*, RA-* (Assessment and Risk Management)"
+    reason: "Organisational risk processes; not automatable here."

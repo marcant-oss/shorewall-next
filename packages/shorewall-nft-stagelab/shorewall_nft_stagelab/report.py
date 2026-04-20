@@ -22,6 +22,7 @@ class ScenarioResult:
     ok: bool
     duration_s: float
     raw: dict           # tool-specific result dict
+    criteria_results: dict = field(default_factory=dict)  # criterion_name -> bool
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,14 @@ def _render_markdown(run: RunReport) -> str:
             # Generic fallback — dump raw keys
             for k, v in s.raw.items():
                 lines.append(f"- {k}: {v}")
+            lines.append("")
+
+        if s.criteria_results:
+            lines.append("**Acceptance criteria:**")
+            lines.append("")
+            for name, passed in s.criteria_results.items():
+                verdict = "PASS" if passed else "FAIL"
+                lines.append(f"- {name}: {verdict}")
             lines.append("")
 
     # Recommendations section (only when non-empty)

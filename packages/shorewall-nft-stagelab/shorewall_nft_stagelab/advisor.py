@@ -349,6 +349,11 @@ def _h_dos_conntrack_saturation(data: AdvisorInput) -> Recommendation | None:
 
 _PDNS_QPS_INCREASE_RATIO_THRESHOLD: float = 10.0
 
+# NOTE: This is a proxy calculation — real pdns windowing is deferred
+# (pdns extend scripts not yet configured on the reference firewalls).
+# See CLAUDE.md Open items; Task #11 covers windowing for conntrack_overflow
+# and dos_syn_flood only.
+
 
 def _h_dos_dns_latency_blowup(data: AdvisorInput) -> Recommendation | None:
     """Tier B — DNS resolver latency blew up during dos_dns_query.

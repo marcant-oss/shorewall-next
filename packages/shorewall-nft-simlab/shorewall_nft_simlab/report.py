@@ -315,6 +315,104 @@ def write_report(
     return run_dir
 
 
+def write_json(
+    probes: list[tuple],
+    path: Path,
+    *,
+    run_name: str = "",
+    run_ts: str | None = None,
+) -> Path:
+    """Write machine-readable simlab.json matching stagelab audit schema.
+
+    ``probes`` is the same ``(cat, expected, spec, meta)`` list passed to
+    :func:`write_report`.  The file is always written atomically to *path*
+    (overwrites if exists).  Returns *path*.
+
+    Schema version 1.  Failures are capped at 50 entries; full detail lives
+    in the report.json / mismatches.txt produced by :func:`write_report`.
+    """
+    # Compute aggregate counters across all categories.
+    pass_accept = pass_drop = fail_accept = fail_drop = 0
+    for _cat, expected, spec, _meta in probes:
+        observed = spec.verdict or "NONE"
+        if expected == "UNKNOWN":
+            continue
+        if observed == "ACCEPT" and expected == "ACCEPT":
+            pass_accept += 1
+        elif observed == "DROP" and expected == "DROP":
+            pass_drop += 1
+        elif observed == "DROP" and expected == "ACCEPT":
+            fail_drop += 1
+        elif observed == "ACCEPT" and expected == "DROP":
+            fail_accept += 1
+
+    total = pass_accept + pass_drop + fail_accept + fail_drop
+    mismatch_rate = (fail_accept + fail_drop) / total if total > 0 else 0.0
+
+    # Collect first 50 failures.
+    failures: list[dict] = []
+    for _cat, expected, spec, meta in probes:
+        if expected == "UNKNOWN":
+            continue
+        observed = spec.verdict or "NONE"
+        if observed != expected:
+            failures.append({
+                "probe_id": spec.probe_id,
+                "inject_iface": spec.inject_iface,
+                "expect_iface": spec.expect_iface,
+                "expected": expected,
+                "observed": observed,
+                "oracle_reason": meta.get("oracle_reason", ""),
+                "desc": meta.get("desc", ""),
+            })
+            if len(failures) >= 50:
+                break
+
+    payload: dict = {
+        "schema_version": 1,
+        "kind": "simlab-correctness",
+        "run_name": run_name,
+        "run_ts": run_ts,
+        "summary": {
+            "fail_accept": fail_accept,
+            "fail_drop": fail_drop,
+            "mismatch_rate": round(mismatch_rate, 6),
+            "pass_accept": pass_accept,
+            "pass_drop": pass_drop,
+            "total": total,
+        },
+        "failures": failures,
+        "scenarios": [
+            {
+                "criteria_results": {"fail_accept_is_zero": fail_accept == 0},
+                "duration_s": 0.0,
+                "kind": "simlab_correctness",
+                "ok": fail_accept == 0,
+                "raw": {"count": fail_accept},
+                "scenario_id": "simlab-fail-accept",
+                "source": "simlab",
+                "standard_refs": ["cc-iso-15408-fdp-iff-1"],
+                "test_id": "simlab-fail-accept",
+            },
+            {
+                "criteria_results": {
+                    "fail_drop_within_tolerance": fail_drop <= 2,
+                },
+                "duration_s": 0.0,
+                "kind": "simlab_correctness",
+                "ok": fail_drop <= 2,
+                "raw": {"count": fail_drop},
+                "scenario_id": "simlab-fail-drop",
+                "source": "simlab",
+                "standard_refs": ["cc-iso-15408-fdp-iff-1"],
+                "test_id": "simlab-fail-drop",
+            },
+        ],
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    return path
+
+
 def _write_fail_pcaps(run_dir: Path, probes: list[tuple]) -> None:
     """Dump one pcap per failed probe into ``run_dir/fail-pcaps/``.
 

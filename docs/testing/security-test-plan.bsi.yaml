@@ -1,0 +1,272 @@
+# BSI IT-Grundschutz firewall test catalogue fragment
+# Standards: NET.3.2 Firewall, NET.1.1 Architektur, OPS.1.2.5 Protokollierung
+#
+# This file is a stream-B2 fragment; it is merged by the M1 agent into
+# docs/testing/security-test-plan.yaml alongside the CC/NIST (B1) and
+# OWASP/ISO-27001 (B3) fragments.
+#
+# Each `maps_to_scenario` block is a valid StagelabConfig `scenarios[]` entry
+# (minus the wrapping hosts/dut/endpoints keys).  `stagelab validate` accepts
+# a minimal config wrapping any single entry here.
+
+standard: bsi-grundschutz
+version: "BSI IT-Grundschutz Kompendium 2023 Edition 1"
+controls:
+  - NET.3.2 Firewall
+  - NET.1.1 Netzarchitektur
+  - OPS.1.2.5 Protokollierung
+
+tests:
+
+  - test_id: bsi-net-3-2-a2-function-separation
+    standard_refs: [bsi-net-3-2-a2-function-separation]
+    title: "NET.3.2.A2 — Separation of firewall functions"
+    description: >
+      The firewall must enforce zone boundaries and permit only explicitly
+      authorised traffic flows.  Intra-zone traffic that crosses a firewall
+      interface must be subject to the rule set.  This test probes all
+      zone-pair combinations and verifies that packets whose source or
+      destination do not match any allow rule are silently dropped.
+    maps_to_scenario:
+      id: bsi-a2-function-separation
+      kind: rule_scan
+      source: wan-endpoint
+      target_subnet: 10.0.0.0/8
+      random_count: 500
+      test_id: bsi-net-3-2-a2-function-separation
+      standard_refs: [bsi-net-3-2-a2-function-separation]
+      acceptance_criteria:
+        fail_accept_count: 0
+        fail_drop_count: "<= 2"
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a2-function-separation"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a2-function-separation"
+
+  - test_id: bsi-net-3-2-a4-rule-documentation
+    standard_refs: [bsi-net-3-2-a4-rule-documentation]
+    title: "NET.3.2.A4 — Rule documentation and review"
+    description: >
+      Every firewall rule must be documented with its purpose and owner.
+      This control is partially covered by the shorewall-nft configuration
+      files (rules/policy/macros in /etc/shorewall46) which serve as the
+      authoritative rule list.  Automated checking that all rules have a
+      corresponding policy entry is not implemented; this test catalogues the
+      gap.
+    status: partial
+    gap: >
+      No automated rule-to-documentation traceability checker exists.
+      The shorewall-nft configuration files are the documented source of
+      truth; operators must review them manually for completeness.
+    maps_to_scenario:
+      id: bsi-a4-rule-coverage-matrix
+      kind: rule_coverage_matrix
+      source: probe-endpoint
+      zone_subnets:
+        lan: "10.0.10.0/24"
+        dmz: "10.0.20.0/24"
+        wan: "203.0.113.0/24"
+      protos: [tcp, udp, icmp]
+      tcp_ports: [22, 80, 443, 25, 465, 587]
+      udp_ports: [53, 123]
+      probe_count_per_tuple: 1
+      test_id: bsi-net-3-2-a4-rule-documentation
+      standard_refs: [bsi-net-3-2-a4-rule-documentation]
+      acceptance_criteria:
+        undocumented_allow_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a4-rule-documentation"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a4-rule-documentation"
+
+  - test_id: bsi-net-3-2-a5-dos-protection
+    standard_refs: [bsi-net-3-2-a5-dos-protection]
+    title: "NET.3.2.A5 — DoS protection"
+    description: >
+      The firewall must limit the impact of Denial-of-Service attacks.
+      Three scenario kinds are used: SYN-flood (dos_syn_flood), DNS query
+      flood (dos_dns_query), and TCP half-open connection exhaustion
+      (dos_half_open).  All three must pass their respective drop-rate
+      thresholds.
+    maps_to_scenario:
+      id: bsi-a5-syn-flood
+      kind: dos_syn_flood
+      source: dpdk-wan
+      sink: dpdk-lan
+      duration_s: 10
+      rate_pps: 50000
+      src_ip_range: "203.0.113.0/24"
+      dst_port_range: "80,443"
+      expect_max_passed_ratio: 0.05
+      test_id: bsi-net-3-2-a5-dos-protection
+      standard_refs: [bsi-net-3-2-a5-dos-protection]
+      acceptance_criteria:
+        passed_ratio_max: 0.05
+        throughput_degradation_max_pct: 10
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a5-dos-protection"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a5-dos-protection"
+
+  - test_id: bsi-net-3-2-a6-connection-state
+    standard_refs: [bsi-net-3-2-a6-connection-state]
+    title: "NET.3.2.A6 — Connection state tracking"
+    description: >
+      The firewall must be stateful: only packets belonging to established or
+      related connections must be forwarded after the initial handshake.
+      Covered by stateful FTP helper (stateful_helper_ftp), long-lived TCP
+      flow survival (long_flow_survival), and connection storm
+      (conn_storm).
+    maps_to_scenario:
+      id: bsi-a6-stateful-ftp
+      kind: stateful_helper_ftp
+      source: lan-endpoint
+      sink: dmz-endpoint
+      ftp_port: 21
+      mode: passive
+      user: ftpuser
+      password: ftpuser
+      test_file: /tmp/stagelab-ftp-test.txt
+      expect_data_connection: true
+      test_id: bsi-net-3-2-a6-connection-state
+      standard_refs: [bsi-net-3-2-a6-connection-state]
+      acceptance_criteria:
+        data_connection_established: true
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a6-connection-state"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a6-connection-state"
+
+  - test_id: bsi-net-3-2-a7-protocol-validation
+    standard_refs: [bsi-net-3-2-a7-protocol-validation]
+    title: "NET.3.2.A7 — Protocol validation and evasion resistance"
+    description: >
+      The firewall must drop malformed or crafted packets that attempt to
+      bypass rule evaluation (NULL scan, Xmas scan, FIN-without-SYN,
+      IP spoofing, IP fragment overlap, malformed UDP checksum).
+      Covered by the evasion_probes scenario.
+    maps_to_scenario:
+      id: bsi-a7-evasion-probes
+      kind: evasion_probes
+      source: probe-endpoint
+      target_ip: "10.0.10.1"
+      probe_types:
+        - tcp_null
+        - tcp_xmas
+        - tcp_fin_no_syn
+        - ip_spoof
+        - udp_malformed_checksum
+      target_port: 80
+      test_id: bsi-net-3-2-a7-protocol-validation
+      standard_refs: [bsi-net-3-2-a7-protocol-validation]
+      acceptance_criteria:
+        evasion_accepted_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a7-protocol-validation"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a7-protocol-validation"
+
+  - test_id: bsi-net-3-2-a10-logging
+    standard_refs: [bsi-net-3-2-a10-logging]
+    title: "NET.3.2.A10 — Logging and audit trail"
+    description: >
+      The firewall must log security-relevant events and make them available
+      for audit.  shorewalld exports nft counter metrics to Prometheus; a
+      Prometheus scrape validates that counters are incrementing.  Central
+      syslog export and structured per-packet logging are not implemented —
+      see gap note.
+    status: partial
+    gap: >
+      Prometheus counter export (shorewalld) is the only automated logging
+      path.  Per-packet syslog export and a central SIEM are not implemented.
+      OPS.1.2.5 log-retention requirements cannot be fully validated
+      automatically with the current stack.
+    maps_to_scenario:
+      id: bsi-a10-throughput-metrics
+      kind: throughput
+      source: lan-endpoint
+      sink: wan-endpoint
+      proto: tcp
+      duration_s: 10
+      parallel: 2
+      expect_min_gbps: 0.1
+      test_id: bsi-net-3-2-a10-logging
+      standard_refs: [bsi-net-3-2-a10-logging]
+      acceptance_criteria:
+        prometheus_counter_increments: true
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a10-logging"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a10-logging"
+
+  - test_id: bsi-net-3-2-a12-redundancy-ha
+    standard_refs: [bsi-net-3-2-a12-redundancy-ha]
+    title: "NET.3.2.A12 — Redundancy and high availability"
+    description: >
+      The firewall must tolerate failure of the active node and restore
+      traffic forwarding within an acceptable window via VRRP failover.
+      Covered by ha_failover_drill and reload_atomicity scenarios.
+    maps_to_scenario:
+      id: bsi-a12-ha-failover
+      kind: ha_failover_drill
+      source: lan-endpoint
+      sink: wan-endpoint
+      primary_fw_host: root@192.0.2.70
+      secondary_fw_host: root@192.0.2.87
+      service_name: keepalived
+      duration_s: 90
+      stop_at_s: 20
+      restart_at_s: 60
+      max_downtime_s: 3.0
+      test_id: bsi-net-3-2-a12-redundancy-ha
+      standard_refs: [bsi-net-3-2-a12-redundancy-ha]
+      acceptance_criteria:
+        failover_time_max_s: 3
+        traffic_gap_max_s: 3
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a12-redundancy-ha"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a12-redundancy-ha"
+
+  - test_id: bsi-ops-1-2-5-log-retention
+    standard_refs: [bsi-ops-1-2-5-log-retention]
+    title: "OPS.1.2.5 — Log retention and integrity"
+    description: >
+      Log data must be retained for a defined period and protected against
+      modification.  This control is partially out of scope for stagelab:
+      shorewalld exports counters to Prometheus but no log-retention or
+      integrity checking is implemented in the automated test suite.
+    status: partial
+    gap: >
+      Log retention policy (minimum 90 days per BSI baseline) and log
+      integrity protection are operational/infrastructure concerns outside
+      the shorewall-nft test scope.  Manual review required.
+    maps_to_scenario: null
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-ops-1-2-5-log-retention"
+      machine: "N/A — no automated scenario"
+
+out_of_scope:
+  - test_id: bsi-net-3-2-a9-time-sync
+    control: "NET.3.2.A9"
+    reason: >
+      NTP time synchronisation is a system-level concern handled by the OS
+      (chrony/ntpd).  shorewall-nft does not configure or test NTP; the
+      control is out of scope for firewall rule testing.
+
+  - test_id: bsi-net-1-1-a1-arch-doc
+    control: "NET.1.1.A1"
+    reason: >
+      Network architecture documentation is a governance/design artefact.
+      Automated testing cannot verify completeness of documentation.
+      The shorewall-nft configuration files are the machine-readable
+      architecture record; human review is required for NET.1.1.A1.
+
+  - control: "NET.3.2.A3"
+    reason: >
+      Physical network port security (switch port hardening) is out of scope
+      for a software firewall test suite.
+
+  - control: "NET.3.2.A8"
+    reason: >
+      VPN termination and PKI are handled by external components (OpenVPN,
+      WireGuard).  Firewall rules permit VPN traffic but do not perform
+      cryptographic validation — out of scope.
+
+  - control: "NET.3.2.A11"
+    reason: >
+      Remote administration channel hardening is an SSH server configuration
+      concern, not a firewall rule concern.  Out of scope.

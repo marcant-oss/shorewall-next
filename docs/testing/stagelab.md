@@ -281,9 +281,10 @@ be treated as a validation error if it does not match the `${VAR}` pattern.
 | `node_traffic` | ifHCInOctets / ifHCOutOctets + discard counters (IF-MIB 64-bit) | Replacement for ethtool polling; works across switches and remote FW nodes |
 | `system` | UCD-SNMP load averages (1/5/15 min) + sysUpTime | CPU saturation signal during DoS scenarios |
 | `vrrp` | keepalived VRRP instance state + name (KEEPALIVED-MIB) | Sub-second HA-failover drill real downtime measurement |
+| `vrrp_extended` | vrrp_instance_vrid, vrrp_instance_wanted_state, vrrp_instance_effective_priority, vrrp_instance_vips_status, vrrp_instance_preempt, vrrp_instance_preempt_delay | Richer HA-observability: track-script priority drain, VIP assignment status, preempt config; use alongside `vrrp` during failover drills |
 | `pdns` | PowerDNS-Recursor stats via NET-SNMP-EXTEND-MIB | DNS-DoS advisor signal: QPS increase ratio and cache-hit rate |
 
-Use `bundles: [node_traffic, system, vrrp, pdns]` to collect all four.
+Use `bundles: [node_traffic, system, vrrp, vrrp_extended, pdns]` to collect all five.
 The `oids` field must list the raw OIDs for the bundles you select — see
 `tools/stagelab-example-snmp.yaml` for the full list.
 

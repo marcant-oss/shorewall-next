@@ -12,6 +12,7 @@ from typing import Union
 from .config import (
     ConnStormAstfScenario,
     ConnStormScenario,
+    ConntrackOverflowScenario,
     DnsDosScenario,
     EvasionProbesScenario,
     HaFailoverDrillScenario,
@@ -111,6 +112,7 @@ class ThroughputRunner(Scenario):
                 "parallel": sc.parallel,
                 "proto": sc.proto,
                 "delay_before_s": 1,
+                "measure_latency": sc.measure_latency,
                 "scenario_id": sc.id,
             },
         )
@@ -134,12 +136,39 @@ class ThroughputRunner(Scenario):
 
         ok = ok and throughput_gbps >= sc.expect_min_gbps
 
+        # Collect latency percentiles from the first client result that has them.
+        latency_p50_ms: float | None = None
+        latency_p95_ms: float | None = None
+        latency_p99_ms: float | None = None
+        if sc.measure_latency and client_results:
+            r0 = client_results[0]
+            latency_p50_ms = r0.get("latency_p50_ms")
+            latency_p95_ms = r0.get("latency_p95_ms")
+            latency_p99_ms = r0.get("latency_p99_ms")
+
+        # Evaluate acceptance_criteria for latency keys.
+        criteria_results: dict[str, bool] = {}
+        if sc.measure_latency and sc.acceptance_criteria:
+            if "latency_p95_ms_max" in sc.acceptance_criteria and latency_p95_ms is not None:
+                criteria_results["latency_p95_ms"] = latency_p95_ms <= sc.acceptance_criteria["latency_p95_ms_max"]
+            if "latency_p99_ms_max" in sc.acceptance_criteria and latency_p99_ms is not None:
+                criteria_results["latency_p99_ms"] = latency_p99_ms <= sc.acceptance_criteria["latency_p99_ms_max"]
+            if "latency_p50_ms_max" in sc.acceptance_criteria and latency_p50_ms is not None:
+                criteria_results["latency_p50_ms"] = latency_p50_ms <= sc.acceptance_criteria["latency_p50_ms_max"]
+
+        raw: dict = {"throughput_gbps": throughput_gbps}
+        if sc.measure_latency:
+            raw["latency_p50_ms"] = latency_p50_ms
+            raw["latency_p95_ms"] = latency_p95_ms
+            raw["latency_p99_ms"] = latency_p99_ms
+
         return ScenarioResult(
             scenario_id=sc.id,
             kind="throughput",
             ok=ok,
             duration_s=total_duration,
-            raw={"throughput_gbps": throughput_gbps},
+            raw=raw,
+            criteria_results=criteria_results,
         )
 
 
@@ -1467,12 +1496,115 @@ class HaFailoverDrillRunner(Scenario):
 
 
 # ---------------------------------------------------------------------------
+# ConntrackOverflowRunner
+# ---------------------------------------------------------------------------
+
+
+class ConntrackOverflowRunner(Scenario):
+    """Fills the conntrack table to nf_conntrack_max and verifies drop behaviour.
+
+    Emits three AgentCommands:
+    1. conntrack_overflow_fill  — burst new connections from source to exhaust table
+    2. conntrack_overflow_probe — small SYN burst after fill; probes should be dropped
+    3. conntrack_overflow_inspect — SSH to fw_host to read /proc counters + dmesg
+    """
+
+    def __init__(self, scenario: ConntrackOverflowScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        src_ep = cfg.endpoint_by_name(sc.source)
+        sink_ep = cfg.endpoint_by_name(sc.sink)
+        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
+        sink_ip = sink_ep.ipv4.split("/")[0] if sink_ep.ipv4 else "0.0.0.0"
+
+        return [
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="conntrack_overflow_fill",
+                spec={
+                    "src_ip": src_ip,
+                    "sink_ip": sink_ip,
+                    "duration_s": sc.duration_s,
+                    "rate_new_per_s": sc.rate_new_per_s,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="conntrack_overflow_probe",
+                spec={
+                    "src_ip": src_ip,
+                    "sink_ip": sink_ip,
+                    "probe_count": 10,
+                    "scenario_id": sc.id,
+                },
+            ),
+            AgentCommand(
+                endpoint_name=sc.source,
+                kind="conntrack_overflow_inspect",
+                spec={
+                    "fw_host": sc.fw_host,
+                    "scenario_id": sc.id,
+                },
+            ),
+        ]
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+
+        fill_r = next((r for r in results if r.get("tool") == "conntrack_overflow_fill"), {})
+        probe_r = next((r for r in results if r.get("tool") == "conntrack_overflow_probe"), {})
+        inspect_r = next((r for r in results if r.get("tool") == "conntrack_overflow_inspect"), {})
+
+        ct_count = int(inspect_r.get("count", 0))
+        ct_max = int(inspect_r.get("max", 1))
+        dmesg_hits = int(inspect_r.get("dmesg_hits", 0))
+        probe_accepted = int(probe_r.get("accepted_count", 0))
+
+        observed_fill_pct = (100 * ct_count // ct_max) if ct_max > 0 else 0
+
+        # Accept acceptance_criteria overrides if provided.
+        ac = sc.acceptance_criteria
+        fill_pct_min = int(ac.get("expect_table_fill_pct_min", sc.expect_table_fill_pct_min))
+        check_no_new = bool(ac.get("expect_no_new_conntracks_when_full",
+                                   sc.expect_no_new_conntracks_when_full))
+
+        criteria_results: dict[str, bool] = {
+            "table_fill_reached": observed_fill_pct >= fill_pct_min,
+            "drops_reported": dmesg_hits > 0,
+        }
+        if check_no_new:
+            criteria_results["probe_after_fill_blocked"] = probe_accepted == 0
+
+        ok = all(criteria_results.values())
+
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="conntrack_overflow",
+            ok=ok,
+            duration_s=float(fill_r.get("duration_s", sc.duration_s)),
+            raw={
+                "fill_pct": observed_fill_pct,
+                "count": ct_count,
+                "max": ct_max,
+                "dmesg_hits": dmesg_hits,
+                "probe_accepted": probe_accepted,
+                "probe_dropped": int(probe_r.get("dropped_count", 0)),
+                "criteria_results": criteria_results,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
 _ScenarioCfg = Union[
     ThroughputScenario,
     ConnStormScenario,
+    ConntrackOverflowScenario,
     RuleScanScenario,
     TuningSweepScenario,
     ThroughputDpdkScenario,
@@ -1509,6 +1641,8 @@ def build_runner(scenario: _ScenarioCfg) -> Scenario:
         return DnsDosRunner(scenario)  # type: ignore[arg-type]
     if scenario.kind == "dos_half_open":
         return HalfOpenDosRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "conntrack_overflow":
+        return ConntrackOverflowRunner(scenario)  # type: ignore[arg-type]
     if scenario.kind == "rule_coverage_matrix":
         return RuleCoverageMatrixRunner(scenario)  # type: ignore[arg-type]
     if scenario.kind == "stateful_helper_ftp":
@@ -1536,6 +1670,7 @@ __all__ = [
     "SynFloodDosRunner",
     "DnsDosRunner",
     "HalfOpenDosRunner",
+    "ConntrackOverflowRunner",
     "RuleCoverageMatrixRunner",
     "StatefulHelperFtpRunner",
     "EvasionProbesRunner",

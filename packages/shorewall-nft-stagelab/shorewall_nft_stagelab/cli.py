@@ -177,8 +177,11 @@ def review(report_dir: str, output: str | None, open_pr_flag: bool,
               help="Output format. Defaults to both; pdf requires weasyprint.")
 @click.option("--operator", default=None,
               help="Operator name for the cover page (default: $USER).")
+@click.option("--simlab-report", "simlab_report", default=None,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Path to simlab.json produced by simlab-smoketest --output-json.")
 def audit(report_dirs: tuple, output: str | None, output_format: str,
-          operator: str | None) -> None:
+          operator: str | None, simlab_report: str | None) -> None:
     """Consolidate one or more stagelab run-dirs into a signed-off audit
     report (single-file HTML + optional PDF)."""
     import os as _os
@@ -192,6 +195,8 @@ def audit(report_dirs: tuple, output: str | None, output_format: str,
         click.echo(f"Error loading run dirs: {exc}", err=True)
         sys.exit(1)
 
+    simlab_path = Path(simlab_report) if simlab_report else None
+
     if operator:
         payload = _audit.AuditPayload(
             run_id=payload.run_id,
@@ -201,6 +206,7 @@ def audit(report_dirs: tuple, output: str | None, output_format: str,
             recommendations=payload.recommendations,
             sut_facts=payload.sut_facts,
             setup_facts=payload.setup_facts,
+            simlab_report=simlab_path,
         )
     elif not payload.operator:
         payload = _audit.AuditPayload(
@@ -211,6 +217,19 @@ def audit(report_dirs: tuple, output: str | None, output_format: str,
             recommendations=payload.recommendations,
             sut_facts=payload.sut_facts,
             setup_facts=payload.setup_facts,
+            simlab_report=simlab_path,
+        )
+    elif simlab_path is not None:
+        # operator already set by load_runs; still need to attach simlab_report
+        payload = _audit.AuditPayload(
+            run_id=payload.run_id,
+            operator=payload.operator,
+            config_path=payload.config_path,
+            scenarios=payload.scenarios,
+            recommendations=payload.recommendations,
+            sut_facts=payload.sut_facts,
+            setup_facts=payload.setup_facts,
+            simlab_report=simlab_path,
         )
 
     out_dir = Path(output) if output else paths[0]
@@ -222,6 +241,8 @@ def audit(report_dirs: tuple, output: str | None, output_format: str,
         sys.exit(1)
 
     click.echo(str(written["html"]))
+    if written.get("json"):
+        click.echo(str(written["json"]))
     if written.get("pdf"):
         click.echo(str(written["pdf"]))
 

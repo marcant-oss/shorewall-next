@@ -1,3 +1,13 @@
+shorewall-nft (1.10.0-1) unstable; urgency=medium
+
+  * Release 1.10.0: security-test-plan feature — standards-driven catalogue
+    (62 test IDs across 7 standards), conntrack_overflow scenario, latency
+    percentiles, DoS window-delta, vrrp_extended SNMP bundle, VRRP OID fix,
+    trafgen_pyconn replaces tcpkali, simlab.json + audit merger.
+  * See CHANGELOG.md for full details.
+
+ -- André Valentin <avalentin@marcant.net>  Mon, 20 Apr 2026 00:00:00 +0000
+
 shorewall-nft (1.9.0-1) unstable; urgency=medium
 
   * Release 1.9.0: stagelab SNMP metric source (S1-S4), HA-failover drill

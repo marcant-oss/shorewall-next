@@ -1602,6 +1602,20 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     print(f"after:  {after}")
     leaked = {k: after.get(k, 0) - before.get(k, 0) for k in after}
     print(f"delta:  {leaked}")
+
+    # Optional machine-readable JSON for stagelab audit integration.
+    output_json = getattr(args, "output_json", None)
+    if output_json is not None:
+        try:
+            from datetime import datetime, timezone
+
+            from .report import write_json
+            ts = datetime.now(timezone.utc).isoformat()
+            write_json(static, Path(output_json), run_name="smoke", run_ts=ts)
+            print(f"simlab json: {output_json}")
+        except Exception as e:  # noqa: BLE001
+            print(f"simlab json FAILED to write: {e}")
+
     return 0
 
 
@@ -1735,6 +1749,9 @@ def main() -> int:
     p_smoke.add_argument("--no-auto-sysctl", action="store_true",
         dest="no_auto_sysctl", default=False,
         help="Skip automatic sysctl tuning")
+    p_smoke.add_argument("--output-json", type=Path, default=None,
+        dest="output_json", metavar="PATH",
+        help="Write machine-readable simlab.json to PATH (stagelab audit format)")
     p_stress = sub.add_parser("stress", help="N build+destroy cycles")
     p_stress.add_argument("iterations", type=int, nargs="?", default=10)
     sub.add_parser("limit", help="push build/destroy until something breaks")

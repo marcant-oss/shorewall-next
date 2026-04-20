@@ -1,0 +1,1797 @@
+__comment__: Auto-generated (security-test-plan) — DO NOT edit by hand; regenerate
+  via tools/merge-security-test-plan-yaml.py or the M1 merger.
+schema_version: 1
+generated_by: M1 merger (security-test-plan feature)
+generated_at: '2026-04-20T16:58:28+00:00'
+standards:
+- id: cc-iso-15408
+  title: Common Criteria (ISO/IEC 15408)
+  fragment_owner: b1
+- id: nist-800-53
+  title: NIST SP 800-53 rev 5
+  fragment_owner: b1
+- id: bsi-grundschutz
+  title: BSI IT-Grundschutz
+  fragment_owner: b2
+- id: cis-benchmarks
+  title: CIS Benchmarks
+  fragment_owner: b2
+- id: owasp
+  title: OWASP Firewall Testing
+  fragment_owner: b3
+- id: iso-27001
+  title: ISO/IEC 27001 Annex A / 27002
+  fragment_owner: b3
+- id: performance-ipv6
+  title: IPv6 throughput parity (performance addendum)
+  fragment_owner: c3
+tests:
+- test_id: cc-fdp-iff-1-basic-flow
+  standard: cc-iso-15408
+  title: Basic information flow control
+  sfr: FDP_IFF.1
+  description: 'Verify zone-pair accept/drop consistency versus the compiled ruleset
+    using random probes across the target subnet.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 500
+    test_id: cc-fdp-iff-1-basic-flow
+    standard_refs:
+    - cc-iso-15408-fdp-iff-1
+    acceptance_criteria:
+      fail_accept_count: 0
+      fail_drop_count_max: 2
+  evidence:
+    human_ref: security-test-plan.md#cc-fdp-iff-1-basic-flow
+    machine_ref: audit.json[scenarios][].test_id == cc-fdp-iff-1-basic-flow
+  status: covered
+- test_id: cc-fdp-iff-1-default-deny
+  standard: cc-iso-15408
+  title: Default deny on undefined zone pairs
+  sfr: FDP_IFF.1.5
+  description: 'Traffic to zone pairs with no explicit ACCEPT rule must be dropped.
+    Probes target IP ranges not covered by any policy rule.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 192.0.2.0/24
+    random_count: 200
+    test_id: cc-fdp-iff-1-default-deny
+    standard_refs:
+    - cc-iso-15408-fdp-iff-1
+    acceptance_criteria:
+      fail_accept_count: 0
+  evidence:
+    human_ref: security-test-plan.md#cc-fdp-iff-1-default-deny
+    machine_ref: audit.json[scenarios][].test_id == cc-fdp-iff-1-default-deny
+  status: covered
+- test_id: cc-fdp-iff-1-evasion-reject
+  standard: cc-iso-15408
+  title: Reject evasion probes (malformed TCP, spoofed IPs)
+  sfr: FDP_IFF.1
+  description: 'Firewall must silently drop TCP NULL, TCP XMAS, TCP FIN-without-SYN,
+    IP-spoofed, and malformed-checksum UDP frames.
+
+    '
+  maps_to_scenario:
+    kind: evasion_probes
+    source: wan-endpoint
+    target_ip: 10.0.0.1
+    probe_types:
+    - tcp_null
+    - tcp_xmas
+    - tcp_fin_no_syn
+    - ip_spoof
+    - udp_malformed_checksum
+    target_port: 80
+    test_id: cc-fdp-iff-1-evasion-reject
+    standard_refs:
+    - cc-iso-15408-fdp-iff-1
+    acceptance_criteria:
+      pass_count: 0
+  evidence:
+    human_ref: security-test-plan.md#cc-fdp-iff-1-evasion-reject
+    machine_ref: audit.json[scenarios][].test_id == cc-fdp-iff-1-evasion-reject
+  status: covered
+- test_id: cc-fau-gen-1-audit-record
+  standard: cc-iso-15408
+  title: Audit record generation
+  sfr: FAU_GEN.1
+  description: 'Per-rule Prometheus counter verification. Counters must increment
+    for each rule that fires during a rule_scan run. Per-packet syslog records are
+    not generated (partial coverage).
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 200
+    test_id: cc-fau-gen-1-audit-record
+    standard_refs:
+    - cc-iso-15408-fau-gen-1
+    acceptance_criteria:
+      prometheus_counter_incremented: true
+  evidence:
+    human_ref: security-test-plan.md#cc-fau-gen-1-audit-record
+    machine_ref: audit.json[scenarios][].metrics
+  status: partial
+  gap_reason: 'Only aggregate Prometheus counters are produced. Per-packet syslog/CEF
+    records are not emitted. A shorewalld CEF/syslog exporter is tracked as a separate
+    open task.
+
+    '
+- test_id: cc-fru-rsa-1-conn-storm
+  standard: cc-iso-15408
+  title: Minimum resource allocation under connection storm
+  sfr: FRU_RSA.1
+  description: 'High connection-creation rate must not degrade legitimate throughput
+    below 80% of baseline.
+
+    '
+  maps_to_scenario:
+    kind: conn_storm
+    source: wan-endpoint
+    sink: lan-endpoint
+    target_conns: 100000
+    rate_per_s: 10000
+    hold_s: 30
+    test_id: cc-fru-rsa-1-conn-storm
+    standard_refs:
+    - cc-iso-15408-fru-rsa-1
+    acceptance_criteria:
+      throughput_ratio_min: 0.8
+  evidence:
+    human_ref: security-test-plan.md#cc-fru-rsa-1-conn-storm
+    machine_ref: audit.json[scenarios][].test_id == cc-fru-rsa-1-conn-storm
+  status: covered
+- test_id: cc-fru-rsa-1-dos-syn-flood
+  standard: cc-iso-15408
+  title: Minimum resource allocation under SYN flood
+  sfr: FRU_RSA.1
+  description: 'At most 5% of SYN packets from a flood must reach the sink. The firewall
+    must absorb or drop the remaining 95%+.
+
+    '
+  maps_to_scenario:
+    kind: dos_syn_flood
+    source: wan-endpoint
+    sink: dmz-endpoint
+    duration_s: 10
+    rate_pps: 50000
+    src_ip_range: 100.64.0.0/10
+    dst_port_range: 80,443
+    expect_max_passed_ratio: 0.05
+    test_id: cc-fru-rsa-1-dos-syn-flood
+    standard_refs:
+    - cc-iso-15408-fru-rsa-1
+    acceptance_criteria:
+      passed_ratio_max: 0.05
+  evidence:
+    human_ref: security-test-plan.md#cc-fru-rsa-1-dos-syn-flood
+    machine_ref: audit.json[scenarios][].test_id == cc-fru-rsa-1-dos-syn-flood
+  status: covered
+  note: 'rate_pps must not exceed STAGELAB_DOS_RATE_CAP_PPS (default 100000). Requires
+    dpdk endpoint. Adjust rate_pps for non-DPDK hardware.
+
+    '
+- test_id: cc-fru-rsa-1-dos-conntrack
+  standard: cc-iso-15408
+  title: Minimum resource allocation, conntrack saturation
+  sfr: FRU_RSA.1
+  description: 'Half-open connection flood must not cause kernel OOM or conntrack
+    ENOMEM. The firewall must recover after the flood stops.
+
+    '
+  maps_to_scenario:
+    kind: dos_half_open
+    source: wan-endpoint
+    sink: dmz-endpoint
+    duration_s: 30
+    target_conns: 500000
+    open_rate_per_s: 20000
+    dst_port: 80
+    test_id: cc-fru-rsa-1-dos-conntrack
+    standard_refs:
+    - cc-iso-15408-fru-rsa-1
+    acceptance_criteria:
+      kernel_error_count: 0
+  evidence:
+    human_ref: security-test-plan.md#cc-fru-rsa-1-dos-conntrack
+    machine_ref: audit.json[scenarios][].test_id == cc-fru-rsa-1-dos-conntrack
+  status: covered
+  note: 'Requires dpdk endpoint. open_rate_per_s must not exceed STAGELAB_DOS_RATE_CAP_PPS.
+
+    '
+- test_id: cc-fmt-msa-3-default-values
+  standard: cc-iso-15408
+  title: Restrictive default attribute values
+  sfr: FMT_MSA.3
+  description: 'Default-deny policy enforced at base chains; shorewall-nft check compile
+    step succeeds without warnings.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 100
+    test_id: cc-fmt-msa-3-default-values
+    standard_refs:
+    - cc-iso-15408-fmt-msa-3
+    acceptance_criteria:
+      fail_accept_count: 0
+      base_chain_policy: drop
+  evidence:
+    human_ref: security-test-plan.md#cc-fmt-msa-3-default-values
+    machine_ref: audit.json[scenarios][].test_id == cc-fmt-msa-3-default-values
+  status: covered
+- test_id: cc-fpt-fls-1-reload-atomicity
+  standard: cc-iso-15408
+  title: Preserve secure state during ruleset reload
+  sfr: FPT_FLS.1
+  description: 'Atomic ruleset reload (nft atomic replace) must not disrupt established
+    TCP flows. Retransmissions during the reload window must stay below 100.
+
+    '
+  maps_to_scenario:
+    kind: reload_atomicity
+    source: wan-endpoint
+    sink: lan-endpoint
+    fw_host: root@fw-primary
+    duration_s: 60
+    reload_at_s: 20
+    max_retrans_during_reload: 100
+    test_id: cc-fpt-fls-1-reload-atomicity
+    standard_refs:
+    - cc-iso-15408-fpt-fls-1
+    acceptance_criteria:
+      max_retrans_during_reload: 100
+  evidence:
+    human_ref: security-test-plan.md#cc-fpt-fls-1-reload-atomicity
+    machine_ref: audit.json[scenarios][].test_id == cc-fpt-fls-1-reload-atomicity
+  status: covered
+- test_id: cc-fpt-rcv-3-ha-failover
+  standard: cc-iso-15408
+  title: Automated recovery via HA failover
+  sfr: FPT_RCV.3
+  description: 'VRRP failover drill: stop keepalived on the primary FW, measure downtime
+    until traffic flows via the secondary. Downtime must be within 5 seconds.
+
+    '
+  maps_to_scenario:
+    kind: ha_failover_drill
+    source: wan-endpoint
+    sink: lan-endpoint
+    primary_fw_host: root@fw-primary
+    secondary_fw_host: root@fw-secondary
+    duration_s: 90
+    stop_at_s: 20
+    restart_at_s: 60
+    service_name: keepalived
+    max_downtime_s: 5.0
+    test_id: cc-fpt-rcv-3-ha-failover
+    standard_refs:
+    - cc-iso-15408-fpt-rcv-3
+    acceptance_criteria:
+      max_downtime_s: 5.0
+  evidence:
+    human_ref: security-test-plan.md#cc-fpt-rcv-3-ha-failover
+    machine_ref: audit.json[scenarios][].test_id == cc-fpt-rcv-3-ha-failover
+  status: covered
+- test_id: cc-fta-ssl-3-long-flow-survival
+  standard: cc-iso-15408
+  title: Established-flow survival under conntrack timeout constraints
+  sfr: FTA_SSL.3
+  description: 'Long TCP stream must survive the full duration when conntrack timeout
+    is set above the stream duration. Validates that the firewall does not prematurely
+    terminate established sessions.
+
+    '
+  maps_to_scenario:
+    kind: long_flow_survival
+    source: wan-endpoint
+    sink: lan-endpoint
+    fw_host: root@fw-primary
+    duration_s: 300
+    sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
+    sysctl_value: 600
+    expect_flow_dies: false
+    test_id: cc-fta-ssl-3-long-flow-survival
+    standard_refs:
+    - cc-iso-15408-fta-ssl-3
+    acceptance_criteria:
+      flow_survived: true
+  evidence:
+    human_ref: security-test-plan.md#cc-fta-ssl-3-long-flow-survival
+    machine_ref: audit.json[scenarios][].test_id == cc-fta-ssl-3-long-flow-survival
+  status: covered
+- test_id: nist-ac-4-info-flow
+  standard: nist-800-53
+  title: Information flow enforcement
+  control: AC-4
+  description: 'Zone-pair accept/drop consistency versus the compiled ruleset using
+    random probes across a /8 target subnet.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 500
+    test_id: nist-ac-4-info-flow
+    standard_refs:
+    - nist-800-53-ac-4
+    acceptance_criteria:
+      fail_accept_count: 0
+      fail_drop_count_max: 2
+  evidence:
+    human_ref: security-test-plan.md#nist-ac-4-info-flow
+    machine_ref: audit.json[scenarios][].test_id == nist-ac-4-info-flow
+  status: covered
+- test_id: nist-ac-4-boundary-coverage
+  standard: nist-800-53
+  title: Information flow enforcement — boundary coverage matrix
+  control: AC-4
+  description: 'Systematic per-zone-pair coverage via rule_coverage_matrix across
+    TCP, UDP, and ICMP protocols.
+
+    '
+  maps_to_scenario:
+    kind: rule_coverage_matrix
+    source: wan-endpoint
+    zone_subnets:
+      wan: 0.0.0.0/0
+      lan: 10.0.10.0/24
+      dmz: 10.0.20.0/24
+    protos:
+    - tcp
+    - udp
+    - icmp
+    tcp_ports:
+    - 22
+    - 80
+    - 443
+    udp_ports:
+    - 53
+    - 123
+    probe_count_per_tuple: 1
+    test_id: nist-ac-4-boundary-coverage
+    standard_refs:
+    - nist-800-53-ac-4
+    acceptance_criteria:
+      uncovered_zone_pairs: 0
+  evidence:
+    human_ref: security-test-plan.md#nist-ac-4-boundary-coverage
+    machine_ref: audit.json[scenarios][].test_id == nist-ac-4-boundary-coverage
+  status: covered
+- test_id: nist-sc-5-dos-syn
+  standard: nist-800-53
+  title: Resistance to SYN-flood DoS
+  control: SC-5
+  description: 'At most 5% of SYN packets from a controlled flood must reach the sink.
+
+    '
+  maps_to_scenario:
+    kind: dos_syn_flood
+    source: wan-endpoint
+    sink: dmz-endpoint
+    duration_s: 10
+    rate_pps: 50000
+    src_ip_range: 100.64.0.0/10
+    dst_port_range: 80,443
+    expect_max_passed_ratio: 0.05
+    test_id: nist-sc-5-dos-syn
+    standard_refs:
+    - nist-800-53-sc-5
+    acceptance_criteria:
+      passed_ratio_max: 0.05
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-5-dos-syn
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-5-dos-syn
+  status: covered
+  note: 'Requires dpdk endpoint. rate_pps must not exceed STAGELAB_DOS_RATE_CAP_PPS.
+
+    '
+- test_id: nist-sc-5-dos-conntrack
+  standard: nist-800-53
+  title: Resistance to conntrack saturation DoS
+  control: SC-5
+  description: 'High connection-creation rate must not cause kernel OOM/ENOMEM and
+    must keep throughput above 80% of baseline.
+
+    '
+  maps_to_scenario:
+    kind: conn_storm
+    source: wan-endpoint
+    sink: lan-endpoint
+    target_conns: 100000
+    rate_per_s: 10000
+    hold_s: 30
+    test_id: nist-sc-5-dos-conntrack
+    standard_refs:
+    - nist-800-53-sc-5
+    acceptance_criteria:
+      throughput_ratio_min: 0.8
+      kernel_error_count: 0
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-5-dos-conntrack
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-5-dos-conntrack
+  status: covered
+- test_id: nist-sc-5-dos-dns
+  standard: nist-800-53
+  title: Resistance to DNS query-rate DoS
+  control: SC-5
+  description: 'DNS flood must not prevent legitimate resolver access. Firewall rate-limiting
+    must keep resolver reachable.
+
+    '
+  maps_to_scenario:
+    kind: dos_dns_query
+    source: wan-endpoint
+    sink: dmz-endpoint
+    duration_s: 10
+    queries_per_s: 20000
+    query_name_pattern: random
+    target_resolver: 10.0.20.53
+    test_id: nist-sc-5-dos-dns
+    standard_refs:
+    - nist-800-53-sc-5
+    acceptance_criteria:
+      resolver_reachable_during_flood: true
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-5-dos-dns
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-5-dos-dns
+  status: covered
+  note: 'Requires dpdk endpoint. queries_per_s must not exceed STAGELAB_DOS_RATE_CAP_PPS.
+
+    '
+- test_id: nist-sc-5-dos-half-open
+  standard: nist-800-53
+  title: Resistance to half-open TCP connection exhaustion
+  control: SC-5
+  description: 'Half-open flood must not push conntrack table above 95% utilisation
+    and the firewall must recover within 30 seconds after the flood stops.
+
+    '
+  maps_to_scenario:
+    kind: dos_half_open
+    source: wan-endpoint
+    sink: dmz-endpoint
+    duration_s: 30
+    target_conns: 500000
+    open_rate_per_s: 20000
+    dst_port: 80
+    test_id: nist-sc-5-dos-half-open
+    standard_refs:
+    - nist-800-53-sc-5
+    acceptance_criteria:
+      conntrack_table_usage_peak_ratio_max: 0.95
+      recovery_within_s: 30
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-5-dos-half-open
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-5-dos-half-open
+  status: covered
+  note: 'Requires dpdk endpoint. open_rate_per_s must not exceed STAGELAB_DOS_RATE_CAP_PPS.
+
+    '
+- test_id: nist-sc-7-boundary-throughput
+  standard: nist-800-53
+  title: Boundary protection — sustained throughput under load
+  control: SC-7
+  description: 'iperf3 throughput test through the firewall. Must sustain the configured
+    minimum Gbps over the full duration.
+
+    '
+  maps_to_scenario:
+    kind: throughput
+    source: wan-endpoint
+    sink: lan-endpoint
+    proto: tcp
+    duration_s: 30
+    parallel: 4
+    expect_min_gbps: 1.0
+    test_id: nist-sc-7-boundary-throughput
+    standard_refs:
+    - nist-800-53-sc-7
+    acceptance_criteria:
+      throughput_gbps_min: 1.0
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-7-boundary-throughput
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-7-boundary-throughput
+  status: covered
+- test_id: nist-sc-7-boundary-evasion
+  standard: nist-800-53
+  title: Boundary protection — evasion probe rejection
+  control: SC-7
+  description: 'Malformed and crafted frames across the boundary must be dropped.
+    Zero packets must pass.
+
+    '
+  maps_to_scenario:
+    kind: evasion_probes
+    source: wan-endpoint
+    target_ip: 10.0.0.1
+    probe_types:
+    - tcp_null
+    - tcp_xmas
+    - tcp_fin_no_syn
+    - ip_spoof
+    - udp_malformed_checksum
+    target_port: 80
+    test_id: nist-sc-7-boundary-evasion
+    standard_refs:
+    - nist-800-53-sc-7
+    acceptance_criteria:
+      pass_count: 0
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-7-boundary-evasion
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-7-boundary-evasion
+  status: covered
+- test_id: nist-au-2-audit-events
+  standard: nist-800-53
+  title: Audit events — per-rule counter verification
+  control: AU-2
+  description: 'Per-rule Prometheus counters must increment for rules that fire during
+    a rule_scan run. Partial coverage only (no per-packet syslog).
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 200
+    test_id: nist-au-2-audit-events
+    standard_refs:
+    - nist-800-53-au-2
+    acceptance_criteria:
+      prometheus_counter_incremented: true
+  evidence:
+    human_ref: security-test-plan.md#nist-au-2-audit-events
+    machine_ref: audit.json[scenarios][].metrics
+  status: partial
+  gap_reason: 'Only aggregate Prometheus counters. Per-packet records with timestamps
+    and structured fields are not produced. A shorewalld CEF/syslog exporter is tracked
+    as a separate open task.
+
+    '
+- test_id: nist-au-12-audit-generation
+  standard: nist-800-53
+  title: Audit record generation — shorewalld Prometheus scrape
+  control: AU-12
+  description: 'shorewalld Prometheus endpoint must be reachable during a run and
+    return monotonically increasing nft counter values.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 100
+    test_id: nist-au-12-audit-generation
+    standard_refs:
+    - nist-800-53-au-12
+    acceptance_criteria:
+      prometheus_counter_incremented: true
+      scrape_duration_s_max: 5.0
+  evidence:
+    human_ref: security-test-plan.md#nist-au-12-audit-generation
+    machine_ref: audit.json[scenarios][].metrics
+  status: partial
+  gap_reason: 'Per-packet structured audit records are not generated; Prometheus counters
+    only.
+
+    '
+- test_id: nist-si-4-monitoring
+  standard: nist-800-53
+  title: System monitoring via shorewalld Prometheus exporter
+  control: SI-4
+  description: 'shorewalld Prometheus scrape must complete within 5 seconds and return
+    non-empty nft counter and conntrack metrics.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 50
+    test_id: nist-si-4-monitoring
+    standard_refs:
+    - nist-800-53-si-4
+    acceptance_criteria:
+      scrape_duration_s_max: 5.0
+      metric_count_min: 1
+  evidence:
+    human_ref: security-test-plan.md#nist-si-4-monitoring
+    machine_ref: audit.json[scenarios][].metrics
+  status: covered
+- test_id: nist-sc-5-reload-atomicity
+  standard: nist-800-53
+  title: Service availability during ruleset reload
+  control: SC-5(3)
+  description: 'Atomic nft ruleset reload must not interrupt established TCP flows.
+    Retransmissions during reload must stay below 100.
+
+    '
+  maps_to_scenario:
+    kind: reload_atomicity
+    source: wan-endpoint
+    sink: lan-endpoint
+    fw_host: root@fw-primary
+    duration_s: 60
+    reload_at_s: 20
+    max_retrans_during_reload: 100
+    test_id: nist-sc-5-reload-atomicity
+    standard_refs:
+    - nist-800-53-sc-5
+    acceptance_criteria:
+      max_retrans_during_reload: 100
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-5-reload-atomicity
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-5-reload-atomicity
+  status: covered
+- test_id: nist-sc-7-ha-failover
+  standard: nist-800-53
+  title: Boundary protection — HA failover continuity
+  control: SC-7(18)
+  description: 'VRRP failover drill: stop keepalived on the primary FW, measure downtime,
+    confirm secondary assumes VIP within 5 seconds.
+
+    '
+  maps_to_scenario:
+    kind: ha_failover_drill
+    source: wan-endpoint
+    sink: lan-endpoint
+    primary_fw_host: root@fw-primary
+    secondary_fw_host: root@fw-secondary
+    duration_s: 90
+    stop_at_s: 20
+    restart_at_s: 60
+    service_name: keepalived
+    max_downtime_s: 5.0
+    test_id: nist-sc-7-ha-failover
+    standard_refs:
+    - nist-800-53-sc-7
+    acceptance_criteria:
+      max_downtime_s: 5.0
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-7-ha-failover
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-7-ha-failover
+  status: covered
+- test_id: bsi-net-3-2-a2-function-separation
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a2-function-separation
+  title: NET.3.2.A2 — Separation of firewall functions
+  description: 'The firewall must enforce zone boundaries and permit only explicitly
+    authorised traffic flows.  Intra-zone traffic that crosses a firewall interface
+    must be subject to the rule set.  This test probes all zone-pair combinations
+    and verifies that packets whose source or destination do not match any allow rule
+    are silently dropped.
+
+    '
+  maps_to_scenario:
+    id: bsi-a2-function-separation
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 500
+    test_id: bsi-net-3-2-a2-function-separation
+    standard_refs:
+    - bsi-net-3-2-a2-function-separation
+    acceptance_criteria:
+      fail_accept_count: 0
+      fail_drop_count: <= 2
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a2-function-separation
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a2-function-separation
+- test_id: bsi-net-3-2-a4-rule-documentation
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a4-rule-documentation
+  title: NET.3.2.A4 — Rule documentation and review
+  description: 'Every firewall rule must be documented with its purpose and owner.
+    This control is partially covered by the shorewall-nft configuration files (rules/policy/macros
+    in /etc/shorewall46) which serve as the authoritative rule list.  Automated checking
+    that all rules have a corresponding policy entry is not implemented; this test
+    catalogues the gap.
+
+    '
+  status: partial
+  gap: 'No automated rule-to-documentation traceability checker exists. The shorewall-nft
+    configuration files are the documented source of truth; operators must review
+    them manually for completeness.
+
+    '
+  maps_to_scenario:
+    id: bsi-a4-rule-coverage-matrix
+    kind: rule_coverage_matrix
+    source: probe-endpoint
+    zone_subnets:
+      lan: 10.0.10.0/24
+      dmz: 10.0.20.0/24
+      wan: 203.0.113.0/24
+    protos:
+    - tcp
+    - udp
+    - icmp
+    tcp_ports:
+    - 22
+    - 80
+    - 443
+    - 25
+    - 465
+    - 587
+    udp_ports:
+    - 53
+    - 123
+    probe_count_per_tuple: 1
+    test_id: bsi-net-3-2-a4-rule-documentation
+    standard_refs:
+    - bsi-net-3-2-a4-rule-documentation
+    acceptance_criteria:
+      undocumented_allow_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a4-rule-documentation
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a4-rule-documentation
+- test_id: bsi-net-3-2-a5-dos-protection
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a5-dos-protection
+  title: NET.3.2.A5 — DoS protection
+  description: 'The firewall must limit the impact of Denial-of-Service attacks. Three
+    scenario kinds are used: SYN-flood (dos_syn_flood), DNS query flood (dos_dns_query),
+    and TCP half-open connection exhaustion (dos_half_open).  All three must pass
+    their respective drop-rate thresholds.
+
+    '
+  maps_to_scenario:
+    id: bsi-a5-syn-flood
+    kind: dos_syn_flood
+    source: dpdk-wan
+    sink: dpdk-lan
+    duration_s: 10
+    rate_pps: 50000
+    src_ip_range: 203.0.113.0/24
+    dst_port_range: 80,443
+    expect_max_passed_ratio: 0.05
+    test_id: bsi-net-3-2-a5-dos-protection
+    standard_refs:
+    - bsi-net-3-2-a5-dos-protection
+    acceptance_criteria:
+      passed_ratio_max: 0.05
+      throughput_degradation_max_pct: 10
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a5-dos-protection
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a5-dos-protection
+- test_id: bsi-net-3-2-a6-connection-state
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a6-connection-state
+  title: NET.3.2.A6 — Connection state tracking
+  description: 'The firewall must be stateful: only packets belonging to established
+    or related connections must be forwarded after the initial handshake. Covered
+    by stateful FTP helper (stateful_helper_ftp), long-lived TCP flow survival (long_flow_survival),
+    and connection storm (conn_storm).
+
+    '
+  maps_to_scenario:
+    id: bsi-a6-stateful-ftp
+    kind: stateful_helper_ftp
+    source: lan-endpoint
+    sink: dmz-endpoint
+    ftp_port: 21
+    mode: passive
+    user: ftpuser
+    password: ftpuser
+    test_file: /tmp/stagelab-ftp-test.txt
+    expect_data_connection: true
+    test_id: bsi-net-3-2-a6-connection-state
+    standard_refs:
+    - bsi-net-3-2-a6-connection-state
+    acceptance_criteria:
+      data_connection_established: true
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a6-connection-state
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a6-connection-state
+- test_id: bsi-net-3-2-a7-protocol-validation
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a7-protocol-validation
+  title: NET.3.2.A7 — Protocol validation and evasion resistance
+  description: 'The firewall must drop malformed or crafted packets that attempt to
+    bypass rule evaluation (NULL scan, Xmas scan, FIN-without-SYN, IP spoofing, IP
+    fragment overlap, malformed UDP checksum). Covered by the evasion_probes scenario.
+
+    '
+  maps_to_scenario:
+    id: bsi-a7-evasion-probes
+    kind: evasion_probes
+    source: probe-endpoint
+    target_ip: 10.0.10.1
+    probe_types:
+    - tcp_null
+    - tcp_xmas
+    - tcp_fin_no_syn
+    - ip_spoof
+    - udp_malformed_checksum
+    target_port: 80
+    test_id: bsi-net-3-2-a7-protocol-validation
+    standard_refs:
+    - bsi-net-3-2-a7-protocol-validation
+    acceptance_criteria:
+      evasion_accepted_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a7-protocol-validation
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a7-protocol-validation
+- test_id: bsi-net-3-2-a10-logging
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a10-logging
+  title: NET.3.2.A10 — Logging and audit trail
+  description: 'The firewall must log security-relevant events and make them available
+    for audit.  shorewalld exports nft counter metrics to Prometheus; a Prometheus
+    scrape validates that counters are incrementing.  Central syslog export and structured
+    per-packet logging are not implemented — see gap note.
+
+    '
+  status: partial
+  gap: 'Prometheus counter export (shorewalld) is the only automated logging path.  Per-packet
+    syslog export and a central SIEM are not implemented. OPS.1.2.5 log-retention
+    requirements cannot be fully validated automatically with the current stack.
+
+    '
+  maps_to_scenario:
+    id: bsi-a10-throughput-metrics
+    kind: throughput
+    source: lan-endpoint
+    sink: wan-endpoint
+    proto: tcp
+    duration_s: 10
+    parallel: 2
+    expect_min_gbps: 0.1
+    test_id: bsi-net-3-2-a10-logging
+    standard_refs:
+    - bsi-net-3-2-a10-logging
+    acceptance_criteria:
+      prometheus_counter_increments: true
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a10-logging
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a10-logging
+- test_id: bsi-net-3-2-a12-redundancy-ha
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a12-redundancy-ha
+  title: NET.3.2.A12 — Redundancy and high availability
+  description: 'The firewall must tolerate failure of the active node and restore
+    traffic forwarding within an acceptable window via VRRP failover. Covered by ha_failover_drill
+    and reload_atomicity scenarios.
+
+    '
+  maps_to_scenario:
+    id: bsi-a12-ha-failover
+    kind: ha_failover_drill
+    source: lan-endpoint
+    sink: wan-endpoint
+    primary_fw_host: root@192.0.2.70
+    secondary_fw_host: root@192.0.2.87
+    service_name: keepalived
+    duration_s: 90
+    stop_at_s: 20
+    restart_at_s: 60
+    max_downtime_s: 3.0
+    test_id: bsi-net-3-2-a12-redundancy-ha
+    standard_refs:
+    - bsi-net-3-2-a12-redundancy-ha
+    acceptance_criteria:
+      failover_time_max_s: 3
+      traffic_gap_max_s: 3
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a12-redundancy-ha
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a12-redundancy-ha
+- test_id: bsi-ops-1-2-5-log-retention
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-ops-1-2-5-log-retention
+  title: OPS.1.2.5 — Log retention and integrity
+  description: 'Log data must be retained for a defined period and protected against
+    modification.  This control is partially out of scope for stagelab: shorewalld
+    exports counters to Prometheus but no log-retention or integrity checking is implemented
+    in the automated test suite.
+
+    '
+  status: partial
+  gap: 'Log retention policy (minimum 90 days per BSI baseline) and log integrity
+    protection are operational/infrastructure concerns outside the shorewall-nft test
+    scope.  Manual review required.
+
+    '
+  maps_to_scenario: null
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-ops-1-2-5-log-retention
+    machine: N/A — no automated scenario
+- test_id: cis-5-2-1-firewall-default-deny-ingress
+  standard: cis-benchmarks
+  standard_refs:
+  - cis-5-2-1-firewall-default-deny-ingress
+  title: CIS 5.2.1 — Default-deny ingress from WAN
+  description: 'The default policy for inbound (ingress from WAN) traffic must be
+    DROP. Any packet not matched by an explicit allow rule must be silently discarded.  This
+    test performs a random-probe scan from the WAN zone against the internal address
+    space and verifies that no unsolicited packet is accepted.
+
+    '
+  maps_to_scenario:
+    id: cis-5-2-1-default-deny-ingress
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 500
+    test_id: cis-5-2-1-firewall-default-deny-ingress
+    standard_refs:
+    - cis-5-2-1-firewall-default-deny-ingress
+    acceptance_criteria:
+      fail_accept_count: 0
+      fail_drop_count: <= 2
+  evidence:
+    human: docs/testing/security-test-plan.cis.md#cis-5-2-1-firewall-default-deny-ingress
+    machine: audit.json scenarios[].test_id == cis-5-2-1-firewall-default-deny-ingress
+- test_id: cis-5-2-2-firewall-default-deny-egress
+  standard: cis-benchmarks
+  standard_refs:
+  - cis-5-2-2-firewall-default-deny-egress
+  title: CIS 5.2.2 — Default-deny egress (outbound) policy
+  description: 'The default policy for outbound traffic must also be DROP (or REJECT).
+    Only explicitly permitted egress flows are allowed.  This test performs a rule
+    scan from an internal zone toward external destinations, verifying that only authorised
+    services (HTTP/HTTPS, DNS, NTP, SMTP) pass. Note: whether egress default-deny
+    is applicable depends on zone policy in the specific deployment; catalogue entries
+    reference the policy configuration as the evidence source.
+
+    '
+  status: partial
+  gap: 'The acceptance_criteria fail_drop_count threshold is deployment-specific.
+    The operator must review the shorewall-nft zone policy to confirm that egress
+    default-deny is configured.  stagelab validates the behaviour but not the configuration
+    intent.
+
+    '
+  maps_to_scenario:
+    id: cis-5-2-2-default-deny-egress
+    kind: rule_scan
+    source: lan-endpoint
+    target_subnet: 203.0.113.0/24
+    random_count: 300
+    test_id: cis-5-2-2-firewall-default-deny-egress
+    standard_refs:
+    - cis-5-2-2-firewall-default-deny-egress
+    acceptance_criteria:
+      fail_accept_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.cis.md#cis-5-2-2-firewall-default-deny-egress
+    machine: audit.json scenarios[].test_id == cis-5-2-2-firewall-default-deny-egress
+- test_id: cis-5-4-1-established-traffic
+  standard: cis-benchmarks
+  standard_refs:
+  - cis-5-4-1-established-traffic
+  title: CIS 5.4.1 — Accept outbound and established/related connections
+  description: 'The firewall must accept return traffic for outbound connections (ct
+    state established,related accept).  A long-running TCP stream from internal to
+    external validates that return packets are not dropped after the initial accept
+    rule fires.  The long_flow_survival scenario exercises this over an extended period
+    to confirm that conntrack entries are not prematurely expired.
+
+    '
+  maps_to_scenario:
+    id: cis-5-4-1-long-flow
+    kind: long_flow_survival
+    source: lan-endpoint
+    sink: wan-endpoint
+    fw_host: root@192.0.2.70
+    duration_s: 120
+    sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
+    sysctl_value: 300
+    expect_flow_dies: false
+    test_id: cis-5-4-1-established-traffic
+    standard_refs:
+    - cis-5-4-1-established-traffic
+    acceptance_criteria:
+      flow_survived: true
+      retransmit_count_max: 50
+  evidence:
+    human: docs/testing/security-test-plan.cis.md#cis-5-4-1-established-traffic
+    machine: audit.json scenarios[].test_id == cis-5-4-1-established-traffic
+- test_id: cis-5-4-2-outbound-rules-coverage
+  standard: cis-benchmarks
+  standard_refs:
+  - cis-5-4-2-outbound-rules-coverage
+  title: CIS 5.4.2 — Outbound rules coverage matrix
+  description: 'All authorised outbound services must have explicit allow rules; no
+    rule should be a catch-all that opens broad egress.  The rule_coverage_matrix
+    scenario probes all zone-pair combinations with the known-permitted services and
+    verifies that only those services (TCP 22, 80, 443, 25, 465, 587; UDP 53, 123)
+    are accepted outbound.
+
+    '
+  maps_to_scenario:
+    id: cis-5-4-2-outbound-coverage
+    kind: rule_coverage_matrix
+    source: lan-endpoint
+    zone_subnets:
+      lan: 10.0.10.0/24
+      wan: 203.0.113.0/24
+    protos:
+    - tcp
+    - udp
+    tcp_ports:
+    - 22
+    - 25
+    - 80
+    - 443
+    - 465
+    - 587
+    udp_ports:
+    - 53
+    - 123
+    probe_count_per_tuple: 1
+    test_id: cis-5-4-2-outbound-rules-coverage
+    standard_refs:
+    - cis-5-4-2-outbound-rules-coverage
+    acceptance_criteria:
+      unexpected_accept_count: 0
+      expected_services_reachable: true
+  evidence:
+    human: docs/testing/security-test-plan.cis.md#cis-5-4-2-outbound-rules-coverage
+    machine: audit.json scenarios[].test_id == cis-5-4-2-outbound-rules-coverage
+- test_id: cis-5-2-3-open-ports-inventory
+  standard: cis-benchmarks
+  standard_refs:
+  - cis-5-2-3-open-ports-inventory
+  title: CIS 5.2.3 — Open listening ports match expected rule set
+  description: 'The set of ports reachable from outside must exactly match the set
+    of ports explicitly listed in the allow rules.  A rule scan with a wide port range
+    probes the expected-open ports and a random sample of unexpected ports; unexpected-open
+    ports fail the criterion.
+
+    '
+  maps_to_scenario:
+    id: cis-5-2-3-open-ports
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.20.0/24
+    random_count: 200
+    test_id: cis-5-2-3-open-ports-inventory
+    standard_refs:
+    - cis-5-2-3-open-ports-inventory
+    acceptance_criteria:
+      unexpected_open_port_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.cis.md#cis-5-2-3-open-ports-inventory
+    machine: audit.json scenarios[].test_id == cis-5-2-3-open-ports-inventory
+- test_id: cis-5-2-4-ingress-rfc1918-from-wan
+  standard: cis-benchmarks
+  standard_refs:
+  - cis-5-2-4-ingress-rfc1918-from-wan
+  title: CIS 5.2.4 — RFC-1918 source addresses blocked from WAN ingress
+  description: 'Packets arriving on the WAN interface with a RFC-1918 source address
+    (10/8, 172.16/12, 192.168/16) must be dropped (martian filtering / reverse-path
+    filtering).  A rule scan with RFC-1918 sources injected from the WAN endpoint
+    verifies the block is in place.
+
+    '
+  maps_to_scenario:
+    id: cis-5-2-4-rfc1918-block
+    kind: rule_scan
+    source: wan-endpoint
+    target_subnet: 10.0.0.0/8
+    random_count: 100
+    test_id: cis-5-2-4-ingress-rfc1918-from-wan
+    standard_refs:
+    - cis-5-2-4-ingress-rfc1918-from-wan
+    acceptance_criteria:
+      fail_accept_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.cis.md#cis-5-2-4-ingress-rfc1918-from-wan
+    machine: audit.json scenarios[].test_id == cis-5-2-4-ingress-rfc1918-from-wan
+- test_id: cis-5-2-5-ingress-bogon-block
+  standard: cis-benchmarks
+  standard_refs:
+  - cis-5-2-5-ingress-bogon-block
+  title: CIS 5.2.5 — Bogon/martian source address block on WAN ingress
+  description: 'Beyond RFC-1918, packets with loopback (127/8), link-local (169.254/16),
+    multicast (224/4), or reserved-class-E (240/4) source addresses must be dropped
+    on the WAN ingress interface.  An evasion_probes run with ip_spoof probes from
+    those ranges verifies the block.
+
+    '
+  maps_to_scenario:
+    id: cis-5-2-5-bogon-block
+    kind: evasion_probes
+    source: wan-probe
+    target_ip: 10.0.10.1
+    probe_types:
+    - ip_spoof
+    spoof_src_ip: 169.254.1.1
+    target_port: 80
+    test_id: cis-5-2-5-ingress-bogon-block
+    standard_refs:
+    - cis-5-2-5-ingress-bogon-block
+    acceptance_criteria:
+      evasion_accepted_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.cis.md#cis-5-2-5-ingress-bogon-block
+    machine: audit.json scenarios[].test_id == cis-5-2-5-ingress-bogon-block
+- test_id: owasp-fw-1-config-review
+  standard: owasp
+  standard_refs:
+  - owasp/FW-1
+  title: Firewall configuration review
+  status: covered
+  description: 'Review the active firewall ruleset for correctness, over-permission,
+    shadowed rules, and compliance with the deployment security policy. Evidence is
+    produced by `stagelab review` (tier-B advisor recommendations backed by live Prometheus
+    counter data) and the HTML audit report.
+
+    '
+  maps_to_scenario:
+    kind: rule_coverage_matrix
+  acceptance_criteria:
+    advisor_tier_b_unresolved: 0
+    advisor_tier_c_unresolved: <= 5
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-1-config-review
+    machine: audit.json scenarios[].test_id == owasp-fw-1-config-review
+  tags:
+  - config
+  - advisor
+  - review
+- test_id: owasp-fw-2-rulebase-audit
+  standard: owasp
+  standard_refs:
+  - owasp/FW-2
+  title: Rule-base audit (shadow / redundancy / over-permission)
+  status: covered
+  description: 'Enumerate all zone-pair combinations to detect rules that are never
+    matched (dead rules), rules that shadow more-specific entries, and zone pairs
+    that are inadvertently open.  rule_coverage_matrix emits per-zone-pair hit counters;
+    rule_order.py groups chains by packet volume and raises tier-C hints for ordering
+    optimisations.
+
+    '
+  maps_to_scenario:
+    kind: rule_coverage_matrix
+  acceptance_criteria:
+    unreachable_rule_count: 0
+    over_permissive_zone_pairs: 0
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-2-rulebase-audit
+    machine: audit.json scenarios[].test_id == owasp-fw-2-rulebase-audit
+  tags:
+  - rule-order
+  - coverage
+  - advisor
+- test_id: owasp-fw-3-default-deny
+  standard: owasp
+  standard_refs:
+  - owasp/FW-3
+  - iso27001/A.13.1.1
+  title: Default-deny policy verification
+  status: covered
+  description: 'Probe all unmapped zone pairs with random source/destination tuples
+    and verify that every packet is dropped.  No implicit accept path should exist
+    for traffic that has no explicit ACCEPT rule.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    random_count: 500
+  acceptance_criteria:
+    fail_accept_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-3-default-deny
+    machine: audit.json scenarios[].test_id == owasp-fw-3-default-deny
+  tags:
+  - default-deny
+  - rule-scan
+- test_id: owasp-fw-4-evasion-bypass
+  standard: owasp
+  standard_refs:
+  - owasp/FW-4
+  title: Evasion and bypass probe suite
+  status: covered
+  description: 'Send crafted packets designed to evade stateless ACLs: IP fragmentation,
+    overlapping fragment offsets, TCP RST-in-handshake, UDP bad checksum, and IP-options
+    stripping.  All probes must be dropped or normalised; none must reach the protected
+    zone.
+
+    '
+  maps_to_scenario:
+    kind: evasion_probes
+  acceptance_criteria:
+    evasion_success_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-4-evasion-bypass
+    machine: audit.json scenarios[].test_id == owasp-fw-4-evasion-bypass
+  tags:
+  - evasion
+  - fragments
+  - tcp-malform
+- test_id: owasp-fw-5-stateful-inspection
+  standard: owasp
+  standard_refs:
+  - owasp/FW-5
+  title: Stateful inspection under load (partial)
+  status: partial
+  partial_reason: 'conn_storm and long_flow_survival exercise the conntrack code path
+    under high concurrency and over extended time, but the simlab correctness oracle
+    is stateless (iptables-equivalent; no conntrack model).  Out-of-state packet injection
+    is not validated at the oracle level.  Tracked as open item: "simlab stateful
+    oracle".
+
+    '
+  maps_to_scenario:
+    kind: conn_storm
+  acceptance_criteria:
+    established_flows_dropped: 0
+    conntrack_table_fill_fraction: <= 0.80
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-5-stateful-inspection
+    machine: audit.json scenarios[].test_id == owasp-fw-5-stateful-inspection
+  tags:
+  - stateful
+  - conntrack
+  - partial
+- test_id: owasp-fw-6-ha-failover
+  standard: owasp
+  standard_refs:
+  - owasp/FW-6
+  title: HA failover drill (VRRP + conntrackd)
+  status: covered
+  description: 'Trigger a VRRP failover while traffic is flowing; verify that established
+    TCP sessions survive the switchover (conntrackd state replication), that no traffic
+    is forwarded without conntrack state, and that VRRP/keepalived + Bird BGP reconnect
+    within the SLA window.
+
+    '
+  maps_to_scenario:
+    kind: ha_failover_drill
+  acceptance_criteria:
+    session_continuity: true
+    failover_convergence_s: <= 3
+    bgp_reconvergence_s: <= 10
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-6-ha-failover
+    machine: audit.json scenarios[].test_id == owasp-fw-6-ha-failover
+  tags:
+  - ha
+  - vrrp
+  - conntrackd
+- test_id: owasp-fw-7-protocol-stack
+  standard: owasp
+  standard_refs:
+  - owasp/FW-7
+  title: Protocol-stack attack resistance
+  status: covered
+  description: 'Combine evasion_probes (layer-3/4 malformations: bad TCP flags, oversized
+    packets, ICMP flood) with dos_syn_flood (TCP SYN exhaustion).  The firewall must
+    absorb or drop all malformed frames without performance degradation on legitimate
+    traffic.
+
+    '
+  maps_to_scenario:
+    kind: dos_syn_flood
+  acceptance_criteria:
+    legitimate_throughput_degradation_pct: <= 5
+    malformed_frame_accepted: 0
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-7-protocol-stack
+    machine: audit.json scenarios[].test_id == owasp-fw-7-protocol-stack
+  tags:
+  - protocol-stack
+  - syn-flood
+  - evasion
+- test_id: owasp-fw-8-operational-hardening
+  standard: owasp
+  standard_refs:
+  - owasp/FW-8
+  - iso27001/A.18.2.2
+  title: Operational hardening (reload atomicity + exporter health)
+  status: covered
+  description: 'Verify that ruleset reloads are atomic (no window where policy is
+    absent), that the shorewalld Prometheus exporter is reachable and returning well-formed
+    metrics, and that the management interface is not reachable from any non-management
+    zone.
+
+    '
+  maps_to_scenario:
+    kind: reload_atomicity
+  acceptance_criteria:
+    traffic_gap_during_reload_ms: 0
+    prometheus_scrape_ok: true
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-8-operational-hardening
+    machine: audit.json scenarios[].test_id == owasp-fw-8-operational-hardening
+  tags:
+  - reload
+  - atomicity
+  - shorewalld
+- test_id: iso27001-a-13-1-1-network-controls
+  standard: iso-27001
+  standard_refs:
+  - iso27001/A.13.1.1
+  - owasp/FW-3
+  title: Network controls (segmentation and access policy)
+  status: covered
+  description: 'Verify that networks are segregated into security zones and that inter-zone
+    traffic is controlled by an explicit, default-deny policy. The compiled nftables
+    ruleset enforces zone policies; rule_scan probes confirm that every non-permitted
+    zone pair is dropped.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    random_count: 500
+  acceptance_criteria:
+    fail_accept_count: 0
+    zone_pair_coverage_pct: 100
+  evidence:
+    human: docs/testing/security-test-plan.md#iso27001-a-13-1-1-network-controls
+    machine: audit.json scenarios[].test_id == iso27001-a-13-1-1-network-controls
+  tags:
+  - network-controls
+  - zone-segmentation
+  - default-deny
+- test_id: iso27001-a-13-1-2-network-service-security
+  standard: iso-27001
+  standard_refs:
+  - iso27001/A.13.1.2
+  title: Security of network services (partial — SLA proxy via throughput)
+  status: partial
+  partial_reason: 'Service-level protocol SLA (e.g., guaranteed bandwidth or latency
+    per service class) is not separately validated.  throughput + latency scenarios
+    provide proxy evidence that the firewall does not degrade service quality beyond
+    acceptable bounds, but formal SLA verification requires per-service traffic shaping
+    policy, which is not in scope.
+
+    '
+  maps_to_scenario:
+    kind: throughput
+  acceptance_criteria:
+    throughput_degradation_pct: <= 5
+  evidence:
+    human: docs/testing/security-test-plan.md#iso27001-a-13-1-2-network-service-security
+    machine: audit.json scenarios[].test_id == iso27001-a-13-1-2-network-service-security
+  tags:
+  - network-services
+  - throughput
+  - partial
+- test_id: iso27001-a-13-1-3-network-segregation
+  standard: iso-27001
+  standard_refs:
+  - iso27001/A.13.1.3
+  - owasp/FW-2
+  title: Segregation of networks (zone-pair exhaustion)
+  status: covered
+  description: 'Exhaustively enumerate every zone-pair combination and confirm that
+    each pair is either explicitly permitted or explicitly blocked.  No implicit reachability
+    must exist between security zones. rule_coverage_matrix drives this check: it
+    iterates all (src, dst) zone pairs, sends test traffic, and compares observed
+    nft counter increments against the expected policy.
+
+    '
+  maps_to_scenario:
+    kind: rule_coverage_matrix
+  acceptance_criteria:
+    implicit_accept_zone_pairs: 0
+    uncovered_zone_pairs: 0
+  evidence:
+    human: docs/testing/security-test-plan.md#iso27001-a-13-1-3-network-segregation
+    machine: audit.json scenarios[].test_id == iso27001-a-13-1-3-network-segregation
+  tags:
+  - network-segregation
+  - zone-pairs
+  - coverage
+- test_id: iso27001-a-12-4-1-event-logging
+  standard: iso-27001
+  standard_refs:
+  - iso27001/A.12.4.1
+  title: Event logging (partial — Prometheus counters; no per-packet syslog)
+  status: partial
+  partial_reason: 'Prometheus counters provide near-real-time aggregate metrics (packets,
+    bytes, connection rate, drop count) via shorewalld.  However, there is no per-packet
+    drop log, no central SIEM integration, and no CEF/syslog export.  This represents
+    a partial implementation of A.12.4.1.  Full compliance requires a per-packet logging
+    pipeline (tracked as a separate shorewalld task in CLAUDE.md).
+
+    '
+  maps_to_scenario:
+    kind: rule_coverage_matrix
+  acceptance_criteria:
+    prometheus_scrape_ok: true
+    nft_counter_gap_s: <= 30
+  evidence:
+    human: docs/testing/security-test-plan.md#iso27001-a-12-4-1-event-logging
+    machine: audit.json scenarios[].test_id == iso27001-a-12-4-1-event-logging
+  tags:
+  - logging
+  - prometheus
+  - partial
+- test_id: iso27001-a-12-6-1-vuln-management
+  standard: iso-27001
+  standard_refs:
+  - iso27001/A.12.6.1
+  title: Technical vulnerability management (advisor tier-B/C review PRs)
+  status: partial
+  partial_reason: 'Advisor tier-B/C recommendations are automatically opened as PRs
+    via `stagelab review`, providing a structured workflow for addressing firewall-configuration
+    vulnerabilities.  No automated CVE feed or package-vulnerability scanner is integrated.  This
+    covers the configuration-drift aspect of A.12.6.1 but not the software-CVE aspect.
+
+    '
+  maps_to_scenario:
+    kind: rule_coverage_matrix
+  acceptance_criteria:
+    advisor_tier_b_pr_created: true
+  evidence:
+    human: docs/testing/security-test-plan.md#iso27001-a-12-6-1-vuln-management
+    machine: audit.json scenarios[].test_id == iso27001-a-12-6-1-vuln-management
+  tags:
+  - vuln-management
+  - advisor
+  - review
+  - partial
+- test_id: iso27001-a-18-2-1-security-review
+  standard: iso-27001
+  standard_refs:
+  - iso27001/A.18.2.1
+  title: Independent review of information security (stagelab audit report)
+  status: covered
+  description: '`stagelab audit` aggregates evidence from all scenario runs (run.json
+    files), renders a signed HTML/PDF audit report with per-scenario pass/fail verdicts,
+    advisor recommendations, and rule-coverage heat-map.  The report is suitable for
+    submission to an independent reviewer or compliance auditor.
+
+    '
+  maps_to_scenario:
+    kind: rule_coverage_matrix
+  acceptance_criteria:
+    audit_html_generated: true
+    audit_json_generated: true
+    overall_pass: true
+  evidence:
+    human: docs/testing/security-test-plan.md#iso27001-a-18-2-1-security-review
+    machine: audit.json scenarios[].test_id == iso27001-a-18-2-1-security-review
+  tags:
+  - audit
+  - compliance-review
+  - evidence
+- test_id: iso27001-a-18-2-2-policy-compliance
+  standard: iso-27001
+  standard_refs:
+  - iso27001/A.18.2.2
+  - owasp/FW-8
+  title: Compliance with security policies (test plan as policy instrument)
+  status: covered
+  description: 'This test plan itself is the policy instrument: running `tools/run-security-test-plan.sh`
+    executes all catalogue entries, enforces acceptance criteria, and exits non-zero
+    on any failure. Regular execution (scheduled or on every ruleset change) implements
+    continuous compliance checking against the documented security policy.
+
+    '
+  maps_to_scenario:
+    kind: reload_atomicity
+  acceptance_criteria:
+    run_exit_code: 0
+    acceptance_criteria_failures: 0
+  evidence:
+    human: docs/testing/security-test-plan.md#iso27001-a-18-2-2-policy-compliance
+    machine: audit.json scenarios[].test_id == iso27001-a-18-2-2-policy-compliance
+  tags:
+  - policy-compliance
+  - executor
+  - continuous
+- test_id: iso27001-a-13-2-1-transfer-controls
+  standard: iso-27001
+  standard_refs:
+  - iso27001/A.13.2.1
+  title: Information transfer controls (zone-pair data-flow enforcement)
+  status: covered
+  description: 'Verify that zone-pair rules restrict data flows to those explicitly
+    permitted by the security policy, preventing unauthorised lateral movement or
+    data exfiltration paths.  Validated by rule_scan (random probes on non-permitted
+    paths) and rule_coverage_matrix (systematic enumeration of all flow directions).
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    random_count: 500
+  acceptance_criteria:
+    fail_accept_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.md#iso27001-a-13-2-1-transfer-controls
+    machine: audit.json scenarios[].test_id == iso27001-a-13-2-1-transfer-controls
+  tags:
+  - data-transfer
+  - lateral-movement
+  - zone-policy
+- test_id: perf-ipv6-tcp-throughput
+  standard: performance-ipv6
+  title: IPv6 TCP throughput meets SLO
+  description: 'Single-directional TCP throughput over an IPv6-native endpoint pair.
+    Ensures throughput parity with the IPv4 baseline scenario.
+
+    '
+  maps_to_scenario:
+    kind: throughput
+    proto: tcp
+    source: v6-client
+    sink: v6-server
+    duration_s: 30
+    parallel: 4
+    expect_min_gbps: 8.0
+  acceptance_criteria:
+    min_gbps: 8.0
+    max_retrans_ratio: 0.005
+  standard_refs:
+  - nist-800-53-sc-7
+  status: covered
+  evidence:
+    human: docs/testing/security-test-plan.md#perf-ipv6-tcp-throughput
+    machine: audit.json scenarios[].test_id == perf-ipv6-tcp-throughput
+  rationale: 'NIST SP 800-53 SC-7 (boundary protection) applies equally to IPv6 and
+    IPv4 traffic paths.  Performance parity must be demonstrated so that IPv6 deployment
+    does not silently degrade throughput.
+
+    '
+- test_id: perf-ipv6-udp-throughput
+  standard: performance-ipv6
+  title: IPv6 UDP throughput meets SLO
+  description: 'Single-directional UDP throughput over an IPv6-native endpoint pair.
+    Ensures throughput parity with IPv4 UDP baseline.
+
+    '
+  maps_to_scenario:
+    kind: throughput
+    proto: udp
+    source: v6-client
+    sink: v6-server
+    duration_s: 20
+    parallel: 2
+    expect_min_gbps: 5.0
+  acceptance_criteria:
+    min_gbps: 5.0
+  standard_refs:
+  - nist-800-53-sc-7
+  status: covered
+  evidence:
+    human: docs/testing/security-test-plan.md#perf-ipv6-udp-throughput
+    machine: audit.json scenarios[].test_id == perf-ipv6-udp-throughput
+  rationale: 'UDP-based protocols (DNS, NTP, syslog, media) traverse the firewall
+    over IPv6 in dual-stack deployments.  Throughput parity reduces the risk of a
+    performance cliff when clients migrate to IPv6.
+
+    '
+out_of_scope:
+- standard: cc-iso-15408
+  sfr_family: FCS_* (Cryptographic support)
+  reason: 'Firewall is a stateless/stateful packet filter. TLS/IPsec crypto stack
+    testing belongs to a separate component evaluation.
+
+    '
+- standard: cc-iso-15408
+  sfr_family: ADV_* (Development)
+  reason: 'Requires formal design documentation review and developer correspondence
+    evidence. No test automation applies.
+
+    '
+- standard: cc-iso-15408
+  sfr_family: ATE_* (Tests)
+  reason: 'Meta-level; covered by the existence of this framework, not by individual
+    scenarios.
+
+    '
+- standard: cc-iso-15408
+  sfr_family: FIA_* (Identification and authentication)
+  reason: 'Management-plane concern. The firewall does not authenticate forwarded
+    flows.
+
+    '
+- standard: cc-iso-15408
+  sfr_family: FTP_ITC.1 (Inter-TSF channel)
+  reason: 'VPN/IPsec between trust domains is not in scope for the packet-filter test
+    plan.
+
+    '
+- standard: cc-iso-15408
+  sfr_family: FPT_STM.1 (Reliable timestamps)
+  reason: 'NTP synchronisation is an OS/kernel concern; not tested here.
+
+    '
+- standard: cc-iso-15408
+  sfr_family: AGD_* (Guidance documents)
+  reason: Documentation review; not automated.
+- standard: cc-iso-15408
+  sfr_family: ALC_* (Lifecycle support)
+  reason: Supply-chain and process concerns; not testable with this framework.
+- standard: nist-800-53
+  control_family: SC-6 (Resource Availability)
+  reason: 'Kernel-level resource partitioning (cgroups, CPU pinning) is a platform
+    concern. Partially addressed by the advisor tuning_sweep heuristic.
+
+    '
+- standard: nist-800-53
+  control_family: IA-* (Identification and Authentication)
+  reason: Management-plane authentication; firewall does not authenticate forwarded
+    flows.
+- standard: nist-800-53
+  control_family: CM-* (Configuration Management)
+  reason: Organisational configuration change control process; not automatable.
+- standard: nist-800-53
+  control_family: AT-*, PS-* (Awareness and Training / Personnel Security)
+  reason: Personnel controls; not testable by this framework.
+- standard: nist-800-53
+  control_family: PE-* (Physical and Environmental Protection)
+  reason: Data-centre physical access controls; outside scope.
+- standard: nist-800-53
+  control_family: SC-8 (Transmission Confidentiality and Integrity)
+  reason: TLS/MACsec crypto stack testing is a separate component concern.
+- standard: nist-800-53
+  control_family: SC-28 (Protection of Information at Rest)
+  reason: Disk encryption; outside scope of packet-filter testing.
+- standard: nist-800-53
+  control_family: AU-9 / AU-10 (Audit Protection / Non-repudiation)
+  reason: 'Requires an independent audit store. Prometheus counters live on the firewall
+    node itself; dedicated SIEM integration is a separate task.
+
+    '
+- standard: nist-800-53
+  control_family: CA-*, RA-* (Assessment and Risk Management)
+  reason: Organisational risk processes; not automatable here.
+- standard: bsi-grundschutz
+  test_id: bsi-net-3-2-a9-time-sync
+  control: NET.3.2.A9
+  reason: 'NTP time synchronisation is a system-level concern handled by the OS (chrony/ntpd).  shorewall-nft
+    does not configure or test NTP; the control is out of scope for firewall rule
+    testing.
+
+    '
+- standard: bsi-grundschutz
+  test_id: bsi-net-1-1-a1-arch-doc
+  control: NET.1.1.A1
+  reason: 'Network architecture documentation is a governance/design artefact. Automated
+    testing cannot verify completeness of documentation. The shorewall-nft configuration
+    files are the machine-readable architecture record; human review is required for
+    NET.1.1.A1.
+
+    '
+- standard: bsi-grundschutz
+  control: NET.3.2.A3
+  reason: 'Physical network port security (switch port hardening) is out of scope
+    for a software firewall test suite.
+
+    '
+- standard: bsi-grundschutz
+  control: NET.3.2.A8
+  reason: 'VPN termination and PKI are handled by external components (OpenVPN, WireGuard).  Firewall
+    rules permit VPN traffic but do not perform cryptographic validation — out of
+    scope.
+
+    '
+- standard: bsi-grundschutz
+  control: NET.3.2.A11
+  reason: 'Remote administration channel hardening is an SSH server configuration
+    concern, not a firewall rule concern.  Out of scope.
+
+    '
+- standard: cis-benchmarks
+  test_id: cis-5-3-loopback-rules
+  control: '5.3'
+  reason: 'CIS 5.3 requires loopback interface rules (accept all lo traffic, drop
+    lo-source from non-lo).  These are system-hardening rules that belong in the OS
+    firewall configuration, not in the shorewall-nft firewall-rule test suite.  Verified
+    as a one-time configuration audit item, not by repeated stagelab runs.
+
+    '
+- standard: cis-benchmarks
+  test_id: cis-3-5-uncommon-protocols
+  control: '3.5'
+  reason: 'Disabling uncommon protocols (DCCP/SCTP) is a kernel module configuration
+    task (modprobe.d blacklist).  Not a firewall rule concern; out of scope for shorewall-nft
+    testing.
+
+    '
+- standard: cis-benchmarks
+  test_id: cis-3-x-network-params
+  control: 3.x
+  reason: 'CIS Section 3 network parameters (ip_forward, send_redirects, accept_source_route,
+    etc.) are kernel sysctl settings.  Applied at boot by sysctl.d; verified by a
+    separate hardening audit tool.  Out of scope for the firewall-rule test suite.
+
+    '
+- standard: cis-benchmarks
+  control: 6.x
+  reason: 'CIS Section 6 (system hardening — auditd, file integrity, PAM, etc.) is
+    entirely out of scope for firewall testing.
+
+    '
+- standard: owasp
+  id: owasp-tls-fingerprint
+  reason: 'TLS fingerprint / protocol-downgrade evasion requires a TLS-aware proxy
+    or DPI appliance.  nftables operates below the TLS layer; this control is out
+    of scope for a stateless/stateful packet firewall.
+
+    '
+- standard: owasp
+  id: owasp-fragment-reassembly-dos
+  reason: 'Fragment-reassembly DoS (Teardrop / Rose) is handled by the Linux kernel
+    before nftables sees the packet.  Effect is on the host stack, not the ruleset.  Tracked
+    as a separate open item in CLAUDE.md.
+
+    '
+- standard: iso-27001
+  id: iso27001-a-12-4-3-admin-activity
+  control: A.12.4.3
+  reason: 'Administrator and operator activity logs are OS-level controls (auditd,
+    sshd AuthorizedKeysFile logs).  Not a firewall ruleset test.
+
+    '
+- standard: iso-27001
+  id: iso27001-a-18-1-3-records-protection
+  control: A.18.1.3
+  reason: 'Records protection is a data-retention and organisational policy control.  Outside
+    firewall scope.
+
+    '
+- standard: iso-27001
+  id: iso27001-a-7-personnel
+  control: A.7
+  reason: 'Human resource security (vetting, contracts, disciplinary process) is an
+    HR/organisational control, not a firewall test.
+
+    '
+- standard: iso-27001
+  id: iso27001-a-8-asset-management
+  control: A.8
+  reason: 'Asset management and classification is an inventory/governance control,
+    not a firewall test.
+
+    '
+- standard: iso-27001
+  id: iso27001-a-9-access-control
+  control: A.9
+  reason: 'Identity and authentication management (IAM, MFA, privilege review) is
+    not directly tested by firewall scenarios; the firewall enforces network-layer
+    access policy only.
+
+    '
+- standard: iso-27001
+  id: iso27001-a-11-physical
+  control: A.11
+  reason: 'Physical and environmental security (data-centre access, cabling, power)
+    is not a firewall test.
+
+    '
+- standard: performance-ipv6
+  item: IPv6-only transition / NAT64
+  reason: 'The reference firewall is dual-stack; NAT64 is a separate appliance and
+    not in scope for throughput parity tests.
+
+    '
+- standard: performance-ipv6
+  item: IPv6 flow-label QoS
+  reason: 'Flow-label based QoS is not a firewall-level concern and is deferred to
+    the network-layer QoS test plan.
+
+    '
+- standard: performance-ipv6
+  item: MLD (Multicast Listener Discovery)
+  reason: 'MLD is handled by the CIS/OWASP protocol-stack test items; out of scope
+    for throughput parity.
+
+    '
