@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import subprocess
 import sys
 from typing import Any
 
 from shorewall_nft_stagelab import metrics as _metrics
-from shorewall_nft_stagelab import trafgen_iperf3, trafgen_nmap, trafgen_scapy, tuning
+from shorewall_nft_stagelab import (
+    topology_dpdk,
+    trafgen_iperf3,
+    trafgen_nmap,
+    trafgen_scapy,
+    trafgen_trex,
+    tuning,
+)
 from shorewall_nft_stagelab.ipc import (
     AckMessage,
     ErrorMessage,
@@ -133,6 +141,22 @@ async def handle_setup_endpoint(
             "tap_count": len(bh.tap_fds),
         }
 
+    if mode == "dpdk":
+        dpdk_spec = topology_dpdk.DpdkEndpointSpec(
+            name=name,
+            pci_addr=spec["pci_addr"],
+            dpdk_cores=tuple(spec["dpdk_cores"]),
+            hugepages_gib=int(spec["hugepages_gib"]),
+        )
+        handle = await asyncio.to_thread(topology_dpdk.setup_dpdk_endpoint, dpdk_spec)
+        state["endpoints"][name] = handle
+        return {
+            "mode": "dpdk",
+            "pci_addr": handle.pci_addr,
+            "orig_driver": handle.orig_driver,
+            "bound_at_ts": handle.bound_at_ts,
+        }
+
     raise ValueError(f"unknown endpoint mode: {mode!r}")
 
 
@@ -146,6 +170,8 @@ async def handle_teardown_endpoint(
     handle = state["endpoints"].pop(name)
     if isinstance(handle, NativeEndpointHandle):
         await asyncio.to_thread(teardown_native_endpoint, handle)
+    elif isinstance(handle, topology_dpdk.DpdkEndpointHandle):
+        await asyncio.to_thread(topology_dpdk.teardown_dpdk_endpoint, handle)
     else:
         await asyncio.to_thread(teardown_probe_bridge, handle)
     return {"ok": True}
@@ -230,6 +256,41 @@ async def handle_run_scenario(
 
     if kind == "collect_oracle_verdict":
         return {"tool": "oracle_marker", "ok": True}
+
+    if kind == "run_trex_stateless":
+        trex_spec = trafgen_trex.TrexStatelessSpec(
+            ports=tuple(spec.get("ports", (0,))),
+            duration_s=int(spec.get("duration_s", 10)),
+            multiplier=str(spec.get("multiplier", "10gbps")),
+            pcap_files=tuple(spec.get("pcap_files", ())),
+            profile_py=str(spec.get("profile_py", "")),
+            trex_daemon_port=int(spec.get("trex_daemon_port", 4501)),
+            trex_host=str(spec.get("trex_host", "127.0.0.1")),
+        )
+        result = await asyncio.to_thread(trafgen_trex.run_trex_stl, trex_spec)
+        return {
+            "tool": "trex-stl", "ok": result.ok,
+            "throughput_gbps": result.throughput_gbps, "pps": result.pps,
+            "errors": result.errors, "duration_s": result.duration_s,
+            "_sweep_point": spec.get("_sweep_point"),
+        }
+
+    if kind == "run_trex_astf":
+        trex_spec_astf = trafgen_trex.TrexAstfSpec(
+            profile_py=str(spec["profile_py"]),
+            duration_s=int(spec.get("duration_s", 30)),
+            multiplier=float(spec.get("multiplier", 1.0)),
+            trex_daemon_port=int(spec.get("trex_daemon_port", 4502)),
+            trex_host=str(spec.get("trex_host", "127.0.0.1")),
+        )
+        result_astf = await asyncio.to_thread(trafgen_trex.run_trex_astf, trex_spec_astf)
+        return {
+            "tool": "trex-astf", "ok": result_astf.ok,
+            "throughput_gbps": result_astf.throughput_gbps, "pps": result_astf.pps,
+            "concurrent_sessions": result_astf.concurrent_sessions,
+            "new_sessions_per_s": result_astf.new_sessions_per_s,
+            "errors": result_astf.errors, "duration_s": result_astf.duration_s,
+        }
 
     raise ValueError(f"unknown scenario kind: {kind!r}")
 
@@ -318,6 +379,9 @@ async def _make_stdio_channel() -> JsonLineChannel:
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 
+log = logging.getLogger(__name__)
+
+
 async def run_agent(host_name: str) -> int:
     """Read JSON-line messages from stdin, dispatch, write ACK/ERROR to stdout."""
     state: dict[str, Any] = {
@@ -325,6 +389,13 @@ async def run_agent(host_name: str) -> int:
         "stubs": {},
         "endpoints": {},
     }
+
+    try:
+        recovered = await asyncio.to_thread(topology_dpdk.recover_from_crash)
+        if recovered:
+            log.info("recovered %d orphaned DPDK binding(s): %s", len(recovered), recovered)
+    except Exception as exc:  # noqa: BLE001 — best-effort, never fatal at startup
+        log.warning("DPDK recovery failed at startup: %s", exc)
 
     try:
         channel = await _make_stdio_channel()
