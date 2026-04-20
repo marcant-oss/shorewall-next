@@ -19,6 +19,7 @@
 #   tools/setup-remote-test-host.sh root@host --simulate-src /path/to/old
 #   tools/setup-remote-test-host.sh root@host --role stagelab-agent
 #   tools/setup-remote-test-host.sh root@host --role stagelab-agent-dpdk
+#   tools/setup-remote-test-host.sh root@host --check-trex-updates
 #
 # --role ROLE   choose bootstrap role:
 #               "default"              simlab/simulate (AlmaLinux 10 or Debian/grml)
@@ -28,9 +29,17 @@
 #                                      (AlmaLinux 10 only — Debian supported but not primary)
 #               Default: "default".
 #
+# --check-trex-updates
+#               Query remote /opt/trex/, the pinned version in this script,
+#               and (best-effort) the cisco CDN for the latest release.
+#               Never mutates remote state. Exits after printing the report.
+#
 # Environment variables (stagelab-agent-dpdk only):
-#   STAGELAB_HUGEPAGES   2 MiB hugepages to allocate (default: 512 = 1 GiB)
-#   STAGELAB_SKIP_SHA    set to 1 to skip TRex tarball SHA-256 check (dev/CI only)
+#   STAGELAB_HUGEPAGES            2 MiB hugepages to allocate (default: 512 = 1 GiB)
+#   STAGELAB_TREX_VERSION         override TRex version without editing this file
+#   STAGELAB_TREX_MIRROR_URL      base URL of an internal mirror (no trailing slash)
+#                                 curl downloads <URL>/<version>.tar.gz; CA-verified when https
+#   STAGELAB_TREX_LOCAL_TARBALL   path to a pre-downloaded local tarball; skips network entirely
 #
 # The host must already accept passwordless SSH for the given user.
 # Idempotent: safe to re-run on persistent-storage hosts.
@@ -45,21 +54,24 @@ DEPLOY_JSON_DEFAULT="$SCRIPT_DIR/deploy.json"
 DEPLOY_JSON="$DEPLOY_JSON_DEFAULT"
 REMOTE=""
 ROLE="default"
+CHECK_TREX_UPDATES=0
 
-# TRex bundle constants (stagelab-agent-dpdk only).
-# SHA is a placeholder — after downloading the tarball manually the first
-# time, record `sha256sum /tmp/trex.tar.gz` here and remove this comment.
-# Use STAGELAB_SKIP_SHA=1 in CI / integration tests to bypass the check.
-TREX_VERSION="v3.04"
-TREX_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
-TREX_URL="https://trex-tgn.cisco.com/trex/release/${TREX_VERSION}.tar.gz"
-TREX_DEST="/opt/trex/${TREX_VERSION}"
+# TRex installation pin. Update TREX_VERSION_LATEST_KNOWN when a newer
+# release is verified to work. Set STAGELAB_TREX_VERSION in the env to
+# install a specific version without editing this file.
+TREX_VERSION_LATEST_KNOWN="v3.04"
+TREX_VERSION="${STAGELAB_TREX_VERSION:-$TREX_VERSION_LATEST_KNOWN}"
+TREX_CDN_BASE="https://trex-tgn.cisco.com/trex/release"
+TREX_CA_PEM="$SCRIPT_DIR/trex-ca.pem"
+
+info() { printf 'setup-remote-test-host: %s\n' "$1"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --simulate-src) SIMULATE_SRC="$2"; shift 2 ;;
-        --deploy-json)  DEPLOY_JSON="$2"; shift 2 ;;
-        --role)         ROLE="$2"; shift 2 ;;
+        --simulate-src)      SIMULATE_SRC="$2"; shift 2 ;;
+        --deploy-json)       DEPLOY_JSON="$2"; shift 2 ;;
+        --role)              ROLE="$2"; shift 2 ;;
+        --check-trex-updates) CHECK_TREX_UPDATES=1; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
@@ -76,7 +88,14 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$REMOTE" ] || { echo "usage: $0 user@host [--simulate-src DIR] [--role default|stagelab-agent|stagelab-agent-dpdk]" >&2; exit 1; }
+[ -n "$REMOTE" ] || { echo "usage: $0 user@host [--simulate-src DIR] [--role default|stagelab-agent|stagelab-agent-dpdk] [--check-trex-updates]" >&2; exit 1; }
+
+if [ "${CHECK_TREX_UPDATES}" = "1" ]; then
+    # shellcheck source=tools/lib/trex-install.sh
+    . "$SCRIPT_DIR/lib/trex-install.sh"
+    trex_install_check_updates "$REMOTE"
+    exit 0
+fi
 
 case "$ROLE" in
     default|stagelab-agent|stagelab-agent-dpdk) ;;
@@ -88,8 +107,6 @@ IS_DPDK=0
 if [ "$ROLE" = "stagelab-agent-dpdk" ]; then
     IS_DPDK=1
 fi
-
-info() { printf 'setup-remote-test-host: %s\n' "$1"; }
 
 # ── Required binary sets (for post-install verification) ──────────────────────
 # role=default
@@ -495,45 +512,11 @@ done
 ' 2>/dev/null | while IFS= read -r _line; do info "  $_line"; done || true
 
     # ── 5. TRex bundle staging ────────────────────────────────────
+    # shellcheck source=tools/lib/trex-install.sh
+    . "$SCRIPT_DIR/lib/trex-install.sh"
     info "stagelab-agent-dpdk: staging TRex $TREX_VERSION"
-    # Pass vars and the skip-SHA flag to the remote function
-    _skip_sha="${STAGELAB_SKIP_SHA:-}"
-    ssh "$REMOTE" "
-TREX_VERSION='${TREX_VERSION}'
-TREX_SHA256='${TREX_SHA256}'
-TREX_URL='${TREX_URL}'
-TREX_DEST='${TREX_DEST}'
-STAGELAB_SKIP_SHA='${_skip_sha}'
-
-stage_trex() {
-    if [ -d \"\$TREX_DEST\" ] && [ -x \"\$TREX_DEST/t-rex-64\" ]; then
-        echo \"TRex \$TREX_VERSION already staged at \$TREX_DEST — skipping\"
-        return
-    fi
-    echo \"downloading TRex \$TREX_VERSION to /tmp/trex.tar.gz\"
-    _exit_block=''
-    curl -fsSL \"\$TREX_URL\" -o /tmp/trex.tar.gz || {
-        echo \"WARNING: failed to download TRex — leaving /opt/trex absent\"
-        _exit_block=1
-    }
-    if [ -z \"\${STAGELAB_SKIP_SHA:-}\" ] && [ -z \"\$_exit_block\" ]; then
-        _actual=\$(sha256sum /tmp/trex.tar.gz | awk '{print \$1}')
-        if [ \"\$_actual\" != \"\$TREX_SHA256\" ]; then
-            echo \"WARNING: TRex SHA mismatch (actual=\$_actual expected=\$TREX_SHA256)\"
-            echo \"         Set STAGELAB_SKIP_SHA=1 to bypass (dev only) or update the pinned SHA.\"
-            _exit_block=1
-        fi
-    fi
-    if [ -z \"\$_exit_block\" ]; then
-        mkdir -p \"\$TREX_DEST\"
-        tar -xzf /tmp/trex.tar.gz -C \"\$TREX_DEST\" --strip-components=1
-        echo \"TRex staged at \$TREX_DEST\"
-    fi
-    rm -f /tmp/trex.tar.gz
-}
-
-stage_trex
-" || true
+    trex_install_stage "$REMOTE" "$TREX_VERSION"
+    trex_install_verify "$REMOTE" "$TREX_VERSION"
 
     # ── 6. Recovery-file parent dir ───────────────────────────────
     info "stagelab-agent-dpdk: ensuring /var/lib/stagelab exists"
