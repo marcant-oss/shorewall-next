@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# tester02-downstream-setup — idempotent boot-time setup for customer-VLAN
+# endpoints on load-tester-02, for through-FW stagelab scenario traffic-gen.
+#
+# eth1 is on a VLAN-transparent bridge (customer-VLAN trunk). VLANs used:
+#   VLAN 10 = mgmt zone (bond0.10, 203.0.113.24/29) — restrictive
+#   VLAN 20 = host zone (bond0.20, 203.0.113.128/25)  — generic LAN; net→host
+#             permitted for typical flows. Gold-signal tester01→tester02
+#             through-FW runs on this VLAN.
+#
+# Return route on VLAN 20: 203.0.113.64/27 (sim-uplink backbone /27) goes
+# via host-zone gateway so replies traverse the FW symmetrically. Without
+# this, replies default-route via eth0 mgmt and get lost.
+#
+# Idempotent; safe to run more than once.
+
+set -eu
+
+PARENT=eth1
+LOG_TAG="tester02-downstream-setup"
+log() { logger -t "${LOG_TAG}" -- "$*"; echo "[${LOG_TAG}] $*"; }
+
+ip link set "${PARENT}" up
+
+_mk_vlan_if() {
+    local vlan=$1
+    local ipaddr=$2
+    local iface="${PARENT}.${vlan}"
+    if ! ip link show "${iface}" >/dev/null 2>&1; then
+        log "create ${iface} (VLAN ${vlan} on ${PARENT})"
+        ip link add link "${PARENT}" name "${iface}" type vlan id "${vlan}"
+    fi
+    ip link set "${iface}" up
+    if ! ip -br addr show "${iface}" | grep -q "${ipaddr%/*}"; then
+        ip addr add "${ipaddr}" dev "${iface}"
+        log "added ${ipaddr} on ${iface}"
+    fi
+}
+
+_mk_vlan_if 10 203.0.113.30/29
+_mk_vlan_if 20 203.0.113.254/24
+
+ip route replace 203.0.113.64/27 via 203.0.113.129 dev eth1.20
+log "return-route for backbone 203.0.113.64/27 via 203.0.113.129 set"
+log "done"
