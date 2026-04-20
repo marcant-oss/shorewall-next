@@ -131,12 +131,15 @@ class TestDnstapOnly:
         spec = specs[0]
         # set_name is non-None (it's been overridden to point at an nfset).
         assert spec.set_name is not None
-        # The set_name points to an nfset target (either v4 or v6 suffix).
+        # A2 fix: set_name now stores the BASE name (no _v4/_v6 suffix).
+        # The worker appends the family suffix at write time.
         expected_v4 = nfset_to_set_name("widgets", "v4")
-        expected_v6 = nfset_to_set_name("widgets", "v6")
-        assert spec.set_name in (expected_v4, expected_v6), (
-            f"set_name={spec.set_name!r} should be one of {expected_v4!r}, {expected_v6!r}"
+        expected_base = expected_v4[:-3]  # strip "_v4"
+        assert spec.set_name == expected_base, (
+            f"set_name={spec.set_name!r} should be base name {expected_base!r}"
         )
+        assert not spec.set_name.endswith("_v4"), "base name must not have _v4 suffix"
+        assert not spec.set_name.endswith("_v6"), "base name must not have _v6 suffix"
 
 
 class TestResolverOnly:

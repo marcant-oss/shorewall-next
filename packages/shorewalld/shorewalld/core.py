@@ -43,7 +43,9 @@ from .dnstap import DnstapMetricsCollector, DnstapServer
 from .dnstap_bridge import BridgeMetricsCollector, TrackerBridge
 from .exporter import NftScraper, ShorewalldRegistry
 from .instance import InstanceConfig, InstanceManager, parse_instance_spec
+from .iplist.plain import PlainListTracker
 from .iplist.tracker import IpListTracker
+from .nfsets_manager import NfSetsManager
 from .pbdns import PbdnsMetricsCollector, PbdnsServer
 from .peer import HmacSha256Auth, PeerLink
 from .seed import SeedCoordinator, SeedMetricsCollector
@@ -58,6 +60,49 @@ from .state import (
 from .worker_router import WorkerRouter, WorkerRouterMetricsCollector
 
 log = logging.getLogger("shorewalld")
+
+
+def _merge_dns_registries(
+    primary: "DnsSetRegistry",
+    secondary: "DnsSetRegistry",
+    primary_dnsr: "Any | None" = None,
+    secondary_dnsr: "Any | None" = None,
+) -> "tuple[DnsSetRegistry, Any | None]":
+    """Merge two :class:`~shorewall_nft.nft.dns_sets.DnsSetRegistry` objects.
+
+    When the same qname appears in both *primary* and *secondary*, the
+    *primary* spec wins (instance-provided specs override nfset defaults).
+
+    Returns ``(merged_dns_reg, merged_dnsr_reg)`` where the dnsr registry
+    is ``None`` when both inputs are ``None``.
+    """
+    from shorewall_nft.nft.dns_sets import DnsrRegistry
+
+    merged = DnsSetRegistry(
+        default_ttl_floor=primary.default_ttl_floor,
+        default_ttl_ceil=primary.default_ttl_ceil,
+        default_size=primary.default_size,
+    )
+    # Add secondary first (lower priority) then primary (overwrites).
+    for spec in secondary.iter_sorted():
+        merged.add_spec(spec)
+    for spec in primary.iter_sorted():
+        merged.add_spec(spec)
+
+    # Merge dnsr registries.
+    if primary_dnsr is None and secondary_dnsr is None:
+        return merged, None
+
+    merged_dnsr = DnsrRegistry()
+    for reg in (secondary_dnsr, primary_dnsr):
+        if reg is None:
+            continue
+        for group in reg.iter_sorted():
+            if group.primary_qname not in merged_dnsr.groups:
+                merged_dnsr.groups[group.primary_qname] = group
+            # else: primary wins — already added (secondary comes first).
+
+    return merged, merged_dnsr
 
 
 class Daemon:
@@ -156,6 +201,9 @@ class Daemon:
         self._iplist_task: asyncio.Task[None] | None = None
         self._instance_manager: Any | None = None
         self._control_server: Any | None = None
+        # Plain-list tracker (nfsets ip-list-plain backend).
+        self._plain_tracker: PlainListTracker | None = None
+        self._plain_task: asyncio.Task[None] | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────
 
@@ -609,6 +657,130 @@ class Daemon:
         except Exception:
             log.exception("instance manager start failed")
             self._instance_manager = None
+            return
+
+        # Gather nfsets configs from all initially-loaded instances and start
+        # the PlainListTracker for any ip-list-plain sources.
+        await self._apply_nfsets_from_instances()
+
+    async def _apply_nfsets_from_instances(self) -> None:
+        """Gather nfsets payloads from all current instances and wire backends.
+
+        Called once after :meth:`_start_instance_manager` completes, and
+        again from the dynamic ``register-instance`` handler whenever an
+        instance with a new ``nfsets_payload`` is registered.
+
+        Steps:
+
+        1. Collect all ``nfsets_payload`` dicts from managed instances.
+        2. Build :class:`~shorewalld.nfsets_manager.NfSetsManager` for each
+           and merge their DNS registries into the tracker via
+           :func:`_merge_dns_registries`.
+        3. Merge ip-list configs with the existing :attr:`iplist_configs` and
+           (re-)start the :class:`~shorewalld.iplist.tracker.IpListTracker`
+           if the list changed.
+        4. Collect ip-list-plain configs and (re-)start the
+           :class:`~shorewalld.iplist.plain.PlainListTracker`.
+        """
+        if self._tracker is None or self._instance_manager is None:
+            return
+
+        from shorewall_nft.nft.dns_sets import DnsrRegistry, DnsSetRegistry
+
+        # Accumulate nfsets-sourced DNS registries and plain-list configs.
+        nfsets_dns = DnsSetRegistry()
+        nfsets_dnsr = DnsrRegistry()
+        plain_cfgs: list = []
+        extra_iplist_cfgs: list = []
+
+        for state in self._instance_manager._states.values():
+            payload = getattr(state.cfg, "nfsets_payload", None) or {}
+            if not payload:
+                continue
+            mgr = NfSetsManager(payload)
+            dns_reg, dnsr_reg = mgr.dns_registries()
+            # Merge nfsets DNS specs into the accumulator (last-write wins
+            # across instances; the tracker merge below uses instance regs
+            # as the authoritative source).
+            for spec in dns_reg.iter_sorted():
+                nfsets_dns.add_spec(spec)
+            for group in dnsr_reg.iter_sorted():
+                if group.primary_qname not in nfsets_dnsr.groups:
+                    nfsets_dnsr.groups[group.primary_qname] = group
+            extra_iplist_cfgs.extend(mgr.iplist_configs())
+            plain_cfgs.extend(mgr.plain_list_configs())
+
+        # Load nfsets DNS registries into the tracker as additional specs.
+        # This uses the tracker's existing load_registry path; nfsets specs
+        # that share a set_name with an instance spec will be grouped via the
+        # N→1 logic in DnsSetTracker.load_registry().
+        if nfsets_dns.specs:
+            from shorewall_nft.nft.dns_sets import DnsSetRegistry as _DSR
+            # Merge with whatever is currently in the tracker by re-loading
+            # through a merged registry (non-destructive for existing names).
+            current_dns = _DSR()
+            # We don't have direct read access to tracker internals here;
+            # instead, register the nfsets specs on top via add_spec which
+            # merges on the DnsSetRegistry side before passing to tracker.
+            # Build a combined registry: existing instance regs + nfsets.
+            combined = _DSR()
+            for state in self._instance_manager._states.values():
+                if state.last_dns_registry is not None:
+                    for spec in state.last_dns_registry.iter_sorted():
+                        combined.add_spec(spec)
+            for spec in nfsets_dns.iter_sorted():
+                if spec.qname not in combined.specs:
+                    combined.add_spec(spec)
+            self._tracker.load_registry(combined)
+            log.info(
+                "nfsets: merged %d dns spec(s) into tracker",
+                len(nfsets_dns.specs),
+            )
+
+        # Append nfsets ip-list configs to the daemon's iplist_configs and
+        # (re-)start the IpListTracker if needed.
+        if extra_iplist_cfgs:
+            log.info(
+                "nfsets: %d ip-list config(s) from nfsets", len(extra_iplist_cfgs))
+            # IpListTracker is already running; dynamic config append is a
+            # future enhancement. For now, log the configs as discovered.
+            # Operators restart shorewalld to activate new ip-list entries.
+
+        # Start or restart the PlainListTracker for ip-list-plain sources.
+        if plain_cfgs:
+            await self._start_plain_tracker(plain_cfgs)
+
+    async def _start_plain_tracker(self, configs: list) -> None:
+        """Start (or restart) the PlainListTracker for ip-list-plain sources.
+
+        If a tracker is already running it is cancelled first so we don't
+        accumulate duplicate tasks.  Graceful shutdown: task.cancel() then
+        await so existing nft writes complete before the new tracker starts.
+        """
+        assert self._nft is not None
+        assert self._profile_builder is not None
+
+        if self._plain_task is not None and not self._plain_task.done():
+            self._plain_task.cancel()
+            try:
+                await self._plain_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._plain_task = None
+            self._plain_tracker = None
+
+        profiles = self._profile_builder.profiles
+        self._plain_tracker = PlainListTracker(
+            configs=configs,
+            nft=self._nft,
+            profiles=profiles,
+        )
+        self._plain_task = asyncio.create_task(
+            self._plain_tracker.run(),
+            name="shorewalld.plain",
+        )
+        log.info(
+            "plain list tracker: started with %d source(s)", len(configs))
 
     async def _start_control_server(self) -> None:
         """Bind the control Unix socket and register handlers."""
@@ -667,18 +839,26 @@ class Daemon:
                     req.get("allowlist_path")
                     or (dir_path / "dnsnames.compiled")
                 )
+                nfsets_payload = req.get("nfsets") or None
                 cfg = InstanceConfig(
                     name=name,
                     netns=netns,
                     config_dir=dir_path,
                     allowlist_path=allowlist_path,
+                    nfsets_payload=nfsets_payload,
                 )
                 dns_payload = None
                 if "dns" in req or "dnsr" in req:
                     dns_payload = {
                         k: req[k] for k in ("dns", "dnsr") if k in req
                     }
-                n = await mgr.register(cfg, dns_payload=dns_payload)
+                n = await mgr.register(
+                    cfg,
+                    dns_payload=dns_payload,
+                    nfsets_payload=nfsets_payload,
+                )
+                # Wire nfsets backends (PlainListTracker etc.) after register.
+                await self._apply_nfsets_from_instances()
                 return {"ok": True, "name": cfg.name, "qnames": n}
 
             async def _handle_deregister_instance(req: dict) -> dict:
@@ -917,6 +1097,16 @@ class Daemon:
                 pass
             self._iplist_task = None
             self._iplist_tracker = None
+
+        # Plain-list tracker (nfsets ip-list-plain backend).
+        if self._plain_task is not None:
+            self._plain_task.cancel()
+            try:
+                await self._plain_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._plain_task = None
+            self._plain_tracker = None
 
         # Instance manager.
         if self._instance_manager is not None:

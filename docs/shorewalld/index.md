@@ -1419,6 +1419,11 @@ systemctl restart shorewalld
 
 ## DNS-backed nft sets (`dns:` and `dnsr:` rule syntax)
 
+> **See also**: [nfsets](../features/nfsets.md) — when you need multiple hostnames per
+> set, non-DNS backends (URL blocklists, cloud prefix lists), or explicit set naming
+> for tooling/monitoring, use the `nfsets` config file and `nfset:<name>` rule syntax
+> instead of inline `dns:`/`dnsr:`.
+
 shorewalld can populate nftables sets with the answers to DNS
 queries so a Shorewall rule can match on hostname instead of
 literal IP. The compiler declares the sets, the daemon populates

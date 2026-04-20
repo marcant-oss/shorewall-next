@@ -887,13 +887,23 @@ def nfset_registry_to_dns_registries(
     For each :class:`~shorewall_nft.nft.nfsets.NfSetEntry`:
 
     * ``backend == "dnstap"`` → each host in ``entry.hosts`` is registered
-      via :meth:`DnsSetRegistry.add_with_target` with ``set_name`` pointing
-      to both the ``_v4`` and ``_v6`` nfset variants.
+      once via :meth:`DnsSetRegistry.add_with_target` with ``set_name`` set
+      to the **base** nfset name (``nfset_<sanitized>``, without ``_v4``/
+      ``_v6`` suffix).  The worker-side lookup appends the family suffix at
+      write time to derive the real nft set name.
     * ``backend == "resolver"`` → each host is registered via
-      :meth:`DnsrRegistry.add_with_target`, forwarding ``dns_servers``,
-      ``refresh``, and ``dnstype`` as the comment annotation.
+      :meth:`DnsrRegistry.add_with_target` once, using the same base name.
     * ``backend == "ip-list"`` / ``"ip-list-plain"`` → skipped; handled by
       ``NfSetsManager`` in Wave 3.
+
+    Storing the **base** name (without ``_v4``/``_v6``) avoids the
+    ``add_with_target`` v4-then-v6 overwrite bug: previously calling
+    ``add_with_target(qname, set_name="nfset_X_v4")`` and then
+    ``add_with_target(qname, set_name="nfset_X_v6")`` would silently discard
+    the v4 spec because both keyed on the same ``qname`` in ``specs``.  Now a
+    single registration with the base name covers both families; the
+    worker derives the family-suffixed nft set name via
+    ``f"{spec.set_name}_v4"`` / ``f"{spec.set_name}_v6"``.
 
     Both registries use ``declare_set=False`` because the nft sets are
     declared by :func:`~shorewall_nft.nft.nfsets.emit_nfset_declarations`,
@@ -908,25 +918,28 @@ def nfset_registry_to_dns_registries(
     dnsr_reg = DnsrRegistry()
 
     for entry in nfsets.entries:
+        # Derive the base name (strip the "_v4" suffix from the v4 variant).
+        # nfset_to_set_name returns "nfset_<body>_v4"; the base is "nfset_<body>".
+        base_name = nfset_to_set_name(entry.name, "v4")
+        if base_name.endswith("_v4"):
+            base_name = base_name[:-3]  # strip trailing "_v4"
+
         if entry.backend == "dnstap":
             for host in entry.hosts:
-                for family in ("v4", "v6"):
-                    target = nfset_to_set_name(entry.name, family)
-                    dns_reg.add_with_target(
-                        qname=host,
-                        set_name=target,
-                        comment=f"nfset:{entry.name}",
-                    )
-        elif entry.backend == "resolver":
-            for family in ("v4", "v6"):
-                target = nfset_to_set_name(entry.name, family)
-                dnsr_reg.add_with_target(
-                    primary=entry.hosts[0] if entry.hosts else entry.name,
-                    qnames=entry.hosts,
-                    set_name=target,
-                    pull_enabled=True,
+                # Register once with the base name; worker appends "_v4"/"_v6".
+                dns_reg.add_with_target(
+                    qname=host,
+                    set_name=base_name,
                     comment=f"nfset:{entry.name}",
                 )
+        elif entry.backend == "resolver":
+            dnsr_reg.add_with_target(
+                primary=entry.hosts[0] if entry.hosts else entry.name,
+                qnames=entry.hosts,
+                set_name=base_name,
+                pull_enabled=True,
+                comment=f"nfset:{entry.name}",
+            )
         # ip-list / ip-list-plain: handled by NfSetsManager (Wave 3).
 
     return dns_reg, dnsr_reg

@@ -183,7 +183,8 @@ class TestNfsetRegistryToDnsRegistries:
         # And the dnsr registry must be empty (dnstap does not need pull)
         assert dnsr_reg.groups == {}
 
-    def test_dnstap_v4_set_name_override(self):
+    def test_dnstap_set_name_is_base_name(self):
+        """set_name stores the base name (no _v4/_v6 suffix) — A2 fix."""
         entry = NfSetEntry(
             name="mycdn",
             hosts=["cdn.example.com"],
@@ -193,12 +194,17 @@ class TestNfsetRegistryToDnsRegistries:
         dns_reg, _ = nfset_registry_to_dns_registries(nfsets)
 
         spec = dns_reg.specs["cdn.example.com"]
-        expected_v4 = nfset_to_set_name("mycdn", "v4")
-        expected_v6 = nfset_to_set_name("mycdn", "v6")
-        # The spec's set_name should point to one of the family variants
-        assert spec.set_name in (expected_v4, expected_v6)
+        # Base name: nfset_to_set_name("mycdn", "v4") with "_v4" stripped
+        v4_name = nfset_to_set_name("mycdn", "v4")
+        expected_base = v4_name[:-3]  # strip "_v4"
+        assert spec.set_name == expected_base, (
+            f"set_name should be base name {expected_base!r}, got {spec.set_name!r}")
+        # Must NOT carry a family suffix
+        assert not spec.set_name.endswith("_v4"), "base name must not have _v4 suffix"
+        assert not spec.set_name.endswith("_v6"), "base name must not have _v6 suffix"
 
-    def test_dnstap_both_families_registered(self):
+    def test_dnstap_single_registration_covers_both_families(self):
+        """One qname registration suffices for both families when set_name override used."""
         entry = NfSetEntry(
             name="mycdn",
             hosts=["cdn.example.com"],
@@ -207,10 +213,10 @@ class TestNfsetRegistryToDnsRegistries:
         nfsets = _make_nfsets(entry)
         dns_reg, _ = nfset_registry_to_dns_registries(nfsets)
 
-        # add_with_target is called once per family → same qname registered
-        # (with the second call overwriting the first; this is expected —
-        # Wave 3 will refine per-family tracking if needed)
+        # Single spec entry — both families derived at write time from base name.
         assert "cdn.example.com" in dns_reg.specs
+        spec = dns_reg.specs["cdn.example.com"]
+        assert spec.set_name is not None, "set_name must be set for nfset bridge"
 
     def test_resolver_entry_populates_dnsr_registry(self):
         entry = NfSetEntry(
@@ -281,7 +287,25 @@ class TestNfsetRegistryToDnsRegistries:
 
         group = dnsr_reg.groups.get("api.example.com")
         assert group is not None
-        # The comment must contain the nfset_target annotation
+        # The comment must contain the nfset_target annotation with the base name.
         assert "nfset_target=" in group.comment
-        expected_name = nfset_to_set_name("api-resolver", "v4")
-        assert expected_name in group.comment or nfset_to_set_name("api-resolver", "v6") in group.comment
+        # Base name: v4 variant with "_v4" stripped.
+        v4_name = nfset_to_set_name("api-resolver", "v4")
+        expected_base = v4_name[:-3]
+        assert expected_base in group.comment, (
+            f"base name {expected_base!r} not found in comment {group.comment!r}")
+
+    def test_resolver_single_registration_covers_both_families(self):
+        """One resolver group registration suffices; family suffix appended at write time."""
+        entry = NfSetEntry(
+            name="api-resolver",
+            hosts=["api.example.com"],
+            backend="resolver",
+        )
+        nfsets = _make_nfsets(entry)
+        _, dnsr_reg = nfset_registry_to_dns_registries(nfsets)
+
+        # Only one group for the primary — not two (one per family)
+        assert len(dnsr_reg.groups) == 1
+        group = dnsr_reg.groups["api.example.com"]
+        assert "nfset_target=" in group.comment
