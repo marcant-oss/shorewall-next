@@ -191,6 +191,18 @@ async def _exec_source(path: str, timeout: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _incr_error(state: "_PlainListState", error_type: str) -> None:
+    """Increment the per-error-type counter on *state* (Wave 6 metrics)."""
+    state.refresh_error_counts[error_type] = (
+        state.refresh_error_counts.get(error_type, 0) + 1
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tracker
 # ---------------------------------------------------------------------------
 
@@ -447,12 +459,15 @@ class PlainListTracker:
                 "falling back to refresh polling",
                 state.cfg.name,
             )
+            # W6: record that inotify is NOT active (stays 0 — default).
+            _incr_error(state, "inotify_missing")
             return
 
         inotify = inotify_simple.INotify()
         flags = inotify_simple.flags.CLOSE_WRITE | inotify_simple.flags.MOVED_TO
         try:
             inotify.add_watch(state.cfg.source, flags)
+            state.inotify_active = 1  # W6: mark watch as active
             log.debug(
                 "plain.%s: inotify watch active on %s",
                 state.cfg.name, state.cfg.source,
@@ -472,6 +487,7 @@ class PlainListTracker:
         except asyncio.CancelledError:
             pass
         finally:
+            state.inotify_active = 0  # W6: watch is gone
             try:
                 inotify.close()
             except Exception:  # noqa: BLE001
@@ -485,6 +501,10 @@ class PlainListTracker:
     async def _do_refresh_locked(self, state: _PlainListState) -> None:
         cfg = state.cfg
         list_log = logging.getLogger(f"shorewalld.plain.{cfg.name}")
+
+        # W6: count every attempt.
+        state.refresh_total += 1
+        t_fetch_start = time.monotonic()
 
         # ── Fetch ──────────────────────────────────────────────────────────
         try:
@@ -503,17 +523,49 @@ class PlainListTracker:
                     cfg.name, cfg.source,
                 )
                 state.consecutive_errors += 1
+                state.refresh_failure_total += 1  # W6
+                _incr_error(state, "other")  # W6
                 return
-        except Exception as exc:
+        except TimeoutError:
             state.consecutive_errors += 1
+            state.refresh_failure_total += 1  # W6
+            _incr_error(state, "timeout")  # W6
+            log.warning("plain.%s: fetch timeout", cfg.name)
+            return
+        except RuntimeError as exc:
+            # exec: non-zero exit code
+            state.consecutive_errors += 1
+            state.refresh_failure_total += 1  # W6
+            _incr_error(state, "exec_exit")  # W6
             log.warning("plain.%s: fetch error: %s", cfg.name, exc)
             return
+        except OSError as exc:
+            state.consecutive_errors += 1
+            state.refresh_failure_total += 1  # W6
+            # HTTP-level errors are OSError subclasses in urllib
+            err_str = str(exc)
+            if "HTTP Error" in err_str or "http" in type(exc).__name__.lower():
+                _incr_error(state, "http_status")  # W6
+            else:
+                _incr_error(state, "other")  # W6
+            log.warning("plain.%s: fetch error: %s", cfg.name, exc)
+            return
+        except Exception as exc:
+            state.consecutive_errors += 1
+            state.refresh_failure_total += 1  # W6
+            _incr_error(state, "other")  # W6
+            log.warning("plain.%s: fetch error: %s", cfg.name, exc)
+            return
+
+        fetch_duration = time.monotonic() - t_fetch_start  # W6
 
         # ── Parse ──────────────────────────────────────────────────────────
         try:
             new_v4, new_v6 = _parse_lines(text)
         except Exception as exc:
             state.consecutive_errors += 1
+            state.refresh_failure_total += 1  # W6
+            _incr_error(state, "parse")  # W6
             log.error("plain.%s: parse error: %s", cfg.name, exc)
             return
 
@@ -524,6 +576,8 @@ class PlainListTracker:
                 cfg.name, total, cfg.max_prefixes,
             )
             state.consecutive_errors += 1
+            state.refresh_failure_total += 1  # W6
+            _incr_error(state, "other")  # W6
             return
 
         # ── Apply diff ─────────────────────────────────────────────────────
@@ -550,8 +604,14 @@ class PlainListTracker:
 
         state.current_v4 = new_v4
         state.current_v6 = new_v6
-        state.last_refresh_ts = time.time()
+        now = time.time()
+        state.last_refresh_ts = now
         state.consecutive_errors = 0
+        # W6: record successful refresh metrics.
+        state.refresh_success_total += 1
+        state.last_success_ts = now
+        state.refresh_duration_sum += fetch_duration
+        state.refresh_duration_count += 1
 
         if total_added or total_removed:
             list_log.info(

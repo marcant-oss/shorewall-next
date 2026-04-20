@@ -119,6 +119,66 @@ class NfSetsManager:
 
         return configs
 
+    # ── Metrics helpers (Wave 6) ──────────────────────────────────────────────
+
+    def entries_by_backend(self) -> "dict[str, int]":
+        """Return count of NfSetEntry objects grouped by backend.
+
+        Used by :class:`~shorewalld.collectors.nfsets.NfsetsCollector` at
+        scrape time to emit ``shorewalld_nfsets_entries``.  The returned dict
+        maps each backend name (``"dnstap"``, ``"resolver"``, ``"ip-list"``,
+        ``"ip-list-plain"``) to the number of entries that use it.  Backends
+        with zero entries are **not** included.
+
+        Returns an empty dict when the payload was empty or unparseable.
+        """
+        if self._registry is None:
+            return {}
+        counts: dict[str, int] = {}
+        for entry in self._registry.entries:
+            counts[entry.backend] = counts.get(entry.backend, 0) + 1
+        return counts
+
+    def hosts_by_backend(self) -> "dict[str, int]":
+        """Return total host/qname/source count grouped by backend.
+
+        Each :class:`~shorewall_nft.nft.nfsets.NfSetEntry` may carry multiple
+        hosts (e.g. a ``dnstap`` entry with several qnames).  This method sums
+        ``len(entry.hosts)`` per backend.  Used by
+        :class:`~shorewalld.collectors.nfsets.NfsetsCollector` for the
+        ``shorewalld_nfsets_hosts`` gauge.
+
+        Returns an empty dict when the payload was empty or unparseable.
+        """
+        if self._registry is None:
+            return {}
+        counts: dict[str, int] = {}
+        for entry in self._registry.entries:
+            counts[entry.backend] = counts.get(entry.backend, 0) + len(entry.hosts)
+        return counts
+
+    def payload_bytes(self) -> int:
+        """Approximate serialised payload size in bytes.
+
+        Estimates the size of the JSON payload by summing string lengths of
+        all entry fields.  Used by the collector as
+        ``shorewalld_nfsets_payload_bytes``.  Returns 0 when no registry is
+        loaded.
+
+        The value is a lower-bound estimate (no JSON framing overhead), which
+        is fine for the alerting use-case (operator wants to know if the
+        payload is growing unbounded, not its exact byte count).
+        """
+        if self._registry is None:
+            return 0
+        total = 0
+        for entry in self._registry.entries:
+            total += len(entry.name) + len(entry.backend)
+            total += sum(len(h) for h in entry.hosts)
+            for k, vs in entry.options.items():
+                total += len(k) + sum(len(v) for v in vs)
+        return total
+
     def plain_list_configs(self) -> "list[PlainListConfig]":
         """Extract ``ip-list-plain`` entries as :class:`~shorewalld.iplist.plain.PlainListConfig` objects.
 

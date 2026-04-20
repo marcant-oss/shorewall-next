@@ -25,6 +25,7 @@ from .flowtable import FlowtableCollector
 from .link import _LINK_STAT_FIELDS, LinkCollector
 from .neighbour import NeighbourCollector, _neigh_state_name
 from .netstat import _TCPEXT_FIELDS, NetstatCollector
+from .nfsets import NfsetsCollector  # noqa: E402 — after exporter cycle settles
 from .nft import NftCollector
 from .qdisc import (
     _QDISC_FIELDS,
@@ -55,6 +56,7 @@ from .softnet import (
 
 __all__ = [
     "AddressCollector",
+    "NfsetsCollector",
     "ConntrackStatsCollector",
     "CtCollector",
     "FlowtableCollector",

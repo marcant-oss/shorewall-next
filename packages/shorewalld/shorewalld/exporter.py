@@ -411,6 +411,7 @@ from shorewalld.collectors import (  # noqa: E402,F401
     LinkCollector,
     NeighbourCollector,
     NetstatCollector,
+    NfsetsCollector,
     NftCollector,
     QdiscCollector,
     SnmpCollector,

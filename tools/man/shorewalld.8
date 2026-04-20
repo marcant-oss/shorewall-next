@@ -375,6 +375,69 @@ shorewalld_dnstap_queue_depth                   gauge
 .fi
 .RE
 
+.SS DNS-set per-set metrics
+.RS
+.nf
+shorewalld_dns_set_elements                     gauge    set,family
+shorewalld_dns_set_adds_total                   counter  set,family
+shorewalld_dns_set_refreshes_total              counter  set,family
+shorewalld_dns_set_dedup_hits_total             counter  set,family
+shorewalld_dns_set_dedup_misses_total           counter  set,family
+shorewalld_dns_set_expiries_total               counter  set,family
+shorewalld_dns_set_last_update_age_seconds      gauge    set,family
+shorewalld_dns_set_shared_qnames                gauge    set_name,family  [W6]
+.fi
+.RE
+
+.PP
+.B shorewalld_dns_set_shared_qnames
+counts how many DNS qnames feed a single shared nft set (N:1 grouping active
+when value > 1).
+
+.SS nfsets instance metrics [Wave 6 \-\- nfsets feature]
+.RS
+.nf
+shorewalld_nfsets_entries                       gauge    instance,backend
+shorewalld_nfsets_hosts                         gauge    instance,backend
+shorewalld_nfsets_payload_bytes                 gauge    instance
+.fi
+.RE
+
+.PP
+.B shorewalld_nfsets_entries
+counts nfset config entries by backend (dnstap, resolver, ip-list,
+ip-list-plain).
+.B shorewalld_nfsets_hosts
+counts the total qname/host/source count per backend.
+.B shorewalld_nfsets_payload_bytes
+is an approximate payload-size gauge useful for alerting on unbounded growth.
+
+.SS Plain-list tracker metrics [Wave 6 \-\- ip-list-plain backend]
+.RS
+.nf
+shorewalld_plainlist_refresh_total              counter  name,source_type,outcome
+shorewalld_plainlist_refresh_duration_seconds_sum   counter  name,source_type
+shorewalld_plainlist_refresh_duration_seconds_count counter  name,source_type
+shorewalld_plainlist_entries                    gauge    name,family
+shorewalld_plainlist_last_success_timestamp_seconds gauge name
+shorewalld_plainlist_inotify_active             gauge    name
+shorewalld_plainlist_errors_total               counter  name,source_type,error_type
+.fi
+.RE
+
+.PP
+Label values:
+.B source_type
+\[bu] http | file | exec;
+.B outcome
+\[bu] success | failure;
+.B error_type
+\[bu] http_status | dns | timeout | parse | exec_exit | inotify_missing | other.
+.PP
+.B shorewalld_plainlist_last_success_timestamp_seconds
+is a Unix-timestamp gauge (0 = never refreshed).  Alert with
+.B time() \- metric > THRESHOLD .
+
 .SH FILES
 .TP
 .I /etc/shorewalld.conf
