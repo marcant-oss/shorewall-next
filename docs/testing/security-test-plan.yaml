@@ -2,7 +2,7 @@ __comment__: Auto-generated (security-test-plan) — DO NOT edit by hand; regene
   via tools/merge-security-test-plan-yaml.py or the M1 merger.
 schema_version: 1
 generated_by: M1 merger (security-test-plan feature)
-generated_at: '2026-04-20T18:02:09+00:00'
+generated_at: '2026-04-20T18:51:59+00:00'
 standards:
 - id: cc-iso-15408
   title: Common Criteria (ISO/IEC 15408)
@@ -755,7 +755,7 @@ tests:
     id: bsi-a5-syn-flood
     kind: dos_syn_flood
     source_role: wan-uplink
-    sink_role: lan-downstream
+    sink_role: dmz-downstream
     duration_s: 10
     rate_pps: 50000
     src_ip_range: 203.0.113.0/24
@@ -1130,7 +1130,7 @@ tests:
 - test_id: owasp-fw-1-config-review
   standard: owasp
   standard_refs:
-  - owasp/FW-1
+  - owasp-fw-1
   title: Firewall configuration review
   status: covered
   description: 'Review the active firewall ruleset for correctness, over-permission,
@@ -1142,6 +1142,10 @@ tests:
   maps_to_scenario:
     kind: rule_coverage_matrix
     source_role: wan-uplink
+    zone_subnets:
+      net: 203.0.113.0/24
+      host: 203.0.113.128/25
+      mgmt: 203.0.113.24/29
   acceptance_criteria:
     advisor_tier_b_unresolved: 0
     advisor_tier_c_unresolved: <= 5
@@ -1155,7 +1159,7 @@ tests:
 - test_id: owasp-fw-2-rulebase-audit
   standard: owasp
   standard_refs:
-  - owasp/FW-2
+  - owasp-fw-2
   title: Rule-base audit (shadow / redundancy / over-permission)
   status: covered
   description: 'Enumerate all zone-pair combinations to detect rules that are never
@@ -1168,6 +1172,10 @@ tests:
   maps_to_scenario:
     kind: rule_coverage_matrix
     source_role: wan-uplink
+    zone_subnets:
+      net: 203.0.113.0/24
+      host: 203.0.113.128/25
+      mgmt: 203.0.113.24/29
   acceptance_criteria:
     unreachable_rule_count: 0
     over_permissive_zone_pairs: 0
@@ -1181,8 +1189,8 @@ tests:
 - test_id: owasp-fw-3-default-deny
   standard: owasp
   standard_refs:
-  - owasp/FW-3
-  - iso27001/A.13.1.1
+  - owasp-fw-3
+  - iso27001-a-13-1-1
   title: Default-deny policy verification
   status: covered
   description: 'Probe all unmapped zone pairs with random source/destination tuples
@@ -1206,7 +1214,7 @@ tests:
 - test_id: owasp-fw-4-evasion-bypass
   standard: owasp
   standard_refs:
-  - owasp/FW-4
+  - owasp-fw-4
   title: Evasion and bypass probe suite
   status: covered
   description: 'Send crafted packets designed to evade stateless ACLs: IP fragmentation,
@@ -1218,7 +1226,7 @@ tests:
   maps_to_scenario:
     kind: evasion_probes
     source_role: wan-uplink
-    sink_role: lan-downstream
+    target_ip: 203.0.113.129
   acceptance_criteria:
     evasion_success_count: 0
   evidence:
@@ -1231,7 +1239,7 @@ tests:
 - test_id: owasp-fw-5-stateful-inspection
   standard: owasp
   standard_refs:
-  - owasp/FW-5
+  - owasp-fw-5
   title: Stateful inspection under load (partial)
   status: partial
   partial_reason: 'conn_storm and long_flow_survival exercise the conntrack code path
@@ -1258,7 +1266,7 @@ tests:
 - test_id: owasp-fw-6-ha-failover
   standard: owasp
   standard_refs:
-  - owasp/FW-6
+  - owasp-fw-6
   title: HA failover drill (VRRP + conntrackd)
   status: covered
   description: 'Trigger a VRRP failover while traffic is flowing; verify that established
@@ -1271,6 +1279,8 @@ tests:
     kind: ha_failover_drill
     source_role: wan-uplink
     sink_role: lan-downstream
+    primary_fw_host: root@192.0.2.70
+    secondary_fw_host: root@192.0.2.87
   acceptance_criteria:
     session_continuity: true
     failover_convergence_s: <= 3
@@ -1285,7 +1295,7 @@ tests:
 - test_id: owasp-fw-7-protocol-stack
   standard: owasp
   standard_refs:
-  - owasp/FW-7
+  - owasp-fw-7
   title: Protocol-stack attack resistance
   status: covered
   description: 'Combine evasion_probes (layer-3/4 malformations: bad TCP flags, oversized
@@ -1297,7 +1307,9 @@ tests:
   maps_to_scenario:
     kind: dos_syn_flood
     source_role: wan-uplink
-    sink_role: lan-downstream
+    sink_role: dmz-downstream
+    rate_pps: 10000
+    src_ip_range: 10.100.0.0/16
   acceptance_criteria:
     legitimate_throughput_degradation_pct: <= 5
     malformed_frame_accepted: 0
@@ -1311,8 +1323,8 @@ tests:
 - test_id: owasp-fw-8-operational-hardening
   standard: owasp
   standard_refs:
-  - owasp/FW-8
-  - iso27001/A.18.2.2
+  - owasp-fw-8
+  - iso27001-a-18-2-2
   title: Operational hardening (reload atomicity + exporter health)
   status: covered
   description: 'Verify that ruleset reloads are atomic (no window where policy is
@@ -1325,6 +1337,7 @@ tests:
     kind: reload_atomicity
     source_role: wan-uplink
     sink_role: lan-downstream
+    fw_host: root@192.0.2.70
   acceptance_criteria:
     traffic_gap_during_reload_ms: 0
     prometheus_scrape_ok: true
@@ -1338,8 +1351,8 @@ tests:
 - test_id: iso27001-a-13-1-1-network-controls
   standard: iso-27001
   standard_refs:
-  - iso27001/A.13.1.1
-  - owasp/FW-3
+  - iso27001-a-13-1-1
+  - owasp-fw-3
   title: Network controls (segmentation and access policy)
   status: covered
   description: 'Verify that networks are segregated into security zones and that inter-zone
@@ -1351,6 +1364,7 @@ tests:
   maps_to_scenario:
     kind: rule_scan
     source_role: wan-uplink
+    target_subnet: 10.0.0.0/8
     random_count: 500
   acceptance_criteria:
     fail_accept_count: 0
@@ -1365,7 +1379,7 @@ tests:
 - test_id: iso27001-a-13-1-2-network-service-security
   standard: iso-27001
   standard_refs:
-  - iso27001/A.13.1.2
+  - iso27001-a-13-1-2
   title: Security of network services (partial — SLA proxy via throughput)
   status: partial
   partial_reason: 'Service-level protocol SLA (e.g., guaranteed bandwidth or latency
@@ -1379,6 +1393,10 @@ tests:
     kind: throughput
     source_role: wan-uplink
     sink_role: lan-downstream
+    proto: tcp
+    duration_s: 30
+    parallel: 4
+    expect_min_gbps: 1.0
   acceptance_criteria:
     throughput_degradation_pct: <= 5
   evidence:
@@ -1391,8 +1409,8 @@ tests:
 - test_id: iso27001-a-13-1-3-network-segregation
   standard: iso-27001
   standard_refs:
-  - iso27001/A.13.1.3
-  - owasp/FW-2
+  - iso27001-a-13-1-3
+  - owasp-fw-2
   title: Segregation of networks (zone-pair exhaustion)
   status: covered
   description: 'Exhaustively enumerate every zone-pair combination and confirm that
@@ -1405,6 +1423,10 @@ tests:
   maps_to_scenario:
     kind: rule_coverage_matrix
     source_role: wan-uplink
+    zone_subnets:
+      net: 203.0.113.0/24
+      host: 203.0.113.128/25
+      mgmt: 203.0.113.24/29
   acceptance_criteria:
     implicit_accept_zone_pairs: 0
     uncovered_zone_pairs: 0
@@ -1418,7 +1440,7 @@ tests:
 - test_id: iso27001-a-12-4-1-event-logging
   standard: iso-27001
   standard_refs:
-  - iso27001/A.12.4.1
+  - iso27001-a-12-4-1
   title: Event logging (partial — Prometheus counters; no per-packet syslog)
   status: partial
   partial_reason: 'Prometheus counters provide near-real-time aggregate metrics (packets,
@@ -1431,6 +1453,10 @@ tests:
   maps_to_scenario:
     kind: rule_coverage_matrix
     source_role: wan-uplink
+    zone_subnets:
+      net: 203.0.113.0/24
+      host: 203.0.113.128/25
+      mgmt: 203.0.113.24/29
   acceptance_criteria:
     prometheus_scrape_ok: true
     nft_counter_gap_s: <= 30
@@ -1444,7 +1470,7 @@ tests:
 - test_id: iso27001-a-12-6-1-vuln-management
   standard: iso-27001
   standard_refs:
-  - iso27001/A.12.6.1
+  - iso27001-a-12-6-1
   title: Technical vulnerability management (advisor tier-B/C review PRs)
   status: partial
   partial_reason: 'Advisor tier-B/C recommendations are automatically opened as PRs
@@ -1456,6 +1482,10 @@ tests:
   maps_to_scenario:
     kind: rule_coverage_matrix
     source_role: wan-uplink
+    zone_subnets:
+      net: 203.0.113.0/24
+      host: 203.0.113.128/25
+      mgmt: 203.0.113.24/29
   acceptance_criteria:
     advisor_tier_b_pr_created: true
   evidence:
@@ -1469,7 +1499,7 @@ tests:
 - test_id: iso27001-a-18-2-1-security-review
   standard: iso-27001
   standard_refs:
-  - iso27001/A.18.2.1
+  - iso27001-a-18-2-1
   title: Independent review of information security (stagelab audit report)
   status: covered
   description: '`stagelab audit` aggregates evidence from all scenario runs (run.json
@@ -1481,6 +1511,10 @@ tests:
   maps_to_scenario:
     kind: rule_coverage_matrix
     source_role: wan-uplink
+    zone_subnets:
+      net: 203.0.113.0/24
+      host: 203.0.113.128/25
+      mgmt: 203.0.113.24/29
   acceptance_criteria:
     audit_html_generated: true
     audit_json_generated: true
@@ -1495,8 +1529,8 @@ tests:
 - test_id: iso27001-a-18-2-2-policy-compliance
   standard: iso-27001
   standard_refs:
-  - iso27001/A.18.2.2
-  - owasp/FW-8
+  - iso27001-a-18-2-2
+  - owasp-fw-8
   title: Compliance with security policies (test plan as policy instrument)
   status: covered
   description: 'This test plan itself is the policy instrument: running `tools/run-security-test-plan.sh`
@@ -1509,6 +1543,7 @@ tests:
     kind: reload_atomicity
     source_role: wan-uplink
     sink_role: lan-downstream
+    fw_host: root@192.0.2.70
   acceptance_criteria:
     run_exit_code: 0
     acceptance_criteria_failures: 0
@@ -1522,7 +1557,7 @@ tests:
 - test_id: iso27001-a-13-2-1-transfer-controls
   standard: iso-27001
   standard_refs:
-  - iso27001/A.13.2.1
+  - iso27001-a-13-2-1
   title: Information transfer controls (zone-pair data-flow enforcement)
   status: covered
   description: 'Verify that zone-pair rules restrict data flows to those explicitly
@@ -1534,6 +1569,7 @@ tests:
   maps_to_scenario:
     kind: rule_scan
     source_role: wan-uplink
+    target_subnet: 10.0.0.0/8
     random_count: 500
   acceptance_criteria:
     fail_accept_count: 0
@@ -1554,8 +1590,6 @@ tests:
   maps_to_scenario:
     kind: throughput
     proto: tcp
-    source: v6-client
-    sink: v6-server
     source_role: wan-uplink
     sink_role: lan-downstream
     duration_s: 30
@@ -1585,8 +1619,6 @@ tests:
   maps_to_scenario:
     kind: throughput
     proto: udp
-    source: v6-client
-    sink: v6-server
     source_role: wan-uplink
     sink_role: lan-downstream
     duration_s: 20

@@ -99,7 +99,24 @@ def load_runs(run_dirs: list[Path]) -> AuditPayload:
     config_path = ""
     operator = os.environ.get("USER", "unknown")
 
-    sorted_dirs = sorted(run_dirs, key=lambda d: d.name)
+    # Expand: if a given path has no run.json directly, look for timestamped
+    # subdirectories (the pattern stagelab run creates: output_dir/<run_id>/run.json).
+    expanded: list[Path] = []
+    for d in run_dirs:
+        if (d / "run.json").exists():
+            expanded.append(d)
+        else:
+            subdirs = sorted(
+                (sd for sd in d.iterdir() if sd.is_dir() and (sd / "run.json").exists()),
+                key=lambda sd: sd.name,
+            )
+            expanded.extend(subdirs)
+
+    sorted_dirs = sorted(expanded, key=lambda d: d.name)
+    if not sorted_dirs:
+        raise FileNotFoundError(
+            f"No run.json found in any of: {[str(d) for d in run_dirs]}"
+        )
 
     for run_dir in sorted_dirs:
         run_json = run_dir / "run.json"

@@ -134,6 +134,11 @@ def test_prometheus_scraper_timeout_raises():
 
 def test_snmp_scraper_import_error_when_pysnmp_missing(monkeypatch):
     """SNMPScraper.scrape raises ImportError with 'pysnmp' in message when pysnmp absent."""
+    # Monkeypatch _HAS_PYSNMP to False so the check fires regardless of whether
+    # pysnmp is installed in the current venv (avoids test regression when
+    # pysnmp is present).
+    monkeypatch.setattr(_mi, "_HAS_PYSNMP", False)
+
     original_import = importlib.import_module
 
     def _mock_import(name, *args, **kwargs):

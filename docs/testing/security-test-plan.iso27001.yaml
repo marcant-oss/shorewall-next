@@ -19,7 +19,7 @@ standard_url: "https://www.iso.org/standard/54534.html"
 tests:
 
   - test_id: iso27001-a-13-1-1-network-controls
-    standard_refs: ["iso27001/A.13.1.1", "owasp/FW-3"]
+    standard_refs: ["iso27001-a-13-1-1", "owasp-fw-3"]
     title: "Network controls (segmentation and access policy)"
     status: covered
     description: >
@@ -30,6 +30,7 @@ tests:
     maps_to_scenario:
       kind: rule_scan
       source_role: wan-uplink
+      target_subnet: "10.0.0.0/8"
       random_count: 500
     acceptance_criteria:
       fail_accept_count: 0
@@ -40,7 +41,7 @@ tests:
     tags: [network-controls, zone-segmentation, default-deny]
 
   - test_id: iso27001-a-13-1-2-network-service-security
-    standard_refs: ["iso27001/A.13.1.2"]
+    standard_refs: ["iso27001-a-13-1-2"]
     title: "Security of network services (partial — SLA proxy via throughput)"
     status: partial
     partial_reason: >
@@ -53,6 +54,10 @@ tests:
       kind: throughput
       source_role: wan-uplink
       sink_role: lan-downstream
+      proto: tcp
+      duration_s: 30
+      parallel: 4
+      expect_min_gbps: 1.0
     acceptance_criteria:
       throughput_degradation_pct: "<= 5"
     evidence:
@@ -61,7 +66,7 @@ tests:
     tags: [network-services, throughput, partial]
 
   - test_id: iso27001-a-13-1-3-network-segregation
-    standard_refs: ["iso27001/A.13.1.3", "owasp/FW-2"]
+    standard_refs: ["iso27001-a-13-1-3", "owasp-fw-2"]
     title: "Segregation of networks (zone-pair exhaustion)"
     status: covered
     description: >
@@ -74,6 +79,10 @@ tests:
     maps_to_scenario:
       kind: rule_coverage_matrix
       source_role: wan-uplink
+      zone_subnets:
+        net: "203.0.113.0/24"
+        host: "203.0.113.128/25"
+        mgmt: "203.0.113.24/29"
     acceptance_criteria:
       implicit_accept_zone_pairs: 0
       uncovered_zone_pairs: 0
@@ -83,7 +92,7 @@ tests:
     tags: [network-segregation, zone-pairs, coverage]
 
   - test_id: iso27001-a-12-4-1-event-logging
-    standard_refs: ["iso27001/A.12.4.1"]
+    standard_refs: ["iso27001-a-12-4-1"]
     title: "Event logging (partial — Prometheus counters; no per-packet syslog)"
     status: partial
     partial_reason: >
@@ -97,6 +106,10 @@ tests:
       kind: rule_coverage_matrix
       source_role: wan-uplink
       # Prometheus scrape is verified as part of the metrics-ingest path.
+      zone_subnets:
+        net: "203.0.113.0/24"
+        host: "203.0.113.128/25"
+        mgmt: "203.0.113.24/29"
     acceptance_criteria:
       prometheus_scrape_ok: true
       nft_counter_gap_s: "<= 30"
@@ -106,7 +119,7 @@ tests:
     tags: [logging, prometheus, partial]
 
   - test_id: iso27001-a-12-6-1-vuln-management
-    standard_refs: ["iso27001/A.12.6.1"]
+    standard_refs: ["iso27001-a-12-6-1"]
     title: "Technical vulnerability management (advisor tier-B/C review PRs)"
     status: partial
     partial_reason: >
@@ -118,6 +131,10 @@ tests:
     maps_to_scenario:
       kind: rule_coverage_matrix
       source_role: wan-uplink
+      zone_subnets:
+        net: "203.0.113.0/24"
+        host: "203.0.113.128/25"
+        mgmt: "203.0.113.24/29"
     acceptance_criteria:
       advisor_tier_b_pr_created: true
     evidence:
@@ -126,7 +143,7 @@ tests:
     tags: [vuln-management, advisor, review, partial]
 
   - test_id: iso27001-a-18-2-1-security-review
-    standard_refs: ["iso27001/A.18.2.1"]
+    standard_refs: ["iso27001-a-18-2-1"]
     title: "Independent review of information security (stagelab audit report)"
     status: covered
     description: >
@@ -139,6 +156,10 @@ tests:
       kind: rule_coverage_matrix
       source_role: wan-uplink
       # audit is the post-processing step over all scenario results.
+      zone_subnets:
+        net: "203.0.113.0/24"
+        host: "203.0.113.128/25"
+        mgmt: "203.0.113.24/29"
     acceptance_criteria:
       audit_html_generated: true
       audit_json_generated: true
@@ -149,7 +170,7 @@ tests:
     tags: [audit, compliance-review, evidence]
 
   - test_id: iso27001-a-18-2-2-policy-compliance
-    standard_refs: ["iso27001/A.18.2.2", "owasp/FW-8"]
+    standard_refs: ["iso27001-a-18-2-2", "owasp-fw-8"]
     title: "Compliance with security policies (test plan as policy instrument)"
     status: covered
     description: >
@@ -164,6 +185,7 @@ tests:
       sink_role: lan-downstream
       # reload_atomicity is the sentinel that the full policy-enforcement
       # pipeline (compile → load → verify) is functional.
+      fw_host: "root@192.0.2.70"
     acceptance_criteria:
       run_exit_code: 0
       acceptance_criteria_failures: 0
@@ -173,7 +195,7 @@ tests:
     tags: [policy-compliance, executor, continuous]
 
   - test_id: iso27001-a-13-2-1-transfer-controls
-    standard_refs: ["iso27001/A.13.2.1"]
+    standard_refs: ["iso27001-a-13-2-1"]
     title: "Information transfer controls (zone-pair data-flow enforcement)"
     status: covered
     description: >
@@ -185,6 +207,7 @@ tests:
     maps_to_scenario:
       kind: rule_scan
       source_role: wan-uplink
+      target_subnet: "10.0.0.0/8"
       random_count: 500
     acceptance_criteria:
       fail_accept_count: 0

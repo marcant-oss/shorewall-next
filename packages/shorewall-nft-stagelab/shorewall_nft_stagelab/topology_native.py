@@ -70,11 +70,20 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
             ["ip", "link", "set", spec.nic, "up"],
             "bring up parent NIC",
         )
-        _run(
-            ["ip", "link", "add", "link", spec.nic,
-             "name", vlan_iface, "type", "vlan", "id", str(spec.vlan)],
-            "create VLAN iface",
-        )
+        # Create VLAN sub-interface. If it already exists (e.g. created by a
+        # systemd service at boot — tester02-downstream.service) we reuse it
+        # directly rather than failing; "File exists" from `ip link add` is
+        # the only safe-to-ignore CalledProcessError here.
+        try:
+            subprocess.run(
+                ["ip", "link", "add", "link", spec.nic,
+                 "name", vlan_iface, "type", "vlan", "id", str(spec.vlan)],
+                check=True, text=True, capture_output=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            if "File exists" not in exc.stderr:
+                raise RuntimeError(f"create VLAN iface failed: {exc.stderr}") from exc
+            # Interface pre-exists; take it over by moving it to our netns.
         _run(
             ["ip", "link", "set", vlan_iface, "netns", netns],
             "move VLAN iface to netns",

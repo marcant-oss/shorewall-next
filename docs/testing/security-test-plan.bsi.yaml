@@ -90,7 +90,7 @@ tests:
       id: bsi-a5-syn-flood
       kind: dos_syn_flood
       source_role: wan-uplink
-      sink_role: lan-downstream
+      sink_role: dmz-downstream    # requires DPDK endpoint + dos_target_allowlist; skipped in non-DPDK lab configs
       duration_s: 10
       rate_pps: 50000
       src_ip_range: "203.0.113.0/24"

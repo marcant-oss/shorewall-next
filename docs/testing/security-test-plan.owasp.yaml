@@ -17,7 +17,7 @@ standard_url: "https://owasp.org/www-project-web-security-testing-guide/"
 tests:
 
   - test_id: owasp-fw-1-config-review
-    standard_refs: ["owasp/FW-1"]
+    standard_refs: ["owasp-fw-1"]
     title: "Firewall configuration review"
     status: covered
     description: >
@@ -30,6 +30,10 @@ tests:
       source_role: wan-uplink
       # rule_coverage_matrix enumerates every zone-pair and reports
       # hit/miss counters, feeding the advisor with rule utilisation data.
+      zone_subnets:
+        net: "203.0.113.0/24"
+        host: "203.0.113.128/25"
+        mgmt: "203.0.113.24/29"
     acceptance_criteria:
       advisor_tier_b_unresolved: 0
       advisor_tier_c_unresolved: "<= 5"   # operator override per deployment
@@ -39,7 +43,7 @@ tests:
     tags: [config, advisor, review]
 
   - test_id: owasp-fw-2-rulebase-audit
-    standard_refs: ["owasp/FW-2"]
+    standard_refs: ["owasp-fw-2"]
     title: "Rule-base audit (shadow / redundancy / over-permission)"
     status: covered
     description: >
@@ -51,6 +55,10 @@ tests:
     maps_to_scenario:
       kind: rule_coverage_matrix
       source_role: wan-uplink
+      zone_subnets:
+        net: "203.0.113.0/24"
+        host: "203.0.113.128/25"
+        mgmt: "203.0.113.24/29"
     acceptance_criteria:
       unreachable_rule_count: 0
       over_permissive_zone_pairs: 0
@@ -60,7 +68,7 @@ tests:
     tags: [rule-order, coverage, advisor]
 
   - test_id: owasp-fw-3-default-deny
-    standard_refs: ["owasp/FW-3", "iso27001/A.13.1.1"]
+    standard_refs: ["owasp-fw-3", "iso27001-a-13-1-1"]
     title: "Default-deny policy verification"
     status: covered
     description: >
@@ -80,7 +88,7 @@ tests:
     tags: [default-deny, rule-scan]
 
   - test_id: owasp-fw-4-evasion-bypass
-    standard_refs: ["owasp/FW-4"]
+    standard_refs: ["owasp-fw-4"]
     title: "Evasion and bypass probe suite"
     status: covered
     description: >
@@ -91,7 +99,7 @@ tests:
     maps_to_scenario:
       kind: evasion_probes
       source_role: wan-uplink
-      sink_role: lan-downstream
+      target_ip: "203.0.113.129"
     acceptance_criteria:
       evasion_success_count: 0
     evidence:
@@ -100,7 +108,7 @@ tests:
     tags: [evasion, fragments, tcp-malform]
 
   - test_id: owasp-fw-5-stateful-inspection
-    standard_refs: ["owasp/FW-5"]
+    standard_refs: ["owasp-fw-5"]
     title: "Stateful inspection under load (partial)"
     status: partial
     partial_reason: >
@@ -122,7 +130,7 @@ tests:
     tags: [stateful, conntrack, partial]
 
   - test_id: owasp-fw-6-ha-failover
-    standard_refs: ["owasp/FW-6"]
+    standard_refs: ["owasp-fw-6"]
     title: "HA failover drill (VRRP + conntrackd)"
     status: covered
     description: >
@@ -134,6 +142,10 @@ tests:
       kind: ha_failover_drill
       source_role: wan-uplink
       sink_role: lan-downstream
+      # Primary and secondary FW SSH targets. Operator may opt to skip this
+      # scenario in environments where live failover drills are not permitted.
+      primary_fw_host: "root@192.0.2.70"
+      secondary_fw_host: "root@192.0.2.87"
     acceptance_criteria:
       session_continuity: true
       failover_convergence_s: "<= 3"
@@ -144,7 +156,7 @@ tests:
     tags: [ha, vrrp, conntrackd]
 
   - test_id: owasp-fw-7-protocol-stack
-    standard_refs: ["owasp/FW-7"]
+    standard_refs: ["owasp-fw-7"]
     title: "Protocol-stack attack resistance"
     status: covered
     description: >
@@ -155,7 +167,9 @@ tests:
     maps_to_scenario:
       kind: dos_syn_flood
       source_role: wan-uplink
-      sink_role: lan-downstream
+      sink_role: dmz-downstream    # requires DPDK endpoint + dos_target_allowlist; skipped in non-DPDK lab configs
+      rate_pps: 10000
+      src_ip_range: "10.100.0.0/16"
     acceptance_criteria:
       legitimate_throughput_degradation_pct: "<= 5"
       malformed_frame_accepted: 0
@@ -165,7 +179,7 @@ tests:
     tags: [protocol-stack, syn-flood, evasion]
 
   - test_id: owasp-fw-8-operational-hardening
-    standard_refs: ["owasp/FW-8", "iso27001/A.18.2.2"]
+    standard_refs: ["owasp-fw-8", "iso27001-a-18-2-2"]
     title: "Operational hardening (reload atomicity + exporter health)"
     status: covered
     description: >
@@ -177,6 +191,7 @@ tests:
       kind: reload_atomicity
       source_role: wan-uplink
       sink_role: lan-downstream
+      fw_host: "root@192.0.2.70"
     acceptance_criteria:
       traffic_gap_during_reload_ms: 0
       prometheus_scrape_ok: true

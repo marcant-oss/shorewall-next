@@ -52,8 +52,11 @@ def validate(config_path: str) -> None:
 )
 def run_cmd(config_path: str, output_dir: str | None) -> None:
     """Connect agents, execute all scenarios, write a report to OUTPUT_DIR."""
+    import datetime
 
-    async def _run() -> Path:
+    async def _run() -> tuple[Path, Exception | None]:
+        """Returns (run_dir, setup_error).  On setup failure a partial run.json
+        is written so the audit step has something to consume."""
         cfg = _config.load(config_path)
         if output_dir is not None:
             # Override the output dir from config.
@@ -73,25 +76,73 @@ def run_cmd(config_path: str, output_dir: str | None) -> None:
             dos_safety.preflight_warning(summaries, countdown_s=3)
 
         controller = StagelabController(cfg, config_path=config_path)
+        setup_error: Exception | None = None
+        run: _report.RunReport | None = None
         try:
             await controller.connect()
             await controller.start_scraping()
-            await controller.setup_endpoints()
             try:
-                run = await controller.run_scenarios()
-            finally:
+                await controller.setup_endpoints()
+            except Exception as exc:  # noqa: BLE001
+                setup_error = exc
+            if setup_error is None:
+                try:
+                    run = await controller.run_scenarios()
+                finally:
+                    await controller.stop_scraping()
+                    await controller.teardown_endpoints()
+            else:
                 await controller.stop_scraping()
-                await controller.teardown_endpoints()
+                # Best-effort teardown of any endpoints that did set up.
+                try:
+                    await controller.teardown_endpoints()
+                except Exception:  # noqa: BLE001
+                    pass
         finally:
             await controller.close()
 
         out = Path(cfg.report.output_dir)
-        run_dir = _report.write(run, out)
-        return run_dir
+
+        if run is not None:
+            run_dir = _report.write(run, out)
+        else:
+            # Endpoint setup failed: emit a partial run with each configured
+            # scenario recorded as ok=False (setup-failed) so the audit step
+            # has a run_dir to consume.
+            run_id = datetime.datetime.now(datetime.timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            setup_error_msg = str(setup_error) if setup_error else "setup failed"
+            partial_scenarios = [
+                _report.ScenarioResult(
+                    scenario_id=sc.id,
+                    kind=sc.kind,
+                    ok=False,
+                    duration_s=0.0,
+                    raw={"setup_error": setup_error_msg},
+                    criteria_results={},
+                )
+                for sc in cfg.scenarios
+            ]
+            partial_run = _report.RunReport(
+                run_id=run_id,
+                config_path=config_path,
+                scenarios=partial_scenarios,
+            )
+            run_dir = _report.write(partial_run, out)
+
+        return run_dir, setup_error
 
     try:
-        run_dir = asyncio.run(_run())
+        run_dir, setup_error = asyncio.run(_run())
         click.echo(str(run_dir))
+        if setup_error is not None:
+            # Endpoint setup failed; a partial run.json was written so the
+            # audit step can still consume it.  We warn to stderr but exit 0
+            # so the executor shell script adds this run_dir to the audit
+            # input — the scenarios are recorded as ok=False which is the
+            # correct representation of a setup-failed run.
+            click.echo(f"Warning: endpoint setup failed: {setup_error}", err=True)
     except Exception as exc:  # noqa: BLE001
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)

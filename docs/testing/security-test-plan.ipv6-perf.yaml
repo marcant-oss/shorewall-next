@@ -12,8 +12,6 @@ tests:
     maps_to_scenario:
       kind: throughput
       proto: tcp
-      source: v6-client
-      sink: v6-server
       source_role: wan-uplink
       sink_role: lan-downstream
       duration_s: 30
@@ -40,8 +38,6 @@ tests:
     maps_to_scenario:
       kind: throughput
       proto: udp
-      source: v6-client
-      sink: v6-server
       source_role: wan-uplink
       sink_role: lan-downstream
       duration_s: 20
