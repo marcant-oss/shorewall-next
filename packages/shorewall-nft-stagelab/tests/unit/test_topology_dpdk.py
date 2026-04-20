@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from unittest.mock import MagicMock
 
@@ -10,6 +11,7 @@ import pytest
 
 from shorewall_nft_stagelab import topology_dpdk
 from shorewall_nft_stagelab.topology_dpdk import (
+    DpdkEndpointHandle,
     DpdkEndpointSpec,
     recover_from_crash,
     setup_dpdk_endpoint,
@@ -77,6 +79,8 @@ def test_setup_writes_recovery_entry(tmp_path, monkeypatch):
     monkeypatch.setattr(topology_dpdk, "RECOVERY_FILE", rec_file)
     monkeypatch.setattr(topology_dpdk, "_read_current_driver", lambda _: "virtio-pci")
     monkeypatch.setattr(topology_dpdk, "_run_devbind", _fake_devbind_factory())
+    monkeypatch.setattr(topology_dpdk, "_pci_to_ifname", lambda _: "eth1")
+    monkeypatch.setattr(topology_dpdk, "_read_master", lambda _: ("bond0", "bond"))
 
     setup_dpdk_endpoint(_GOOD_SPEC)
 
@@ -85,6 +89,8 @@ def test_setup_writes_recovery_entry(tmp_path, monkeypatch):
     assert len(entries) == 1
     assert entries[0]["pci_addr"] == _GOOD_PCI
     assert entries[0]["orig_driver"] == "virtio-pci"
+    assert entries[0]["orig_master"] == "bond0"
+    assert entries[0]["orig_master_kind"] == "bond"
 
 
 # ---------------------------------------------------------------------------
@@ -212,3 +218,140 @@ def test_recover_from_crash_missing_file_returns_empty(tmp_path, monkeypatch):
 
     result = recover_from_crash()
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — setup snapshots bond master into handle and recovery entry
+# ---------------------------------------------------------------------------
+
+
+def test_setup_snapshots_bond_master(tmp_path, monkeypatch):
+    rec_file = tmp_path / "rec.json"
+    monkeypatch.setattr(topology_dpdk, "RECOVERY_FILE", rec_file)
+    monkeypatch.setattr(topology_dpdk, "_read_current_driver", lambda _: "virtio-pci")
+    monkeypatch.setattr(topology_dpdk, "_run_devbind", _fake_devbind_factory())
+    monkeypatch.setattr(topology_dpdk, "_pci_to_ifname", lambda _: "eth1")
+    monkeypatch.setattr(topology_dpdk, "_read_master", lambda _: ("bond0", "bond"))
+
+    handle = setup_dpdk_endpoint(_GOOD_SPEC)
+
+    assert handle.orig_master == "bond0"
+    assert handle.orig_master_kind == "bond"
+
+    entries = json.loads(rec_file.read_text())
+    assert entries[0]["orig_master"] == "bond0"
+    assert entries[0]["orig_master_kind"] == "bond"
+
+
+# ---------------------------------------------------------------------------
+# Test 10 — teardown re-attaches bond master in correct sequence
+# ---------------------------------------------------------------------------
+
+
+def test_teardown_reattaches_bond_master(tmp_path, monkeypatch):
+    rec_file = tmp_path / "rec.json"
+    monkeypatch.setattr(topology_dpdk, "RECOVERY_FILE", rec_file)
+    rec_file.write_text("[]")
+
+    handle = DpdkEndpointHandle(
+        name="ep0",
+        pci_addr=_GOOD_PCI,
+        orig_driver="virtio-pci",
+        bound_at_ts=1.0,
+        orig_master="bond0",
+        orig_master_kind="bond",
+    )
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str]) -> None:
+        run_calls.append(list(cmd))
+
+    monkeypatch.setattr(topology_dpdk, "_run_devbind", _fake_devbind_factory())
+    monkeypatch.setattr(topology_dpdk, "_wait_for_netdev", lambda pci, timeout_s=2.0: "eth1")
+    monkeypatch.setattr(topology_dpdk, "_run", _fake_run)
+
+    teardown_dpdk_endpoint(handle)
+
+    # Bond sequence: down → master → up → master up
+    assert ["ip", "link", "set", "eth1", "down"] in run_calls
+    assert ["ip", "link", "set", "eth1", "master", "bond0"] in run_calls
+    assert ["ip", "link", "set", "eth1", "up"] in run_calls
+    assert ["ip", "link", "set", "bond0", "up"] in run_calls
+
+    # Ordering: down before master
+    idx_down = run_calls.index(["ip", "link", "set", "eth1", "down"])
+    idx_master = run_calls.index(["ip", "link", "set", "eth1", "master", "bond0"])
+    assert idx_down < idx_master
+
+
+# ---------------------------------------------------------------------------
+# Test 11 — teardown re-attaches bridge master (no intermediate down)
+# ---------------------------------------------------------------------------
+
+
+def test_teardown_reattaches_bridge_master(tmp_path, monkeypatch):
+    rec_file = tmp_path / "rec.json"
+    monkeypatch.setattr(topology_dpdk, "RECOVERY_FILE", rec_file)
+    rec_file.write_text("[]")
+
+    handle = DpdkEndpointHandle(
+        name="ep0",
+        pci_addr=_GOOD_PCI,
+        orig_driver="virtio-pci",
+        bound_at_ts=1.0,
+        orig_master="br-trunk",
+        orig_master_kind="bridge",
+    )
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str]) -> None:
+        run_calls.append(list(cmd))
+
+    monkeypatch.setattr(topology_dpdk, "_run_devbind", _fake_devbind_factory())
+    monkeypatch.setattr(topology_dpdk, "_wait_for_netdev", lambda pci, timeout_s=2.0: "eth1")
+    monkeypatch.setattr(topology_dpdk, "_run", _fake_run)
+
+    teardown_dpdk_endpoint(handle)
+
+    # Bridge sequence: master → up → master up (no down step)
+    assert ["ip", "link", "set", "eth1", "master", "br-trunk"] in run_calls
+    assert ["ip", "link", "set", "eth1", "up"] in run_calls
+    assert ["ip", "link", "set", "br-trunk", "up"] in run_calls
+    # Must NOT have a 'down' for eth1
+    assert ["ip", "link", "set", "eth1", "down"] not in run_calls
+
+
+# ---------------------------------------------------------------------------
+# Test 12 — teardown master-restore failure is best-effort (does not raise)
+# ---------------------------------------------------------------------------
+
+
+def test_teardown_master_restore_best_effort(tmp_path, monkeypatch, caplog):
+    rec_file = tmp_path / "rec.json"
+    monkeypatch.setattr(topology_dpdk, "RECOVERY_FILE", rec_file)
+    rec_file.write_text("[]")
+
+    handle = DpdkEndpointHandle(
+        name="ep0",
+        pci_addr=_GOOD_PCI,
+        orig_driver="virtio-pci",
+        bound_at_ts=1.0,
+        orig_master="bond0",
+        orig_master_kind="bond",
+    )
+
+    def _failing_run(cmd: list[str]) -> None:
+        if "master" in cmd:
+            raise RuntimeError("simulated ip link set master failure")
+
+    monkeypatch.setattr(topology_dpdk, "_run_devbind", _fake_devbind_factory())
+    monkeypatch.setattr(topology_dpdk, "_wait_for_netdev", lambda pci, timeout_s=2.0: "eth1")
+    monkeypatch.setattr(topology_dpdk, "_run", _failing_run)
+
+    # Must not raise — master restore is best-effort
+    with caplog.at_level(logging.WARNING, logger="shorewall_nft_stagelab.topology_dpdk"):
+        teardown_dpdk_endpoint(handle)
+
+    assert any("master restore failed" in r.message for r in caplog.records)
