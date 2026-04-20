@@ -281,7 +281,7 @@ if [ "$ROLE" = "stagelab-agent" ] || [ "$IS_DPDK" = "1" ]; then
     if [ "$TARGET_FAMILY" = "debian" ]; then
         ssh "$REMOTE" '
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    iperf3 nmap ethtool bridge-utils jq tcpdump 2>&1 | tail -10
+    iperf3 nmap ethtool bridge-utils jq tcpdump curl vsftpd 2>&1 | tail -10
 # TODO: tcpkali — add source-build step when needed (T8d)
 if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         linux-perf >/dev/null 2>&1; then
@@ -290,20 +290,24 @@ else
     echo "WARNING: linux-perf not available on this distro — skipping"
 fi
 '
-        verify_binaries "role=stagelab-agent (Debian)" iperf3 nmap ethtool tcpdump jq
+        verify_binaries "role=stagelab-agent (Debian)" iperf3 nmap ethtool tcpdump jq curl
     else
         # AlmaLinux 10: iperf3 is in EPEL. bridge commands come from iproute
         # (no separate bridge-utils on EL). perf = "perf" package.
         # Single transaction for atomic rollback on partial failure.
         ssh "$REMOTE" '
 set -e
-dnf install -y iperf3 nmap ethtool jq tcpdump
+dnf install -y iperf3 nmap ethtool jq tcpdump curl vsftpd
 # TODO: tcpkali — add source-build step when needed (T8d)
 '
         # perf is optional — warn but do not fail
         ssh "$REMOTE" 'dnf install -y perf >/dev/null 2>&1 && echo "perf installed" || echo "WARNING: perf not available — skipping"' || true
-        verify_binaries "role=stagelab-agent (AlmaLinux)" iperf3 nmap ethtool tcpdump jq
+        verify_binaries "role=stagelab-agent (AlmaLinux)" iperf3 nmap ethtool tcpdump jq curl
     fi
+    info "stagelab-agent: vsftpd installed but NOT enabled."
+    info "  For stateful_helper_ftp scenarios:"
+    info "    systemctl start vsftpd    # on the sink tester"
+    info "    useradd ftpuser; echo 'ftpuser:ftpuser' | chpasswd"
 
     info "stagelab-agent: applying sysctls (persistent on AlmaLinux 10)"
     # nf_conntrack module must be loaded before /proc/sys/net/netfilter/nf_conntrack_max exists.

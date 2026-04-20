@@ -108,6 +108,8 @@ _NMAP_FIELDS = frozenset({
 _PROBE_FIELDS = frozenset({
     "proto", "src_ip", "dst_ip", "src_port", "dst_port", "family",
     "flags", "payload_len", "vlan", "src_mac", "dst_mac",
+    "probe_type", "tcp_flags", "tcp_window",
+    "frag_overlap", "udp_bad_checksum", "expected_verdict",
 })
 
 
@@ -338,6 +340,138 @@ async def handle_run_scenario(
             return {"tool": "trex_daemon", "ok": True, "note": "no handle; was not tracked"}
         await asyncio.to_thread(trex_daemon.stop, h)
         return {"tool": "trex_daemon", "ok": True, "port": port, "pid": h.pid}
+
+    if kind == "trigger_fw_reload":
+        import time
+        fw_host = spec["fw_host"]
+        cmd = spec["reload_command"]
+        # delay_before_s is already consumed at the top of handle_run_scenario.
+        t0 = time.time()
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host, cmd],
+            check=False, text=True, capture_output=True, timeout=60,
+        )
+        dt = time.time() - t0
+        return {
+            "tool": "fw_reload", "ok": proc.returncode == 0,
+            "duration_s": dt,
+            "fw_host": fw_host,
+            "reload_command": cmd,
+            "rc": proc.returncode,
+            "stderr": (proc.stderr or "")[:500],
+        }
+
+    if kind == "set_fw_sysctl":
+        import time
+        fw_host = spec["fw_host"]
+        key = spec["sysctl_key"]
+        value = int(spec["sysctl_value"])
+        t0 = time.time()
+        # Apply via sysctl -w on the FW. The write is runtime-only (non-persistent);
+        # operator or reboot restores the default.
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
+             "sysctl", "-w", f"{key}={value}"],
+            check=False, text=True, capture_output=True, timeout=30,
+        )
+        dt = time.time() - t0
+        return {
+            "tool": "fw_sysctl", "ok": proc.returncode == 0,
+            "duration_s": dt,
+            "fw_host": fw_host,
+            "sysctl_key": key,
+            "sysctl_value": value,
+            "rc": proc.returncode,
+            "stderr": (proc.stderr or "")[:500],
+        }
+
+    if kind == "stop_fw_service":
+        import time
+        fw_host = spec["fw_host"]
+        svc = spec["service_name"]
+        t0 = time.time()
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
+             "systemctl", "stop", svc],
+            check=False, text=True, capture_output=True, timeout=30,
+        )
+        dt = time.time() - t0
+        return {
+            "tool": "fw_service", "action": "stop", "ok": proc.returncode == 0,
+            "duration_s": dt, "fw_host": fw_host, "service_name": svc,
+            "rc": proc.returncode, "stderr": (proc.stderr or "")[:500],
+        }
+
+    if kind == "start_fw_service":
+        import time
+        fw_host = spec["fw_host"]
+        svc = spec["service_name"]
+        t0 = time.time()
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
+             "systemctl", "start", svc],
+            check=False, text=True, capture_output=True, timeout=30,
+        )
+        dt = time.time() - t0
+        return {
+            "tool": "fw_service", "action": "start", "ok": proc.returncode == 0,
+            "duration_s": dt, "fw_host": fw_host, "service_name": svc,
+            "rc": proc.returncode, "stderr": (proc.stderr or "")[:500],
+        }
+
+    if kind == "query_conntrack_count":
+        fw_host = spec["fw_host"]
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
+             "cat", "/proc/sys/net/netfilter/nf_conntrack_count"],
+            check=False, text=True, capture_output=True, timeout=10,
+        )
+        count = -1
+        if proc.returncode == 0:
+            try:
+                count = int((proc.stdout or "").strip())
+            except ValueError:
+                pass
+        return {
+            "tool": "conntrack_count", "ok": proc.returncode == 0,
+            "fw_host": fw_host, "count": count,
+            "rc": proc.returncode, "stderr": (proc.stderr or "")[:500],
+        }
+
+    if kind == "run_ftp_helper_probe":
+        import time
+        netns = state["endpoints"][endpoint_name].netns
+        sink_ip = spec["sink_ip"]
+        port = int(spec.get("ftp_port", 21))
+        mode = spec.get("mode", "passive")
+        user = spec.get("user", "ftpuser")
+        password = spec.get("password", "ftpuser")
+        test_file = spec.get("test_file", "/tmp/stagelab-ftp-test.txt")
+        pasv_flag = "--ftp-pasv" if mode == "passive" else "--ftp-port=-"
+        argv = [
+            "curl", "--silent", "--show-error",
+            "--connect-timeout", "5", "--max-time", "20",
+            pasv_flag,
+            "-u", f"{user}:{password}",
+            f"ftp://{sink_ip}:{port}{test_file}",
+            "-o", "/dev/null",
+        ]
+        t0 = time.time()
+        proc = await asyncio.to_thread(_exec_in_netns, netns, argv)
+        dt = time.time() - t0
+        data_ok = proc.returncode == 0
+        return {
+            "tool": "ftp_probe", "ok": data_ok,
+            "control_ok": data_ok,
+            "data_transfer_ok": data_ok,
+            "duration_s": dt,
+            "stderr": (proc.stderr or "")[:500],
+        }
 
     raise ValueError(f"unknown scenario kind: {kind!r}")
 

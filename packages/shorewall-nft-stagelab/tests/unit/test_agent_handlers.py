@@ -497,6 +497,48 @@ def test_stop_trex_daemon_pops_and_stops() -> None:
     assert 4501 not in state["trex_daemons"]
 
 
+def test_run_ftp_helper_probe_invokes_curl_in_netns() -> None:
+    """run_ftp_helper_probe dispatches to _exec_in_netns with curl argv."""
+    handle = NativeEndpointHandle(
+        name="ftp-src", netns="NS_TEST_ftp_src", nsstub_pid=77, vlan_iface="eth0.10"
+    )
+    state = _state()
+    state["endpoints"]["ftp-src"] = handle
+
+    fake_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    msg = RunScenarioMessage(
+        id="r-ftp",
+        scenario_spec={
+            "endpoint_name": "ftp-src",
+            "kind": "run_ftp_helper_probe",
+            "spec": {
+                "sink_ip": "10.0.20.1",
+                "ftp_port": 21,
+                "mode": "passive",
+                "user": "ftpuser",
+                "password": "ftpuser",
+                "test_file": "/tmp/stagelab-ftp-test.txt",
+                "scenario_id": "ftp-test-1",
+            },
+        },
+    )
+    captured: list[list[str]] = []
+
+    def fake_exec_in_netns(netns: str, argv: list[str]) -> subprocess.CompletedProcess:
+        captured.append(argv)
+        return fake_proc
+
+    with patch("shorewall_nft_stagelab.agent._exec_in_netns", side_effect=fake_exec_in_netns):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    assert resp["tool"] == "ftp_probe"
+    assert resp["ok"] is True
+    assert captured, "_exec_in_netns was not called"
+    argv = captured[0]
+    assert argv[:2] == ["curl", "--silent"]
+
+
 def test_poll_metrics_nft_counters() -> None:
     """poll_metrics(kind=nft_counters) returns serialised rows from poll_nft_counters."""
     from shorewall_nft_stagelab.metrics import MetricRow
