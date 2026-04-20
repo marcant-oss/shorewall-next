@@ -160,11 +160,10 @@ class ConnStormRunner(Scenario):
                 endpoint_name=sc.source,
                 kind="run_tcpkali",
                 spec={
-                    "server_ip": sink_ip,
-                    "port": 5201,
-                    "target_conns": sc.target_conns,
-                    "rate_per_s": sc.rate_per_s,
-                    "hold_s": sc.hold_s,
+                    "target": f"{sink_ip}:5001",
+                    "connections": sc.target_conns,
+                    "connect_rate": sc.rate_per_s,
+                    "duration_s": sc.hold_s,
                     "scenario_id": sc.id,
                 },
             )

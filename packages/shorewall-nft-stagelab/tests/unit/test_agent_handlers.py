@@ -376,6 +376,59 @@ def test_run_scenario_trex_stateless_calls_trafgen_trex() -> None:
     assert resp["throughput_gbps"] == 9.5
 
 
+def test_run_scenario_tcpkali_calls_trafgen() -> None:
+    """run_tcpkali scenario calls trafgen_tcpkali.build_argv + parse_stdout via netns exec."""
+    from shorewall_nft_stagelab.trafgen_tcpkali import TcpkaliResult
+
+    handle = NativeEndpointHandle(
+        name="ep_tk", netns="NS_TEST_ep_tk", nsstub_pid=88, vlan_iface="eth0.10"
+    )
+    state = _state()
+    state["endpoints"]["ep_tk"] = handle
+
+    fake_result = TcpkaliResult(
+        tool="tcpkali", ok=True, duration_s=30.0,
+        connections_established=998, connections_failed=2,
+        traffic_bits_per_sec=235e6, raw={},
+    )
+    fake_proc = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
+
+    msg = RunScenarioMessage(
+        id="r-tk",
+        scenario_spec={
+            "endpoint_name": "ep_tk",
+            "kind": "run_tcpkali",
+            "spec": {
+                "target": "10.0.1.1:5001",
+                "connections": 1000,
+                "connect_rate": 200,
+                "duration_s": 30,
+            },
+        },
+    )
+    with (
+        patch(
+            "shorewall_nft_stagelab.trafgen_tcpkali.build_argv",
+            return_value=["tcpkali", "-c", "1000"],
+        ) as mock_build,
+        patch("subprocess.run", return_value=fake_proc),
+        patch(
+            "shorewall_nft_stagelab.trafgen_tcpkali.parse_stdout",
+            return_value=fake_result,
+        ) as mock_parse,
+    ):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    mock_build.assert_called_once()
+    mock_parse.assert_called_once()
+    assert resp["tool"] == "tcpkali"
+    assert resp["ok"] is True
+    assert resp["connections_established"] == 998
+    assert resp["connections_failed"] == 2
+
+
 def test_poll_metrics_nft_counters() -> None:
     """poll_metrics(kind=nft_counters) returns serialised rows from poll_nft_counters."""
     from shorewall_nft_stagelab.metrics import MetricRow

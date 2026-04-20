@@ -1,0 +1,9 @@
+Listening on :65530 for a few seconds: OK.
+Warming up: done.
+Ramped up to 998 concurrent connections in 5.03s
+Total data sent:     420.7 MiB (441213440 bytes) in 30.0s
+Total data received: 419.8 MiB (440279040 bytes) in 30.0s
+Bandwidth: 117.6 Mbps ⇅ 117.4 Mbps (235.0 Mbps)
+CPS_conn_out: 200.0/s
+Connections: 998/1000 established, 2 failed
+Test duration: 30.00s.

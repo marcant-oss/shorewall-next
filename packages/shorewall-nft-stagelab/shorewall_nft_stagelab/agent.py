@@ -15,6 +15,7 @@ from shorewall_nft_stagelab import (
     trafgen_iperf3,
     trafgen_nmap,
     trafgen_scapy,
+    trafgen_tcpkali,
     trafgen_trex,
     tuning,
 )
@@ -96,6 +97,10 @@ async def handle_ping(msg: Message, state: dict[str, Any]) -> dict[str, Any]:
 _IPERF3_FIELDS = frozenset({
     "mode", "bind", "server_ip", "duration_s", "parallel",
     "proto", "udp_bandwidth_mbps", "port",
+})
+_TCPKALI_FIELDS = frozenset({
+    "target", "bind", "connections", "connect_rate",
+    "duration_s", "message_rate", "message_size_b",
 })
 _NMAP_FIELDS = frozenset({
     "target", "ports", "proto", "source_ip", "timing", "extra_args",
@@ -223,6 +228,23 @@ async def handle_run_scenario(
         if spec.get("_sweep_point") is not None:
             result_tuning["_sweep_point"] = spec["_sweep_point"]
         return result_tuning
+
+    if kind == "run_tcpkali":
+        tk_spec = trafgen_tcpkali.TcpkaliSpec(
+            **{k: v for k, v in spec.items() if k in _TCPKALI_FIELDS}
+        )
+        netns = state["endpoints"][endpoint_name].netns
+        proc = await asyncio.to_thread(
+            _exec_in_netns, netns, trafgen_tcpkali.build_argv(tk_spec)
+        )
+        r = trafgen_tcpkali.parse_stdout(proc.stdout)
+        return {
+            "tool": "tcpkali", "ok": r.ok,
+            "connections_established": r.connections_established,
+            "connections_failed": r.connections_failed,
+            "traffic_bps": r.traffic_bits_per_sec,
+            "duration_s": r.duration_s,
+        }
 
     if kind == "run_nmap":
         netns = state["endpoints"][endpoint_name].netns
