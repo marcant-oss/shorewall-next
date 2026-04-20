@@ -417,6 +417,8 @@ from shorewalld.collectors import (  # noqa: E402,F401
     SnmpCollector,
     SockstatCollector,
     SoftnetCollector,
+    VrrpCollector,
+    VrrpInstance,
     _extract_qdisc_row,
     _format_tc_handle,
     _neigh_state_name,

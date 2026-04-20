@@ -180,6 +180,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--control-socket-netns", default=None, metavar="NETNS",
         help="Bind the control socket inside this named netns.")
+    p.add_argument(
+        "--enable-vrrp-collector", action="store_true", default=False,
+        help="Enable the VRRP D-Bus collector that scrapes keepalived state "
+             "from the system bus (requires jeepney>=0.8; degrades silently "
+             "if jeepney is absent or keepalived is not running).")
     for sub in SUBSYSTEMS:
         p.add_argument(
             f"--log-level-{sub}", default=None, metavar="LEVEL",
@@ -393,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
         control_socket=args.control_socket,
         control_socket_netns=args.control_socket_netns,
         iplist_configs=iplist_cfgs,
+        enable_vrrp_collector=args.enable_vrrp_collector,
     )
     try:
         return asyncio.run(daemon.run())

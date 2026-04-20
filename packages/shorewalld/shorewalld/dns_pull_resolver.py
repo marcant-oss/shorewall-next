@@ -34,6 +34,7 @@ import ipaddress
 import logging
 import random
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 import dns.asyncresolver
@@ -53,6 +54,20 @@ class PullResolverMetrics:
     resolve_errors_total: int = 0
     nxdomain_total: int = 0
     entries_submitted_total: int = 0
+    # Per-set counters — keyed on primary_qname (the set_name proxy).
+    # outcome ∈ {"success", "failure"}
+    # These are defaultdicts so any new set_name is initialised to 0
+    # automatically, avoiding lock contention on the asyncio thread.
+    per_set_refresh_total: dict = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(int))
+    )
+    # Duration sum/count per set_name (no buckets to keep it cheap).
+    per_set_duration_sum: dict = field(
+        default_factory=lambda: defaultdict(float)
+    )
+    per_set_duration_count: dict = field(
+        default_factory=lambda: defaultdict(int)
+    )
 
 log = logging.getLogger(__name__)
 
@@ -386,6 +401,7 @@ class PullResolver:
 
         Returns the monotonic timestamp for the next resolve.
         """
+        t_start = time.monotonic()
         tasks = [
             self._resolve_qname(q, group.ttl_floor, group.ttl_ceil)
             for q in group.qnames
@@ -422,10 +438,18 @@ class PullResolver:
                 submitted += 1
 
         self.metrics.resolves_total += 1
+        elapsed = time.monotonic() - t_start
+        set_name = group.primary_qname
         if not has_results:
             self.metrics.resolve_errors_total += 1
+            # Per-set failure counter.
+            self.metrics.per_set_refresh_total[set_name]["failure"] += 1
             wait = self._min_retry
         else:
+            # Per-set success counter + duration.
+            self.metrics.per_set_refresh_total[set_name]["success"] += 1
+            self.metrics.per_set_duration_sum[set_name] += elapsed
+            self.metrics.per_set_duration_count[set_name] += 1
             wait = max(
                 self._min_retry,
                 int(min_ttl * DEFAULT_RESOLVE_FRACTION),
@@ -523,4 +547,33 @@ class PullResolverMetricsCollector(CollectorBase):
         counter("shorewalld_pull_resolver_entries_submitted_total",
                 "Individual (ip, ttl) entries submitted to SetWriter",
                 m.entries_submitted_total)
+
+        # Per-set counters — labelled by set_name, outcome ∈ {success, failure}.
+        # qname is intentionally excluded (unbounded cardinality per instance).
+        refresh_fam = _MetricFamily(
+            "shorewalld_dns_resolver_refresh_total",
+            "DNS resolver refresh cycles per set and outcome",
+            ["set_name", "outcome"],
+            mtype="counter",
+        )
+        dur_sum_fam = _MetricFamily(
+            "shorewalld_dns_resolver_refresh_duration_seconds_sum",
+            "Cumulative seconds spent in successful DNS resolver refresh cycles per set",
+            ["set_name"],
+            mtype="counter",
+        )
+        dur_count_fam = _MetricFamily(
+            "shorewalld_dns_resolver_refresh_duration_seconds_count",
+            "Number of successful DNS resolver refresh cycles measured per set",
+            ["set_name"],
+            mtype="counter",
+        )
+        for set_name, outcomes in m.per_set_refresh_total.items():
+            for outcome, count in outcomes.items():
+                refresh_fam.add([set_name, outcome], float(count))
+        for set_name, dur_sum in m.per_set_duration_sum.items():
+            dur_sum_fam.add([set_name], dur_sum)
+        for set_name, dur_count in m.per_set_duration_count.items():
+            dur_count_fam.add([set_name], float(dur_count))
+        fams.extend([refresh_fam, dur_sum_fam, dur_count_fam])
         return fams
