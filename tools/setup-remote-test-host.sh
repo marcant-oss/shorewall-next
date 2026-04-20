@@ -14,10 +14,17 @@
 #   tools/setup-remote-test-host.sh root@192.0.2.83
 #   tools/setup-remote-test-host.sh root@host --simulate-src /path/to/old
 #   tools/setup-remote-test-host.sh root@host --role stagelab-agent
+#   tools/setup-remote-test-host.sh root@host --role stagelab-agent-dpdk
 #
-# --role ROLE   choose bootstrap role: "default" (existing behaviour) or
-#               "stagelab-agent" (adds perf-test tooling + sysctls).
+# --role ROLE   choose bootstrap role:
+#               "default"              existing behaviour (simlab/simulate)
+#               "stagelab-agent"       adds iperf3/nmap/ethtool + high-pps sysctls
+#               "stagelab-agent-dpdk"  stagelab-agent PLUS DPDK + TRex bootstrap
 #               Default: "default".
+#
+# Environment variables (stagelab-agent-dpdk only):
+#   STAGELAB_HUGEPAGES   2 MiB hugepages to allocate (default: 512 = 1 GiB)
+#   STAGELAB_SKIP_SHA    set to 1 to skip TRex tarball SHA-256 check (dev/CI only)
 #
 # The host must already accept passwordless SSH for the given user.
 # Idempotent: safe to re-run after the box is re-imaged.
@@ -32,6 +39,15 @@ DEPLOY_JSON_DEFAULT="$SCRIPT_DIR/deploy.json"
 DEPLOY_JSON="$DEPLOY_JSON_DEFAULT"
 REMOTE=""
 ROLE="default"
+
+# TRex bundle constants (stagelab-agent-dpdk only).
+# SHA is a placeholder — after downloading the tarball manually the first
+# time, record `sha256sum /tmp/trex.tar.gz` here and remove this comment.
+# Use STAGELAB_SKIP_SHA=1 in CI / integration tests to bypass the check.
+TREX_VERSION="v3.04"
+TREX_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
+TREX_URL="https://trex-tgn.cisco.com/trex/release/${TREX_VERSION}.tar.gz"
+TREX_DEST="/opt/trex/${TREX_VERSION}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -54,12 +70,18 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$REMOTE" ] || { echo "usage: $0 user@host [--simulate-src DIR] [--role default|stagelab-agent]" >&2; exit 1; }
+[ -n "$REMOTE" ] || { echo "usage: $0 user@host [--simulate-src DIR] [--role default|stagelab-agent|stagelab-agent-dpdk]" >&2; exit 1; }
 
 case "$ROLE" in
-    default|stagelab-agent) ;;
-    *) echo "unknown role: $ROLE (expected: default or stagelab-agent)" >&2; exit 1 ;;
+    default|stagelab-agent|stagelab-agent-dpdk) ;;
+    *) echo "unknown role: $ROLE (expected: default, stagelab-agent, or stagelab-agent-dpdk)" >&2; exit 1 ;;
 esac
+
+# stagelab-agent-dpdk implies stagelab-agent
+IS_DPDK=0
+if [ "$ROLE" = "stagelab-agent-dpdk" ]; then
+    IS_DPDK=1
+fi
 
 info() { printf 'setup-remote-test-host: %s\n' "$1"; }
 
@@ -142,7 +164,7 @@ dnf install -y -q python3-pytest python3-pytest-xdist 2>/dev/null || true
 fi
 
 # ── stagelab-agent: extra tooling ─────────────────────────────────
-if [ "$ROLE" = "stagelab-agent" ]; then
+if [ "$ROLE" = "stagelab-agent" ] || [ "$IS_DPDK" = "1" ]; then
     info "stagelab-agent: installing perf-test tooling"
     if [ "$PKG_MGR" = "apt" ]; then
         ssh "$REMOTE" '
@@ -188,13 +210,141 @@ fi
 fi
 # ──────────────────────────────────────────────────────────────────
 
+# ── stagelab-agent-dpdk: DPDK + TRex bootstrap ────────────────────
+if [ "$IS_DPDK" = "1" ]; then
+    # ── 1. DPDK tooling install ──────────────────────────────────
+    info "stagelab-agent-dpdk: installing DPDK tooling"
+    if [ "$PKG_MGR" = "apt" ]; then
+        ssh "$REMOTE" '
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    dpdk python3-pyelftools 2>&1 | tail -5 || true
+# dpdk-kmods-dkms may fail on kernels without matching headers — log and continue
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    dpdk-kmods-dkms 2>&1 | tail -5 || echo "WARNING: dpdk-kmods-dkms not available — skipping"
+' || true
+    else
+        ssh "$REMOTE" '
+dnf install -y -q dpdk dpdk-tools python3-pyelftools 2>&1 | tail -5 || true
+' || true
+    fi
+    # Fall-back: if dpdk-devbind.py was not provided by the distro package,
+    # use a vendored copy if present (we do not create it here — placeholder only).
+    ssh "$REMOTE" '
+if ! command -v dpdk-devbind.py >/dev/null 2>&1 && \
+   ! test -f /usr/share/dpdk/usertools/dpdk-devbind.py && \
+   ! test -f /usr/sbin/dpdk-devbind.py; then
+    if test -f /root/shorewall-nft/tools/dpdk-devbind.py; then
+        cp /root/shorewall-nft/tools/dpdk-devbind.py /usr/local/sbin/dpdk-devbind.py
+        chmod +x /usr/local/sbin/dpdk-devbind.py
+        echo "dpdk-devbind.py: installed from vendored copy"
+    else
+        echo "WARNING: dpdk-devbind.py not found — DPDK NIC binding will not work"
+    fi
+fi
+' || true
+
+    # ── 2. Load vfio-pci kernel module ───────────────────────────
+    info "stagelab-agent-dpdk: loading vfio-pci module"
+    ssh "$REMOTE" '
+modprobe vfio-pci || echo "WARNING: failed to modprobe vfio-pci (kernel may lack CONFIG_VFIO_PCI)"
+# Enable unsafe NOIOMMU on hosts/VMs without an IOMMU (typical in test VMs)
+if [ ! -d /sys/class/iommu ] || [ -z "$(ls -A /sys/class/iommu 2>/dev/null)" ]; then
+    echo "no IOMMU detected — enabling vfio unsafe_noiommu_mode"
+    echo 1 > /sys/module/vfio/parameters/enable_unsafe_noiommu_mode 2>/dev/null || true
+fi
+' || true
+
+    # ── 3. Hugepages allocation ───────────────────────────────────
+    info "stagelab-agent-dpdk: allocating 2 MiB hugepages"
+    _hp="${STAGELAB_HUGEPAGES:-512}"
+    ssh "$REMOTE" "
+DPDK_HUGEPAGES_2M='${_hp}'
+echo \"\$DPDK_HUGEPAGES_2M\" > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+mkdir -p /dev/hugepages
+mountpoint -q /dev/hugepages || mount -t hugetlbfs nodev /dev/hugepages
+got=\$(cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages)
+echo \"hugepages: requested=\$DPDK_HUGEPAGES_2M got=\$got\"
+if [ \"\$got\" -lt \"\$DPDK_HUGEPAGES_2M\" ]; then
+    echo \"WARNING: only \$got of \$DPDK_HUGEPAGES_2M hugepages allocated — low RAM?\"
+fi
+" || true
+
+    # ── 4. NIC DPDK-compatibility survey ─────────────────────────
+    info "stagelab-agent-dpdk: surveying NIC DPDK compatibility"
+    ssh "$REMOTE" '
+for _iface in $(ip -o link show | awk -F: '"'"'{print $2}'"'"' | tr -d '"'"' '"'"' | grep -v "^lo$\|@"); do
+    _driver=$(ethtool -i "$_iface" 2>/dev/null | awk '"'"'/^driver:/{print $2}'"'"')
+    _pci=$(ethtool -i "$_iface" 2>/dev/null | awk '"'"'/^bus-info:/{print $2}'"'"')
+    case "$_driver" in
+        i40e|ice|mlx5_core) _status="compatible" ;;
+        virtio_net)          _status="virtio-user dev only" ;;
+        r8169|r8125)         _status="not compatible (Realtek)" ;;
+        "")                  _status="unknown (ethtool unavailable?)" ;;
+        *)                   _status="unknown/unsupported" ;;
+    esac
+    echo "DPDK: $_iface (pci=$_pci driver=$_driver) -- $_status"
+done
+' 2>/dev/null | while IFS= read -r _line; do info "  $_line"; done || true
+
+    # ── 5. TRex bundle staging ────────────────────────────────────
+    info "stagelab-agent-dpdk: staging TRex $TREX_VERSION"
+    # Pass vars and the skip-SHA flag to the remote function
+    _skip_sha="${STAGELAB_SKIP_SHA:-}"
+    ssh "$REMOTE" "
+TREX_VERSION='${TREX_VERSION}'
+TREX_SHA256='${TREX_SHA256}'
+TREX_URL='${TREX_URL}'
+TREX_DEST='${TREX_DEST}'
+STAGELAB_SKIP_SHA='${_skip_sha}'
+
+stage_trex() {
+    if [ -d \"\$TREX_DEST\" ] && [ -x \"\$TREX_DEST/t-rex-64\" ]; then
+        echo \"TRex \$TREX_VERSION already staged at \$TREX_DEST — skipping\"
+        return
+    fi
+    echo \"downloading TRex \$TREX_VERSION to /tmp/trex.tar.gz\"
+    _exit_block=''
+    curl -fsSL \"\$TREX_URL\" -o /tmp/trex.tar.gz || {
+        echo \"WARNING: failed to download TRex — leaving /opt/trex absent\"
+        _exit_block=1
+    }
+    if [ -z \"\${STAGELAB_SKIP_SHA:-}\" ] && [ -z \"\$_exit_block\" ]; then
+        _actual=\$(sha256sum /tmp/trex.tar.gz | awk '{print \$1}')
+        if [ \"\$_actual\" != \"\$TREX_SHA256\" ]; then
+            echo \"WARNING: TRex SHA mismatch (actual=\$_actual expected=\$TREX_SHA256)\"
+            echo \"         Set STAGELAB_SKIP_SHA=1 to bypass (dev only) or update the pinned SHA.\"
+            _exit_block=1
+        fi
+    fi
+    if [ -z \"\$_exit_block\" ]; then
+        mkdir -p \"\$TREX_DEST\"
+        tar -xzf /tmp/trex.tar.gz -C \"\$TREX_DEST\" --strip-components=1
+        echo \"TRex staged at \$TREX_DEST\"
+    fi
+    rm -f /tmp/trex.tar.gz
+}
+
+stage_trex
+" || true
+
+    # ── 6. Recovery-file parent dir ───────────────────────────────
+    info "stagelab-agent-dpdk: ensuring /var/lib/stagelab exists"
+    ssh "$REMOTE" '
+mkdir -p /var/lib/stagelab
+# If a dpdk-bindings.json recovery file exists from a prior crashed run,
+# leave it — the agent will replay bindings and clear it on next start.
+' || true
+
+fi
+# ── end stagelab-agent-dpdk ───────────────────────────────────────
+
 info "create venv + editable install (netkit first, then dependent packages)"
 # Install order is load-bearing: netkit must be installed before simlab
 # (which depends on shorewall-nft-netkit>=1.8.0). pip with -e does not
 # resolve local-path editables transitively — they must be installed in
 # dependency order.
 STAGELAB_EXTRA=""
-if [ "$ROLE" = "stagelab-agent" ]; then
+if [ "$ROLE" = "stagelab-agent" ] || [ "$IS_DPDK" = "1" ]; then
     STAGELAB_EXTRA=" -e packages/shorewall-nft-stagelab[dev]"
 fi
 ssh "$REMOTE" "cd /root/shorewall-nft && \
