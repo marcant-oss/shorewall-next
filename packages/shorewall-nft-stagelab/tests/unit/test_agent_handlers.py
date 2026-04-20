@@ -687,3 +687,120 @@ def test_poll_metrics_nft_counters() -> None:
     assert rows[0]["key"] == "cnt_accept"
     assert rows[0]["value"] == 42.0
     assert rows[1]["value"] == 5040.0
+
+
+# ── HTTP listener handler tests ────────────────────────────────────────────────
+
+
+def test_start_http_listener_spawns_subprocess_in_netns() -> None:
+    """start_http_listener spawns python3 -m http.server and returns pid + port."""
+    handle = NativeEndpointHandle(
+        name="sink", netns="NS_TEST_sink", nsstub_pid=20, vlan_iface="eth0.20"
+    )
+    state = _state()
+    state["endpoints"]["sink"] = handle
+    state["http_listeners"] = {}
+
+    msg = RunScenarioMessage(
+        id="r-http-start",
+        scenario_spec={
+            "endpoint_name": "sink",
+            "kind": "start_http_listener",
+            "spec": {
+                "bind_ip": "10.0.20.1",
+                "port": 80,
+                "_http_sidecar": True,
+                "scenario_id": "cs-test",
+            },
+        },
+    )
+
+    class FakeProc:
+        pid = 12345
+        def send_signal(self, sig): pass  # noqa: E704
+        def wait(self, *a, **kw): pass    # noqa: E704
+
+    fake_proc = FakeProc()
+
+    with (
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch("asyncio.sleep", return_value=None),
+    ):
+        resp = asyncio.run(handle_run_scenario(msg, state))
+
+    assert resp["tool"] == "http_listener"
+    assert resp["ok"] is True
+    assert resp["pid"] == 12345
+    assert resp["port"] == 80
+    assert resp["_http_sidecar"] is True
+    # Listener must be tracked in state
+    assert ("sink", 80) in state["http_listeners"]
+
+
+def test_stop_http_listener_sends_sigterm() -> None:
+    """stop_http_listener sends SIGTERM to the tracked subprocess and removes from state."""
+    import signal as _signal
+
+    handle = NativeEndpointHandle(
+        name="sink2", netns="NS_TEST_sink2", nsstub_pid=21, vlan_iface="eth0.20"
+    )
+    state = _state()
+    state["endpoints"]["sink2"] = handle
+
+    signals_sent: list[int] = []
+
+    class FakeProc:
+        pid = 9999
+        def send_signal(self, sig): signals_sent.append(sig)  # noqa: E704
+        def wait(self, *a, **kw): pass                        # noqa: E704
+
+    fake_proc = FakeProc()
+    state["http_listeners"] = {("sink2", 8080): fake_proc}
+
+    msg = RunScenarioMessage(
+        id="r-http-stop",
+        scenario_spec={
+            "endpoint_name": "sink2",
+            "kind": "stop_http_listener",
+            "spec": {
+                "bind_ip": "10.0.20.2",
+                "port": 8080,
+                "_http_sidecar": True,
+                "scenario_id": "cs-test",
+            },
+        },
+    )
+
+    resp = asyncio.run(handle_run_scenario(msg, state))
+
+    assert resp["tool"] == "http_listener"
+    assert resp["ok"] is True
+    assert resp["pid"] == 9999
+    assert resp["port"] == 8080
+    assert resp["_http_sidecar"] is True
+    assert _signal.SIGTERM in signals_sent
+    # Must be removed from state after stop
+    assert ("sink2", 8080) not in state["http_listeners"]
+
+
+def test_stop_http_listener_missing_returns_ok_false() -> None:
+    """stop_http_listener returns ok=False if no listener is registered."""
+    handle = NativeEndpointHandle(
+        name="sink3", netns="NS_TEST_sink3", nsstub_pid=22, vlan_iface="eth0.20"
+    )
+    state = _state()
+    state["endpoints"]["sink3"] = handle
+    state["http_listeners"] = {}
+
+    msg = RunScenarioMessage(
+        id="r-http-stop-missing",
+        scenario_spec={
+            "endpoint_name": "sink3",
+            "kind": "stop_http_listener",
+            "spec": {"port": 80, "_http_sidecar": True},
+        },
+    )
+    resp = asyncio.run(handle_run_scenario(msg, state))
+    assert resp["tool"] == "http_listener"
+    assert resp["ok"] is False
+    assert resp["_http_sidecar"] is True

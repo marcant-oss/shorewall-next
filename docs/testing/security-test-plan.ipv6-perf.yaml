@@ -45,6 +45,7 @@ tests:
       duration_s: 20
       parallel: 2
       expect_min_gbps: 5.0
+      udp_bandwidth_mbps: 0
     acceptance_criteria:
       min_gbps: 5.0
     standard_refs: [nist-800-53-sc-7]

@@ -110,11 +110,12 @@ tests:
       below 80% of baseline.
     maps_to_scenario:
       kind: conn_storm
-      source_role: wan-uplink
+      source_role: wan-native
       sink_role: lan-downstream
       target_conns: 100000
       rate_per_s: 10000
       hold_s: 30
+      target_port: 80
       test_id: cc-fru-rsa-1-conn-storm
       standard_refs:
         - cc-iso-15408-fru-rsa-1

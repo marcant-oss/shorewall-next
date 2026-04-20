@@ -1,6 +1,6 @@
 # Firewall Security Test Plan
 
-Auto-generated canonical document. Generated at 2026-04-20T18:52:09+00:00.
+Auto-generated canonical document. Generated at 2026-04-20T23:23:24+00:00.
 Do NOT edit by hand; update source fragments under
 `docs/testing/security-test-plan.<std>.md` and re-run
 `tools/merge-security-test-plan.py`.

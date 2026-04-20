@@ -67,6 +67,38 @@ def test_build_argv_tcp_client() -> None:
     assert "8" in argv
     # UDP flag must NOT appear for TCP
     assert "-u" not in argv
+    # -b must NOT appear for TCP (no UDP bandwidth control)
+    assert "-b" not in argv
+
+
+def test_build_argv_udp_default_unlimited() -> None:
+    """UDP with udp_bandwidth_mbps=0 (default) must emit -b 0 (unlimited)."""
+    spec = Iperf3Spec(
+        mode="client",
+        bind="10.0.0.2",
+        server_ip="10.0.0.1",
+        proto="udp",
+        udp_bandwidth_mbps=0,
+    )
+    argv = build_argv(spec)
+    assert "-u" in argv
+    idx = argv.index("-b")
+    assert argv[idx + 1] == "0"
+
+
+def test_build_argv_udp_explicit_bandwidth() -> None:
+    """UDP with udp_bandwidth_mbps=500 must emit -b 500M."""
+    spec = Iperf3Spec(
+        mode="client",
+        bind="10.0.0.2",
+        server_ip="10.0.0.1",
+        proto="udp",
+        udp_bandwidth_mbps=500,
+    )
+    argv = build_argv(spec)
+    assert "-u" in argv
+    idx = argv.index("-b")
+    assert argv[idx + 1] == "500M"
 
 
 def test_run_iperf3_nonjson_raises(monkeypatch: pytest.MonkeyPatch) -> None:
