@@ -16,6 +16,7 @@ from . import (
     standards_cc_nist,
     standards_owasp_iso27001,
     standards_perf,
+    standards_simlab,
 )
 
 
@@ -31,6 +32,7 @@ _FRAGMENTS = (
     standards_bsi_cis.TEST_ID_FRAGMENT,
     standards_owasp_iso27001.TEST_ID_FRAGMENT,
     standards_perf.TEST_ID_FRAGMENT,
+    standards_simlab.TEST_ID_FRAGMENT,
 )
 
 
