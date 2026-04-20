@@ -218,6 +218,23 @@ Off by default.
 .TP
 .BI \-\-control\-socket\-netns " NETNS"
 Bind the control socket inside this named network namespace.
+.TP
+.B \-\-enable\-vrrp\-collector
+Enable the VRRP D-Bus collector that scrapes keepalived state from the
+system bus (
+.IB org.keepalived. *
+by default).
+Requires
+.B jeepney>=0.8
+(installed via
+.BR "pip install shorewalld[vrrp]" );
+degrades silently if jeepney is absent or keepalived is not running.
+On AlmaLinux 10 / RHEL 10, keepalived is built without
+.BR \-\-enable\-dbus ;
+the collector will report
+.B dbus_unavailable
+errors and emit no VRRP metrics on those hosts.
+See the PROMETHEUS METRICS section below for the metric list.
 
 .SH tap SUBCOMMAND
 .B shorewalld tap
@@ -437,6 +454,37 @@ Label values:
 .B shorewalld_plainlist_last_success_timestamp_seconds
 is a Unix-timestamp gauge (0 = never refreshed).  Alert with
 .B time() \- metric > THRESHOLD .
+
+.SS VRRP metrics [Wave 8 \-\- keepalived D-Bus, opt-in via \-\-enable\-vrrp\-collector]
+.RS
+.nf
+shorewalld_vrrp_state                           gauge    bus_name,instance,vr_id,nic,family
+shorewalld_vrrp_priority                        gauge    bus_name,instance,vr_id
+shorewalld_vrrp_effective_priority              gauge    bus_name,instance,vr_id
+shorewalld_vrrp_last_transition_timestamp_seconds gauge  bus_name,instance,vr_id
+shorewalld_vrrp_vip_count                       gauge    bus_name,instance,vr_id,family
+shorewalld_vrrp_scrape_errors_total             counter  reason
+.fi
+.RE
+
+.PP
+.B shorewalld_vrrp_state
+encodes the keepalived state integer: 1=BACKUP, 2=MASTER, 3=FAULT.
+.B shorewalld_vrrp_priority
+and
+.B shorewalld_vrrp_effective_priority
+are reserved for future keepalived D-Bus extensions; currently reported as 0
+(not exposed by the keepalived D-Bus interface at this time).
+.B shorewalld_vrrp_scrape_errors_total
+reason values:
+.B dbus_unavailable
+(bus unreachable or jeepney absent),
+.B timeout
+(per-call 1 s deadline exceeded),
+.B properties_get
+(GetAll call failed),
+.B parse
+(unexpected property format).
 
 .SH FILES
 .TP

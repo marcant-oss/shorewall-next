@@ -137,6 +137,7 @@ class Daemon:
         control_socket: str | None = None,
         control_socket_netns: str | None = None,
         iplist_configs: list[Any] | None = None,
+        enable_vrrp_collector: bool = False,
     ) -> None:
         self.prom_host = prom_host
         self.prom_port = prom_port
@@ -168,6 +169,7 @@ class Daemon:
         self.control_socket = control_socket
         self.control_socket_netns = control_socket_netns
         self.iplist_configs: list[Any] = iplist_configs or []
+        self.enable_vrrp_collector = enable_vrrp_collector
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
@@ -241,6 +243,13 @@ class Daemon:
             len(self._profile_builder.profiles),
             list(self._profile_builder.profiles),
         )
+
+        # Optional VRRP D-Bus collector (opt-in, requires jeepney).
+        if self.enable_vrrp_collector:
+            from .collectors.vrrp import VrrpCollector as _VrrpCollector
+            _vc = _VrrpCollector()
+            self._registry.add(_vc)
+            log.info("shorewalld VRRP D-Bus collector registered")
 
         # Prometheus HTTP scrape endpoint. Deferred import so
         # ``--help`` works without prometheus_client installed.
@@ -775,6 +784,19 @@ class Daemon:
             nft=self._nft,
             profiles=profiles,
         )
+        # Register PlainListTracker metrics so they appear on the scrape
+        # endpoint.  Two collectors are needed:
+        #
+        # 1. _metrics (IpListMetrics) — nft apply-path / capacity /
+        #    write-error counters accumulated inside _apply_set().
+        # 2. NfsetsCollector(plain_tracker=…) — fetch/parse latency,
+        #    refresh success/failure totals, entry counts, inotify status.
+        if self._registry is not None:
+            from .collectors import NfsetsCollector
+            self._registry.add(self._plain_tracker._metrics)  # type: ignore[arg-type]
+            self._registry.add(
+                NfsetsCollector("", plain_tracker=self._plain_tracker)
+            )
         self._plain_task = asyncio.create_task(
             self._plain_tracker.run(),
             name="shorewalld.plain",

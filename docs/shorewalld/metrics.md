@@ -211,3 +211,81 @@ rate(shorewalld_plainlist_refresh_duration_seconds_sum[5m])
 | `outcome` | 2 | Fixed: `success`, `failure` |
 | `error_type` | 7 | Fixed enum |
 | `family` | 2 | Fixed: `ipv4`, `ipv6` |
+
+---
+
+## VRRP (keepalived D-Bus) **(W8)**
+
+Enabled with `--enable-vrrp-collector`.  Requires `jeepney>=0.8`
+(`pip install shorewalld[vrrp]`).  Degrades silently when jeepney is absent
+or keepalived is not running.
+
+### Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `shorewalld_vrrp_state` | gauge | `bus_name`, `instance`, `vr_id`, `nic`, `family` | VRRP instance state: 1=BACKUP, 2=MASTER, 3=FAULT |
+| `shorewalld_vrrp_priority` | gauge | `bus_name`, `instance`, `vr_id` | Base priority (0 — not exposed via D-Bus, reserved for future) |
+| `shorewalld_vrrp_effective_priority` | gauge | `bus_name`, `instance`, `vr_id` | Effective priority after tracking adjustments (0 — not exposed via D-Bus) |
+| `shorewalld_vrrp_last_transition_timestamp_seconds` | gauge | `bus_name`, `instance`, `vr_id` | Unix timestamp of last observed state change (0 if unknown) |
+| `shorewalld_vrrp_vip_count` | gauge | `bus_name`, `instance`, `vr_id`, `family` | Number of VIPs currently held (0 — not exposed via D-Bus) |
+| `shorewalld_vrrp_scrape_errors_total` | counter | `reason` | D-Bus scrape errors by reason |
+
+`reason` values: `dbus_unavailable`, `timeout`, `properties_get`, `parse`.
+
+### Cardinality
+
+| Label | Upper bound | Notes |
+|-------|-------------|-------|
+| `bus_name` | # keepalived processes | Typically 1 per host |
+| `instance` | # VRRP instances | Typically 2–8 (one per VR per family) |
+| `vr_id` | 255 (VRRP spec) | Typically < 10 in practice |
+| `nic` | # firewall NICs | Typically 2–4 |
+| `family` | 2 | Fixed: `ipv4`, `ipv6` |
+
+Total label combinations: bounded by operator config.  Typically < 20.
+
+### D-Bus property contract
+
+keepalived exposes only two properties per instance via
+`org.keepalived.Vrrp1.Instance.GetAll`:
+
+- **`Name`** `(s)` — instance name (`vrrp->iname`)
+- **`State`** `(us)` — `(uint_state, string_label)` where 1=BACKUP, 2=MASTER,
+  3=FAULT
+
+Object path format: `/org/keepalived/Vrrp1/Instance/<nic>/<vrid>/IPv4|IPv6`.
+The collector derives `nic`, `vr_id`, and `family` from the path.
+`priority`, `effective_priority`, `last_transition`, and `vip_count` are not
+available from the D-Bus interface and are reported as 0.
+
+### Example PromQL alerts
+
+```promql
+# Alert if any VRRP instance is not in MASTER state for more than 30s
+# (adjust for your topology — only alert on the active node).
+ALERT VrrpNotMaster
+  IF shorewalld_vrrp_state{instance="fw_master_v4"} != 2
+  FOR 30s
+  LABELS { severity="critical" }
+  ANNOTATIONS { summary="VRRP instance not MASTER" }
+
+# Alert on a spike in state transitions (>2/min over a 5-min window).
+ALERT VrrpFlapping
+  IF rate(shorewalld_vrrp_scrape_errors_total{reason="timeout"}[5m]) > 0.1
+  LABELS { severity="warning" }
+```
+
+### CAVEATS
+
+**AlmaLinux 10 / RHEL 10 / CentOS Stream 10**: `keepalived 2.2.8-6.el10`
+is built **without** `--enable-dbus`.  The D-Bus objects are not registered
+and `shorewalld_vrrp_*` metrics will be absent (the collector degrades
+silently with `dbus_unavailable` errors).  Options for operators on AL10:
+
+1. Rebuild keepalived from source with `--enable-dbus` configured.
+2. Run the VRRP collector on the peer nodes (Debian/Fedora) where keepalived
+   ships with D-Bus support enabled.
+
+No workaround exists within shorewalld — the underlying daemon must expose
+the D-Bus interface.
