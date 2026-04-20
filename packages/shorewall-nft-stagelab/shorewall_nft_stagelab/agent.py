@@ -192,9 +192,10 @@ async def handle_run_scenario(
 
     if kind in ("run_iperf3_server", "run_iperf3_client"):
         netns = state["endpoints"][endpoint_name].netns
-        i3_spec = trafgen_iperf3.Iperf3Spec(
-            **{k: v for k, v in spec.items() if k in _IPERF3_FIELDS}
-        )
+        mode = "server" if kind == "run_iperf3_server" else "client"
+        i3_kwargs = {k: v for k, v in spec.items() if k in _IPERF3_FIELDS}
+        i3_kwargs["mode"] = mode
+        i3_spec = trafgen_iperf3.Iperf3Spec(**i3_kwargs)
         proc = await asyncio.to_thread(
             _exec_in_netns, netns, trafgen_iperf3.build_argv(i3_spec)
         )
