@@ -373,6 +373,33 @@ Archive the whole directory under a stable path for compliance evidence.
   - TCP (iperf3 port 5201): **drop** (connection timeout) — net→host TCP is REJECTed by policy. This is correct behaviour; any throughput scenario without a permitted zone-pair+proto will time out.
 - Persistent setup: `/usr/local/sbin/tester02-downstream-setup` + `tester02-downstream.service` on tester02 bring eth1.10, eth1.20 and the return route up idempotently at boot. Reference copy shipped in the repo at `tools/tester02-downstream-setup.example`.
 
+### DPDK / TRex capability (tester02)
+
+Deployed via `tools/setup-remote-test-host.sh --role stagelab-agent-dpdk`:
+
+- **DPDK 24.11.3** + `dpdk-tools` (includes `dpdk-devbind.py`, `dpdk-testpmd`).
+- **TRex v3.08** staged at `/opt/trex/v3.08/`.
+- **vfio-pci** kernel module loaded; `iommufd` + `vfio_pci_core` + `vfio_iommu_type1` active.
+- **Hugepages**: 512× 2 MiB = 1 GiB (`HugePages_Total=512`, `HugePages_Free=512`).
+- **Crash-recovery state**: `/var/lib/stagelab/dpdk-bindings.json` present (stagelab's `topology_dpdk.py` contract — any rebind-during-run is tracked + auto-recovered).
+
+NIC mapping (hardware PCI addrs for stagelab YAML `pci_addr:` field):
+
+| Device | PCI addr | Role | DPDK-bindable? |
+|--------|----------|------|----------------|
+| eth0 | `0000:06:12.0` | mgmt (SSH lifeline) | **NO** — would sever access |
+| eth1 | `0000:06:13.0` | customer-VLAN trunk (`eth1.10`, `eth1.20`) | NO while in use |
+| eth2 | `0000:06:14.0` | backbone (idle on tester02) | **YES** |
+
+**Verified** (live smoke 2026-04-20): bind `0000:06:14.0` → vfio-pci, run `dpdk-testpmd -l 0-1 -n 2 -a 0000:06:14.0`, 8 RX + 8 TX packets / 0 drops, port opened/closed cleanly, unbind → virtio_net restored.
+
+**virtio-net caveat**: the tester NICs are virtio_net, which DPDK can drive but NOT at line-rate (capped around 1–5 Gbps due to host-emulation overhead). For real line-rate (10/25/40G) TRex runs, the operator must attach a PCI-passthrough NIC (Mellanox/Intel) via Proxmox, plus kernel cmdline additions: `iommu=pt`, `isolcpus=<reserved-cores>`, `default_hugepagesz=1G hugepagesz=1G hugepages=4`. Tracked as task #31 (additional interfaces for line-rate).
+
+**Dispatchable DPDK scenarios today** (with current virtio-backed NICs):
+- `throughput_dpdk` low-rate correctness — tester02 eth2 as the DPDK port; target ≈1–3 Gbps.
+- `conn_storm_astf` low-rate correctness — TRex ASTF profile with a moderate multiplier.
+- Any scenario that exercises the DPDK → kernel path for compliance evidence (demonstrating that the FW handles DPDK-sourced traffic correctly, even if not at line-rate).
+
 ### Scenario dispatch implications
 
 - `rule_scan` + `rule_coverage_matrix` are **fully exercisable** — they test the policy matrix and expect specific DROP/ACCEPT verdicts per zone-pair + protocol. Use `source_role: wan-uplink` (tester01 sim-uplink) + `sink_role: lan-downstream` (tester02 host-zone) in the base config.
