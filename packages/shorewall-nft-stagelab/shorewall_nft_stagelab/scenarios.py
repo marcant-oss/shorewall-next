@@ -382,7 +382,12 @@ class RuleScanRunner(Scenario):
         src_ep = ep_map[sc.source]
         family = getattr(sc, "family", "ipv4")
         if family == "ipv6":
-            src_ip = src_ep.ipv6.split("/")[0] if src_ep.ipv6 else "::"
+            if not src_ep.ipv6:
+                raise ValueError(
+                    f"rule_scan scenario {sc.id!r}: family=ipv6 requires "
+                    f"ipv6 address on source endpoint {sc.source!r}"
+                )
+            src_ip = src_ep.ipv6.split("/")[0]
         else:
             src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
 
@@ -1140,7 +1145,16 @@ class EvasionProbesRunner(Scenario):
     def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
         sc = self._sc
         src_ep = cfg.endpoint_by_name(sc.source)
-        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
+        family = getattr(sc, "family", "ipv4")
+        if family == "ipv6":
+            if not src_ep.ipv6:
+                raise ValueError(
+                    f"evasion_probes scenario {sc.id!r}: family=ipv6 requires "
+                    f"ipv6 address on source endpoint {sc.source!r}"
+                )
+            src_ip = src_ep.ipv6.split("/")[0]
+        else:
+            src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
 
         commands: list[AgentCommand] = []
         for idx, probe_type in enumerate(sc.probe_types, start=1):
@@ -1150,6 +1164,7 @@ class EvasionProbesRunner(Scenario):
                 "src_ip": sc.spoof_src_ip if probe_type == "ip_spoof" else src_ip,
                 "dst_ip": sc.target_ip,
                 "dst_port": sc.target_port,
+                "family": family,
                 "scenario_id": sc.id,
                 "expected_verdict": "drop",
             }
