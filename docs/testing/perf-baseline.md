@@ -304,6 +304,54 @@ controller-local SSH) is identical to the conntrack sidecar fix already shipped.
 
 ---
 
+---
+
+## Through-FW conntrack probe (perf-through-fw-conntrack-probe)
+
+**Status**: Designed; not yet executed.
+
+**Rule piggybacked**: `SSH(ACCEPT) net:203.0.113.64/27 $FW`
+(line 47, `/etc/shorewall/rules` on the reference HA firewall primary node)
+
+**Traffic path**: tester01 eth2 (`203.0.113.74/27`) → FW `bond1`
+(`203.0.113.75`) tcp/22 → SSHd on the FW itself.  Zone: `net → $FW` (INPUT
+chain).  Conntrack sees the flow because it arrives on `bond1` (net zone
+interface) and is directed at the FW itself.
+
+**Scenario kind**: `conn_storm_direct` — targets a fixed IP:port directly
+without requiring an HTTP listener on a sink endpoint.  The FW's SSHd
+completes the TCP 3-way handshake; each connection contributes one
+`ESTABLISHED` entry to conntrack.
+
+**Source endpoint**: `net-backbone-native` — tester01, `mode: native`,
+`nic: eth2` (untagged, no VLAN), `ipv4: 203.0.113.74/27`.  This requires
+`topology_native.py` untagged-NIC support (NIC moved directly into netns,
+`vlan=None`), added in this commit.
+
+**Pre-run operator steps**:
+1. `ssh root@192.0.2.93 "systemctl stop sim-uplink"` — sim-uplink uses
+   eth2 (router ID `203.0.113.77`); must not conflict with the test endpoint.
+2. `ssh root@192.0.2.93 "ip route"` — verify the default route still
+   exists via the management NIC (eth0 or equivalent) so stagelab SSH stays up.
+3. Run: `STAGELAB_SNMP_COMMUNITY_MON=public .venv/bin/shorewall-nft-stagelab run tools/stagelab-fw-test-live.yaml --output-dir /tmp/through-fw-test`
+4. `ssh root@192.0.2.93 "systemctl start sim-uplink"` — restore.
+
+**Expected results**:
+| Metric | Expected range | Notes |
+|--------|---------------|-------|
+| `conntrack_peak_observed` | 10–1000 | SSH MaxStartups limits concurrent handshakes to ~128 by default; actual peak depends on FW sshd config |
+| `established` | ≥ 10% of `target_conns` | SSH rate-limiting reduces success rate |
+| `flowtable_packets_delta` | N/A | SSH flows are short-lived; flowtable offload unlikely to fire for tcp/22 |
+
+**Flowtable note**: flowtable offload (`nft flowtable`) targets long-lived
+throughput flows (http/https/iperf3), not short SSH handshakes.  For real
+flowtable delta > 0, the scenario should target a long-lived TCP flow (e.g.
+iperf3 on port 5201 against `host:$UPDATES` which has `ACCEPT all host:$UPDATES
+tcp ... 5201` at rules line 616).  That requires tester01 in net zone +
+tester02 in host zone as a through-FW iperf3 pair — a follow-up item.
+
+---
+
 ## Follow-up items for operator
 
 1. **Through-FW routing**: add a temporary ACCEPT rule on the FW for

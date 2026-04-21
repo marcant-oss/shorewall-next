@@ -54,4 +54,14 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "CONNTRACK-CONN-STORM",
         "Conntrack table health under high connection-rate storm",
     ),
+    # Through-FW conntrack probe: piggybacks on an existing ACCEPT rule so the
+    # FW forwarding path is exercised without modifying the FW config.
+    # Source: tester01 net-zone (203.0.113.64/27, bond1).
+    # Target: FW bond1 VIP (203.0.113.75), tcp/22 — permitted by:
+    #   SSH(ACCEPT) net:203.0.113.64/27 $FW  (rules line 47)
+    "perf-through-fw-conntrack-probe": (
+        "performance-conntrack",
+        "CONNTRACK-THROUGH-FW",
+        "Through-FW conntrack probe: conn_storm_direct to FW SSHd via existing net→fw SSH ACCEPT rule",
+    ),
 }

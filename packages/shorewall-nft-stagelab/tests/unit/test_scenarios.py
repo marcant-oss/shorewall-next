@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from shorewall_nft_stagelab.config import (
+    ConnStormDirectScenario,
     ConnStormScenario,
     Dut,
     Endpoint,
@@ -15,7 +16,7 @@ from shorewall_nft_stagelab.config import (
     StagelabConfig,
     ThroughputScenario,
 )
-from shorewall_nft_stagelab.scenarios import ThroughputRunner, build_runner
+from shorewall_nft_stagelab.scenarios import ConnStormDirectRunner, ThroughputRunner, build_runner
 
 _VLAN_COUNTER = {"n": 10}
 
@@ -733,3 +734,158 @@ def test_rule_scan_ipv6_probe_endpoint_no_ipv4_required() -> None:
     assert len(probe_cmds) == 2
     for cmd in probe_cmds:
         assert cmd.spec["src_ip"] == "2001:db8:0:2000::200"
+
+
+# ---------------------------------------------------------------------------
+# ConnStormDirectRunner tests
+# ---------------------------------------------------------------------------
+
+
+def _base_cfg_direct(scenarios: list) -> StagelabConfig:
+    """Config with a single native endpoint (no VLAN — untagged backbone)."""
+    return StagelabConfig(
+        hosts=[Host(name="host1", address="10.0.0.1")],
+        dut=Dut(kind="external"),
+        endpoints=[
+            Endpoint(
+                name="net-bb",
+                host="host1",
+                mode="native",
+                nic="eth2",
+                # vlan=None for untagged backbone
+                ipv4="203.0.113.74/27",
+                ipv4_gw="203.0.113.92",
+            ),
+        ],
+        scenarios=scenarios,
+        metrics=MetricsSpec(),
+        report=ReportSpec(output_dir="/tmp/stagelab-test-direct"),
+    )
+
+
+def test_conn_storm_direct_plan_single_command():
+    """ConnStormDirectRunner.plan() emits exactly one run_tcpkali command
+    targeting target_ip:target_port directly (no HTTP listener on a sink)."""
+    sc = ConnStormDirectScenario(
+        id="csd1",
+        kind="conn_storm_direct",
+        source="net-bb",
+        target_ip="203.0.113.75",
+        target_port=22,
+        target_conns=1000,
+        rate_per_s=200,
+        hold_s=10,
+    )
+    cfg = _base_cfg_direct([sc])
+    runner = build_runner(sc)
+    cmds = runner.plan(cfg)
+
+    assert isinstance(runner, ConnStormDirectRunner)
+    assert len(cmds) == 1
+    (storm_cmd,) = cmds
+    assert storm_cmd.kind == "run_tcpkali"
+    assert storm_cmd.endpoint_name == "net-bb"
+    assert storm_cmd.spec["target"] == "203.0.113.75:22"
+    assert storm_cmd.spec["connections"] == 1000
+    assert storm_cmd.spec["connect_rate"] == 200
+    assert storm_cmd.spec["duration_s"] == 10
+
+
+def test_conn_storm_direct_plan_with_conntrack_sidecar():
+    """When observe_conntrack=True, plan() adds a concurrent poll_conntrack."""
+    sc = ConnStormDirectScenario(
+        id="csd2",
+        kind="conn_storm_direct",
+        source="net-bb",
+        target_ip="203.0.113.75",
+        target_port=22,
+        target_conns=500,
+        rate_per_s=100,
+        hold_s=5,
+        observe_conntrack=True,
+        fw_host="root@fw-primary",
+    )
+    cfg = _base_cfg_direct([sc])
+    runner = build_runner(sc)
+    cmds = runner.plan(cfg)
+
+    assert len(cmds) == 2
+    storm_cmd = cmds[0]
+    sidecar_cmd = cmds[1]
+
+    assert storm_cmd.kind == "run_tcpkali"
+    assert not storm_cmd.concurrent
+
+    assert sidecar_cmd.kind == "poll_conntrack"
+    assert sidecar_cmd.concurrent is True
+    assert sidecar_cmd.spec["fw_host"] == "root@fw-primary"
+    assert sidecar_cmd.spec["duration_s"] == 5 + 2  # hold_s + 2
+
+
+def test_conn_storm_direct_summarize_records_peak():
+    """summarize() puts conntrack_peak_observed into raw when sidecar result present."""
+    sc = ConnStormDirectScenario(
+        id="csd3",
+        kind="conn_storm_direct",
+        source="net-bb",
+        target_ip="203.0.113.75",
+        target_port=22,
+        target_conns=100,
+        rate_per_s=50,
+        hold_s=5,
+        observe_conntrack=True,
+        fw_host="root@fw-primary",
+    )
+    runner = ConnStormDirectRunner(sc)
+    results = [
+        {
+            "tool": "pyconn", "ok": True,
+            "connections_established": 80, "connections_failed": 20,
+            "duration_s": 5.0,
+        },
+        {
+            "tool": "poll_conntrack", "_conntrack_sidecar": True,
+            "peak": 75, "samples": [10, 50, 75, 70, 60],
+        },
+    ]
+    result = runner.summarize(results)
+    assert result.kind == "conn_storm_direct"
+    assert result.raw["conntrack_peak_observed"] == 75
+    assert result.raw["target_ip"] == "203.0.113.75"
+    assert result.raw["target_port"] == 22
+    assert result.raw["established"] == 80
+    # ok: established=80 >= min_ok=max(1, int(100*0.1))=10 → True
+    assert result.ok is True
+
+
+def test_conn_storm_direct_requires_fw_host_when_observe_conntrack():
+    """ValidationError when observe_conntrack=True but fw_host is not set."""
+    import pytest
+    with pytest.raises(Exception):
+        ConnStormDirectScenario(
+            id="bad",
+            kind="conn_storm_direct",
+            source="net-bb",
+            target_ip="1.2.3.4",
+            observe_conntrack=True,
+            # fw_host intentionally omitted
+        )
+
+
+def test_conn_storm_direct_untagged_endpoint_parses():
+    """A native endpoint with vlan=None (untagged) is valid in StagelabConfig."""
+    sc = ConnStormDirectScenario(
+        id="csd4",
+        kind="conn_storm_direct",
+        source="net-bb",
+        target_ip="203.0.113.75",
+        target_port=22,
+        target_conns=10,
+        rate_per_s=5,
+        hold_s=2,
+    )
+    cfg = _base_cfg_direct([sc])
+    bb_ep = next(ep for ep in cfg.endpoints if ep.name == "net-bb")
+    assert bb_ep.vlan is None
+    assert bb_ep.mode == "native"
+    assert bb_ep.nic == "eth2"
