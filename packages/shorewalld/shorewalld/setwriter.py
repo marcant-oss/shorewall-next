@@ -32,7 +32,9 @@ Batch assembly:
   ops stay on separate batches (simpler worker-side script).
 * Flush on any of three conditions: builder full, window elapsed,
   shutdown requested.
-* BATCH_WINDOW_MS defaults to 10 ms, tunable via shorewall.conf.
+* Batch window defaults to 10 ms; operators tune it via
+  ``BATCH_WINDOW_SECONDS`` in ``shorewalld.conf`` or
+  ``--batch-window-seconds`` on the CLI.
 
 Metrics are updated at commit time from the tracker's own counters,
 so the exporter doesn't need a separate code path. The SetWriter

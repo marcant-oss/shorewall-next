@@ -504,3 +504,57 @@ class TestDedupAllocationFree:
             f"DEDUP hot path allocated {bytes_allocs} bytes across "
             f"{n_dedup} proposals — expected O(1)"
         )
+
+
+# ── M-3: injected refresh_threshold tests ───────────────────────────────────
+
+
+class TestRefreshThresholdInjection:
+    """Verify that a non-default refresh_threshold passed to DnsSetTracker
+    is actually honoured by propose(), and that the threshold=0.9 case
+    deduplicates where threshold=0.1 would emit a REFRESH.
+    """
+
+    def _make_tracker(self, threshold: float) -> tuple[DnsSetTracker, FakeClock]:
+        reg = DnsSetRegistry()
+        reg.add_spec(DnsSetSpec(
+            qname="example.com", ttl_floor=300, ttl_ceil=3600, size=256))
+        clock = FakeClock(start=1000.0)
+        t = DnsSetTracker(refresh_threshold=threshold, clock=clock)
+        t.load_registry(reg)
+        return t, clock
+
+    def test_threshold_09_deduplicates_at_40pct_remaining(self):
+        """With threshold=0.9 an entry at 40% remaining is DEDUP."""
+        tracker, clock = self._make_tracker(threshold=0.9)
+        sid = tracker.set_id_for("example.com", FAMILY_V4)
+        ttl = 600
+        p = Proposal(set_id=sid, ip=_ip4i("198.51.100.1"), ttl=ttl)
+        tracker.commit([p], [Verdict.ADD])
+        # Advance so 40% of TTL remains (60% elapsed = 360 s).
+        clock.advance(360)
+        # With threshold=0.9, we need >=90%*600=540s remaining to DEDUP.
+        # Only 240s remain → should be REFRESH, not DEDUP.
+        assert tracker.propose(p) == Verdict.REFRESH
+
+    def test_threshold_01_refresh_at_40pct_remaining_becomes_dedup(self):
+        """With threshold=0.1 the same scenario is DEDUP (40% > 10%)."""
+        tracker, clock = self._make_tracker(threshold=0.1)
+        sid = tracker.set_id_for("example.com", FAMILY_V4)
+        ttl = 600
+        p = Proposal(set_id=sid, ip=_ip4i("198.51.100.1"), ttl=ttl)
+        tracker.commit([p], [Verdict.ADD])
+        clock.advance(360)   # 40% remaining
+        # threshold=0.1 → need only 60s remaining to DEDUP; 240 > 60 → DEDUP.
+        assert tracker.propose(p) == Verdict.DEDUP
+
+    def test_threshold_honours_boundary_exactly(self):
+        """Proposal exactly at the threshold boundary is DEDUP (>=)."""
+        tracker, clock = self._make_tracker(threshold=0.5)
+        sid = tracker.set_id_for("example.com", FAMILY_V4)
+        ttl = 600
+        p = Proposal(set_id=sid, ip=_ip4i("198.51.100.2"), ttl=ttl)
+        tracker.commit([p], [Verdict.ADD])
+        # Advance exactly to 50% elapsed → 300s remain = 0.5 * 600 → DEDUP.
+        clock.advance(300)
+        assert tracker.propose(p) == Verdict.DEDUP
