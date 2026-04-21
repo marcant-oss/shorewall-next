@@ -158,3 +158,106 @@ def test_summarize_any_leaked_fails() -> None:
     assert result.raw["leaked_through"] == 1
     assert result.raw["dropped_by_fw"] == 2
     assert "tcp_xmas" in result.raw["leaked_probe_types"]
+
+
+# ---------------------------------------------------------------------------
+# IPv6 tests
+# ---------------------------------------------------------------------------
+
+_IPV6_YAML = textwrap.dedent("""\
+    hosts:
+      - name: tester
+        address: root@192.168.4.73
+
+    dut:
+      kind: external
+
+    endpoints:
+      - name: probe-ep-v6
+        host: tester
+        mode: probe
+        bridge: br-probe
+        ipv4: 10.0.10.1/24
+        ipv6: 2a00:f88:0:2000::200/64
+        ipv6_gw: 2a00:f88:0:2000::1
+
+    scenarios:
+      - id: evasion-v6
+        kind: evasion_probes
+        source: probe-ep-v6
+        target_ip: 2a00:f88:0:3168::1
+        family: ipv6
+        probe_types:
+          - tcp_null
+          - tcp_xmas
+
+    report:
+      output_dir: /tmp/out
+""")
+
+_IPV6_NO_ADDR_YAML = textwrap.dedent("""\
+    hosts:
+      - name: tester
+        address: root@192.168.4.73
+
+    dut:
+      kind: external
+
+    endpoints:
+      - name: probe-ep-noipv6
+        host: tester
+        mode: probe
+        bridge: br-probe
+        ipv4: 10.0.10.1/24
+
+    scenarios:
+      - id: evasion-v6-noaddr
+        kind: evasion_probes
+        source: probe-ep-noipv6
+        target_ip: 2a00:f88:0:3168::1
+        family: ipv6
+        probe_types:
+          - tcp_null
+
+    report:
+      output_dir: /tmp/out
+""")
+
+
+def test_plan_ipv6_uses_endpoint_ipv6() -> None:
+    """family=ipv6 → src_ip must be stripped endpoint.ipv6, not endpoint.ipv4."""
+    import pytest
+    cfg = _load(_IPV6_YAML)
+    sc_cfg = cfg.scenarios[0]
+    runner = EvasionProbesRunner(sc_cfg)  # type: ignore[arg-type]
+    cmds = runner.plan(cfg)
+
+    probe_cmds = [c for c in cmds if c.kind == "send_probe"]
+    assert len(probe_cmds) == 2
+    for cmd in probe_cmds:
+        # src_ip must be the stripped IPv6 (no prefix length)
+        assert cmd.spec["src_ip"] == "2a00:f88:0:2000::200"
+        assert cmd.spec["family"] == "ipv6"
+
+
+def test_plan_ipv6_family_propagates_to_non_spoof_probes() -> None:
+    """family must appear in every non-spoof probe spec."""
+    cfg = _load(_IPV6_YAML)
+    sc_cfg = cfg.scenarios[0]
+    runner = EvasionProbesRunner(sc_cfg)  # type: ignore[arg-type]
+    cmds = runner.plan(cfg)
+
+    probe_cmds = [c for c in cmds if c.kind == "send_probe"]
+    for cmd in probe_cmds:
+        assert cmd.spec.get("family") == "ipv6"
+
+
+def test_plan_ipv6_missing_ipv6_raises_valueerror() -> None:
+    """family=ipv6 on a probe endpoint with no ipv6 configured must raise ValueError
+    with the endpoint name in the message."""
+    import pytest
+    cfg = _load(_IPV6_NO_ADDR_YAML)
+    sc_cfg = cfg.scenarios[0]
+    runner = EvasionProbesRunner(sc_cfg)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="probe-ep-noipv6"):
+        runner.plan(cfg)
