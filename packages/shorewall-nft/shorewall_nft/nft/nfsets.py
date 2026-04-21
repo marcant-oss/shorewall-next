@@ -43,7 +43,8 @@ _BACKENDS: frozenset[str] = frozenset({
 _DNS_BACKENDS: frozenset[str] = frozenset({"dnstap", "resolver"})
 _IPLIST_BACKENDS: frozenset[str] = frozenset({"ip-list", "ip-list-plain"})
 
-# Valid dnstype values (SRV is tracked but not implemented this wave).
+# Valid dnstype values. "srv" triggers SRV resolution + recursive A/AAAA
+# on the returned targets in shorewalld's PullResolver (see W12).
 _DNS_TYPES: frozenset[str] = frozenset({"a", "aaaa", "srv"})
 
 # Duration suffix multipliers.

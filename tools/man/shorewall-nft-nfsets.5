@@ -8,9 +8,7 @@ file declares named dynamic nft sets that are populated at runtime by
 .BR shorewalld (8).
 Each row names a set and selects the backend that will keep it populated.
 
-Declared sets can be referenced in the
-.I rules
-file using
+Declared sets can be referenced in rule files using
 .IB zone : nfset: name
 syntax.  The compiler emits the nft set declarations (type, flags, size);
 shorewalld provides the elements.
@@ -18,7 +16,7 @@ shorewalld provides the elements.
 Use
 .I nfsets
 instead of inline
-.B dns:hostname
+.B dnst:hostname
 syntax when you need:
 .IP \(bu 2
 Multiple hostnames merged into a single set.
@@ -26,6 +24,8 @@ Multiple hostnames merged into a single set.
 Non-DNS backends (URL blocklists, cloud provider prefix lists).
 .IP \(bu 2
 Explicit set naming for tooling and monitoring.
+.IP \(bu 2
+Multiple backends feeding the same set simultaneously (additive model).
 
 .SH FILE FORMAT
 Location:
@@ -46,6 +46,7 @@ HOSTS	yes	Hostname(s), URL, file path, or cloud-provider keyword
 OPTIONS	yes	Backend keyword + per-backend options (comma-separated)
 .TE
 
+.PP
 Multiple rows with the same
 .I NAME
 and the same backend are merged: their
@@ -53,7 +54,7 @@ and the same backend are merged: their
 lists are concatenated.
 Multiple rows with the same
 .I NAME
-but different backends are stored additively — both backends populate the
+but different backends are stored additively \(em both backends populate the
 same nft sets simultaneously (see the
 .B MULTIPLE BACKENDS FOR ONE SET
 section below).
@@ -135,8 +136,9 @@ Resolve AAAA records only (IPv6).
 Query the SRV RRset for the hostname.  For each
 .I Target
 in the answer, resolve its A and AAAA records and write the resulting IPs
-into the nft set.  The SRV port is discarded \(em the set is IP-only.
-At most 32 SRV targets are processed per RRset.
+into the nft set with TTL = min(srv_ttl, child_ttl).  The SRV port is
+discarded \(em the set is IP-only.  At most 32 SRV targets are processed
+per RRset.
 .RE
 .PP
 .RS
@@ -153,8 +155,8 @@ sip  _sip._udp.example.org           resolver,dnstype=srv,refresh=10m
 
 .SS ip-list
 shorewalld fetches a structured prefix list from a registered cloud
-provider (AWS, GCP, …) and installs the prefixes/CIDRs into an interval nft
-set.
+provider (AWS, GCP, \&...) and installs the prefixes/CIDRs into an interval
+nft set.
 
 .I HOSTS
 must be the registered provider keyword (e.g.
@@ -235,6 +237,7 @@ refresh=DURATION	resolver, ip-list, ip-list-plain	Re-fetch/re-resolve interval
 inotify	ip-list-plain	Watch file via inotify
 dnstype=a/aaaa	dnstap, resolver	Address family restriction
 dnstype=srv	resolver	Query SRV; resolve each target's A+AAAA
+size=N	all	nft set capacity override (k/M suffix accepted)
 .TE
 
 Duration syntax: integer seconds, or integer followed by
@@ -249,8 +252,14 @@ Examples:
 .BR 1h ,
 .BR 2d .
 
+Size accepts a plain integer, a
+.B k
+suffix (× 1024), or an
+.B M
+suffix (× 1048576).  Valid range: 1 \(en 67108864 (64\~M).
+
 .SH nft SET NAMING
-Each declared set produces two nft sets — one for IPv4 and one for IPv6:
+Each declared set produces two nft sets \(em one for IPv4 and one for IPv6:
 .RS
 .nf
 nfset_<name>_v4
@@ -265,35 +274,11 @@ consecutive underscores are collapsed; the body is truncated to 22
 characters with a SHA-1 collision guard appended if needed.  The maximum
 total identifier length is 31 characters.
 
-.SH REFERENCING SETS IN RULES
-
-.TP
-.IB zone : nfset: name
-Match packets whose source or destination address is in the set.
-.TP
-.IB zone :! nfset: name
-Match packets whose address is
-.I not
-in the set.
-.TP
-.IB zone : nfset: name1 , name2
-Comma-separated list: expands to one rule per set.
-
-.SS Example rules
-.RS
-.nf
-#ACTION  SOURCE               DEST   PROTO  DPORT
-ACCEPT   net:nfset:cdn        loc
-ACCEPT   loc                  net:nfset:allowlist
-DROP     net:!nfset:trusted   fw
-.fi
-.RE
-
 .SH nft SET FLAGS
 The compiler selects
 .B flags
 .I per logical set name
-based on the mix of backends feeding that name (W15 per-set flags):
+based on the mix of backends feeding that name:
 
 .TS
 l l.
@@ -321,15 +306,15 @@ in the OPTIONS column.
 Two or more rows with the same
 .I NAME
 but different backends are stored additively.
-shorewalld routes each row to its own tracker; both trackers write to the
+shorewalld routes each row to its own tracker; all trackers write to the
 same pair of nft sets simultaneously.
 .PP
 Example:
 .RS
 .nf
-# name    hosts                             options
-web       cdn.example.org,edge.example.org  resolver,refresh=5m
-web       /etc/shorewall46/web-blocks.txt   ip-list-plain,refresh=1h
+# name    hosts                              options
+web       cdn.example.org,edge.example.org   resolver,refresh=5m
+web       /etc/shorewall46/web-extra.txt     ip-list-plain,refresh=1h
 .fi
 .RE
 .PP
@@ -345,8 +330,82 @@ row to PullResolver and the
 .B ip-list-plain
 row to PlainListTracker; both write IPs into the shared nft sets.
 
-.SH RELATIONSHIP TO shorewalld
+.SH REFERENCING SETS IN RULES
+
+.TP
+.IB zone : nfset: name
+Match packets whose source or destination address is in the set.
+.TP
+.IB zone :! nfset: name
+Match packets whose address is
+.I not
+in the set.
+.TP
+.IB zone : nfset: name1 , name2
+Comma-separated list: expands to one rule per set (OR-clone semantics).
+
 .PP
+Classic bracket syntax is also accepted (see
+.BR shorewall\-nft\-rules (5)):
+.TP
+.BI + setname [ src ]
+Match source address against
+.IR setname .
+.TP
+.BI + setname [ dst ]
+Match destination address.
+.TP
+.BI + setname [ src,dst ]
+Match both source and destination.
+.TP
+.BI +[ a,b,c ]
+AND-multi-set: packet must match
+.I all
+listed sets simultaneously.  Distinct from the OR-clone comma expansion above.
+
+.SS Inline dns: alternatives
+Instead of declaring a named set, rules may use inline single-hostname tokens:
+.TP
+.IB zone : dnst: hostname
+Single-hostname tap-driven set.
+.B Preferred
+form.
+.TP
+.IB zone : dnsr: hostname
+Single-hostname pull-resolver-driven set.
+.TP
+.IB zone : dns: hostname
+Alias for
+.B dnst:
+\(em
+.BR deprecated .
+Emits a compile-time WARNING once per config file.  Migrate to
+.BR dnst: .
+
+.SS Per-table token support
+.TS
+l l l.
+Config file	SOURCE column	DEST / ADDRESS column
+_
+rules	yes	yes
+blrules	yes	yes
+stoppedrules	yes	yes
+masq	yes	no (ADDRESS column not supported)
+dnat	yes	no (TARGET column not supported)
+tcrules	yes	yes
+mangle	yes	yes
+notrack	yes	yes
+conntrack	yes	yes
+rawnat	yes	yes
+ecn	yes	yes
+arprules	yes	yes
+accounting	yes	yes
+policies	no	no
+nfacct	no	no
+scfilter	no	no
+.TE
+
+.SH RELATIONSHIP TO shorewalld
 The compiler (1) emits the nft set declarations in the compiled ruleset, and
 (2) serialises the nfsets registry inside the
 .B register-instance
@@ -372,28 +431,88 @@ configs to IpListTracker.
 
 Multiple instances in different network namespaces can each declare a set
 named
-.BR nfset:web
-— shorewalld routes DNS answers into the correct nft set in the correct
+.B nfset:web
+\(em shorewalld routes DNS answers into the correct nft set in the correct
 netns.
 
-.SH INLINE dns: AND dnsr: ALTERNATIVES
-Instead of declaring a named set, rules may use inline syntax:
-.TP
-.IB zone : dns: hostname
-Single-hostname tap-driven set (one set per hostname).
-.TP
-.IB zone : dnsr: hostname
-Single-hostname pull-resolver-driven set.
+.SH LARGE-SET PERFORMANCE
+Very large set payloads are transferred to the target netns via zero-copy
+.BR memfd_create (2)
+IPC (Linux \(>= 3.17); no operator tuning is required for multi-hundred-MB
+bulk ip-list loads.
+
+When any list hits \(>= 80% of its declared capacity, a WARN log is emitted.
+Set
+.B SHOREWALLD_IPLIST_SWAP_RENAME=1
+to enable atomic swap-rename for large refreshes (requires nft \(>= 0.9.3 and
+Linux \(>= 5.10).
+
+.SH EXAMPLES
+
+.SS Example 1: Single-backend simple config
+.nf
+# /etc/shorewall46/nfsets
+#NAME       HOSTS                     OPTIONS
+cdn         {a,b}.cdn.example.com     dnstap
+blocklist   https://example.org/bl    ip\-list\-plain,refresh=1h
+.fi
 .PP
-Use
-.B nfset:
-when multiple hostnames must share one set or when a non-DNS backend is
-needed.
+Rules:
+.nf
+# /etc/shorewall46/rules
+ACCEPT    net:nfset:cdn       loc
+DROP      net:nfset:blocklist fw
+.fi
+
+.SS Example 2: SRV-enabled resolver
+.nf
+# /etc/shorewall46/nfsets
+sip   _sip._udp.example.org   resolver,dnstype=srv,refresh=10m
+.fi
+.PP
+Rules:
+.nf
+ACCEPT    net:nfset:sip   fw   udp   5060
+.fi
+.PP
+shorewalld resolves
+.I _sip._udp.example.org SRV,
+extracts targets, and resolves each target's A and AAAA records (up to 32
+targets per RRset).
+
+.SS Example 3: Multi-backend for one set name
+.nf
+# /etc/shorewall46/nfsets
+web   cdn.example.org,edge.example.org   resolver,refresh=5m
+web   /etc/shorewall46/web-extra.txt     ip\-list\-plain,refresh=1h
+.fi
+.PP
+Both rows feed
+.B nfset_web_v4
+and
+.BR nfset_web_v6 .
+The compiler emits
+.B "flags timeout, interval"
+(union of both backend types).
+
+.SS Example 4: ip-list-plain with inotify
+.nf
+# /etc/shorewall46/nfsets
+localbl   /var/lib/lists/blocked.txt   ip\-list\-plain,inotify,size=512k
+.fi
+.PP
+shorewalld reloads the list immediately whenever the file changes, without
+waiting for the default 1 h refresh cycle.  The set is declared with
+.B size 524288
+(512 * 1024).
 
 .SH FILES
 .TP
 .I /etc/shorewall/nfsets
 The nfsets config file.
+.TP
+.I /etc/shorewall46/nfsets
+Dual-stack (merged) config directory variant.
 .TP
 .I /etc/shorewall/dnsnames.compiled
 Written by
