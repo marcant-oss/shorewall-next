@@ -17,6 +17,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "FDP_IFF.1",
         "Basic information flow control (zone-pair policies)",
     ),
+    "cc-fdp-iff-1-basic-flow-ipv6": (
+        "cc-iso-15408",
+        "FDP_IFF.1",
+        "Basic information flow control — IPv6 (zone-pair policies, dual-stack)",
+    ),
     "cc-fdp-iff-1-default-deny": (
         "cc-iso-15408",
         "FDP_IFF.1.5",
@@ -26,6 +31,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "cc-iso-15408",
         "FDP_IFF.1",
         "Reject evasion probes (malformed TCP flags, spoofed IPs, fragmentation)",
+    ),
+    "cc-fdp-iff-1-evasion-reject-ipv6": (
+        "cc-iso-15408",
+        "FDP_IFF.1",
+        "Reject evasion probes — IPv6 (extension headers, fragmentation, malformed ICMPv6)",
     ),
 
     # FAU_GEN.1 — Audit data generation (PARTIAL — Prometheus counters only)
@@ -40,6 +50,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "cc-iso-15408",
         "FRU_RSA.1",
         "Minimum resource allocation under high connection-rate load",
+    ),
+    "cc-fru-rsa-1-conn-storm-ipv6": (
+        "cc-iso-15408",
+        "FRU_RSA.1",
+        "Minimum resource allocation under high IPv6 connection-rate load",
     ),
     "cc-fru-rsa-1-dos-syn-flood": (
         "cc-iso-15408",
@@ -92,6 +107,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "AC-4",
         "Information flow enforcement (zone-pair policy scan)",
     ),
+    "nist-ac-4-info-flow-ipv6": (
+        "nist-800-53",
+        "AC-4",
+        "Information flow enforcement — IPv6 (dual-stack zone-pair policy scan)",
+    ),
     "nist-ac-4-boundary-coverage": (
         "nist-800-53",
         "AC-4",
@@ -108,6 +128,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "nist-800-53",
         "SC-5",
         "Resistance to conntrack saturation DoS (conn_storm)",
+    ),
+    "nist-sc-5-dos-conntrack-overflow": (
+        "nist-800-53",
+        "SC-5",
+        "Resistance to conntrack table overflow (conntrack_overflow scenario)",
     ),
     "nist-sc-5-dos-dns": (
         "nist-800-53",
@@ -126,10 +151,25 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "SC-7",
         "Boundary protection — sustained throughput under load",
     ),
+    "nist-sc-7-boundary-throughput-ipv6": (
+        "nist-800-53",
+        "SC-7",
+        "Boundary protection — sustained IPv6 throughput under load",
+    ),
     "nist-sc-7-boundary-evasion": (
         "nist-800-53",
         "SC-7",
         "Boundary protection — evasion probe rejection",
+    ),
+    "nist-sc-7-boundary-evasion-ipv6": (
+        "nist-800-53",
+        "SC-7",
+        "Boundary protection — IPv6 evasion probe rejection",
+    ),
+    "nist-sc-7-flowtable-offload": (
+        "nist-800-53",
+        "SC-7",
+        "Boundary protection — nft flowtable hardware offload verification",
     ),
 
     # AU-2 / AU-12 — Audit events (PARTIAL — Prometheus counters only)

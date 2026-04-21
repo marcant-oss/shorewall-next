@@ -87,6 +87,14 @@ Emitted when the `inet shorewall` table is loaded.
 | `shorewalld_worker_transport_recv_bytes_total` | counter | `netns` | Bytes received over SEQPACKET |
 | `shorewalld_worker_transport_send_errors_total` | counter | `netns` | SEQPACKET send errors |
 
+## Infrastructure / runtime metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `shorewalld_rtnl_handles_cached` | gauge | — | Number of cached `IPRoute` handles (one per managed netns); exposed by `RtnlHandlesCollector` (A-1) |
+
+---
+
 ## DNS-set pipeline metrics
 
 Emitted when `--listen-api` is set.
@@ -99,6 +107,26 @@ Emitted when `--listen-api` is set.
 | `shorewalld_dnstap_connections` | gauge | — | Active dnstap connections |
 | `shorewalld_dnstap_workers_busy` | gauge | — | Decoder worker threads busy |
 | `shorewalld_dnstap_queue_depth` | gauge | — | Decoder queue depth |
+
+### pbdns pre-parse filter counters
+
+Emitted by the two-pass filter (P-5). On a deployment where ~95% of
+frames are non-allowlisted queries the expected ratio is `~99%` of
+received frames dropping here before any `ParseFromString` call.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `shorewalld_pbdns_frames_skipped_by_type_total` | counter | — | PBDNSMessage frames dropped pre-parse: type was not a response type (`DNSResponseType=2` or `DNSIncomingResponseType=4`) |
+| `shorewalld_pbdns_frames_skipped_by_qname_total` | counter | — | Response-type frames dropped pre-parse: qname not in tracker allowlist |
+
+**PromQL — fraction of pbdns frames reaching full decode:**
+
+```promql
+1 - (
+  rate(shorewalld_pbdns_frames_skipped_by_type_total[5m])
+  + rate(shorewalld_pbdns_frames_skipped_by_qname_total[5m])
+) / rate(shorewalld_pbdns_frames_accepted_total[5m])
+```
 
 ### Per-set DNS metrics
 

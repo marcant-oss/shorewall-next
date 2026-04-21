@@ -39,10 +39,10 @@ def tracker_with_entries():
     gh_v6 = t.set_id_for("github.com", FAMILY_V6)
     api_v4 = t.set_id_for("api.stripe.com", FAMILY_V4)
     t.commit([
-        Proposal(set_id=gh_v4, ip_bytes=b"\x01\x02\x03\x04", ttl=600),
-        Proposal(set_id=gh_v4, ip_bytes=b"\x05\x06\x07\x08", ttl=600),
-        Proposal(set_id=gh_v6, ip_bytes=bytes([0xAA] * 16), ttl=600),
-        Proposal(set_id=api_v4, ip_bytes=b"\x09\x09\x09\x09", ttl=60),
+        Proposal(set_id=gh_v4, ip=int.from_bytes(b"\x01\x02\x03\x04", "big"), ttl=600),
+        Proposal(set_id=gh_v4, ip=int.from_bytes(b"\x05\x06\x07\x08", "big"), ttl=600),
+        Proposal(set_id=gh_v6, ip=int.from_bytes(bytes([0xAA] * 16), "big"), ttl=600),
+        Proposal(set_id=api_v4, ip=int.from_bytes(b"\x09\x09\x09\x09", "big"), ttl=60),
     ], [Verdict.ADD] * 4)
     return t
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from shorewalld.exporter import CollectorBase, _MetricFamily
 
-from ._shared import _AF_NAMES
+from ._shared import _AF_NAMES, close_rtnl, get_rtnl
 
 # Linux NUD_* bitmask → human name, ordered by priority (most specific
 # first). An entry usually has a single bit set, but NUD_NOARP +
@@ -48,25 +48,17 @@ class NeighbourCollector(CollectorBase):
             ["netns", "iface", "family", "state"])
 
         try:
-            from pyroute2 import IPRoute  # type: ignore[import-untyped]
+            ipr = get_rtnl(self.netns or None)
         except ImportError:
             return [count]
-
-        kwargs = {"netns": self.netns} if self.netns else {}
-        try:
-            ipr = IPRoute(**kwargs)
         except Exception:
             return [count]
         try:
             links = ipr.get_links()
             neighs = ipr.get_neighbours()
         except Exception:
+            close_rtnl(self.netns or None)
             return [count]
-        finally:
-            try:
-                ipr.close()
-            except Exception:
-                pass
 
         idx_to_name: dict[int, str] = {}
         for link in links:

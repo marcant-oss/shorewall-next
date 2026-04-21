@@ -1,26 +1,29 @@
 """ConntrackStatsCollector — per-netns conntrack engine counters via CTNETLINK.
 
-This is the lone collector that still hops through ``_in_netns()`` on
-the scrape thread (CLAUDE.md §"Read RPC: netns-pinned /proc reads").
-The read RPC doesn't yet proxy ``NFCTSocket`` over worker IPC, so the
-setns is kept local here; every other ``/proc``-reading collector has
-moved to the worker-delegated path. Deferred work: proxy CTNETLINK too.
+The read RPC proxies ``NFCTSocket`` over worker IPC so the scrape
+thread never calls ``setns(2)`` — the worker is already pinned to the
+target netns (``READ_KIND_CTNETLINK``). All other collectors have used
+the worker-delegated path since the Read RPC shipped; this collector
+is now fully aligned with that architecture.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-from shorewall_nft.nft.netlink import _in_netns
+from typing import TYPE_CHECKING, Any
 
 from shorewalld.exporter import CollectorBase, _MetricFamily
+
+if TYPE_CHECKING:
+    from shorewalld.read_codec import CtNetlinkStats
+
+    from ._shared import _CtFileReader
 
 # Per-netns conntrack counters summed from the per-CPU CTNETLINK rows.
 # Legacy fields (SEARCHED / NEW / DELETE / DELETE_LIST / INSERT) are
 # skipped — modern kernels never increment them and surfacing them
 # would only confuse alerting rules.
 _CT_STAT_FIELDS: list[tuple[str, str, str]] = [
-    # (pyroute2 attr, metric name, help text)
+    # (pyroute2 attr / CtNetlinkStats field, metric name, help text)
     ("CTA_STATS_FOUND", "shorewall_nft_ct_found_total",
      "Conntrack lookups that matched an existing entry"),
     ("CTA_STATS_INVALID", "shorewall_nft_ct_invalid_total",
@@ -62,17 +65,21 @@ def _sum_ct_stats_cpu(rows: list[Any]) -> dict[str, int]:
 class ConntrackStatsCollector(CollectorBase):
     """Per-netns conntrack engine counters via ``CTNETLINK``.
 
-    Opens ``NFCTSocket`` *inside* the target netns (setns hop via
-    :func:`_in_netns`) because netfilter sockets bind to the calling
-    netns at open time. The kernel returns one row per CPU; we sum
-    across CPUs since the per-CPU identity is never a stable label
-    for Prometheus.
+    Delegates the ``NFCTSocket`` call to the nft-worker that is already
+    pinned to the target netns (``WorkerRouter.ctnetlink_stats_sync``),
+    so the scrape thread stays in the default netns and requires no
+    extra capabilities beyond what the daemon already holds.
 
-    Requires ``CAP_NET_ADMIN``. On EPERM / missing pyroute2 / netns
-    gone the collector emits the metric families with zero samples
-    rather than raising — the registry isolates exceptions anyway,
-    but a silent empty is friendlier for unprivileged dev runs.
+    On ``ctnetlink_stats_sync`` returning ``None`` (worker unavailable,
+    netns gone, pyroute2 missing, timeout) the collector emits the
+    metric families with zero samples rather than raising — the registry
+    isolates exceptions anyway, but a silent empty is friendlier for
+    unprivileged dev runs.
     """
+
+    def __init__(self, netns: str, router: "_CtFileReader") -> None:
+        super().__init__(netns)
+        self._router = router
 
     def collect(self) -> list[_MetricFamily]:
         families = {
@@ -83,29 +90,11 @@ class ConntrackStatsCollector(CollectorBase):
         def _all() -> list[_MetricFamily]:
             return list(families.values())
 
-        try:
-            from pyroute2 import NFCTSocket  # type: ignore[import-untyped]
-        except ImportError:
+        stats: CtNetlinkStats | None = self._router.ctnetlink_stats_sync(
+            self.netns)
+        if stats is None:
             return _all()
 
-        try:
-            with _in_netns(self.netns or None):
-                sock = NFCTSocket()
-                try:
-                    rows = sock.stat()
-                finally:
-                    try:
-                        sock.close()
-                    except Exception:
-                        pass
-        except Exception:
-            # EPERM (no CAP_NET_ADMIN), netns gone, pyroute2 NetlinkError
-            # — all non-fatal. Return the declared families empty so
-            # Prometheus still sees them rather than the metric names
-            # disappearing under dropped privileges.
-            return _all()
-
-        totals = _sum_ct_stats_cpu(rows)
         for attr, name, _help in _CT_STAT_FIELDS:
-            families[name].add([self.netns], float(totals[attr]))
+            families[name].add([self.netns], float(getattr(stats, attr, 0)))
         return _all()

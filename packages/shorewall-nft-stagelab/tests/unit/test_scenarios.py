@@ -117,11 +117,15 @@ def test_conn_storm_plan_three_commands():
     assert storm_cmd.spec["connect_rate"] == 200
     assert storm_cmd.spec["duration_s"] == 5
 
-    # 3) HTTP listener stop on sink
+    # 3) HTTP listener stop on sink — must wait for the storm to finish
     assert stop_cmd.kind == "stop_http_listener"
     assert stop_cmd.endpoint_name == "sink"
     assert stop_cmd.spec["port"] == 80
     assert stop_cmd.spec["_http_sidecar"] is True
+    # delay_before_s = hold_s + 2 so the listener stays up for the storm.
+    # Without this the sink group (start→stop, sequential) stops the listener
+    # immediately after starting it, killing it before the storm can connect.
+    assert stop_cmd.spec["delay_before_s"] == 5 + 2  # hold_s + 2
 
 
 def test_conn_storm_plan_custom_target_port():
@@ -390,6 +394,9 @@ def test_throughput_plan_emits_conntrack_sidecar_when_observe_set():
     assert sidecar.spec["duration_s"] == 12  # duration_s + 2
     assert sidecar.spec["interval_s"] == 1.0
     assert sidecar.spec["_conntrack_sidecar"] is True
+    # concurrent=True ensures the controller runs the sidecar in parallel
+    # with the iperf3 client rather than sequentially after it finishes.
+    assert sidecar.concurrent is True
 
 
 def test_throughput_plan_no_sidecar_when_observe_false():
@@ -471,6 +478,8 @@ def test_conn_storm_plan_emits_conntrack_sidecar_when_observe_set():
     assert sidecar.spec["duration_s"] == 17  # hold_s + 2
     assert sidecar.spec["interval_s"] == 1.0
     assert sidecar.spec["_conntrack_sidecar"] is True
+    # concurrent=True ensures the sidecar overlaps with the pyconn storm
+    assert sidecar.concurrent is True
 
 
 def test_conn_storm_plan_no_sidecar_when_observe_false():
@@ -526,3 +535,110 @@ def test_conn_storm_summarize_captures_peak():
     assert result.raw["conntrack_peak_observed"] == 12345
     assert result.raw["established"] == 100
     assert result.ok is True
+
+
+# ---------------------------------------------------------------------------
+# IPv6 probe-mode endpoint support — RuleScanRunner
+# ---------------------------------------------------------------------------
+
+
+def _make_probe_ep(name: str, host: str, ipv4: str | None = None, ipv6: str | None = None) -> Endpoint:
+    return Endpoint(
+        name=name,
+        host=host,
+        mode="probe",
+        bridge="br-test",
+        ipv4=ipv4,
+        ipv6=ipv6,
+    )
+
+
+def _probe_cfg(src_ipv6: str | None, scenarios: list) -> StagelabConfig:
+    """Config with one probe endpoint, optionally carrying an IPv6 address."""
+    return StagelabConfig(
+        hosts=[Host(name="h1", address="local:")],
+        dut=Dut(kind="external"),
+        endpoints=[
+            _make_probe_ep("probe-src", "h1", ipv4="10.0.10.1/24", ipv6=src_ipv6),
+        ],
+        scenarios=scenarios,
+        metrics=MetricsSpec(),
+        report={"output_dir": "/tmp/stagelab-test"},
+    )
+
+
+def test_rule_scan_ipv6_uses_endpoint_ipv6() -> None:
+    """plan() with family=ipv6 on a probe endpoint must use endpoint.ipv6 stripped."""
+    from shorewall_nft_stagelab.scenarios import RuleScanRunner
+
+    sc = RuleScanScenario(
+        id="rs-v6",
+        kind="rule_scan",
+        source="probe-src",
+        target_subnet="2001:db8:0:3168::/64",
+        random_count=3,
+        family="ipv6",
+    )
+    cfg = _probe_cfg("2001:db8:0:2000::200/64", [sc])
+    runner = RuleScanRunner(sc)
+    cmds = runner.plan(cfg)
+
+    probe_cmds = [c for c in cmds if c.kind == "send_probe"]
+    assert len(probe_cmds) == 3
+    for cmd in probe_cmds:
+        assert cmd.spec["src_ip"] == "2001:db8:0:2000::200"
+        assert cmd.spec["family"] == "ipv6"
+
+
+def test_rule_scan_ipv6_missing_ipv6_raises_valueerror() -> None:
+    """family=ipv6 with no endpoint.ipv6 must raise ValueError with endpoint name."""
+    from shorewall_nft_stagelab.scenarios import RuleScanRunner
+
+    sc = RuleScanScenario(
+        id="rs-v6-noaddr",
+        kind="rule_scan",
+        source="probe-src",
+        target_subnet="2001:db8:0:3168::/64",
+        random_count=2,
+        family="ipv6",
+    )
+    cfg = _probe_cfg(None, [sc])
+    runner = RuleScanRunner(sc)
+    with pytest.raises(ValueError, match="probe-src"):
+        runner.plan(cfg)
+
+
+def test_rule_scan_ipv6_probe_endpoint_no_ipv4_required() -> None:
+    """A probe endpoint with only ipv6 set (no ipv4) must work for family=ipv6 scans."""
+    from shorewall_nft_stagelab.scenarios import RuleScanRunner
+
+    sc = RuleScanScenario(
+        id="rs-v6-only",
+        kind="rule_scan",
+        source="probe-src-v6only",
+        target_subnet="2001:db8:0:3168::/64",
+        random_count=2,
+        family="ipv6",
+    )
+    cfg = StagelabConfig(
+        hosts=[Host(name="h1", address="local:")],
+        dut=Dut(kind="external"),
+        endpoints=[
+            Endpoint(
+                name="probe-src-v6only",
+                host="h1",
+                mode="probe",
+                bridge="br-test",
+                ipv6="2001:db8:0:2000::200/64",
+            ),
+        ],
+        scenarios=[sc],
+        metrics=MetricsSpec(),
+        report={"output_dir": "/tmp/stagelab-test"},
+    )
+    runner = RuleScanRunner(sc)
+    cmds = runner.plan(cfg)
+    probe_cmds = [c for c in cmds if c.kind == "send_probe"]
+    assert len(probe_cmds) == 2
+    for cmd in probe_cmds:
+        assert cmd.spec["src_ip"] == "2001:db8:0:2000::200"

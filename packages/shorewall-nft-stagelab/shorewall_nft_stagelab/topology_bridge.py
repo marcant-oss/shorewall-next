@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import os
 import re
 import subprocess
@@ -21,6 +23,10 @@ _NETNS_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 _EEXIST = 17
 _ENODEV = 19
 _ENOENT = 2
+
+# Load libc once at import time — see agent.py for the dlopen-in-preexec_fn hazard.
+_libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+_CLONE_NEWNET = 0x40000000
 
 
 def _validate_iface(name: str, label: str) -> None:
@@ -58,18 +64,19 @@ def _run_in_ns(netns: str, *cmd: str) -> None:
     no ``ip netns exec`` wrapper binary is needed.  The ``bridge`` command
     (used for VLAN filter config) is the only consumer; pyroute2 has no
     bridge-vlan API.
-    """
-    import ctypes
 
-    _CLONE_NEWNET = 0x40000000
+    Uses the module-level ``_libc`` handle — do NOT call ctypes.CDLL() inside
+    the preexec_fn (unsafe in multithreaded processes; see agent.py for details).
+    """
     ns_path = f"/run/netns/{netns}"
 
     def _enter_ns() -> None:  # runs in child, post-fork, pre-exec
-        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        # Use module-level _libc — do NOT call ctypes.CDLL() here.
         fd = os.open(ns_path, os.O_RDONLY)
         try:
             if _libc.setns(fd, _CLONE_NEWNET) != 0:
-                raise OSError(ctypes.get_errno(), "setns failed")
+                _errno = ctypes.get_errno()
+                raise OSError(_errno, f"setns({ns_path!r}): {os.strerror(_errno)}")
         finally:
             os.close(fd)
 

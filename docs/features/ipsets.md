@@ -39,6 +39,9 @@ shorewall-nft maps `+setname` to the nft set `setname` in the compiled
 exist at apply time — shorewall-nft emits a set reference, not a set
 declaration. Use `nfsets` to declare sets declaratively, or
 `shorewall-nft load-sets` to populate sets from external sources.
+When libnftables' native JSON API is available, bulk element loads skip the
+nft text parser entirely, making large set population (tens of thousands of
+prefixes) significantly faster.
 
 ---
 

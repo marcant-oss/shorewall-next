@@ -371,7 +371,8 @@ def test_worker_pool_counts_non_client_response_drops():
     frame_q: queue.Queue[bytes] = queue.Queue(maxsize=4)
 
     # CLIENT_QUERY (type=5) is a query event, not a response — the
-    # decoder drops it and increments the non-response counter.
+    # two-pass pre-filter peeks the type varint and drops the frame
+    # before the full protobuf parse, incrementing frames_skipped_by_type.
     frame = _make_dnstap_frame(5, b"\x00")
 
     async def driver() -> None:
@@ -385,13 +386,13 @@ def test_worker_pool_counts_non_client_response_drops():
             frame_q.put(frame)
             for _ in range(50):
                 await asyncio.sleep(0.02)
-                if metrics.frames_dropped_not_client_response:
+                if metrics.frames_skipped_by_type:
                     break
         finally:
             pool.stop()
 
     asyncio.run(driver())
-    assert metrics.frames_dropped_not_client_response == 1
+    assert metrics.frames_skipped_by_type == 1
 
 
 @pytest.mark.skipif(not _HAVE_DNSPYTHON, reason="dnspython not installed")
@@ -501,16 +502,19 @@ def test_worker_pool_counts_decode_errors():
             loop=loop, qname_filter=QnameFilter(), n_workers=1)
         pool.start()
         try:
+            # All-0xFF bytes: _peek_message_type returns None (malformed
+            # varint) so the frame is counted as frames_skipped_by_type
+            # before the full protobuf parse ever runs.
             frame_q.put(b"\xff\xff\xff\xff\xff\xff\xff\xff")  # garbage
             for _ in range(50):
                 await asyncio.sleep(0.02)
-                if metrics.frames_decode_error:
+                if metrics.frames_skipped_by_type:
                     break
         finally:
             pool.stop()
 
     asyncio.run(driver())
-    assert metrics.frames_decode_error == 1
+    assert metrics.frames_skipped_by_type == 1
 
 
 # ── Queue overflow bookkeeping (server side) ──────────────────────

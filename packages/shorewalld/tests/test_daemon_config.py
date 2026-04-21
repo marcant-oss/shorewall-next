@@ -103,23 +103,35 @@ def test_unknown_keys_are_ignored(tmp_path: Path):
     assert d.listen_prom == ":9748"
 
 
+def _capture_daemon_config(captured: dict):
+    """Return a FakeDaemon class that captures the DaemonConfig fields."""
+    from shorewalld.daemon_config import DaemonConfig
+
+    class _FakeDaemon:
+        def __init__(self, config: DaemonConfig | None = None, **kw):
+            if config is not None:
+                # New path: capture config fields as flat dict for assertions.
+                for f in config.__dataclass_fields__:
+                    captured[f] = getattr(config, f)
+            else:
+                captured.update(kw)
+
+        async def run(self):
+            return 0
+
+    return _FakeDaemon
+
+
 def test_cli_merges_conf_defaults(tmp_path: Path, monkeypatch):
     """Smoke test: CLI main() picks up conf values when no flag passed."""
     conf = tmp_path / "shorewalld.conf"
     conf.write_text("LISTEN_PROM=127.0.0.1:9900\nSTATE_DIR=/tmp/foo\n")
     captured: dict = {}
 
-    class _FakeDaemon:
-        def __init__(self, **kw):
-            captured.update(kw)
-
-        async def run(self):
-            return 0
-
     import shorewalld.core as core_mod
     from shorewalld import cli as cli_mod
 
-    monkeypatch.setattr(core_mod, "Daemon", _FakeDaemon)
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
     # configure_logging mutates the shorewalld logger tree — stub it
     # out so these tests don't leak handlers into later tests.
     monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
@@ -136,17 +148,10 @@ def test_cli_flag_overrides_conf(tmp_path: Path, monkeypatch):
     conf.write_text("LISTEN_PROM=127.0.0.1:9900\n")
     captured: dict = {}
 
-    class _FakeDaemon:
-        def __init__(self, **kw):
-            captured.update(kw)
-
-        async def run(self):
-            return 0
-
     import shorewalld.core as core_mod
     from shorewalld import cli as cli_mod
 
-    monkeypatch.setattr(core_mod, "Daemon", _FakeDaemon)
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
     # configure_logging mutates the shorewalld logger tree — stub it
     # out so these tests don't leak handlers into later tests.
     monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
@@ -157,3 +162,98 @@ def test_cli_flag_overrides_conf(tmp_path: Path, monkeypatch):
     assert rc == 0
     assert captured["prom_host"] == "0.0.0.0"
     assert captured["prom_port"] == 9999
+
+
+# ── M-3: DNS_DEDUP_REFRESH_THRESHOLD + BATCH_WINDOW_SECONDS tests ────────────
+
+
+def test_load_defaults_dns_dedup_threshold(tmp_path: Path):
+    """DNS_DEDUP_REFRESH_THRESHOLD=0.75 is parsed as a float."""
+    conf = tmp_path / "shorewalld.conf"
+    conf.write_text("DNS_DEDUP_REFRESH_THRESHOLD=0.75\n")
+    d = load_defaults(conf)
+    assert d.dns_dedup_refresh_threshold == 0.75
+
+
+def test_load_defaults_batch_window_seconds(tmp_path: Path):
+    """BATCH_WINDOW_SECONDS=0.025 is parsed as a float."""
+    conf = tmp_path / "shorewalld.conf"
+    conf.write_text("BATCH_WINDOW_SECONDS=0.025\n")
+    d = load_defaults(conf)
+    assert d.batch_window_seconds == 0.025
+
+
+def test_load_defaults_dns_tuning_defaults_are_none(tmp_path: Path):
+    """When keys are absent the attrs are None (CLI default wins)."""
+    conf = tmp_path / "shorewalld.conf"
+    conf.write_text("LISTEN_PROM=:9748\n")
+    d = load_defaults(conf)
+    assert d.dns_dedup_refresh_threshold is None
+    assert d.batch_window_seconds is None
+
+
+def test_float_coercion_rejects_invalid_threshold(tmp_path: Path):
+    """DNS_DEDUP_REFRESH_THRESHOLD=abc raises a clear ConfigError."""
+    conf = tmp_path / "shorewalld.conf"
+    conf.write_text("DNS_DEDUP_REFRESH_THRESHOLD=abc\n")
+    with pytest.raises(ConfigError, match="DNS_DEDUP_REFRESH_THRESHOLD"):
+        load_defaults(conf)
+
+
+def test_float_coercion_rejects_invalid_batch_window(tmp_path: Path):
+    """BATCH_WINDOW_SECONDS=abc raises a clear ConfigError."""
+    conf = tmp_path / "shorewalld.conf"
+    conf.write_text("BATCH_WINDOW_SECONDS=abc\n")
+    with pytest.raises(ConfigError, match="BATCH_WINDOW_SECONDS"):
+        load_defaults(conf)
+
+
+def test_cli_dns_dedup_threshold_override(tmp_path: Path, monkeypatch):
+    """--dns-dedup-refresh-threshold CLI flag overrides conf value."""
+    conf = tmp_path / "shorewalld.conf"
+    conf.write_text("DNS_DEDUP_REFRESH_THRESHOLD=0.75\n")
+    captured: dict = {}
+
+    import shorewalld.core as core_mod
+    from shorewalld import cli as cli_mod
+
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
+    monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
+    rc = cli_mod.main([
+        "--config-file", str(conf),
+        "--dns-dedup-refresh-threshold", "0.6",
+    ])
+    assert rc == 0
+    assert captured["dns_dedup_refresh_threshold"] == 0.6
+
+
+def test_cli_dns_dedup_threshold_from_conf(tmp_path: Path, monkeypatch):
+    """DNS_DEDUP_REFRESH_THRESHOLD in conf is picked up when no CLI flag."""
+    conf = tmp_path / "shorewalld.conf"
+    conf.write_text("DNS_DEDUP_REFRESH_THRESHOLD=0.75\n")
+    captured: dict = {}
+
+    import shorewalld.core as core_mod
+    from shorewalld import cli as cli_mod
+
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
+    monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
+    rc = cli_mod.main(["--config-file", str(conf)])
+    assert rc == 0
+    assert captured["dns_dedup_refresh_threshold"] == 0.75
+
+
+def test_cli_batch_window_from_conf(tmp_path: Path, monkeypatch):
+    """BATCH_WINDOW_SECONDS in conf is picked up when no CLI flag."""
+    conf = tmp_path / "shorewalld.conf"
+    conf.write_text("BATCH_WINDOW_SECONDS=0.050\n")
+    captured: dict = {}
+
+    import shorewalld.core as core_mod
+    from shorewalld import cli as cli_mod
+
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
+    monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
+    rc = cli_mod.main(["--config-file", str(conf)])
+    assert rc == 0
+    assert captured["batch_window_seconds"] == 0.050

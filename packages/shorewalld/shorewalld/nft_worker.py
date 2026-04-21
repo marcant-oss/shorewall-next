@@ -81,16 +81,20 @@ from .batch_codec import (
 )
 from .logsetup import get_logger
 from .read_codec import (
+    CT_STATS_FIELDS,
     MAGIC_READ_REQ,
     MAX_FILE_BYTES,
     READ_KIND_COUNT_LINES,
+    READ_KIND_CTNETLINK,
     READ_KIND_FILE,
     READ_STATUS_ERROR,
     READ_STATUS_NOT_FOUND,
     READ_STATUS_OK,
     READ_STATUS_TOO_LARGE,
+    CtNetlinkStats,
     ReadWireError,
     decode_read_request,
+    encode_ct_stats,
     encode_line_count,
     encode_read_response_into,
     peek_magic,
@@ -106,6 +110,11 @@ log = get_logger("worker")
 # libc prototype for PR_SET_PDEATHSIG. Linux-specific.
 # PR_SET_NAME is handled by ``proctitle.set_proc_name``.
 _PR_SET_PDEATHSIG = 1
+
+# Module-level libc handle — resolved once at import time so both
+# _install_pdeathsig and _enter_netns reuse the same CDLL object
+# instead of calling find_library + CDLL on every worker spawn.
+_LIBC = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
 
 # Table / family the workers write to. Shorewall-nft ships one
 # inet table called "shorewall"; the worker's job is to push DNS set
@@ -143,9 +152,7 @@ def _install_pdeathsig(sig: int = signal.SIGTERM) -> None:
     just not self-cleaning on parent crash.
     """
     try:
-        libc_name = ctypes.util.find_library("c") or "libc.so.6"
-        libc = ctypes.CDLL(libc_name, use_errno=True)
-        libc.prctl(_PR_SET_PDEATHSIG, sig, 0, 0, 0)
+        _LIBC.prctl(_PR_SET_PDEATHSIG, sig, 0, 0, 0)
     except OSError:
         log.debug("prctl PR_SET_PDEATHSIG failed — continuing")
 
@@ -167,9 +174,7 @@ def _enter_netns(name: str) -> None:
     fd = os.open(ns_path, os.O_RDONLY)
     try:
         CLONE_NEWNET = 0x40000000
-        libc_name = ctypes.util.find_library("c") or "libc.so.6"
-        libc = ctypes.CDLL(libc_name, use_errno=True)
-        rc = libc.setns(fd, CLONE_NEWNET)
+        rc = _LIBC.setns(fd, CLONE_NEWNET)
         if rc != 0:
             err = ctypes.get_errno()
             raise OSError(err, f"setns({ns_path}) failed: {os.strerror(err)}")
@@ -186,23 +191,19 @@ def _enter_netns(name: str) -> None:
 def _set_name_for(set_id: int, family: int) -> str:
     """Resolve a ``set_id`` to the nft set name.
 
-    The worker maintains its own mini-registry installed at startup
-    via the set-name table message (Phase 2b). For Phase 2a we keep
-    things simple: every op carries the set *name* in a small
-    extension header. This is a TODO pointer; for the initial
-    ship we hard-code a single resolver from the DnsSetTracker
-    state that the parent maps.
+    This function is intentionally not used in the shipped architecture.
+    The set-name resolver is passed as a closure (``lookup``) into
+    :func:`nft_worker_entrypoint` at fork time: the child inherits a
+    copy-on-write snapshot of the parent's :class:`DnsSetTracker` and
+    the parent builds a ``lookup(set_id, family) → name | None``
+    callable over that snapshot.  :func:`build_nft_script` receives
+    that callable directly — no per-worker registry or IPC round-trip.
 
-    See :class:`ParentWorker` below which owns the table lookup.
+    See :func:`nft_worker_entrypoint` for the shipped wiring.
     """
-    # Intentional placeholder — the parent passes batches whose
-    # ``set_id`` has been pre-resolved to an index the worker can
-    # look up via a side channel. Until that side channel ships
-    # (Phase 2b), tests use ParentWorker.apply_batch_local which
-    # translates in the parent's address space.
     raise NotImplementedError(
-        "worker-local set_id resolver not wired yet — "
-        "use ParentWorker.apply_batch_local in tests")
+        "worker-local set_id resolver is not used — "
+        "pass a lookup closure to nft_worker_entrypoint instead")
 
 
 def build_nft_script(
@@ -243,7 +244,7 @@ def build_nft_script(
         if name is None:
             continue  # allowlist drift — silently skip
         if op.family == 4:
-            elem = ".".join(str(b) for b in op.ip_bytes)
+            elem = socket.inet_ntop(socket.AF_INET, op.ip_bytes)
         else:
             # Compact IPv6 via socket.inet_ntop — still fine here;
             # this path is per-op but in nft-script building, not on
@@ -274,6 +275,72 @@ def build_nft_script(
 # ---------------------------------------------------------------------------
 
 
+# Module-level cache for the NFCTSocket used inside worker children.
+# Each child process is single-threaded and long-lived; one socket per
+# child is sufficient. The parent never touches this (it's only set
+# after fork in the child's address space).
+_nfct_socket = None
+
+
+def _get_nfct_socket():
+    """Return a lazily-created, cached NFCTSocket for this worker.
+
+    Called only inside the child process (already in the target netns).
+    First call opens the socket; subsequent calls return the cached one.
+
+    Raises ``ImportError`` if pyroute2 is not installed, or
+    ``OSError`` / ``NetlinkError`` if the netns lacks conntrack support.
+    """
+    global _nfct_socket
+    if _nfct_socket is None:
+        from pyroute2 import NFCTSocket  # type: ignore[import-untyped]
+        _nfct_socket = NFCTSocket()
+    return _nfct_socket
+
+
+def _handle_read_ctnetlink() -> tuple[int, bytes]:
+    """Issue a CTNETLINK stats dump in the worker's current netns.
+
+    Opens (or reuses) an ``NFCTSocket`` bound to this process's netns,
+    calls ``stat()`` to retrieve per-CPU counters, sums across CPUs, and
+    returns the 64-byte :data:`CT_STATS_STRUCT_SIZE` payload ready for
+    transport.
+
+    Returns ``(READ_STATUS_OK, payload)`` on success, or an error status
+    with a UTF-8 diagnostic string. Never raises.
+    """
+    try:
+        sock = _get_nfct_socket()
+        rows = sock.stat()
+    except ImportError:
+        return READ_STATUS_ERROR, b"pyroute2 not installed"
+    except Exception as e:  # noqa: BLE001
+        # NetlinkError, OSError (ENOENT = netns gone), etc.
+        return READ_STATUS_ERROR, str(e).encode("utf-8")
+
+    totals: dict[str, int] = {f: 0 for f in CT_STATS_FIELDS}
+    for row in rows:
+        get = getattr(row, "get_attr", None)
+        if get is None:
+            continue
+        for field in totals:
+            val = get(field)
+            if val is not None:
+                totals[field] += int(val)
+
+    stats = CtNetlinkStats(
+        CTA_STATS_FOUND=totals["CTA_STATS_FOUND"],
+        CTA_STATS_INVALID=totals["CTA_STATS_INVALID"],
+        CTA_STATS_IGNORE=totals["CTA_STATS_IGNORE"],
+        CTA_STATS_INSERT_FAILED=totals["CTA_STATS_INSERT_FAILED"],
+        CTA_STATS_DROP=totals["CTA_STATS_DROP"],
+        CTA_STATS_EARLY_DROP=totals["CTA_STATS_EARLY_DROP"],
+        CTA_STATS_ERROR=totals["CTA_STATS_ERROR"],
+        CTA_STATS_SEARCH_RESTART=totals["CTA_STATS_SEARCH_RESTART"],
+    )
+    return READ_STATUS_OK, encode_ct_stats(stats)
+
+
 def _handle_read(kind: int, path: str) -> tuple[int, bytes]:
     """Execute a read-RPC in the worker's current netns.
 
@@ -282,6 +349,8 @@ def _handle_read(kind: int, path: str) -> tuple[int, bytes]:
     * ``READ_KIND_FILE`` + OK → raw file bytes (capped at
       :data:`MAX_FILE_BYTES`).
     * ``READ_KIND_COUNT_LINES`` + OK → 8-byte big-endian line count.
+    * ``READ_KIND_CTNETLINK`` + OK → 64-byte :class:`CtNetlinkStats`
+      struct (``path`` is ignored for this kind).
     * non-OK → UTF-8 error string (optional).
 
     Pure function w.r.t. the worker — never raises, never touches
@@ -302,6 +371,8 @@ def _handle_read(kind: int, path: str) -> tuple[int, bytes]:
                 for _ in f:
                     n += 1
             return READ_STATUS_OK, encode_line_count(n)
+        elif kind == READ_KIND_CTNETLINK:
+            return _handle_read_ctnetlink()
         else:
             return READ_STATUS_ERROR, (
                 f"unknown read kind: {kind}".encode("utf-8"))

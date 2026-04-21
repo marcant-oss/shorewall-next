@@ -10,19 +10,35 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
 
 - `cli.py`, `ctl.py`, `iplist_cli.py` — Click entry points (`shorewalld`,
   `shorewalld-ctl`, `shorewalld-iplist`).
-- `core.py` — `Daemon.run()`: asyncio event loop, subsystem lifecycle.
-- `config.py` — `shorewalld.conf` + allowlist loader.
-- `control.py` — control unix socket (`register-instance`,
-  `reload-instance`, status queries from `shorewall-nft`).
+- `core.py` — `Daemon.run()`: asyncio event loop, subsystem lifecycle;
+  receives runtime config as a single typed `DaemonConfig` (`daemon_config.py`);
+  kwargs accepted for back-compat with a `DeprecationWarning`;
+  control-socket handlers live in `control_handlers.py` for testability.
+- `daemon_config.py` — `DaemonConfig` frozen dataclass (`frozen=True`,
+  `slots=True`), 34 fields covering all daemon runtime knobs. Built by
+  `cli.py` after merging `ConfDefaults` (from shorewalld.conf) with argparse
+  CLI flags. Pass as `Daemon(config=DaemonConfig(...))`.
+- `config.py` — `shorewalld.conf` + allowlist loader; `ConfDefaults` holds
+  the file-parsed view with `| None` fields (unset = CLI default wins).
+- `control.py` — control unix socket protocol (`ControlServer`, dispatch,
+  `ping` built-in). Wire format: one JSON object per line.
+- `control_handlers.py` — `ControlHandlers`: one async method per
+  control-socket command (`handle_register_instance`,
+  `handle_reload_instance`, `handle_deregister_instance`,
+  `handle_instance_status`, `handle_refresh_iplist`,
+  `handle_iplist_status`, `handle_refresh_dns`). Constructed with
+  subsystem refs; no reference to the whole Daemon — fully unit-testable.
 - `instance.py` — `InstanceManager`: per-netns allowlist state,
   register-resync wiring.
 - `exporter.py` — shared Prometheus infrastructure: `NftScraper`,
   `ShorewalldRegistry`, `CollectorBase`, `Histogram`, `_MetricFamily`.
   Concrete collectors live under `collectors/`; this module re-exports
-  them for back-compat.
+  the public collector classes for back-compat. Private helpers
+  (`_CT_STAT_FIELDS`, `_extract_qdisc_row`, etc.) are no longer
+  re-exported — import from `shorewalld.collectors.<module>` directly.
 - `collectors/` — one module per Prometheus collector:
   `nft.py`, `flowtable.py`, `link.py`, `qdisc.py`, `conntrack.py`
-  (CTNETLINK — lone `_in_netns()` hop), `ct.py`, `snmp.py`,
+  (CTNETLINK — proxied via `READ_KIND_CTNETLINK` worker RPC, no setns), `ct.py`, `snmp.py`,
   `netstat.py`, `sockstat.py`, `softnet.py`, `neighbour.py`,
   `address.py`, `worker_router.py` (`WorkerRouterMetricsCollector`).
   Shared helpers in `_shared.py` (`_AF_NAMES`, `_read_int_via_router`).
@@ -76,7 +92,22 @@ Every code path here is hot. Target: 20 000 DNS answers/s across dnstap
   copies, no f-string reassembly of qnames thrown away a microsecond later.
 - **Filter before decode.** Two-pass decoder: walk varint stream far enough
   to read discriminator fields (message type, qname), consult the allowlist,
-  *only then* do the full parse. 99 % of frames are waste.
+  *only then* do the full parse. 99 % of frames are waste.  Both passes are
+  active in both ingestion paths:
+  ``_peek_message_type()`` in ``dnstap.py`` walks the outer Dnstap varint
+  stream to field 14 (``Message``), then the inner stream to field 1
+  (``type``), and returns the enum int without calling ``ParseFromString``.
+  ``DecodeWorkerPool._decode_one()`` calls the peek first; only frames whose
+  type is in ``RESPONSE_MESSAGE_TYPES`` reach the full parse.  Skipped frames
+  are counted in ``shorewalld_dnstap_frames_skipped_by_type_total``.
+  ``_peek_type_and_qname()`` in ``pbdns.py`` walks the PBDNSMessage varint
+  stream to field 1 (``type``) and field 12 (``question``), descends into
+  the DNSQuestion sub-message to extract field 1 (``qName``), and returns
+  ``(type_int, qname_bytes)`` without calling ``ParseFromString``.
+  ``decode_pbdns_frame()`` calls the peek first; non-response types are
+  dropped (``shorewalld_pbdns_frames_skipped_by_type_total``) and RESPONSE
+  frames with an unregistered qname are dropped before the full parse
+  (``shorewalld_pbdns_frames_skipped_by_qname_total``).
 - **Batch at the netlink boundary.** Every `add element` is a round-trip.
   Coalesce per `(set, netns)` in a short window. Single updates at 20 k/s
   melt the scheduler.
@@ -94,12 +125,27 @@ Every code path here is hot. Target: 20 000 DNS answers/s across dnstap
   `/sys` reads run inside the already-forked nft worker that owns
   the target netns — see the file-read RPC under `read_codec.py` and
   the "Read RPC: netns-pinned /proc reads" section below. The scrape
-  thread itself never calls `setns(2)`. `ConntrackStatsCollector` is
-  the lone remaining direct `_in_netns()` hop (needs a bound
-  `NFCTSocket` the worker protocol does not yet proxy).
+  thread itself never calls `setns(2)`. `ConntrackStatsCollector` WAS
+  the lone remaining direct `_in_netns()` hop; it has been converted to
+  use `READ_KIND_CTNETLINK` via the worker RPC — the scrape thread is
+  now entirely free of `setns(2)` calls.
+- **pyroute2 handles cached per netns.** Four collectors (`LinkCollector`,
+  `QdiscCollector`, `NeighbourCollector`, `AddressCollector`) share one
+  `IPRoute` per managed netns via `collectors._shared.get_rtnl`. A single
+  pyroute2 fork happens on first use; all subsequent scrapes reuse the
+  live netlink socket.  Handles are evicted on `NetlinkError` (stale
+  netns) and closed cleanly on daemon shutdown via `close_all_rtnl()`.
+  Current cache size is reported as `shorewalld_rtnl_handles_cached`.
 - **Bounded everything.** Every queue, cache, retry counter has an
   explicit cap. Drops are counted as metrics. Growing RSS is not
   acceptable.
+- **Atomic-int counter bumps.** `PbdnsMetrics` / `DnstapMetrics` /
+  shared `_IngressMetricsBase` rely on GIL atomicity of
+  `dict[int] += 1` for pre-registered counter keys — no lock on the
+  hot path.  Adding a new counter requires an entry in the subclass's
+  `_COUNTER_NAMES` tuple; forgetting raises `KeyError` in tests (fail
+  fast).  `snapshot()` returns a lock-free `dict.copy()` (single C
+  call, GIL-safe).
 - **Measure before optimising.** Scrape-duration histograms, per-stage
   queue depths, batch-size histograms are first-class metrics.
 - **Peer-link UDP: never fragment at IP.** `IP_MTU_DISCOVER=IP_PMTUDISC_DO`
@@ -199,7 +245,7 @@ target netns. The scrape thread stays in the default netns; no
 thread-level `setns` race window, no `CAP_SYS_ADMIN` requirement on
 the scrape path.
 
-Two message kinds (`read_codec.py`):
+Three message kinds (`read_codec.py`):
 
 - `READ_KIND_FILE` → worker `open(path).read(MAX_FILE_BYTES + 1)`,
   reply carries raw bytes. `TOO_LARGE` returned if file exceeds
@@ -208,6 +254,13 @@ Two message kinds (`read_codec.py`):
   carries an 8-byte big-endian u64. Used for `/proc/net/route` and
   `/proc/net/ipv6_route` (would otherwise blow the 64 KiB datagram
   cap on a full-BGP v6 table).
+- `READ_KIND_CTNETLINK` → worker opens (or reuses) an `NFCTSocket`
+  already bound to the child's netns, calls `stat()` to get per-CPU
+  counters, sums across CPUs, and returns a fixed 64-byte
+  `CtNetlinkStats` struct. Replaces the last `_in_netns()` hop that
+  `ConntrackStatsCollector` previously used on the scrape thread.
+  `WorkerRouter.ctnetlink_stats_sync(netns)` is the scrape-thread
+  entry point; it mirrors `read_file_sync` / `count_lines_sync`.
 
 Wire format: 18-byte request header + UTF-8 path; 20-byte response
 header + payload. Dispatched by peeking the first four bytes of each

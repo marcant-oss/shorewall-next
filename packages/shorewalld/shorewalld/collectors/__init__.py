@@ -5,8 +5,9 @@ parser helpers and static field tables). Collectors split by data
 source: libnftables scraper (``nft``, ``flowtable``), pyroute2 netlink
 (``link``, ``qdisc``, ``neighbour``, ``address``), ``/proc`` + ``/sys``
 file reads routed through the netns-pinned worker (``ct``, ``snmp``,
-``netstat``, ``sockstat``, ``softnet``), and CTNETLINK via a per-scrape
-setns hop (``conntrack``). See the docstring on :mod:`shorewalld.exporter`
+``netstat``, ``sockstat``, ``softnet``), and CTNETLINK proxied through
+the worker via ``READ_KIND_CTNETLINK`` (``conntrack`` — no scrape-thread
+``setns`` anymore). See the docstring on :mod:`shorewalld.exporter`
 for the larger architecture.
 
 Importing from :mod:`shorewalld.exporter` continues to work — the

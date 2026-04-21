@@ -72,11 +72,11 @@ class TestN1Sharing:
         sid = t.set_id_for("a.example.com", FAMILY_V4)
         assert sid == t.set_id_for("b.example.com", FAMILY_V4)
 
-        ip_a = bytes([198, 51, 100, 1])
-        ip_b = bytes([198, 51, 100, 2])
+        ip_a = int.from_bytes(bytes([198, 51, 100, 1]), "big")
+        ip_b = int.from_bytes(bytes([198, 51, 100, 2]), "big")
 
-        p_a = Proposal(set_id=sid, ip_bytes=ip_a, ttl=300)
-        p_b = Proposal(set_id=sid, ip_bytes=ip_b, ttl=300)
+        p_a = Proposal(set_id=sid, ip=ip_a, ttl=300)
+        p_b = Proposal(set_id=sid, ip=ip_b, ttl=300)
 
         v_a = t.propose(p_a)
         v_b = t.propose(p_b)
@@ -131,13 +131,13 @@ class TestBackwardCompat:
         """Existing propose/commit semantics are unaffected."""
         t = _build_tracker(_spec("github.com"))
         sid = t.set_id_for("github.com", FAMILY_V4)
-        ip = bytes([198, 51, 100, 10])
-        p = Proposal(set_id=sid, ip_bytes=ip, ttl=300)
+        ip = int.from_bytes(bytes([198, 51, 100, 10]), "big")
+        p = Proposal(set_id=sid, ip=ip, ttl=300)
         v = t.propose(p)
         assert v == Verdict.ADD
         t.commit([p], [v])
         # Second proposal with > 50% TTL remaining → DEDUP.
-        v2 = t.propose(Proposal(set_id=sid, ip_bytes=ip, ttl=300))
+        v2 = t.propose(Proposal(set_id=sid, ip=ip, ttl=300))
         assert v2 == Verdict.DEDUP
 
 

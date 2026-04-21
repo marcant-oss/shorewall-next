@@ -206,6 +206,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--vrrp-snmp-timeout", type=float, default=1.0, metavar="SECS",
         help="SNMP request timeout in seconds (default: 1.0).")
+    # ── DNS-set pipeline tuning ───────────────────────────────────────
+    p.add_argument(
+        "--dns-dedup-refresh-threshold", type=float, default=0.5,
+        metavar="FLOAT",
+        help="Fraction of the new TTL that must remain in the current nft "
+             "element expiry before a DNS answer is considered a duplicate "
+             "and the write is skipped (0.0..1.0, default: 0.5).  "
+             "Lower values write more frequently; higher values write less "
+             "often but may serve slightly stale entries for longer.")
+    p.add_argument(
+        "--batch-window-seconds", type=float, default=0.010,
+        metavar="SECS",
+        help="Coalescing window in seconds for the SetWriter batch pipeline. "
+             "DNS updates arriving within this window are merged into a "
+             "single nft transaction (default: 0.010 = 10 ms).  Increase "
+             "to reduce nft round-trips under heavy load; decrease for lower "
+             "latency on sparse traffic.")
     for sub in SUBSYSTEMS:
         p.add_argument(
             f"--log-level-{sub}", default=None, metavar="LEVEL",
@@ -293,6 +310,10 @@ def _merge_conf_defaults(
     take("vrrp_snmp_community", defaults.vrrp_snmp_community)
     take("vrrp_snmp_timeout", defaults.vrrp_snmp_timeout)
 
+    # DNS-set pipeline tuning knobs.
+    take("dns_dedup_refresh_threshold", defaults.dns_dedup_refresh_threshold)
+    take("batch_window_seconds", defaults.batch_window_seconds)
+
     return args
 
 
@@ -373,6 +394,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Imported lazily so --help works without prometheus_client installed.
     from .core import Daemon
+    from .daemon_config import DaemonConfig
 
     socket_mode_int: int | None = None
     if args.socket_mode is not None:
@@ -397,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             parser.error(f"IPLIST_* config parse error: {e}")
 
-    daemon = Daemon(
+    cfg = DaemonConfig(
         prom_host=prom_host,
         prom_port=prom_port,
         api_socket=args.listen_api,
@@ -423,17 +445,20 @@ def main(argv: list[str] | None = None) -> int:
         state_enabled=not args.no_state,
         state_no_load=args.no_state_load,
         state_flush=args.state_flush,
-        instances=list(args.instances),
+        instances=tuple(args.instances),
         control_socket=args.control_socket,
         control_socket_netns=args.control_socket_netns,
-        iplist_configs=iplist_cfgs,
+        iplist_configs=tuple(iplist_cfgs),
         enable_vrrp_collector=args.enable_vrrp_collector,
         vrrp_snmp_enabled=args.vrrp_snmp_enable,
         vrrp_snmp_host=args.vrrp_snmp_host,
         vrrp_snmp_port=args.vrrp_snmp_port,
         vrrp_snmp_community=args.vrrp_snmp_community,
         vrrp_snmp_timeout=args.vrrp_snmp_timeout,
+        dns_dedup_refresh_threshold=args.dns_dedup_refresh_threshold,
+        batch_window_seconds=args.batch_window_seconds,
     )
+    daemon = Daemon(config=cfg)
     try:
         return asyncio.run(daemon.run())
     except KeyboardInterrupt:

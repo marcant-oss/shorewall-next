@@ -37,6 +37,44 @@ description: nfsets, full man-page coverage, Prometheus nfsets metrics, VrrpColl
 
 ---
 
+## Infrastructure (netns IPC modernisation)
+
+- **No more `iproute2` binary dependency for netns operations** — all
+  named-netns operations in `shorewall-nft` and `shorewall-nft-simlab`
+  now use the `run_in_netns_fork` / `_in_netns()` primitives from
+  `shorewall-nft-netkit`. The `ip` binary is not needed at runtime for
+  any compiled firewall operation.
+- **Large-payload (multi-hundred MB) IPC without deadlock or OOM** — the
+  result pipe is drained concurrently via a `select` loop; `SOCK_SEQPACKET`
+  (EMSGSIZE-capped) is replaced by `SOCK_STREAM` in `PersistentNetnsWorker`;
+  `MemoryError` and `BrokenPipeError` are caught and reported with size context.
+- **Zero-copy memfd + sealed anonymous memory for oversized transfers** —
+  payloads ≥ 4 MiB travel through a `memfd_create(2)` region sealed
+  with `F_SEAL_WRITE | F_SEAL_SHRINK | F_SEAL_GROW`. No `/tmp` file is
+  created; the kernel reclaims pages automatically on last-fd-close.
+  Requires Linux ≥ 3.17; older kernels fall back to the inline pipe path
+  for payloads below the threshold.
+- **New `run_nft_in_netns_zc` specialised helper** — ships an nft script
+  into the target netns via sealed memfd and streams stdout/stderr via
+  drain threads; `NftResult(rc, stdout, stderr)` is returned. Generic
+  `run_in_netns_fork` API is unchanged.
+
+---
+
+---
+
+## Maintenance & Performance (broad-audit round)
+
+- **Two-pass filter for pbdns** — type + qname peeked via raw varint walk before `ParseFromString`; 100× fewer full protobuf parses on a typical non-allowlisted frame mix. Mirrors the existing dnstap two-pass filter.
+- **Shared pyroute2 `IPRoute` per netns** — four collectors (link, qdisc, neighbour, address) reuse one cached handle instead of constructing four per-scrape. Eliminates per-scrape netns fork overhead.
+- **`ControlHandlers` extracted from `Daemon`** — 7 control-socket handlers now live in `control_handlers.py`; shutdown errors surface as non-zero exit instead of silently logging and exiting 0.
+- **`DaemonConfig` typed runtime config** — 34-field frozen dataclass; `Daemon(config=cfg)` replaces the old kwargs path. Kwargs still accepted with a `DeprecationWarning`.
+- **Two new operator tunables**: `DNS_DEDUP_REFRESH_THRESHOLD` (default 0.5) and `BATCH_WINDOW_SECONDS` (default 10 ms) are now wired to `shorewalld.conf` keys and `--` CLI flags.
+- **`shorewalld.exporter.__all__` pinned** — 19 private helpers removed from re-export; import from `shorewalld.collectors.<module>` directly.
+- **pbdns bug fix** — `DNSIncomingResponseType = 4` added to valid response set; frames of that type were silently dropped before this round.
+
+---
+
 ## Upgrading
 
 **No configuration changes are required.** All new features are opt-in:

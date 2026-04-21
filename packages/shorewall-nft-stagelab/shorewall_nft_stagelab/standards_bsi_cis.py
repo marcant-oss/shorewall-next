@@ -28,10 +28,20 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "NET.3.2.A2",
         "Separation of firewall functions",
     ),
+    "bsi-net-3-2-a2-function-separation-ipv6": (
+        "bsi-grundschutz",
+        "NET.3.2.A2",
+        "Separation of firewall functions — IPv6 (dual-stack zone separation)",
+    ),
     "bsi-net-3-2-a4-rule-documentation": (
         "bsi-grundschutz",
         "NET.3.2.A4",
         "Rule documentation and review",
+    ),
+    "bsi-net-3-2-a4-rule-documentation-ipv6": (
+        "bsi-grundschutz",
+        "NET.3.2.A4",
+        "Rule documentation and review — IPv6 (dual-stack rule coverage)",
     ),
     "bsi-net-3-2-a5-dos-protection": (
         "bsi-grundschutz",
@@ -47,6 +57,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "bsi-grundschutz",
         "NET.3.2.A7",
         "Protocol validation and evasion resistance",
+    ),
+    "bsi-net-3-2-a7-protocol-validation-ipv6": (
+        "bsi-grundschutz",
+        "NET.3.2.A7",
+        "Protocol validation and evasion resistance — IPv6",
     ),
     "bsi-net-3-2-a9-time-sync": (
         "bsi-grundschutz",
@@ -80,6 +95,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "cis-benchmarks",
         "5.2.1",
         "Default-deny ingress from WAN",
+    ),
+    "cis-5-2-1-firewall-default-deny-ingress-ipv6": (
+        "cis-benchmarks",
+        "5.2.1",
+        "Default-deny ingress from WAN — IPv6",
     ),
     "cis-5-2-2-firewall-default-deny-egress": (
         "cis-benchmarks",
@@ -125,6 +145,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "cis-benchmarks",
         "5.2.5",
         "Bogon/martian source address block on WAN ingress",
+    ),
+    "cis-5-2-5-ingress-bogon-block-ipv6": (
+        "cis-benchmarks",
+        "5.2.5",
+        "Bogon/martian source address block on WAN ingress — IPv6",
     ),
 }
 

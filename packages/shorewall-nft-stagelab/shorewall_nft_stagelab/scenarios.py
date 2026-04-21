@@ -41,12 +41,20 @@ class AgentCommand:
 
     The controller resolves ``endpoint_name`` → host for transport.
     Scenarios do not know transport details.
+
+    ``concurrent`` marks commands that must run *in parallel* with the other
+    commands on the same host rather than sequentially.  Typical use:
+    sidecar pollers (``poll_conntrack``) that must overlap with the main
+    traffic-gen command on the same host.  The controller groups all
+    concurrent commands for a host into a single ``asyncio.gather`` call
+    that runs alongside the sequential batch for that host.
     """
 
     endpoint_name: str
     kind: str   # "run_iperf3_server" | "run_iperf3_client" | "run_tcpkali" |
                 # "run_nmap" | "send_probe" | "collect_oracle_verdict"
     spec: dict
+    concurrent: bool = False  # if True, run in parallel with sibling commands on the same host
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +153,7 @@ class ThroughputRunner(Scenario):
                     "interval_s": 1.0,
                     "_conntrack_sidecar": True,
                 },
+                concurrent=True,  # must overlap with the iperf3 client
             )
             cmds.append(sidecar_cmd)
 
@@ -278,6 +287,13 @@ class ConnStormRunner(Scenario):
                 "port": port,
                 "_http_sidecar": True,
                 "scenario_id": sc.id,
+                # Delay stop until the storm is done.  Without this, the sink
+                # host group (start → stop, sequential) fires stop immediately
+                # after start — the HTTP listener dies before the storm connects.
+                # The storm group on the source host runs concurrently; it takes
+                # hold_s + 1 s (delay_before_s=1).  We wait hold_s + 2 s before
+                # stopping so the listener stays up for the full storm duration.
+                "delay_before_s": sc.hold_s + 2,
             },
         )
         cmds: list[AgentCommand] = [start_cmd, storm_cmd, stop_cmd]
@@ -292,6 +308,7 @@ class ConnStormRunner(Scenario):
                     "interval_s": 1.0,
                     "_conntrack_sidecar": True,
                 },
+                concurrent=True,  # must overlap with the pyconn storm
             )
             cmds.append(sidecar_cmd)
 
@@ -382,7 +399,12 @@ class RuleScanRunner(Scenario):
         src_ep = ep_map[sc.source]
         family = getattr(sc, "family", "ipv4")
         if family == "ipv6":
-            src_ip = src_ep.ipv6.split("/")[0] if src_ep.ipv6 else "::"
+            if not src_ep.ipv6:
+                raise ValueError(
+                    f"rule_scan scenario {sc.id!r}: family=ipv6 requires "
+                    f"ipv6 address on source endpoint {sc.source!r}"
+                )
+            src_ip = src_ep.ipv6.split("/")[0]
         else:
             src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
 
@@ -1140,7 +1162,16 @@ class EvasionProbesRunner(Scenario):
     def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
         sc = self._sc
         src_ep = cfg.endpoint_by_name(sc.source)
-        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
+        family = getattr(sc, "family", "ipv4")
+        if family == "ipv6":
+            if not src_ep.ipv6:
+                raise ValueError(
+                    f"evasion_probes scenario {sc.id!r}: family=ipv6 requires "
+                    f"ipv6 address on source endpoint {sc.source!r}"
+                )
+            src_ip = src_ep.ipv6.split("/")[0]
+        else:
+            src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
 
         commands: list[AgentCommand] = []
         for idx, probe_type in enumerate(sc.probe_types, start=1):
@@ -1150,6 +1181,7 @@ class EvasionProbesRunner(Scenario):
                 "src_ip": sc.spoof_src_ip if probe_type == "ip_spoof" else src_ip,
                 "dst_ip": sc.target_ip,
                 "dst_port": sc.target_port,
+                "family": family,
                 "scenario_id": sc.id,
                 "expected_verdict": "drop",
             }

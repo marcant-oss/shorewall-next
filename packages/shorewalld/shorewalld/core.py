@@ -20,6 +20,8 @@ import logging
 import os
 import signal
 import socket
+import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,8 @@ from shorewall_nft.nft.dns_sets import (
 from shorewall_nft.nft.netlink import NftInterface
 
 from .control import ControlMetricsCollector, ControlServer
+from .control_handlers import ControlHandlers
+from .daemon_config import DaemonConfig
 from .discover import ProfileBuilder, resolve_netns_list
 from .dns_pull_resolver import PullResolver, PullResolverMetricsCollector
 from .dns_set_tracker import (
@@ -42,7 +46,7 @@ from .dns_set_tracker import (
 from .dnstap import DnstapMetricsCollector, DnstapServer
 from .dnstap_bridge import BridgeMetricsCollector, TrackerBridge
 from .exporter import NftScraper, ShorewalldRegistry
-from .instance import InstanceConfig, InstanceManager, parse_instance_spec
+from .instance import InstanceManager, parse_instance_spec
 from .iplist.plain import PlainListTracker
 from .iplist.tracker import IpListTracker
 from .nfsets_manager import NfSetsManager
@@ -110,13 +114,15 @@ class Daemon:
 
     def __init__(
         self,
+        config: DaemonConfig | None = None,
         *,
-        prom_host: str,
-        prom_port: int,
-        api_socket: str | None,
-        netns_spec: list[str] | str,
-        scrape_interval: float,
-        reprobe_interval: float,
+        # Legacy kwargs — deprecated; pass a DaemonConfig instead.
+        prom_host: str | None = None,
+        prom_port: int | None = None,
+        api_socket: str | None = None,
+        netns_spec: list[str] | str | None = None,
+        scrape_interval: float | None = None,
+        reprobe_interval: float | None = None,
         allowlist_file: Path | None = None,
         pbdns_socket: str | None = None,
         pbdns_tcp: str | None = None,
@@ -143,43 +149,70 @@ class Daemon:
         vrrp_snmp_port: int = 161,
         vrrp_snmp_community: str = "public",
         vrrp_snmp_timeout: float = 1.0,
+        dns_dedup_refresh_threshold: float = 0.5,
+        batch_window_seconds: float = 0.010,
     ) -> None:
-        self.prom_host = prom_host
-        self.prom_port = prom_port
-        self.api_socket = api_socket
-        self.netns_spec = netns_spec
-        self.scrape_interval = scrape_interval
-        self.reprobe_interval = reprobe_interval
+        if config is not None and prom_host is not None:
+            # Mixed call: config + kwargs.  kwargs are silently ignored but
+            # callers should be told they're doing something unexpected.
+            warnings.warn(
+                "Daemon() received both a DaemonConfig and legacy kwargs; "
+                "kwargs are ignored — pass only config=DaemonConfig(...)",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
-        # DNS-set pipeline opt-in config.
-        self.allowlist_file = allowlist_file
-        self.pbdns_socket = pbdns_socket
-        self.pbdns_tcp = pbdns_tcp
-        self.socket_mode = socket_mode
-        self.socket_owner = socket_owner
-        self.socket_group = socket_group
-        self.peer_bind_host = peer_bind_host
-        self.peer_bind_port = peer_bind_port
-        self.peer_host = peer_host
-        self.peer_port = peer_port
-        self.peer_auth_key_file = peer_auth_key_file
-        self.peer_heartbeat_interval = peer_heartbeat_interval
-        self.state_dir = state_dir
-        self.state_enabled = state_enabled
-        self.state_no_load = state_no_load
-        self.state_flush = state_flush
+        if config is None:
+            # Legacy kwargs path — build a DaemonConfig from the kwargs so
+            # the rest of the class can read from self._config uniformly.
+            if prom_host is None or prom_port is None or netns_spec is None:
+                raise TypeError(
+                    "Daemon() requires prom_host, prom_port, and netns_spec "
+                    "when called without a DaemonConfig")
+            warnings.warn(
+                "Daemon() kwargs are deprecated; pass a DaemonConfig instead. "
+                "Example: Daemon(config=DaemonConfig(prom_host=..., ...))",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            config = DaemonConfig(
+                prom_host=prom_host,
+                prom_port=prom_port,
+                api_socket=api_socket,
+                netns_spec=netns_spec,
+                scrape_interval=scrape_interval if scrape_interval is not None else 30.0,
+                reprobe_interval=reprobe_interval if reprobe_interval is not None else 300.0,
+                allowlist_file=allowlist_file,
+                pbdns_socket=pbdns_socket,
+                pbdns_tcp=pbdns_tcp,
+                socket_mode=socket_mode,
+                socket_owner=socket_owner,
+                socket_group=socket_group,
+                peer_bind_host=peer_bind_host,
+                peer_bind_port=peer_bind_port,
+                peer_host=peer_host,
+                peer_port=peer_port,
+                peer_auth_key_file=peer_auth_key_file,
+                peer_heartbeat_interval=peer_heartbeat_interval,
+                state_dir=state_dir,
+                state_enabled=state_enabled,
+                state_no_load=state_no_load,
+                state_flush=state_flush,
+                instances=tuple(instances or []),
+                control_socket=control_socket,
+                control_socket_netns=control_socket_netns,
+                iplist_configs=tuple(iplist_configs or []),
+                enable_vrrp_collector=enable_vrrp_collector,
+                vrrp_snmp_enabled=vrrp_snmp_enabled,
+                vrrp_snmp_host=vrrp_snmp_host,
+                vrrp_snmp_port=vrrp_snmp_port,
+                vrrp_snmp_community=vrrp_snmp_community,
+                vrrp_snmp_timeout=vrrp_snmp_timeout,
+                dns_dedup_refresh_threshold=dns_dedup_refresh_threshold,
+                batch_window_seconds=batch_window_seconds,
+            )
 
-        # New multi-instance / iplist / control settings.
-        self.instances: list[str] = instances or []
-        self.control_socket = control_socket
-        self.control_socket_netns = control_socket_netns
-        self.iplist_configs: list[Any] = iplist_configs or []
-        self.enable_vrrp_collector = enable_vrrp_collector
-        self.vrrp_snmp_enabled = vrrp_snmp_enabled
-        self.vrrp_snmp_host = vrrp_snmp_host
-        self.vrrp_snmp_port = vrrp_snmp_port
-        self.vrrp_snmp_community = vrrp_snmp_community
-        self.vrrp_snmp_timeout = vrrp_snmp_timeout
+        self._config = config
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
@@ -217,6 +250,52 @@ class Daemon:
         self._plain_tracker: PlainListTracker | None = None
         self._plain_task: asyncio.Task[None] | None = None
 
+    # ── config accessor (read-only pass-through) ──────────────────────
+    # Kept for back-compat so existing code/tests can still read
+    # ``daemon.prom_port`` etc. without being changed all at once.
+    # New code should prefer ``daemon._config.<field>`` or pass the
+    # DaemonConfig object around directly.
+
+    @property
+    def prom_host(self) -> str:
+        return self._config.prom_host
+
+    @property
+    def prom_port(self) -> int:
+        return self._config.prom_port
+
+    @property
+    def api_socket(self) -> str | None:
+        return self._config.api_socket
+
+    @property
+    def netns_spec(self) -> list[str] | str:
+        return self._config.netns_spec
+
+    @property
+    def scrape_interval(self) -> float:
+        return self._config.scrape_interval
+
+    @property
+    def reprobe_interval(self) -> float:
+        return self._config.reprobe_interval
+
+    @property
+    def allowlist_file(self) -> Path | None:
+        return self._config.allowlist_file
+
+    @property
+    def instances(self) -> tuple[str, ...]:
+        return self._config.instances
+
+    @property
+    def control_socket(self) -> str | None:
+        return self._config.control_socket
+
+    @property
+    def iplist_configs(self) -> tuple[Any, ...]:
+        return self._config.iplist_configs
+
     # ── lifecycle ────────────────────────────────────────────────────
 
     async def run(self) -> int:
@@ -227,15 +306,15 @@ class Daemon:
 
         log.info(
             "shorewalld starting: prom=%s:%d api=%s netns=%s",
-            self.prom_host, self.prom_port,
-            self.api_socket or "(disabled)",
-            self.netns_spec,
+            self._config.prom_host, self._config.prom_port,
+            self._config.api_socket or "(disabled)",
+            self._config.netns_spec,
         )
 
         # ── subsystem startup ─────────────────────────────────────
         self._nft = NftInterface()
         self._registry = ShorewalldRegistry()
-        self._scraper = NftScraper(self._nft, ttl_s=self.scrape_interval)
+        self._scraper = NftScraper(self._nft, ttl_s=self._config.scrape_interval)
         # Create the worker router early (tracker attaches later
         # during DNS-pipeline bootstrap) so the exporter's /proc-reading
         # collectors can delegate their reads to netns-pinned workers
@@ -245,7 +324,7 @@ class Daemon:
         self._profile_builder = ProfileBuilder(
             self._nft, self._registry, self._scraper, self._router)
 
-        netns_list = resolve_netns_list(self.netns_spec)
+        netns_list = resolve_netns_list(self._config.netns_spec)
         self._profile_builder.build(netns_list)
         self._profile_builder.reprobe()
         log.info(
@@ -254,23 +333,27 @@ class Daemon:
             list(self._profile_builder.profiles),
         )
 
+        # Register the rtnl-handle-count gauge (process-wide singleton).
+        from .collectors._shared import RtnlHandlesCollector
+        self._registry.add(RtnlHandlesCollector())  # type: ignore[arg-type]
+
         # Optional VRRP D-Bus collector (opt-in, requires jeepney).
-        if self.enable_vrrp_collector:
+        if self._config.enable_vrrp_collector:
             from .collectors.vrrp import VrrpCollector as _VrrpCollector
             from .collectors.vrrp import VrrpSnmpConfig as _VrrpSnmpConfig
             _snmp_cfg: _VrrpSnmpConfig | None = None
-            if self.vrrp_snmp_enabled:
+            if self._config.vrrp_snmp_enabled:
                 _snmp_cfg = _VrrpSnmpConfig(
-                    host=self.vrrp_snmp_host,
-                    port=self.vrrp_snmp_port,
-                    community=self.vrrp_snmp_community,
-                    timeout=self.vrrp_snmp_timeout,
+                    host=self._config.vrrp_snmp_host,
+                    port=self._config.vrrp_snmp_port,
+                    community=self._config.vrrp_snmp_community,
+                    timeout=self._config.vrrp_snmp_timeout,
                 )
                 log.info(
                     "shorewalld VRRP SNMP augmentation enabled: "
                     "%s:%d community=%r timeout=%.1fs",
-                    self.vrrp_snmp_host, self.vrrp_snmp_port,
-                    self.vrrp_snmp_community, self.vrrp_snmp_timeout,
+                    self._config.vrrp_snmp_host, self._config.vrrp_snmp_port,
+                    self._config.vrrp_snmp_community, self._config.vrrp_snmp_timeout,
                 )
             _vc = _VrrpCollector(snmp_config=_snmp_cfg)
             self._registry.add(_vc)
@@ -295,22 +378,19 @@ class Daemon:
         # When --instance specs are given without --allowlist-file,
         # bootstrap the pipeline from the first instance's allowlist
         # path so the tracker is available for the InstanceManager.
-        bootstrap_allowlist = self.allowlist_file
-        if bootstrap_allowlist is None and self.instances:
-            first_spec = parse_instance_spec(self.instances[0])
+        bootstrap_allowlist = self._config.allowlist_file
+        if bootstrap_allowlist is None and self._config.instances:
+            first_spec = parse_instance_spec(self._config.instances[0])
             if first_spec.allowlist_path.exists():
                 bootstrap_allowlist = first_spec.allowlist_path
 
         if bootstrap_allowlist is not None:
-            _orig = self.allowlist_file
-            self.allowlist_file = bootstrap_allowlist
-            await self._start_dns_pipeline(netns_list)
-            self.allowlist_file = _orig
+            await self._start_dns_pipeline(netns_list, bootstrap_allowlist)
 
         # When only a control socket is configured and no allowlist was
         # available to bootstrap from, seed an empty pipeline so the
         # InstanceManager starts and register-instance is available.
-        if self._tracker is None and self.control_socket:
+        if self._tracker is None and self._config.control_socket:
             await self._start_empty_dns_pipeline(netns_list)
 
         # Multi-instance manager: layers on the DNS pipeline.
@@ -322,20 +402,20 @@ class Daemon:
         # in both shorewalld's ``--instance`` and shorewall-nft's
         # config directory.
         if self._tracker is not None and (
-            self.instances or self.control_socket
+            self._config.instances or self._config.control_socket
         ):
             await self._start_instance_manager()
 
         # IP-list tracker (fetches cloud prefix lists into nft sets).
-        if self.iplist_configs:
+        if self._config.iplist_configs:
             await self._start_iplist_tracker(netns_list)
 
         # Optional dnstap consumer (Phase 4). Off by default.
-        if self.api_socket:
+        if self._config.api_socket:
             await self._start_dnstap_server(netns_list)
 
         # Control socket server.
-        if self.control_socket:
+        if self._config.control_socket:
             await self._start_control_server()
 
         # Install SIGUSR1 handler for manual iplist refresh.
@@ -347,24 +427,28 @@ class Daemon:
             await self._async_shutdown()
         return 0
 
-    async def _start_dns_pipeline(self, netns_list: list[str]) -> None:
+    async def _start_dns_pipeline(
+        self,
+        netns_list: list[str],
+        allowlist_file: Path,
+    ) -> None:
         """Wire up tracker + router + setwriter + optional ingress/peer.
 
         All subsystems are optional; this is only called when the
         caller passed ``allowlist_file`` because without a compiled
         allowlist the tracker has nothing to dedup against.
         """
-        assert self.allowlist_file is not None
         assert self._nft is not None
 
         try:
-            registry = read_compiled_allowlist(self.allowlist_file)
+            registry = read_compiled_allowlist(allowlist_file)
         except Exception:
             log.exception(
-                "failed to read allowlist file %s", self.allowlist_file)
+                "failed to read allowlist file %s", allowlist_file)
             return
 
-        self._tracker = DnsSetTracker()
+        self._tracker = DnsSetTracker(
+            refresh_threshold=self._config.dns_dedup_refresh_threshold)
         self._tracker.load_registry(registry)
         log.info(
             "dns pipeline: loaded allowlist (%d qnames)",
@@ -374,11 +458,11 @@ class Daemon:
         # Load pull-resolver groups and wire secondary qnames as tracker
         # aliases so the tap pipeline also populates dnsr: sets.
         try:
-            dnsr_registry = read_compiled_dnsr_allowlist(self.allowlist_file)
+            dnsr_registry = read_compiled_dnsr_allowlist(allowlist_file)
         except Exception:
             log.exception(
                 "failed to read dnsr section from allowlist %s",
-                self.allowlist_file)
+                allowlist_file)
             dnsr_registry = None
 
         if dnsr_registry and dnsr_registry.groups:
@@ -421,7 +505,9 @@ class Daemon:
                 log.exception(
                     "router: failed to add netns %r", netns)
 
-        self._set_writer = SetWriter(self._tracker, self._router, loop=loop)
+        self._set_writer = SetWriter(
+            self._tracker, self._router, loop=loop,
+            batch_window_sec=self._config.batch_window_seconds)
         await self._set_writer.start()
 
         self._tracker_bridge = TrackerBridge(
@@ -436,12 +522,12 @@ class Daemon:
         self._registry.add(DnsSetMetricsCollector(self._tracker))
 
         # State persistence.
-        if self.state_enabled:
+        if self._config.state_enabled:
             state_cfg = StateConfig(
-                state_dir=self.state_dir or StateConfig().state_dir,
+                state_dir=self._config.state_dir or StateConfig().state_dir,
                 enabled=True,
-                load_on_start=not self.state_no_load,
-                flush_on_start=self.state_flush,
+                load_on_start=not self._config.state_no_load,
+                flush_on_start=self._config.state_flush,
             )
             self._state_store = StateStore(self._tracker, state_cfg)
             try:
@@ -455,27 +541,27 @@ class Daemon:
         # Accepts unix socket (for out-of-tree producers) and/or TCP
         # (required for pdns-recursor's Lua protobufServer() which
         # speaks TCP only). Both can be enabled simultaneously.
-        if self.pbdns_socket or self.pbdns_tcp:
+        if self._config.pbdns_socket or self._config.pbdns_tcp:
             tcp_host, tcp_port = None, None
-            if self.pbdns_tcp:
-                host, _, port_s = self.pbdns_tcp.rpartition(":")
+            if self._config.pbdns_tcp:
+                host, _, port_s = self._config.pbdns_tcp.rpartition(":")
                 tcp_host = host or "0.0.0.0"
                 try:
                     tcp_port = int(port_s)
                 except ValueError:
                     log.error(
-                        "pbdns tcp spec %r: bad port", self.pbdns_tcp)
+                        "pbdns tcp spec %r: bad port", self._config.pbdns_tcp)
                     tcp_port = None
             pbdns_kwargs: dict = {
-                "socket_path": self.pbdns_socket,
+                "socket_path": self._config.pbdns_socket,
                 "bridge": self._tracker_bridge,
                 "tcp_host": tcp_host,
                 "tcp_port": tcp_port,
-                "socket_owner": self.socket_owner,
-                "socket_group": self.socket_group,
+                "socket_owner": self._config.socket_owner,
+                "socket_group": self._config.socket_group,
             }
-            if self.socket_mode is not None:
-                pbdns_kwargs["socket_mode"] = self.socket_mode
+            if self._config.socket_mode is not None:
+                pbdns_kwargs["socket_mode"] = self._config.socket_mode
             self._pbdns_server = PbdnsServer(**pbdns_kwargs)
             try:
                 await self._pbdns_server.start()
@@ -483,41 +569,41 @@ class Daemon:
                 log.exception(
                     "pbdns server failed to bind "
                     "(socket=%s tcp=%s)",
-                    self.pbdns_socket, self.pbdns_tcp)
+                    self._config.pbdns_socket, self._config.pbdns_tcp)
                 self._pbdns_server = None
             else:
                 assert self._registry is not None
                 self._registry.add(PbdnsMetricsCollector(self._pbdns_server))
 
         # HA peer link.
-        if (self.peer_host and self.peer_port
-                and self.peer_auth_key_file is not None):
+        if (self._config.peer_host and self._config.peer_port
+                and self._config.peer_auth_key_file is not None):
             try:
-                auth = HmacSha256Auth.from_file(self.peer_auth_key_file)
+                auth = HmacSha256Auth.from_file(self._config.peer_auth_key_file)
             except Exception:
                 log.exception(
                     "peer auth key load failed from %s",
-                    self.peer_auth_key_file)
+                    self._config.peer_auth_key_file)
                 auth = None
             if auth is not None:
                 self._peer_link = PeerLink(
                     tracker=self._tracker,
                     writer=self._set_writer,
                     auth=auth,
-                    bind_host=self.peer_bind_host or "0.0.0.0",
-                    bind_port=self.peer_bind_port or 9749,
-                    peer_host=self.peer_host,
-                    peer_port=self.peer_port,
+                    bind_host=self._config.peer_bind_host or "0.0.0.0",
+                    bind_port=self._config.peer_bind_port or 9749,
+                    peer_host=self._config.peer_host,
+                    peer_port=self._config.peer_port,
                     origin_node=socket.gethostname(),
-                    heartbeat_interval=self.peer_heartbeat_interval,
+                    heartbeat_interval=self._config.peer_heartbeat_interval,
                 )
                 try:
                     await self._peer_link.start(loop)
                 except Exception:
                     log.exception(
                         "peer link start failed on %s:%d → %s:%d",
-                        self.peer_bind_host, self.peer_bind_port,
-                        self.peer_host, self.peer_port)
+                        self._config.peer_bind_host, self._config.peer_bind_port,
+                        self._config.peer_host, self._config.peer_port)
                     self._peer_link = None
                 else:
                     from .peer import PeerMetricsCollector
@@ -584,15 +670,12 @@ class Daemon:
         """Register the refresh-dns handler if both server and resolver exist."""
         if self._control_server is None or self._pull_resolver is None:
             return
-        resolver = self._pull_resolver
-
-        async def _handle_refresh_dns(req: dict) -> dict:
-            hostname = req.get("hostname")
-            n = await resolver.refresh(hostname)
-            return {"ok": True, "rescheduled": n}
-
+        # Rebuild ControlHandlers with the now-available pull resolver
+        # and re-register only the refresh-dns slot so the existing
+        # instance/iplist slots are not overwritten.
+        h = ControlHandlers(pull_resolver=self._pull_resolver)
         self._control_server.register_handler(
-            "refresh-dns", _handle_refresh_dns)
+            "refresh-dns", h.handle_refresh_dns)
 
     async def _start_iplist_tracker(self, netns_list: list[str]) -> None:
         """Start the IP-list tracker for cloud prefix sets."""
@@ -601,7 +684,7 @@ class Daemon:
 
         profiles = self._profile_builder.profiles
         self._iplist_tracker = IpListTracker(
-            configs=self.iplist_configs,
+            configs=list(self._config.iplist_configs),
             nft=self._nft,
             profiles=profiles,
             registry=self._registry,
@@ -612,7 +695,7 @@ class Daemon:
         )
         log.info(
             "iplist tracker: started with %d list(s)",
-            len(self.iplist_configs),
+            len(self._config.iplist_configs),
         )
 
     async def _start_empty_dns_pipeline(self, netns_list: list[str]) -> None:
@@ -624,7 +707,8 @@ class Daemon:
         """
         assert self._nft is not None
 
-        self._tracker = DnsSetTracker()
+        self._tracker = DnsSetTracker(
+            refresh_threshold=self._config.dns_dedup_refresh_threshold)
         self._tracker.load_registry(DnsSetRegistry())
 
         loop = asyncio.get_running_loop()
@@ -650,7 +734,9 @@ class Daemon:
         # drops every set-mutating op. WorkerRouter.dispatch() spawns
         # lazily on first use — by then the allowlist is loaded.
 
-        self._set_writer = SetWriter(self._tracker, self._router, loop=loop)
+        self._set_writer = SetWriter(
+            self._tracker, self._router, loop=loop,
+            batch_window_sec=self._config.batch_window_seconds)
         await self._set_writer.start()
 
         self._tracker_bridge = TrackerBridge(
@@ -671,11 +757,11 @@ class Daemon:
         assert self._tracker is not None
         assert self._router is not None
 
-        configs = [parse_instance_spec(spec) for spec in self.instances]
+        configs = [parse_instance_spec(spec) for spec in self._config.instances]
 
         cache = None
-        if self.state_enabled:
-            state_dir = self.state_dir or Path(DEFAULT_STATE_DIR)
+        if self._config.state_enabled:
+            state_dir = self._config.state_dir or Path(DEFAULT_STATE_DIR)
             cache = InstanceCache(state_dir)
 
         self._instance_manager = InstanceManager(
@@ -831,110 +917,44 @@ class Daemon:
 
     async def _start_control_server(self) -> None:
         """Bind the control Unix socket and register handlers."""
-        assert self.control_socket is not None
+        assert self._config.control_socket is not None
 
         self._control_server = ControlServer(
-            socket_path=self.control_socket,
-            netns=self.control_socket_netns,
-            socket_mode=self.socket_mode,
+            socket_path=self._config.control_socket,
+            netns=self._config.control_socket_netns,
+            socket_mode=self._config.socket_mode,
+        )
+
+        # Build the handler object with the subsystem references it needs.
+        handlers = ControlHandlers(
+            instance_mgr=self._instance_manager,
+            iplist_tracker=self._iplist_tracker,
+            pull_resolver=self._pull_resolver,
+            nfsets_hook=self._apply_nfsets_from_instances,
         )
 
         # Register iplist handlers if the tracker is running.
         if self._iplist_tracker is not None:
-            tracker = self._iplist_tracker
-
-            async def _handle_refresh_iplist(req: dict) -> dict:
-                name = req.get("name")
-                if name:
-                    await tracker.refresh_one(name)
-                else:
-                    await tracker.refresh_all()
-                return {"ok": True}
-
-            async def _handle_iplist_status(_req: dict) -> dict:
-                return {"ok": True, "lists": tracker.status()}
-
             self._control_server.register_handler(
-                "refresh-iplist", _handle_refresh_iplist
+                "refresh-iplist", handlers.handle_refresh_iplist
             )
             self._control_server.register_handler(
-                "iplist-status", _handle_iplist_status
+                "iplist-status", handlers.handle_iplist_status
             )
 
         # Register instance handlers if the manager is running.
         if self._instance_manager is not None:
-            mgr = self._instance_manager
-
-            async def _handle_reload_instance(req: dict) -> dict:
-                name = req.get("name")
-                await mgr.reload(name)
-                return {"ok": True}
-
-            async def _handle_instance_status(_req: dict) -> dict:
-                return {"ok": True, "instances": mgr.status()}
-
-            async def _handle_register_instance(req: dict) -> dict:
-                config_dir = req.get("config_dir")
-                netns = req.get("netns") or ""
-                if not config_dir:
-                    return {"ok": False, "error": "missing 'config_dir'"}
-                dir_path = Path(config_dir)
-                # Client-supplied name wins (from INSTANCE_NAME / CLI);
-                # otherwise derive deterministically.
-                name = (req.get("name") or netns or dir_path.name).strip()
-                allowlist_path = Path(
-                    req.get("allowlist_path")
-                    or (dir_path / "dnsnames.compiled")
-                )
-                nfsets_payload = req.get("nfsets") or None
-                cfg = InstanceConfig(
-                    name=name,
-                    netns=netns,
-                    config_dir=dir_path,
-                    allowlist_path=allowlist_path,
-                    nfsets_payload=nfsets_payload,
-                )
-                dns_payload = None
-                if "dns" in req or "dnsr" in req:
-                    dns_payload = {
-                        k: req[k] for k in ("dns", "dnsr") if k in req
-                    }
-                n = await mgr.register(
-                    cfg,
-                    dns_payload=dns_payload,
-                    nfsets_payload=nfsets_payload,
-                )
-                # Wire nfsets backends (PlainListTracker etc.) after register.
-                await self._apply_nfsets_from_instances()
-                return {"ok": True, "name": cfg.name, "qnames": n}
-
-            async def _handle_deregister_instance(req: dict) -> dict:
-                name = req.get("name")
-                if not name:
-                    config_dir = req.get("config_dir")
-                    netns = req.get("netns") or ""
-                    if config_dir:
-                        from pathlib import Path
-                        name = netns or Path(config_dir).name
-                if not name:
-                    return {
-                        "ok": False,
-                        "error": "missing 'name' or 'config_dir'",
-                    }
-                await mgr.deregister(name)
-                return {"ok": True, "name": name}
-
             self._control_server.register_handler(
-                "reload-instance", _handle_reload_instance
+                "reload-instance", handlers.handle_reload_instance
             )
             self._control_server.register_handler(
-                "instance-status", _handle_instance_status
+                "instance-status", handlers.handle_instance_status
             )
             self._control_server.register_handler(
-                "register-instance", _handle_register_instance
+                "register-instance", handlers.handle_register_instance
             )
             self._control_server.register_handler(
-                "deregister-instance", _handle_deregister_instance
+                "deregister-instance", handlers.handle_deregister_instance
             )
 
         # Seed coordinator — answers request-seed commands from shorewall-nft.
@@ -955,7 +975,7 @@ class Daemon:
             await self._control_server.start()
         except Exception:
             log.exception(
-                "control server failed to start on %s", self.control_socket
+                "control server failed to start on %s", self._config.control_socket
             )
             self._control_server = None
             return
@@ -1020,18 +1040,18 @@ class Daemon:
         REGISTRY.register(_Adapter())
         try:
             server, thread = start_http_server(
-                self.prom_port, addr=self.prom_host)
+                self._config.prom_port, addr=self._config.prom_host)
         except Exception as e:
             log.error("failed to bind prom endpoint %s:%d: %s",
-                      self.prom_host, self.prom_port, e)
+                      self._config.prom_host, self._config.prom_port, e)
             return
         self._prom_server = server
         log.info("shorewalld prom endpoint live on %s:%d",
-                 self.prom_host, self.prom_port)
+                 self._config.prom_host, self._config.prom_port)
 
     async def _start_dnstap_server(self, netns_list: list[str]) -> None:
         """Bind the dnstap unix socket and start the decode worker pool."""
-        assert self._nft is not None and self.api_socket is not None
+        assert self._nft is not None and self._config.api_socket is not None
         assert self._registry is not None
         dnstap_kwargs: dict = {
             # If the DNS pipeline was initialised first, route every
@@ -1039,20 +1059,20 @@ class Daemon:
             # (dedup + batch + persistent worker) instead of the
             # legacy direct-nft SetWriter.
             "bridge": self._tracker_bridge,
-            "socket_owner": self.socket_owner,
-            "socket_group": self.socket_group,
+            "socket_owner": self._config.socket_owner,
+            "socket_group": self._config.socket_group,
         }
-        if self.socket_mode is not None:
-            dnstap_kwargs["socket_mode"] = self.socket_mode
+        if self._config.socket_mode is not None:
+            dnstap_kwargs["socket_mode"] = self._config.socket_mode
         self._dnstap_server = DnstapServer(
-            self.api_socket, self._nft, netns_list,
+            self._config.api_socket, self._nft, netns_list,
             **dnstap_kwargs,
         )
         try:
             await self._dnstap_server.start()
         except Exception:
             log.exception("failed to start dnstap server on %s",
-                          self.api_socket)
+                          self._config.api_socket)
             self._dnstap_server = None
             return
         # Register the metrics collector so queue depth / frame
@@ -1071,7 +1091,7 @@ class Daemon:
                 try:
                     await asyncio.wait_for(
                         self._stop_event.wait(),  # type: ignore[union-attr]
-                        timeout=self.reprobe_interval)
+                        timeout=self._config.reprobe_interval)
                     return  # stop_event fired
                 except asyncio.TimeoutError:
                     pass
@@ -1115,24 +1135,41 @@ class Daemon:
 
         Tears down the async DNS-pipeline subsystems in reverse wiring
         order, then delegates the synchronous parts to :meth:`_shutdown`.
+
+        Every step is attempted even if earlier steps fail.  Any step
+        failures are aggregated; after all steps run the list is logged
+        as a summary and the process exits with code 1 so monitoring
+        tools do not see a spurious "clean shutdown".
         """
         if self._shutdown_done:
             return
 
+        errors: list[tuple[str, BaseException]] = []
+
+        async def _safe_async(step: str, coro: Any) -> None:
+            try:
+                await coro
+            except BaseException as exc:
+                errors.append((step, exc))
+                log.exception("shutdown step %r failed", step)
+
+        def _safe_sync(step: str, fn: Any) -> None:
+            try:
+                fn()
+            except BaseException as exc:
+                errors.append((step, exc))
+                log.exception("shutdown step %r failed", step)
+
         # Control server: close before tearing down subsystems it references.
         if self._control_server is not None:
-            try:
-                await self._control_server.shutdown()
-            except Exception:
-                log.exception("control server shutdown failed")
+            await _safe_async(
+                "control_server", self._control_server.shutdown())
             self._control_server = None
 
         # Pull resolver.
         if self._pull_resolver is not None:
-            try:
-                await self._pull_resolver.shutdown()
-            except Exception:
-                log.exception("pull resolver shutdown failed")
+            await _safe_async(
+                "pull_resolver", self._pull_resolver.shutdown())
             self._pull_resolver = None
 
         # IP-list tracker.
@@ -1157,50 +1194,33 @@ class Daemon:
 
         # Instance manager.
         if self._instance_manager is not None:
-            try:
-                await self._instance_manager.shutdown()
-            except Exception:
-                log.exception("instance manager shutdown failed")
+            await _safe_async(
+                "instance_manager", self._instance_manager.shutdown())
             self._instance_manager = None
 
         # Peer link: stop sending heartbeats and close the UDP socket.
         if self._peer_link is not None:
-            try:
-                await self._peer_link.stop()
-            except Exception:
-                log.exception("peer link stop failed")
+            await _safe_async("peer_link", self._peer_link.stop())
             self._peer_link = None
 
         # pbdns ingress server.
         if self._pbdns_server is not None:
-            try:
-                await self._pbdns_server.close()
-            except Exception:
-                log.exception("pbdns server close failed")
+            await _safe_async("pbdns_server", self._pbdns_server.close())
             self._pbdns_server = None
 
         # State store: final save before the tracker gets torn down.
         if self._state_store is not None:
-            try:
-                await self._state_store.stop()
-            except Exception:
-                log.exception("state store stop failed")
+            await _safe_async("state_store", self._state_store.stop())
             self._state_store = None
 
         # SetWriter: flush pending batches through the worker router.
         if self._set_writer is not None:
-            try:
-                await self._set_writer.shutdown()
-            except Exception:
-                log.exception("set writer shutdown failed")
+            await _safe_async("set_writer", self._set_writer.shutdown())
             self._set_writer = None
 
         # Worker router: terminate every per-netns fork worker.
         if self._router is not None:
-            try:
-                await self._router.shutdown()
-            except Exception:
-                log.exception("worker router shutdown failed")
+            await _safe_async("worker_router", self._router.shutdown())
             self._router = None
 
         # Drop tracker + bridge references — they own no kernel state.
@@ -1209,6 +1229,16 @@ class Daemon:
 
         # Synchronous subsystems (prom server, profile teardown, …).
         self._shutdown()
+
+        # After all steps: surface aggregated failures so the process
+        # exits non-zero and monitoring sees a failed shutdown.
+        if errors:
+            failed = ", ".join(s for s, _ in errors)
+            log.error(
+                "shorewalld shutdown completed with %d error(s) in: %s",
+                len(errors), failed,
+            )
+            sys.exit(1)
 
     def _shutdown(self) -> None:
         if self._shutdown_done:
@@ -1249,6 +1279,14 @@ class Daemon:
             except Exception:
                 log.exception("profile teardown failed")
             self._profile_builder = None
+
+        # 4a. Close all cached pyroute2 IPRoute handles (link/qdisc/
+        #     neighbour/address collectors share one handle per netns).
+        try:
+            from .collectors._shared import close_all_rtnl
+            close_all_rtnl()
+        except Exception:
+            log.debug("close_all_rtnl on shutdown failed, ignoring")
 
         # 5. Wake the main loop so run() returns.
         if self._stop_event is not None and not self._stop_event.is_set():

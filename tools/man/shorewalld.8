@@ -282,6 +282,28 @@ SNMPv2c community string for VRRP augmentation (default:
 .BI \-\-vrrp\-snmp\-timeout " SECS"
 SNMP request timeout in seconds (default:
 .BR 1.0 ).
+.TP
+.BI \-\-dns\-dedup\-refresh\-threshold " FLOAT"
+Fraction of the proposed TTL that must remain in the existing nft element
+expiry before a DNS answer is treated as a duplicate and the write is skipped.
+Range: 0.0\(en1.0; default:
+.BR 0.5
+(50 %).  Lower values write more frequently; higher values write less often
+but may serve slightly stale addresses for longer.  Also configurable via
+.B DNS_DEDUP_REFRESH_THRESHOLD
+in
+.IR shorewalld.conf .
+.TP
+.BI \-\-batch\-window\-seconds " SECS"
+Coalescing window in seconds for the SetWriter batch pipeline.  DNS updates
+arriving within this window are merged into a single nft transaction.
+Default:
+.B 0.010
+(10 ms).  Increase to reduce nft round-trips under heavy load; decrease for
+lower latency on sparse traffic.  Also configurable via
+.B BATCH_WINDOW_SECONDS
+in
+.IR shorewalld.conf .
 
 .SH tap SUBCOMMAND
 .B shorewalld tap

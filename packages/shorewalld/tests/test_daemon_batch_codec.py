@@ -291,3 +291,41 @@ class TestCapacityLimits:
 def _unpack(view: memoryview | bytes) -> tuple[memoryview | bytes, object]:
     """Helper: return (view, decoded_header) for iter_ops chaining."""
     return view, decode_header(view)
+
+
+class TestIterOpsIpBytesType:
+    """BatchOp.ip_bytes remains bytes at the wire-codec layer.
+
+    The allocation-free path is at the Proposal (tracker) layer, not
+    here — BatchOp.ip_bytes is needed by nft_worker for formatting.
+    This test pins the contract so a refactor doesn't silently break it.
+    """
+
+    def test_iter_ops_v4_ip_bytes_is_bytes(self):
+        b = BatchBuilder()
+        b.append(
+            set_id=1, family=4, op_kind=BATCH_OP_ADD,
+            ttl=300, ip_bytes=_v4(192, 0, 2, 1),
+        )
+        ops = list(iter_ops(*_unpack(b.finish(batch_id=1))))
+        assert len(ops) == 1
+        op = ops[0]
+        assert isinstance(op.ip_bytes, bytes)
+        assert len(op.ip_bytes) == 4
+        # Round-trip: bytes → int → bytes must be identity.
+        ip_int = int.from_bytes(op.ip_bytes, "big")
+        assert isinstance(ip_int, int)
+        assert ip_int.to_bytes(4, "big") == op.ip_bytes
+
+    def test_iter_ops_v6_ip_bytes_is_bytes_16(self):
+        b = BatchBuilder()
+        b.append(
+            set_id=2, family=6, op_kind=BATCH_OP_ADD,
+            ttl=600, ip_bytes=_v6(0x20),
+        )
+        ops = list(iter_ops(*_unpack(b.finish(batch_id=2))))
+        op = ops[0]
+        assert isinstance(op.ip_bytes, bytes)
+        assert len(op.ip_bytes) == 16
+        ip_int = int.from_bytes(op.ip_bytes, "big")
+        assert ip_int.to_bytes(16, "big") == op.ip_bytes
