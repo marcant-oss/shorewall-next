@@ -75,6 +75,27 @@ def poll_conntrack(ssh_runner: callable) -> list[MetricRow]:
     ]
 
 
+def poll_conntrack_list(ssh_runner: callable) -> list[MetricRow]:
+    """Poll the live conntrack entry count via ``conntrack -L | wc -l``.
+
+    Returns a single MetricRow with key ``conntrack_count`` and value equal
+    to the number of entries currently in the conntrack table.  This is the
+    sidecar metric for the ``observe_conntrack`` field on ThroughputScenario
+    and ConnStormScenario — it must be called periodically (e.g. once per
+    second) from the scenario runner to track peak table utilisation.
+
+    The SSH runner is expected to support piped commands via a shell:
+    ``ssh_runner(["sh", "-c", "conntrack -L | wc -l"])``
+    """
+    stdout = ssh_runner(["sh", "-c", "conntrack -L 2>/dev/null | wc -l"])
+    ts = time.time()
+    try:
+        count = int(stdout.strip())
+    except ValueError:
+        count = 0
+    return [MetricRow(source="conntrack-list", ts_unix=ts, key="conntrack_count", value=float(count))]
+
+
 def poll_ethtool(ssh_runner: callable, iface: str) -> list[MetricRow]:
     """`ethtool -S <iface>` — one MetricRow per "     key: N" line."""
     stdout = ssh_runner(["ethtool", "-S", iface])

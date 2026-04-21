@@ -225,9 +225,23 @@ class ThroughputScenario(BaseModel):
     expect_min_gbps: float
     measure_latency: bool = False  # if True, extract per-interval TCP RTT from iperf3 JSON
     udp_bandwidth_mbps: int = 0    # UDP only; 0 = unlimited (iperf3 -b 0), >0 = cap in Mbps
+    # observe_conntrack: if True, poll `conntrack -L | wc -l` on fw_host once per second
+    # in a sidecar while the throughput scenario runs.  Peak count is recorded in
+    # ScenarioResult.metrics["conntrack_peak_observed"].
+    # TODO(hang-fix agent): wire the sidecar poll in scenarios.py ThroughputRunner.
+    observe_conntrack: bool = False
+    fw_host: str | None = None  # SSH target for conntrack observation; required when observe_conntrack=True
     test_id: str | None = None
     standard_refs: list[str] = []
     acceptance_criteria: dict[str, Any] = {}
+
+    @model_validator(mode="after")
+    def _check_observe_conntrack(self) -> "ThroughputScenario":
+        if self.observe_conntrack and self.fw_host is None:
+            raise ValueError(
+                "fw_host must be set when observe_conntrack=True"
+            )
+        return self
 
     @field_validator("test_id")
     @classmethod
@@ -257,9 +271,23 @@ class ConnStormScenario(BaseModel):
     rate_per_s: int
     hold_s: int
     target_port: int = 80              # TCP port on the sink that pyconn connects to
+    # observe_conntrack: if True, poll `conntrack -L | wc -l` on fw_host once per second
+    # as a sidecar during the storm phase.  Peak count recorded in
+    # ScenarioResult.metrics["conntrack_peak_observed"].
+    # TODO(hang-fix agent): wire the sidecar in scenarios.py ConnStormRunner.
+    observe_conntrack: bool = False
+    fw_host: str | None = None  # SSH target for conntrack observation; required when observe_conntrack=True
     test_id: str | None = None
     standard_refs: list[str] = []
     acceptance_criteria: dict[str, Any] = {}
+
+    @model_validator(mode="after")
+    def _check_observe_conntrack(self) -> "ConnStormScenario":
+        if self.observe_conntrack and self.fw_host is None:
+            raise ValueError(
+                "fw_host must be set when observe_conntrack=True"
+            )
+        return self
 
     @field_validator("target_port")
     @classmethod
