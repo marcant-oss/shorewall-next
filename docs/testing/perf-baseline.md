@@ -205,11 +205,102 @@ for sc in data['scenarios']:
 
 ---
 
+## Conntrack sidecar timing fix (commit 2c3ecc45)
+
+Root-cause analysis of `conntrack_peak_observed = 0`:
+
+**Two independent problems were found:**
+
+### Problem 1: Sequential dispatch (fixed)
+
+`poll_conntrack` was dispatched to the same host group as the iperf3 client
+(both on tester01).  Within a host group, commands run sequentially
+(`_run_host_group` iterates with `await`).  By the time `poll_conntrack`
+started, the iperf3 run had finished and all TCP connections were gone.
+
+**Fix** (commit `2c3ecc45`): Added `concurrent: bool = False` to `AgentCommand`.
+The `poll_conntrack` sidecar is now emitted with `concurrent=True`.  The
+controller's `_run_host_group` splits the group into sequential + concurrent
+batches and runs them as concurrent asyncio tasks via `asyncio.gather`.
+For `poll_conntrack`, the controller runs SSH **directly** (bypassing agent IPC)
+rather than sending through the request-response channel, so the SSH poll
+genuinely overlaps with the iperf3 run.
+
+### Problem 2: L2-local traffic (topology limitation, NOT fixed by code)
+
+Both `wan-native` (203.0.113.253) and `lan-downstream` (203.0.113.254) are
+on the **same VLAN 20 L2 broadcast domain**.  iperf3 between them uses ARP to
+find the MAC directly — traffic NEVER transits the FW forwarding path.  The
+FW's netfilter/conntrack stack sees zero packets from this flow.
+
+**Consequence**: `conntrack_peak_observed` will remain 0 for `wan-native →
+lan-downstream` even with the timing fix.
+
+**Required operator action**: For a real through-FW conntrack measurement:
+
+Option A (recommended): Add a temporary ACCEPT rule on the FW permitting
+iperf3 traffic between tester01's sim-uplink (203.0.113.74/27, net zone) and
+tester02's downstream (203.0.113.128/25, host zone), then re-run with
+`source_role: wan-uplink` and `sink_role: lan-downstream`.
+
+Option B: Place tester01 and tester02 on different VLANs/subnets with the FW
+as the only IP-layer path between them.
+
+Until one of these is done, `perf-conntrack-observe-throughput` will always
+report `conntrack_peak_observed = 0` even with the timing fix applied.
+
+---
+
+## DoS scenarios (Target 2)
+
+All three live-DoS scenarios (`dos_syn_flood`, `dos_half_open`, `dos_dns_query`)
+are hard-gated to `mode=dpdk` endpoints (TRex STL / ASTF).  They **cannot** run
+on the current virtio-net test VMs without new kernel-stack scenario kinds.
+
+| Scenario | Backend required | Virtio-net possible? |
+|----------|-----------------|----------------------|
+| `dos_syn_flood` | TRex STL (raw SYN packets) | No |
+| `dos_half_open` | TRex ASTF (half-open TCP) | No |
+| `dos_dns_query` | TRex STL (UDP/53 queries) | No |
+
+A kernel-stack DoS proxy can be approximated with `conn_storm` at high rate
+(e.g. `target_conns=5000, rate_per_s=5000, hold_s=10`).  This tests FW
+resilience to connection bursts and fills conntrack — but only if through-FW
+routing is set up (see Problem 2 above).
+
+Tracking item: to enable kernel-stack DoS on virtio, add
+`SynFloodNativeDosScenario` (pyconn backend) + `HalfOpenNativeDosScenario`
+(pyconn with `hold_s` > 0 and no FIN).
+
+---
+
+## Flowtable offload (Target 3)
+
+`nist-sc-7-flowtable-offload` is status `partial`.  The acceptance criterion
+`flowtable_counter_nonzero: true` is not yet evaluated by `ThroughputRunner`.
+The `advisor.py` `_h_flowtable_stagnant` heuristic fires on
+`flowtable_*=0` in SNMP/nft-ssh MetricRows, which is a proxy signal.
+
+To implement real flowtable counter tracking:
+1. Add `observe_flowtable: bool` + `flowtable_fw_host: str | None` to
+   `ThroughputScenario`.
+2. In the controller, add `_run_flowtable_counter_poll_local` that SSHes to FW
+   and runs `nft -j list ruleset` before and after the iperf3 run, extracts
+   flowtable packet deltas, and stores them in `ScenarioResult.raw`.
+3. In `ThroughputRunner.summarize()`, evaluate
+   `acceptance_criteria["flowtable_counter_nonzero"]` against the packet delta.
+
+This is tracked as a follow-up — the structural pattern (concurrent sidecar via
+controller-local SSH) is identical to the conntrack sidecar fix already shipped.
+
+---
+
 ## Follow-up items for operator
 
-1. **Conntrack sidecar**: update `fw_host: root@fw-primary` to
-   `fw_host: root@192.0.2.70` in `docs/testing/security-test-plan.ipv6-perf.yaml`
-   and deploy tester01's SSH key to the FW.
+1. **Through-FW routing**: add a temporary ACCEPT rule on the FW for
+   tester01 sim-uplink (net zone) → tester02 downstream (host zone) on
+   tcp/5201 (iperf3), then re-run `perf-conntrack-observe-throughput` with
+   `source_role: wan-uplink` to get real `conntrack_peak_observed` > 0.
 
 2. **conn-storm HTTP listener**: add a `start_http_listener` sidecar command
    in `ConnStormRunner` (or in the catalogue entry) so port 80 on `lan-downstream`
@@ -223,3 +314,8 @@ for sc in data['scenarios']:
 4. **DPDK line-rate** (task #31): provision physical NIC via Proxmox PCI
    passthrough for real 10–40 Gbps measurements.  The current virtio-net
    numbers are a software-emulation ceiling, not a firewall performance ceiling.
+
+5. **Flowtable offload verification**: implement `observe_flowtable` in
+   `ThroughputScenario` + controller sidecar (see flowtable section above).
+   Prerequisite: through-FW routing must be set up so test traffic actually
+   traverses the FW's flowtable rules.

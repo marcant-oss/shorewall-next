@@ -390,6 +390,9 @@ def test_throughput_plan_emits_conntrack_sidecar_when_observe_set():
     assert sidecar.spec["duration_s"] == 12  # duration_s + 2
     assert sidecar.spec["interval_s"] == 1.0
     assert sidecar.spec["_conntrack_sidecar"] is True
+    # concurrent=True ensures the controller runs the sidecar in parallel
+    # with the iperf3 client rather than sequentially after it finishes.
+    assert sidecar.concurrent is True
 
 
 def test_throughput_plan_no_sidecar_when_observe_false():
@@ -471,6 +474,8 @@ def test_conn_storm_plan_emits_conntrack_sidecar_when_observe_set():
     assert sidecar.spec["duration_s"] == 17  # hold_s + 2
     assert sidecar.spec["interval_s"] == 1.0
     assert sidecar.spec["_conntrack_sidecar"] is True
+    # concurrent=True ensures the sidecar overlaps with the pyconn storm
+    assert sidecar.concurrent is True
 
 
 def test_conn_storm_plan_no_sidecar_when_observe_false():

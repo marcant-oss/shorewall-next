@@ -2320,9 +2320,17 @@ tests:
     tests.
 
     '
-  note: 'Handler wiring (observe_conntrack sidecar poll in ThroughputRunner) is a
-    TODO for the hang-fix agent.  The config field and catalogue entry are in place;
-    the scenario will run without conntrack observation until the handler is wired.
+  note: 'Sidecar timing fix shipped (commit 2c3ecc45): poll_conntrack now carries
+    concurrent=True and the controller dispatches it via a local SSH task that runs
+    in parallel with the iperf3 client — it no longer runs sequentially after iperf3
+    finishes.
+
+    Remaining topology gap: both wan-native (203.0.113.253) and lan-downstream
+    (203.0.113.254) are on the same VLAN 20 L2, so iperf3 between them uses ARP
+    directly and never traverses the FW forwarding path.  conntrack_peak_observed
+    will remain 0 until through-FW routing is established (operator must add a
+    temporary ACCEPT rule for tcp/5201 between the net-zone and host-zone subnets,
+    or retarget the scenario to use wan-uplink as source).
 
     '
 - test_id: perf-conntrack-observe-conn-storm
@@ -2360,10 +2368,14 @@ tests:
     the full conntrack-overflow DoS tests.
 
     '
-  note: 'Handler wiring (observe_conntrack sidecar in ConnStormRunner) is a TODO for
-    the hang-fix agent.
+  note: 'Sidecar timing fix shipped (commit 2c3ecc45): poll_conntrack now carries
+    concurrent=True and the controller runs the sidecar in parallel with the pyconn
+    storm via a local SSH task.  Same topology gap as perf-conntrack-observe-throughput:
+    wan-native → lan-downstream is L2-local; conntrack_peak_observed will remain 0
+    until through-FW routing is established.
 
     '
+
 out_of_scope:
 - standard: cc-iso-15408
   sfr_family: FCS_* (Cryptographic support)
