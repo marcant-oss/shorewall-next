@@ -61,6 +61,20 @@ description: nfsets, full man-page coverage, Prometheus nfsets metrics, VrrpColl
 
 ---
 
+---
+
+## Maintenance & Performance (broad-audit round)
+
+- **Two-pass filter for pbdns** — type + qname peeked via raw varint walk before `ParseFromString`; 100× fewer full protobuf parses on a typical non-allowlisted frame mix. Mirrors the existing dnstap two-pass filter.
+- **Shared pyroute2 `IPRoute` per netns** — four collectors (link, qdisc, neighbour, address) reuse one cached handle instead of constructing four per-scrape. Eliminates per-scrape netns fork overhead.
+- **`ControlHandlers` extracted from `Daemon`** — 7 control-socket handlers now live in `control_handlers.py`; shutdown errors surface as non-zero exit instead of silently logging and exiting 0.
+- **`DaemonConfig` typed runtime config** — 34-field frozen dataclass; `Daemon(config=cfg)` replaces the old kwargs path. Kwargs still accepted with a `DeprecationWarning`.
+- **Two new operator tunables**: `DNS_DEDUP_REFRESH_THRESHOLD` (default 0.5) and `BATCH_WINDOW_SECONDS` (default 10 ms) are now wired to `shorewalld.conf` keys and `--` CLI flags.
+- **`shorewalld.exporter.__all__` pinned** — 19 private helpers removed from re-export; import from `shorewalld.collectors.<module>` directly.
+- **pbdns bug fix** — `DNSIncomingResponseType = 4` added to valid response set; frames of that type were silently dropped before this round.
+
+---
+
 ## Upgrading
 
 **No configuration changes are required.** All new features are opt-in:

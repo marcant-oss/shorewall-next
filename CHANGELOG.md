@@ -233,6 +233,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Compile-time `WARNING` logged once per config file on `dns:` use.
   Removal scheduled for a future major release; no hard timeline yet.
 
+### Added (shorewalld broad-audit implementation round)
+
+- `shorewalld_pbdns_frames_skipped_by_type_total` + `*_by_qname_total`:
+  new counters surfacing how many PBDNSMessage frames are dropped
+  pre-parse by the two-pass filter (P-5). Expected ratio ~99% of
+  received frames.
+- `shorewalld_rtnl_handles_cached` gauge: size of the per-netns
+  IPRoute handle cache (A-1).
+- `DNS_DEDUP_REFRESH_THRESHOLD` config key + `--dns-dedup-refresh-threshold`
+  CLI flag: operator-tunable fraction of proposed TTL below which
+  a DNS answer is treated as duplicate and the write is skipped.
+  Default 0.5.
+- `BATCH_WINDOW_SECONDS` config key + `--batch-window-seconds` CLI flag:
+  coalescing window for the SetWriter batch pipeline. Default 0.010
+  (10 ms).
+- `DaemonConfig` frozen dataclass (`daemon_config.py`): 34-field typed
+  runtime config consumed by `Daemon(config=cfg)`. Kwargs accepted for
+  back-compat with a DeprecationWarning.
+- `ControlHandlers` class (`control_handlers.py`): control-socket
+  request handlers extracted from `Daemon` for testability. 7 handlers,
+  27 new unit tests.
+- `_IngressMetricsBase` shared base (`_ingress_metrics.py`):
+  lock-free counter bag for PbdnsMetrics + DnstapMetrics. Bumps are
+  single-bytecode atomic under GIL; no per-increment lock.
+- `__all__` on `shorewalld.exporter`: public surface pinned (18 names);
+  19 private helpers (`_CT_STAT_FIELDS`, `_extract_qdisc_row`, …) no
+  longer re-exported — import from `shorewalld.collectors.<module>`.
+
+### Changed (broad-audit)
+
+- pbdns hot path: full `ParseFromString` gated behind varint peek of
+  type + qname; 100× fewer full parses on a typical mix of
+  allowlisted + non-allowlisted frames.
+- Four pyroute2-based collectors (link, qdisc, neighbour, address)
+  now share one cached `IPRoute(netns=...)` handle per netns instead
+  of opening + closing per scrape. Eliminates the per-scrape
+  pyroute2 netns fork overhead.
+- `Proposal` and `SetMetrics` dataclasses now `slots=True`; drops
+  ~200 B/instance __dict__ on the 20 k-fps allocation path.
+- Compiler hot dataclasses (`Match`, `Rule`, `Chain`) also
+  `slots=True` (~2.7 MB saved per reference-config compile).
+- `nft_worker` IPv4 formatting uses `socket.inet_ntop` instead of
+  generator-based join.
+- `_LIBC` handle cached at module load in `nft_worker.py`; no more
+  `find_library` + `CDLL` on every spawn.
+- `Daemon.__init__` kwargs deprecated (DeprecationWarning,
+  stacklevel=2); pass `DaemonConfig(...)` via `config=` instead.
+- Shutdown sequence aggregates subsystem errors into a single
+  `sys.exit(1)` path (M-4); previously subsystem shutdown failures
+  were silently logged while the process exited 0.
+- PbdnsMetrics / DnstapMetrics per-increment lock removed; counter
+  bumps are lock-free under the GIL (P-4).
+
+### Fixed (broad-audit)
+
+- pbdns valid response set now includes `DNSIncomingResponseType = 4`
+  in addition to `DNSResponseType = 2`. Before this, legitimate
+  frames matching type 4 were silently dropped.
+
+### Internal / non-operator-facing (broad-audit)
+
+- `core.py` shrank from a 1262-line god-object:
+    1262 → 1229 lines after ControlHandlers extract (54a7799ae)
+    1229 → 1309 lines after DaemonConfig refactor (eb9d6e74c;
+    structural scaffolding + back-compat properties net-up, but
+    _start_* bodies cleaner).
+
 ## [1.10.0] - 2026-04-20
 
 ### Added (security-test-plan feature)
