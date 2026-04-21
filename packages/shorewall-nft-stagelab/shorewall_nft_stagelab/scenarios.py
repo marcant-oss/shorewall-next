@@ -356,21 +356,44 @@ class RuleScanRunner(Scenario):
     def _make_rng(self) -> random.Random:
         return random.Random(42)
 
+    @staticmethod
+    def _random_host_ip(
+        net: ipaddress.IPv4Network | ipaddress.IPv6Network,
+        rng: random.Random,
+    ) -> str:
+        """Return a random usable host IP without materialising the host list.
+
+        For large networks (e.g. IPv6 /32 with 2^96 addresses) calling
+        ``list(net.hosts())`` would exhaust memory.  Instead we pick a random
+        integer offset in [1, num_addresses-2] and add it to the network base.
+        Falls back to the network address for /32 or /128.
+        """
+        num = net.num_addresses
+        if num <= 2:
+            # /31, /32 (IPv4) or /127, /128 (IPv6) — use network address
+            return str(net.network_address)
+        # Pick a random host offset in [1, num-2] to skip network + broadcast.
+        offset = rng.randint(1, num - 2)
+        return str(net.network_address + offset)
+
     def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
         sc = self._sc
         ep_map = {ep.name: ep for ep in cfg.endpoints}
         src_ep = ep_map[sc.source]
-        src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
+        family = getattr(sc, "family", "ipv4")
+        if family == "ipv6":
+            src_ip = src_ep.ipv6.split("/")[0] if src_ep.ipv6 else "::"
+        else:
+            src_ip = src_ep.ipv4.split("/")[0] if src_ep.ipv4 else "0.0.0.0"
 
         network = ipaddress.ip_network(sc.target_subnet, strict=False)
-        hosts = list(network.hosts())
 
         rng = self._make_rng()
         commands: list[AgentCommand] = []
 
         for i in range(sc.random_count):
             probe_id = i + 1
-            dst_ip = str(rng.choice(hosts)) if hosts else str(network.network_address)
+            dst_ip = self._random_host_ip(network, rng)
             src_port = rng.randint(1024, 65535)
             dst_port = rng.randint(1, 65535)
             proto = _PROTOS[i % len(_PROTOS)]
@@ -386,6 +409,7 @@ class RuleScanRunner(Scenario):
                         "proto": proto,
                         "src_port": src_port,
                         "dst_port": dst_port,
+                        "family": family,
                         "scenario_id": sc.id,
                     },
                 )
