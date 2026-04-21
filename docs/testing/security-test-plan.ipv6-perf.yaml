@@ -58,6 +58,232 @@ tests:
       IPv6 in dual-stack deployments.  Throughput parity reduces the risk of
       a performance cliff when clients migrate to IPv6.
 
+  - test_id: perf-ipv4-tcp-throughput
+    title: "IPv4 TCP throughput meets SLO"
+    description: >
+      Single-directional TCP throughput over an IPv4 native endpoint pair.
+      Establishes the IPv4 baseline that the IPv6 parity tests compare against.
+      A single iperf3 run with 4 parallel streams must sustain the configured
+      minimum Gbps for the full duration.
+    maps_to_scenario:
+      kind: throughput
+      proto: tcp
+      family: ipv4
+      source_role: wan-uplink
+      sink_role: lan-downstream
+      duration_s: 30
+      parallel: 4
+      expect_min_gbps: 8.0
+    acceptance_criteria:
+      min_gbps: 8.0
+      max_retrans_ratio: 0.005
+    standard_refs: [nist-800-53-sc-7]
+    status: covered
+    evidence:
+      human: "docs/testing/security-test-plan.md#perf-ipv4-tcp-throughput"
+      machine: "audit.json scenarios[].test_id == perf-ipv4-tcp-throughput"
+    rationale: >
+      IPv4 throughput baseline is required by NIST SP 800-53 SC-7 (boundary
+      protection) and forms the reference against which IPv6 parity (SC-7-ipv6)
+      is measured.  Without an explicit IPv4 benchmark the parity comparison
+      has no anchor.
+
+  - test_id: perf-ipv4-udp-throughput
+    title: "IPv4 UDP throughput meets SLO"
+    description: >
+      Single-directional UDP throughput over an IPv4 native endpoint pair.
+      Exercises the UDP forwarding path used by DNS, NTP, syslog, and media
+      traffic zones.
+    maps_to_scenario:
+      kind: throughput
+      proto: udp
+      family: ipv4
+      source_role: wan-uplink
+      sink_role: lan-downstream
+      duration_s: 20
+      parallel: 2
+      expect_min_gbps: 5.0
+      udp_bandwidth_mbps: 0
+    acceptance_criteria:
+      min_gbps: 5.0
+    standard_refs: [nist-800-53-sc-7]
+    status: covered
+    evidence:
+      human: "docs/testing/security-test-plan.md#perf-ipv4-udp-throughput"
+      machine: "audit.json scenarios[].test_id == perf-ipv4-udp-throughput"
+    rationale: >
+      UDP traffic (DNS, NTP, syslog) traverses multiple zone-pairs on the
+      reference firewall.  An IPv4 UDP baseline validates that udp conntrack
+      helpers and NOTRACK rules do not degrade performance below the SLO.
+
+  - test_id: perf-dpdk-ipv4-line-rate-stl
+    title: "DPDK IPv4 line-rate throughput (TRex STL stateless)"
+    description: >
+      TRex stateless load at 10 Gbps IMIX IPv4 traffic mix through the
+      firewall.  Verifies that the nft forwarding path sustains line-rate
+      under a realistic traffic mix without packet loss above 0.1%.
+    maps_to_scenario:
+      kind: throughput_dpdk
+      source_role: wan-dpdk
+      sink_role: lan-dpdk
+      proto: udp
+      duration_s: 30
+      multiplier: "10gbps"
+      packet_size_b: 0   # IMIX: send a pcap replay, not a fixed size
+      test_id: perf-dpdk-ipv4-line-rate-stl
+      standard_refs: [nist-800-53-sc-7]
+      acceptance_criteria:
+        packet_loss_ratio_max: 0.001
+    status: deferred
+    deferred_reason: >
+      Requires DPDK-capable NICs bound to vfio-pci on the test hosts (task
+      #31).  The reference test hosts use virtio-net NICs which do not
+      support line-rate DPDK operation.  Re-enable once hardware NICs with
+      SR-IOV or physical 10G+ NICs are provisioned with
+      STAGELAB_HUGEPAGES=2048.
+    evidence:
+      human: "docs/testing/security-test-plan.md#perf-dpdk-ipv4-line-rate-stl"
+      machine: "audit.json scenarios[].test_id == perf-dpdk-ipv4-line-rate-stl"
+    rationale: >
+      Line-rate testing via DPDK/TRex is the only way to validate 40–100 Gbps
+      forwarding performance.  Without DPDK the iperf3-based kernel stack
+      tests cap at ~25 Gbps.  The IMIX mix (64/512/1500B in 7:4:1 ratio)
+      matches realistic backbone traffic.
+
+  - test_id: perf-dpdk-ipv6-line-rate-stl
+    title: "DPDK IPv6 line-rate throughput (TRex STL stateless)"
+    description: >
+      TRex stateless load at 10 Gbps IMIX IPv6 traffic mix through the
+      firewall.  Verifies IPv6 forwarding path at line-rate; a lower result
+      vs IPv4 indicates a compiler or dispatch bug in the IPv6 chain.
+    maps_to_scenario:
+      kind: throughput_dpdk
+      source_role: wan-dpdk
+      sink_role: lan-dpdk
+      proto: udp
+      duration_s: 30
+      multiplier: "10gbps"
+      packet_size_b: 0   # IMIX pcap replay
+      test_id: perf-dpdk-ipv6-line-rate-stl
+      standard_refs: [nist-800-53-sc-7]
+      acceptance_criteria:
+        packet_loss_ratio_max: 0.001
+    status: deferred
+    deferred_reason: >
+      Same gate as perf-dpdk-ipv4-line-rate-stl (task #31 — DPDK NICs).
+    evidence:
+      human: "docs/testing/security-test-plan.md#perf-dpdk-ipv6-line-rate-stl"
+      machine: "audit.json scenarios[].test_id == perf-dpdk-ipv6-line-rate-stl"
+    rationale: >
+      IPv6 throughput parity at line-rate.  If IPv6 lags IPv4 by more than
+      5% at line-rate it indicates a chain dispatch issue, not just a
+      software-path overhead.
+
+  - test_id: perf-dpdk-ipv4-astf-1m-sessions
+    title: "DPDK IPv4 ASTF 1M concurrent HTTP sessions (TRex ASTF)"
+    description: >
+      TRex ASTF stateful test generating 1 million concurrent HTTP sessions
+      over IPv4 through the firewall.  Validates that the conntrack table
+      handles the session volume without ENOMEM or timeout-premature-eviction.
+    maps_to_scenario:
+      kind: conn_storm_astf
+      source_role: wan-dpdk
+      sink_role: lan-dpdk
+      profile_py: "/opt/trex/v3.08/automation/trex_control_plane/interactive/trex/examples/astf/http_simple.py"
+      duration_s: 60
+      multiplier: 1.0
+      expect_min_concurrent: 1000000
+      test_id: perf-dpdk-ipv4-astf-1m-sessions
+      standard_refs: [nist-800-53-sc-5]
+      acceptance_criteria:
+        concurrent_sessions_min: 1000000
+        kernel_error_count: 0
+    status: deferred
+    deferred_reason: >
+      Requires DPDK NICs (task #31) and TRex v3.08 staged at /opt/trex/v3.08
+      on the test hosts.
+    evidence:
+      human: "docs/testing/security-test-plan.md#perf-dpdk-ipv4-astf-1m-sessions"
+      machine: "audit.json scenarios[].test_id == perf-dpdk-ipv4-astf-1m-sessions"
+    rationale: >
+      NIST SP 800-53 SC-5 (resource availability) requires that the firewall
+      sustains service under high connection concurrency.  1M sessions is the
+      reference conntrack limit benchmark for the HA firewall pair.
+
+  - test_id: perf-conntrack-observe-throughput
+    title: "Conntrack table peak measurement during sustained throughput"
+    description: >
+      During a 60-second IPv4 TCP throughput run (iperf3, 4 parallel streams),
+      continuously poll `conntrack -L | wc -l` on the firewall once per second
+      and record the peak entry count.  Validates that the conntrack table
+      does not accumulate stale entries faster than they are expired during
+      normal load.
+    maps_to_scenario:
+      kind: throughput
+      proto: tcp
+      family: ipv4
+      source_role: wan-native
+      sink_role: lan-downstream
+      duration_s: 60
+      parallel: 4
+      expect_min_gbps: 1.0
+      observe_conntrack: true
+      fw_host: "root@fw-primary"
+      test_id: perf-conntrack-observe-throughput
+      standard_refs: [nist-800-53-sc-5]
+      acceptance_criteria:
+        throughput_gbps_min: 1.0
+        conntrack_peak_observed_max: 200000
+    status: covered
+    evidence:
+      human: "docs/testing/security-test-plan.md#perf-conntrack-observe-throughput"
+      machine: "audit.json scenarios[].test_id == perf-conntrack-observe-throughput"
+    rationale: >
+      Conntrack table growth during normal throughput is a leading indicator of
+      a conntrack helper leak or misconfigured timeout.  Observing the peak
+      count during a known-good load scenario provides a baseline for the
+      DoS conntrack-overflow tests.
+    note: >
+      Handler wiring (observe_conntrack sidecar poll in ThroughputRunner) is a
+      TODO for the hang-fix agent.  The config field and catalogue entry are
+      in place; the scenario will run without conntrack observation until the
+      handler is wired.
+
+  - test_id: perf-conntrack-observe-conn-storm
+    title: "Conntrack table peak measurement during connection storm"
+    description: >
+      During a conn_storm scenario (100 000 concurrent TCP connections, 10 000
+      new connections/s, held for 30 s), continuously poll
+      `conntrack -L | wc -l` on the firewall and record the peak entry count.
+      Validates that the table does not exceed 80% fill before the storm ends.
+    maps_to_scenario:
+      kind: conn_storm
+      source_role: wan-native
+      sink_role: lan-downstream
+      target_conns: 100000
+      rate_per_s: 10000
+      hold_s: 30
+      target_port: 80
+      observe_conntrack: true
+      fw_host: "root@fw-primary"
+      test_id: perf-conntrack-observe-conn-storm
+      standard_refs: [nist-800-53-sc-5]
+      acceptance_criteria:
+        throughput_ratio_min: 0.8
+        conntrack_peak_fill_fraction_max: 0.80
+    status: covered
+    evidence:
+      human: "docs/testing/security-test-plan.md#perf-conntrack-observe-conn-storm"
+      machine: "audit.json scenarios[].test_id == perf-conntrack-observe-conn-storm"
+    rationale: >
+      Connection storms drive conntrack table fill differently from throughput
+      runs.  Observing the fill fraction during the storm validates that the
+      firewall can absorb a moderate burst without exhausting the table — a
+      prerequisite for the full conntrack-overflow DoS tests.
+    note: >
+      Handler wiring (observe_conntrack sidecar in ConnStormRunner) is a TODO
+      for the hang-fix agent.
+
 out_of_scope:
   - item: "IPv6-only transition / NAT64"
     reason: >

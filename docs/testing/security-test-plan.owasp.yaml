@@ -201,6 +201,55 @@ tests:
       machine: "audit.json scenarios[].test_id == owasp-fw-8-operational-hardening"
     tags: [reload, atomicity, shorewalld]
 
+  - test_id: owasp-fw-3-default-deny-ipv6
+    standard_refs: ["owasp-fw-3", "iso27001-a-13-1-1"]
+    title: "Default-deny policy verification — IPv6"
+    status: covered
+    description: >
+      IPv6 twin of owasp-fw-3-default-deny.  Probe all unmapped IPv6 zone
+      pairs and verify that every IPv6 packet to a non-permitted zone pair
+      is dropped.  Covers the case where IPv6 dispatch rules are missing or
+      incorrectly ordered (catch-all before specific zone rules).
+    maps_to_scenario:
+      kind: rule_scan
+      source_role: wan-uplink
+      target_subnet: 2001:db8::/32
+      random_count: 500
+      family: ipv6
+    acceptance_criteria:
+      fail_accept_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-3-default-deny-ipv6"
+      machine: "audit.json scenarios[].test_id == owasp-fw-3-default-deny-ipv6"
+    tags: [default-deny, rule-scan, ipv6]
+
+  - test_id: owasp-fw-4-evasion-bypass-ipv6
+    standard_refs: ["owasp-fw-4"]
+    title: "Evasion and bypass probe suite — IPv6"
+    status: covered
+    description: >
+      IPv6 twin of owasp-fw-4-evasion-bypass.  Send crafted IPv6 packets
+      designed to evade stateless ACLs: extension header injection, TCP
+      RST-in-handshake, UDP bad checksum, and spoofed link-local source.
+      All must be dropped.
+    maps_to_scenario:
+      kind: evasion_probes
+      source_role: wan-uplink
+      target_ip: "2001:db8::1"
+      probe_types:
+        - tcp_null
+        - tcp_xmas
+        - tcp_fin_no_syn
+        - ip_spoof
+        - udp_malformed_checksum
+      family: ipv6
+    acceptance_criteria:
+      evasion_success_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.md#owasp-fw-4-evasion-bypass-ipv6"
+      machine: "audit.json scenarios[].test_id == owasp-fw-4-evasion-bypass-ipv6"
+    tags: [evasion, ipv6, extension-headers]
+
 out_of_scope:
   - id: owasp-tls-fingerprint
     reason: >

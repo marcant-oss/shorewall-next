@@ -281,6 +281,87 @@ tests:
       machine_ref: "audit.json[scenarios][].test_id == cc-fta-ssl-3-long-flow-survival"
     status: covered
 
+  - test_id: cc-fdp-iff-1-basic-flow-ipv6
+    title: "Basic information flow control — IPv6"
+    sfr: FDP_IFF.1
+    description: >
+      IPv6 twin of cc-fdp-iff-1-basic-flow.  Verify zone-pair accept/drop
+      consistency under the compiled nftables ruleset using random IPv6 probes
+      across the reference firewall's IPv6 prefix space.  IPv6 dispatch must
+      route correctly without NDP-ACCEPT rules shadowing zone traffic.
+    maps_to_scenario:
+      kind: rule_scan
+      source_role: wan-uplink
+      target_subnet: 2001:db8::/32
+      random_count: 500
+      family: ipv6
+      test_id: cc-fdp-iff-1-basic-flow-ipv6
+      standard_refs:
+        - cc-iso-15408-fdp-iff-1
+      acceptance_criteria:
+        fail_accept_count: 0
+        fail_drop_count_max: 2
+    evidence:
+      human_ref: "security-test-plan.md#cc-fdp-iff-1-basic-flow-ipv6"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fdp-iff-1-basic-flow-ipv6"
+    status: covered
+
+  - test_id: cc-fdp-iff-1-evasion-reject-ipv6
+    title: "Reject evasion probes — IPv6 (extension headers, spoofed src)"
+    sfr: FDP_IFF.1
+    description: >
+      IPv6 twin of cc-fdp-iff-1-evasion-reject.  Probes IPv6-specific evasion
+      vectors: hop-by-hop extension header injection, fragmentation header
+      abuse, and spoofed-source IPv6 addresses from globally-unrouted prefixes
+      (2001:db8::/32, ::1).  All probes must be dropped.
+    maps_to_scenario:
+      kind: evasion_probes
+      source_role: wan-uplink
+      target_ip: 2001:db8::1
+      probe_types:
+        - tcp_null
+        - tcp_xmas
+        - tcp_fin_no_syn
+        - ip_spoof
+        - udp_malformed_checksum
+      target_port: 80
+      family: ipv6
+      test_id: cc-fdp-iff-1-evasion-reject-ipv6
+      standard_refs:
+        - cc-iso-15408-fdp-iff-1
+      acceptance_criteria:
+        pass_count: 0
+    evidence:
+      human_ref: "security-test-plan.md#cc-fdp-iff-1-evasion-reject-ipv6"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fdp-iff-1-evasion-reject-ipv6"
+    status: covered
+
+  - test_id: cc-fru-rsa-1-conn-storm-ipv6
+    title: "Minimum resource allocation under connection storm — IPv6"
+    sfr: FRU_RSA.1
+    description: >
+      IPv6 twin of cc-fru-rsa-1-conn-storm.  High IPv6 connection-creation
+      rate must not degrade IPv4 throughput below 80% of baseline nor cause
+      conntrack ENOMEM.
+    maps_to_scenario:
+      kind: conn_storm
+      source_role: wan-native
+      sink_role: lan-downstream
+      target_conns: 100000
+      rate_per_s: 10000
+      hold_s: 30
+      target_port: 80
+      family: ipv6
+      test_id: cc-fru-rsa-1-conn-storm-ipv6
+      standard_refs:
+        - cc-iso-15408-fru-rsa-1
+      acceptance_criteria:
+        throughput_ratio_min: 0.8
+    evidence:
+      human_ref: "security-test-plan.md#cc-fru-rsa-1-conn-storm-ipv6"
+      machine_ref: "audit.json[scenarios][].test_id == cc-fru-rsa-1-conn-storm-ipv6"
+    status: covered
+
 out_of_scope:
   - sfr_family: "FCS_* (Cryptographic support)"
     reason: >

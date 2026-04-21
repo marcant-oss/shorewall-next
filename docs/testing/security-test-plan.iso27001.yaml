@@ -216,6 +216,30 @@ tests:
       machine: "audit.json scenarios[].test_id == iso27001-a-13-2-1-transfer-controls"
     tags: [data-transfer, lateral-movement, zone-policy]
 
+  - test_id: iso27001-a-13-1-1-network-controls-ipv6
+    standard_refs: ["iso27001-a-13-1-1", "owasp-fw-3-ipv6"]
+    title: "Network controls — IPv6 zone segmentation"
+    status: covered
+    description: >
+      IPv6 twin of iso27001-a-13-1-1-network-controls.  Verify that IPv6
+      networks are segregated into the same security zones as IPv4 and that
+      the compiled nftables IPv6 chain enforces zone policies correctly.
+      Dual-stack zone types must be type=ip (not ipv4) so that IPv6 dispatch
+      is active for all zone pairs.
+    maps_to_scenario:
+      kind: rule_scan
+      source_role: wan-uplink
+      target_subnet: "2001:db8::/32"
+      random_count: 500
+      family: ipv6
+    acceptance_criteria:
+      fail_accept_count: 0
+      zone_pair_coverage_pct: 100
+    evidence:
+      human: "docs/testing/security-test-plan.md#iso27001-a-13-1-1-network-controls-ipv6"
+      machine: "audit.json scenarios[].test_id == iso27001-a-13-1-1-network-controls-ipv6"
+    tags: [network-controls, zone-segmentation, ipv6]
+
 out_of_scope:
   - id: iso27001-a-12-4-3-admin-activity
     control: "A.12.4.3"
