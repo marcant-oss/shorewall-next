@@ -733,6 +733,10 @@ produce trace events on this stream.
 .SS load\-sets [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
 Load external sets (GeoIP prefix files, ipset exports) into nft after
 .BR start .
+Uses libnftables' native JSON API when available (much faster for bulk
+element loads); falls back to
+.B nft \-f \-
+text mode otherwise.
 
 .RS
 .TP

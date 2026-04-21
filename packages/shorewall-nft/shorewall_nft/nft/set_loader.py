@@ -15,10 +15,22 @@ Usage:
 
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from shorewall_nft.nft.netlink import NftError, NftInterface
+
+_LOG = logging.getLogger(__name__)
+
+# JSON-API chunk size: large enough to minimise round-trips, small enough to
+# keep individual libnftables payloads reasonable.  50 000 prefixes × ~20 B
+# each ≈ 1 MB — well within kernel netlink limits.
+_JSON_CHUNK_DEFAULT = 50_000
+
+# Text-mode chunk size: limited by the nft parser's string buffer.
+_TEXT_CHUNK_DEFAULT = 500
 
 
 @dataclass
@@ -65,7 +77,7 @@ class SetLoader:
         if create:
             self._ensure_set(set_name, "ipv4_addr", ["interval"])
 
-        self._add_elements(set_name, elements)
+        self.bulk_add_elements(set_name, elements)
         return len(elements)
 
     def load_geoip_dir(self, geoip_dir: str | Path,
@@ -116,7 +128,7 @@ class SetLoader:
         for s in nft_sets:
             if s.elements:
                 self._ensure_set(s.name, s.set_type, s.flags)
-                self._add_elements(s.name, s.elements)
+                self.bulk_add_elements(s.name, s.elements)
                 results[s.name] = len(s.elements)
 
         return results
@@ -129,28 +141,119 @@ class SetLoader:
         except (NftError, Exception):
             pass  # Set might not exist yet
 
-    def _ensure_set(self, name: str, set_type: str, flags: list[str]) -> None:
-        """Create the set if it doesn't exist."""
-        flags_str = f"flags {', '.join(flags)}; " if flags else ""
-        cmd = (f"add set {self.family} {self.table} {name} "
-               f"{{ type {set_type}; {flags_str}}}")
-        try:
-            self.nft.cmd(cmd, netns=self.netns)
-        except (NftError, Exception):
-            pass  # Set might already exist
+    def bulk_add_elements(
+        self,
+        set_name: str,
+        elements: list[str],
+        *,
+        chunk_size: int | None = None,
+        prefer_json: bool = True,
+    ) -> None:
+        """Add elements to a set, optionally via libnftables JSON API.
 
-    def _add_elements(self, set_name: str, elements: list[str],
-                      chunk_size: int = 500) -> None:
-        """Add elements to a set in chunks."""
-        for i in range(0, len(elements), chunk_size):
-            chunk = elements[i:i + chunk_size]
-            elem_str = ", ".join(chunk)
-            cmd = f"add element {self.family} {self.table} {set_name} {{ {elem_str} }}"
+        When ``prefer_json=True`` (the default) and libnftables is available
+        (``self.nft._use_lib`` is True), elements are sent via the native JSON
+        API in chunks of ``chunk_size`` (default: 50 000).  This skips the nft
+        text parser and is significantly faster for bulk loads (tens of
+        thousands of elements).
+
+        When libnftables is not available, or ``prefer_json=False``, falls back
+        to the text-chunked path with a default chunk size of 500.
+
+        ``chunk_size`` overrides the default for whichever path is chosen;
+        passing ``chunk_size=500`` positionally is still supported for backward
+        compatibility.
+        """
+        if not elements:
+            return
+
+        use_json = prefer_json and self.nft._use_lib
+
+        if use_json:
+            effective_chunk = chunk_size if chunk_size is not None else _JSON_CHUNK_DEFAULT
+            n_chunks = math.ceil(len(elements) / effective_chunk)
+            _LOG.debug(
+                "SetLoader: JSON API, %d elements in %d chunk(s) for set %s",
+                len(elements), n_chunks, set_name,
+            )
+            for i in range(0, len(elements), effective_chunk):
+                chunk = elements[i:i + effective_chunk]
+                payload: dict = {
+                    "nftables": [
+                        {
+                            "add": {
+                                "element": {
+                                    "family": self.family,
+                                    "table": self.table,
+                                    "name": set_name,
+                                    "elem": chunk,
+                                }
+                            }
+                        }
+                    ]
+                }
+                try:
+                    self.nft.cmd_json(payload)
+                except (NftError, Exception):
+                    # Log but don't fail — some elements might be duplicates
+                    _LOG.debug(
+                        "SetLoader: JSON API chunk %d/%d for set %s failed (ignored)",
+                        i // effective_chunk + 1, n_chunks, set_name,
+                    )
+        else:
+            effective_chunk = chunk_size if chunk_size is not None else _TEXT_CHUNK_DEFAULT
+            n_chunks = math.ceil(len(elements) / effective_chunk)
+            _LOG.debug(
+                "SetLoader: text mode, %d elements in %d chunk(s) for set %s",
+                len(elements), n_chunks, set_name,
+            )
+            for i in range(0, len(elements), effective_chunk):
+                chunk = elements[i:i + effective_chunk]
+                elem_str = ", ".join(chunk)
+                cmd = (f"add element {self.family} {self.table} "
+                       f"{set_name} {{ {elem_str} }}")
+                try:
+                    self.nft.cmd(cmd, netns=self.netns)
+                except (NftError, Exception):
+                    # Log but don't fail — some elements might be duplicates
+                    pass
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _ensure_set(self, name: str, set_type: str, flags: list[str]) -> None:
+        """Create the set if it doesn't exist, via JSON API when available."""
+        if self.nft._use_lib:
+            set_obj: dict = {
+                "family": self.family,
+                "table": self.table,
+                "name": name,
+                "type": set_type,
+            }
+            if flags:
+                set_obj["flags"] = flags
+            payload: dict = {"nftables": [{"add": {"set": set_obj}}]}
+            try:
+                self.nft.cmd_json(payload)
+            except (NftError, Exception):
+                pass  # Set might already exist
+        else:
+            flags_str = f"flags {', '.join(flags)}; " if flags else ""
+            cmd = (f"add set {self.family} {self.table} {name} "
+                   f"{{ type {set_type}; {flags_str}}}")
             try:
                 self.nft.cmd(cmd, netns=self.netns)
             except (NftError, Exception):
-                # Log but don't fail — some elements might be duplicates
-                pass
+                pass  # Set might already exist
+
+    # Keep the old private name as an alias so any callers that happened to
+    # call it directly continue to work.
+    def _add_elements(self, set_name: str, elements: list[str],
+                      chunk_size: int = _TEXT_CHUNK_DEFAULT) -> None:
+        """Deprecated alias for bulk_add_elements (text path)."""
+        self.bulk_add_elements(set_name, elements, chunk_size=chunk_size,
+                               prefer_json=True)
 
 
 def generate_set_loader_script(config_dir: Path) -> str:
