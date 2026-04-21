@@ -32,7 +32,7 @@ def _nl_step(step: str, fn, *args, **kwargs):
 class NativeEndpointSpec:
     name: str           # endpoint name, used for netns name NS_TEST_<name>
     nic: str            # host-side physical NIC name, e.g. "enp1s0f0"
-    vlan: int           # 1..4094
+    vlan: int | None    # 1..4094, or None for untagged (NIC used directly)
     ipv4: str           # "10.0.10.100/24" — CIDR
     ipv4_gw: str        # "10.0.10.1"
     ipv6: str | None = None
@@ -44,12 +44,18 @@ class NativeEndpointHandle:
     name: str
     netns: str          # "NS_TEST_<name>"
     nsstub_pid: int
-    vlan_iface: str     # "<nic>.<vlan>", e.g. "enp1s0f0.10"
+    vlan_iface: str     # "<nic>.<vlan>" for tagged, or "<nic>" for untagged
+    untagged: bool = False  # True when vlan=None (NIC moved into netns directly)
 
 
 def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
-    """Create netns, create VLAN subiface on parent NIC, move it to netns,
-    bring up, set IPs + default GW. Returns handle for teardown.
+    """Create netns, move NIC (or VLAN sub-interface) into it, set IPs + GW.
+
+    When ``spec.vlan`` is not None, a ``<nic>.<vlan>`` VLAN sub-interface is
+    created and moved into the netns (the parent NIC stays in the host netns).
+    When ``spec.vlan`` is None, the NIC itself is moved into the netns directly
+    (untagged backbone endpoint).  Teardown moves the NIC back to the host
+    netns in the untagged case.
 
     Preconditions: caller is root and CAP_NET_ADMIN.
     The parent NIC ``spec.nic`` must exist in the caller's netns.
@@ -61,7 +67,9 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
         )
 
     netns = f"NS_TEST_{spec.name}"
-    vlan_iface = f"{spec.nic}.{spec.vlan}"
+    # For untagged endpoints (vlan=None), use the NIC directly; the vlan_iface
+    # field stores the NIC name so teardown and netns code can find the iface.
+    vlan_iface = spec.nic if spec.vlan is None else f"{spec.nic}.{spec.vlan}"
 
     pid = spawn_nsstub(netns)
     handle = NativeEndpointHandle(
@@ -69,6 +77,7 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
         netns=netns,
         nsstub_pid=pid,
         vlan_iface=vlan_iface,
+        untagged=(spec.vlan is None),
     )
 
     try:
@@ -85,50 +94,29 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
             _nl_step("bring up parent NIC",
                      ipr.link, "set", index=nic_idx[0], state="up")
 
-            # Create VLAN sub-interface. If it already exists (e.g. created by a
-            # systemd service at boot — tester02-downstream.service) we reuse it
-            # directly rather than failing. The kernel emits two distinct error
-            # strings for this depending on whether the interface exists in the
-            # current netns ("File exists" from RTNETLINK) or the 8021q layer
-            # remembers the VLAN-on-parent mapping from a previous setup in
-            # another netns ("8021q: VLAN device already exists"). Both are
-            # safe to ignore — we adopt the interface.
-            try:
-                ipr.link(
-                    "add",
-                    ifname=vlan_iface,
-                    kind="vlan",
-                    link=nic_idx[0],
-                    vlan_id=spec.vlan,
-                )
-            except NetlinkError as exc:
-                if exc.code != _EEXIST:
-                    raise RuntimeError(
-                        f"create VLAN iface failed: {exc}"
-                    ) from exc
-                # Interface pre-exists; check visibility. The 8021q kernel
-                # layer sometimes reports EEXIST even after the user-space
-                # interface has been destroyed by a prior netns-delete — in
-                # that case `link_lookup` returns empty and any subsequent
-                # `set netns` fails with "Cannot find device". Sledgehammer:
-                # reset the 8021q module and retry the add.
-                vlan_idx = ipr.link_lookup(ifname=vlan_iface)
-                if not vlan_idx:
-                    subprocess.run(
-                        ["rmmod", "8021q"],
-                        check=False, text=True, capture_output=True,
-                    )
-                    subprocess.run(
-                        ["modprobe", "8021q"],
-                        check=False, text=True, capture_output=True,
-                    )
-                    # Re-lookup parent NIC (index may have changed after rmmod).
-                    nic_idx = ipr.link_lookup(ifname=spec.nic)
-                    if not nic_idx:
-                        raise RuntimeError(
-                            f"create VLAN iface failed: parent {spec.nic!r} "
-                            f"vanished after 8021q reset"
-                        )
+            if spec.vlan is None:
+                # Untagged mode: move the NIC itself directly into the netns.
+                # Flush any IPs on the NIC first so our assignment is clean.
+                try:
+                    ipr.flush_addr(index=nic_idx[0])
+                except NetlinkError:
+                    pass
+                ns_fd = os.open(f"/run/netns/{netns}", os.O_RDONLY)
+                try:
+                    _nl_step("move NIC to netns",
+                             ipr.link, "set", index=nic_idx[0], net_ns_fd=ns_fd)
+                finally:
+                    os.close(ns_fd)
+            else:
+                # Tagged mode: create VLAN sub-interface and move it into the
+                # netns. If it already exists (e.g. created by a systemd service
+                # at boot — tester02-downstream.service) we reuse it directly.
+                # The kernel emits two distinct error strings for this depending
+                # on whether the interface exists in the current netns ("File
+                # exists" from RTNETLINK) or the 8021q layer remembers the
+                # VLAN-on-parent mapping from a previous setup in another netns
+                # ("8021q: VLAN device already exists"). Both are safe to ignore.
+                try:
                     ipr.link(
                         "add",
                         ifname=vlan_iface,
@@ -136,26 +124,61 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
                         link=nic_idx[0],
                         vlan_id=spec.vlan,
                     )
-                else:
-                    # Interface genuinely exists; flush any stray IPs so our
-                    # assignment is clean.
-                    try:
-                        ipr.flush_addr(index=vlan_idx[0])
-                    except NetlinkError:
-                        pass
+                except NetlinkError as exc:
+                    if exc.code != _EEXIST:
+                        raise RuntimeError(
+                            f"create VLAN iface failed: {exc}"
+                        ) from exc
+                    # Interface pre-exists; check visibility. The 8021q kernel
+                    # layer sometimes reports EEXIST even after the user-space
+                    # interface has been destroyed by a prior netns-delete — in
+                    # that case `link_lookup` returns empty and any subsequent
+                    # `set netns` fails with "Cannot find device". Sledgehammer:
+                    # reset the 8021q module and retry the add.
+                    vlan_idx = ipr.link_lookup(ifname=vlan_iface)
+                    if not vlan_idx:
+                        subprocess.run(
+                            ["rmmod", "8021q"],
+                            check=False, text=True, capture_output=True,
+                        )
+                        subprocess.run(
+                            ["modprobe", "8021q"],
+                            check=False, text=True, capture_output=True,
+                        )
+                        # Re-lookup parent NIC (index may have changed after rmmod).
+                        nic_idx = ipr.link_lookup(ifname=spec.nic)
+                        if not nic_idx:
+                            raise RuntimeError(
+                                f"create VLAN iface failed: parent {spec.nic!r} "
+                                f"vanished after 8021q reset"
+                            )
+                        ipr.link(
+                            "add",
+                            ifname=vlan_iface,
+                            kind="vlan",
+                            link=nic_idx[0],
+                            vlan_id=spec.vlan,
+                        )
+                    else:
+                        # Interface genuinely exists; flush any stray IPs so our
+                        # assignment is clean.
+                        try:
+                            ipr.flush_addr(index=vlan_idx[0])
+                        except NetlinkError:
+                            pass
 
-            # Move VLAN iface to netns — open the netns fd for the move
-            vlan_idx = ipr.link_lookup(ifname=vlan_iface)
-            if not vlan_idx:
-                raise RuntimeError(
-                    f"move VLAN iface to netns failed: {vlan_iface!r} not found after create"
-                )
-            ns_fd = os.open(f"/run/netns/{netns}", os.O_RDONLY)
-            try:
-                _nl_step("move VLAN iface to netns",
-                         ipr.link, "set", index=vlan_idx[0], net_ns_fd=ns_fd)
-            finally:
-                os.close(ns_fd)
+                # Move VLAN iface to netns — open the netns fd for the move
+                vlan_idx = ipr.link_lookup(ifname=vlan_iface)
+                if not vlan_idx:
+                    raise RuntimeError(
+                        f"move VLAN iface to netns failed: {vlan_iface!r} not found after create"
+                    )
+                ns_fd = os.open(f"/run/netns/{netns}", os.O_RDONLY)
+                try:
+                    _nl_step("move VLAN iface to netns",
+                             ipr.link, "set", index=vlan_idx[0], net_ns_fd=ns_fd)
+                finally:
+                    os.close(ns_fd)
 
         # All subsequent ops happen inside the new netns
         with NetNS(netns) as ipns:
@@ -211,18 +234,41 @@ def setup_native_endpoint(spec: NativeEndpointSpec) -> NativeEndpointHandle:
 
 
 def teardown_native_endpoint(handle: NativeEndpointHandle) -> None:
-    """Delete the VLAN iface (it dies with the netns, but we explicitly
-    remove it before stopping the stub to avoid lingering state).
-    Then stop_nsstub() to remove the netns.
+    """Tear down a native endpoint created by ``setup_native_endpoint``.
+
+    For tagged endpoints (VLAN sub-interface): the VLAN iface is deleted inside
+    the netns (it would die with the netns anyway, but explicit deletion avoids
+    stale 8021q state on the parent NIC).
+
+    For untagged endpoints (NIC moved directly into netns): the NIC is moved
+    back to the host (PID-1) netns before stopping the netns stub so that it
+    remains available to the host after teardown.
+
+    Errors are swallowed to stay idempotent.
     """
-    # Best-effort: delete the VLAN iface from inside the netns first.
-    try:
-        with NetNS(handle.netns) as ipns:
-            vi_idx = ipns.link_lookup(ifname=handle.vlan_iface)
-            if vi_idx:
-                ipns.link("del", index=vi_idx[0])
-    except Exception:
-        pass
+    if handle.untagged:
+        # Move NIC back to the host (init) netns before deleting the stub netns.
+        # PID 1 is always in the host netns; open its netns fd for the move.
+        try:
+            with NetNS(handle.netns) as ipns:
+                vi_idx = ipns.link_lookup(ifname=handle.vlan_iface)
+                if vi_idx:
+                    ns_fd = os.open("/proc/1/ns/net", os.O_RDONLY)
+                    try:
+                        ipns.link("set", index=vi_idx[0], net_ns_fd=ns_fd)
+                    finally:
+                        os.close(ns_fd)
+        except Exception:
+            pass
+    else:
+        # Best-effort: delete the VLAN iface from inside the netns first.
+        try:
+            with NetNS(handle.netns) as ipns:
+                vi_idx = ipns.link_lookup(ifname=handle.vlan_iface)
+                if vi_idx:
+                    ipns.link("del", index=vi_idx[0])
+        except Exception:
+            pass
 
     # Remove the netns (stop the stub). Swallow errors to stay idempotent.
     try:
