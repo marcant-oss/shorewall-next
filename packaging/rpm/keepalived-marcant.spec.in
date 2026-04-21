@@ -71,7 +71,6 @@ to work unchanged.
     --enable-libipset \
     --enable-json \
     --enable-regex \
-    --enable-pcre \
     --enable-fwmark \
     --enable-systemd
 
@@ -153,11 +152,18 @@ fi
 %{_unitdir}/keepalived.service
 %dir %{_sysconfdir}/keepalived
 %config(noreplace) %{_sysconfdir}/keepalived/keepalived.conf.example
-%{_datadir}/dbus-1/system.d/org.keepalived.Vrrp1.conf
+# D-Bus security policy: keepalived installs to sysconfdir/dbus-1/system.d/
+# (= /etc/dbus-1/system.d/), NOT /usr/share/dbus-1/system.d/.
+# Verified against keepalived/dbus/Makefile.am: dbussystemdir = @sysconfdir@/dbus-1/system.d
+%{_sysconfdir}/dbus-1/system.d/org.keepalived.Vrrp1.conf
+# D-Bus interface XML files (in /usr/share/dbus-1/interfaces/)
+%{_datadir}/dbus-1/interfaces/org.keepalived.Vrrp1.Instance.xml
+%{_datadir}/dbus-1/interfaces/org.keepalived.Vrrp1.Vrrp.xml
+# MIBs actually shipped by keepalived v2.3.4: KEEPALIVED-MIB, VRRP-MIB, VRRPv3-MIB.
+# VRRP2-MIB.txt and VRRPMIB-RFC2787.txt are RFC-standard MIBs from net-snmp — NOT keepalived.
 %{_datadir}/snmp/mibs/KEEPALIVED-MIB.txt
 %{_datadir}/snmp/mibs/VRRP-MIB.txt
-%{_datadir}/snmp/mibs/VRRP2-MIB.txt
-%{_datadir}/snmp/mibs/VRRPMIB-RFC2787.txt
+%{_datadir}/snmp/mibs/VRRPv3-MIB.txt
 %{_mandir}/man1/genhash.1*
 %{_mandir}/man5/keepalived.conf.5*
 %{_mandir}/man8/keepalived.8*
