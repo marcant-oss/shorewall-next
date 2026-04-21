@@ -7,7 +7,10 @@ package should not depend on these.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from shorewalld.read_codec import CtNetlinkStats
 
 
 class _FileReader(Protocol):
@@ -25,6 +28,18 @@ class _FileReader(Protocol):
     def count_lines_sync(
         self, netns: str, path: str, *, timeout: float = ...,
     ) -> int | None: ...
+
+
+class _CtFileReader(Protocol):
+    """Duck type for ``WorkerRouter`` as used by ``ConntrackStatsCollector``.
+
+    Extends :class:`_FileReader` with the :meth:`ctnetlink_stats_sync`
+    method added by the ``READ_KIND_CTNETLINK`` RPC.
+    """
+
+    def ctnetlink_stats_sync(
+        self, netns: str, *, timeout: float = ...,
+    ) -> "CtNetlinkStats | None": ...
 
 
 # AF_INET / AF_INET6 → short label; used by neighbour + address

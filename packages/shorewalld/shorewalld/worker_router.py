@@ -64,12 +64,15 @@ from .nft_worker import (
 from .read_codec import (
     MAGIC_READ_RESP,
     READ_KIND_COUNT_LINES,
+    READ_KIND_CTNETLINK,
     READ_KIND_FILE,
     READ_STATUS_NOT_FOUND,
     READ_STATUS_OK,
     READ_STATUS_TOO_LARGE,
+    CtNetlinkStats,
     ReadResponse,
     ReadWireError,
+    decode_ct_stats,
     decode_line_count,
     decode_read_response,
     encode_read_request,
@@ -508,6 +511,30 @@ class ParentWorker:
             extra={"netns": self.netns or "(own)"})
         return None
 
+    async def ctnetlink_stats(self) -> CtNetlinkStats | None:
+        """Fetch per-CPU-summed CTNETLINK stats in the worker's netns.
+
+        Returns ``None`` when the worker is unavailable (netns gone,
+        pyroute2 not installed, NetlinkError, timeout). The caller
+        should treat ``None`` as "skip the sample" — no exception is
+        raised.
+        """
+        resp = await self._dispatch_read(READ_KIND_CTNETLINK, "")
+        if resp.status == READ_STATUS_OK:
+            try:
+                return decode_ct_stats(resp.data)
+            except ReadWireError as e:
+                log.warning(
+                    "worker ctnetlink_stats decode error: %s", e,
+                    extra={"netns": self.netns or "(own)"})
+                return None
+        log.debug(
+            "worker ctnetlink_stats error (status=%d): %s",
+            resp.status,
+            resp.data.decode("utf-8", errors="replace"),
+            extra={"netns": self.netns or "(own)"})
+        return None
+
     def _tear_down_transport(self) -> None:
         """Close the parent-side socket and reap the dead child.
 
@@ -777,6 +804,12 @@ class LocalWorker:
         default thread pool to keep the event loop unblocked during
         a large file read (e.g. ``/proc/net/ipv6_route`` on a BGP
         full-table box).
+
+        ``READ_KIND_CTNETLINK`` is also handled here: the default thread
+        pool opens an ``NFCTSocket`` in the daemon's own netns (no setns
+        needed, the process is already there) and returns the stats
+        struct. Running on the executor keeps the event loop unblocked
+        during the netlink roundtrip.
         """
         def _do() -> ReadResponse:
             from .nft_worker import _handle_read
@@ -786,6 +819,27 @@ class LocalWorker:
                 status=status, req_id=0, data=data,
             )
         return await self._loop.run_in_executor(None, _do)
+
+    async def ctnetlink_stats(self) -> CtNetlinkStats | None:
+        """Fetch CTNETLINK stats for the daemon's own netns.
+
+        Delegates to :func:`~shorewalld.nft_worker._handle_read_ctnetlink`
+        on the default thread pool — the daemon is already in its own
+        netns so no setns is needed.
+        """
+        resp = await self._dispatch_read(READ_KIND_CTNETLINK, "")
+        if resp.status == READ_STATUS_OK:
+            try:
+                return decode_ct_stats(resp.data)
+            except ReadWireError as e:
+                log.warning("LocalWorker ctnetlink_stats decode error: %s", e)
+                return None
+        log.debug(
+            "LocalWorker ctnetlink_stats error (status=%d): %s",
+            resp.status,
+            resp.data.decode("utf-8", errors="replace"),
+        )
+        return None
 
     async def shutdown(self) -> None:
         if self._executor is not None:
@@ -913,6 +967,19 @@ class WorkerRouter:
             worker = await self.add_netns(netns)
         return await worker.count_lines(path)
 
+    async def ctnetlink_stats(
+        self, netns: str,
+    ) -> CtNetlinkStats | None:
+        """Fetch per-CPU-summed CTNETLINK stats for ``netns``.
+
+        Spawns a worker if needed (same lazy-spawn rule as read_file).
+        Returns ``None`` on worker error / netns gone / pyroute2 absent.
+        """
+        worker = self._workers.get(netns)
+        if worker is None:
+            worker = await self.add_netns(netns)
+        return await worker.ctnetlink_stats()
+
     def read_file_sync(
         self, netns: str, path: str, *, timeout: float = 5.0,
     ) -> bytes | None:
@@ -955,6 +1022,32 @@ class WorkerRouter:
                 "count_lines_sync(%r, %r) failed: %s", netns, path, e)
             return None
 
+    def ctnetlink_stats_sync(
+        self, netns: str, *, timeout: float = 5.0,
+    ) -> CtNetlinkStats | None:
+        """Blocking variant of :meth:`ctnetlink_stats` for scrape threads.
+
+        Schedules the async :meth:`ctnetlink_stats` on the daemon's event
+        loop via :func:`asyncio.run_coroutine_threadsafe` and waits for
+        the reply. Returns ``None`` on timeout, worker error, netns gone,
+        or if pyroute2 is not installed — the caller should skip the
+        sample in that case. Exceptions are logged at DEBUG level and
+        swallowed so a single CTNETLINK hiccup never stalls the whole
+        scrape.
+        """
+        fut = asyncio.run_coroutine_threadsafe(
+            self.ctnetlink_stats(netns), self.loop)
+        try:
+            return fut.result(timeout=timeout)
+        except (concurrent.futures.TimeoutError,
+                concurrent.futures.CancelledError):
+            fut.cancel()
+            return None
+        except Exception as e:  # noqa: BLE001
+            log.debug(
+                "ctnetlink_stats_sync(%r) failed: %s", netns, e)
+            return None
+
     async def shutdown(self) -> None:
         for worker in list(self._workers.values()):
             try:
@@ -995,4 +1088,5 @@ __all__ = [
     "WORKER_ACK_TIMEOUT",
     "RESPAWN_BACKOFF_MIN",
     "RESPAWN_BACKOFF_MAX",
+    "CtNetlinkStats",
 ]
