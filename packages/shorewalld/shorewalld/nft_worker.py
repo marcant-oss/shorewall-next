@@ -81,16 +81,20 @@ from .batch_codec import (
 )
 from .logsetup import get_logger
 from .read_codec import (
+    CT_STATS_FIELDS,
     MAGIC_READ_REQ,
     MAX_FILE_BYTES,
     READ_KIND_COUNT_LINES,
+    READ_KIND_CTNETLINK,
     READ_KIND_FILE,
     READ_STATUS_ERROR,
     READ_STATUS_NOT_FOUND,
     READ_STATUS_OK,
     READ_STATUS_TOO_LARGE,
+    CtNetlinkStats,
     ReadWireError,
     decode_read_request,
+    encode_ct_stats,
     encode_line_count,
     encode_read_response_into,
     peek_magic,
@@ -274,6 +278,72 @@ def build_nft_script(
 # ---------------------------------------------------------------------------
 
 
+# Module-level cache for the NFCTSocket used inside worker children.
+# Each child process is single-threaded and long-lived; one socket per
+# child is sufficient. The parent never touches this (it's only set
+# after fork in the child's address space).
+_nfct_socket = None
+
+
+def _get_nfct_socket():
+    """Return a lazily-created, cached NFCTSocket for this worker.
+
+    Called only inside the child process (already in the target netns).
+    First call opens the socket; subsequent calls return the cached one.
+
+    Raises ``ImportError`` if pyroute2 is not installed, or
+    ``OSError`` / ``NetlinkError`` if the netns lacks conntrack support.
+    """
+    global _nfct_socket
+    if _nfct_socket is None:
+        from pyroute2 import NFCTSocket  # type: ignore[import-untyped]
+        _nfct_socket = NFCTSocket()
+    return _nfct_socket
+
+
+def _handle_read_ctnetlink() -> tuple[int, bytes]:
+    """Issue a CTNETLINK stats dump in the worker's current netns.
+
+    Opens (or reuses) an ``NFCTSocket`` bound to this process's netns,
+    calls ``stat()`` to retrieve per-CPU counters, sums across CPUs, and
+    returns the 64-byte :data:`CT_STATS_STRUCT_SIZE` payload ready for
+    transport.
+
+    Returns ``(READ_STATUS_OK, payload)`` on success, or an error status
+    with a UTF-8 diagnostic string. Never raises.
+    """
+    try:
+        sock = _get_nfct_socket()
+        rows = sock.stat()
+    except ImportError:
+        return READ_STATUS_ERROR, b"pyroute2 not installed"
+    except Exception as e:  # noqa: BLE001
+        # NetlinkError, OSError (ENOENT = netns gone), etc.
+        return READ_STATUS_ERROR, str(e).encode("utf-8")
+
+    totals: dict[str, int] = {f: 0 for f in CT_STATS_FIELDS}
+    for row in rows:
+        get = getattr(row, "get_attr", None)
+        if get is None:
+            continue
+        for field in totals:
+            val = get(field)
+            if val is not None:
+                totals[field] += int(val)
+
+    stats = CtNetlinkStats(
+        CTA_STATS_FOUND=totals["CTA_STATS_FOUND"],
+        CTA_STATS_INVALID=totals["CTA_STATS_INVALID"],
+        CTA_STATS_IGNORE=totals["CTA_STATS_IGNORE"],
+        CTA_STATS_INSERT_FAILED=totals["CTA_STATS_INSERT_FAILED"],
+        CTA_STATS_DROP=totals["CTA_STATS_DROP"],
+        CTA_STATS_EARLY_DROP=totals["CTA_STATS_EARLY_DROP"],
+        CTA_STATS_ERROR=totals["CTA_STATS_ERROR"],
+        CTA_STATS_SEARCH_RESTART=totals["CTA_STATS_SEARCH_RESTART"],
+    )
+    return READ_STATUS_OK, encode_ct_stats(stats)
+
+
 def _handle_read(kind: int, path: str) -> tuple[int, bytes]:
     """Execute a read-RPC in the worker's current netns.
 
@@ -282,6 +352,8 @@ def _handle_read(kind: int, path: str) -> tuple[int, bytes]:
     * ``READ_KIND_FILE`` + OK → raw file bytes (capped at
       :data:`MAX_FILE_BYTES`).
     * ``READ_KIND_COUNT_LINES`` + OK → 8-byte big-endian line count.
+    * ``READ_KIND_CTNETLINK`` + OK → 64-byte :class:`CtNetlinkStats`
+      struct (``path`` is ignored for this kind).
     * non-OK → UTF-8 error string (optional).
 
     Pure function w.r.t. the worker — never raises, never touches
@@ -302,6 +374,8 @@ def _handle_read(kind: int, path: str) -> tuple[int, bytes]:
                 for _ in f:
                     n += 1
             return READ_STATUS_OK, encode_line_count(n)
+        elif kind == READ_KIND_CTNETLINK:
+            return _handle_read_ctnetlink()
         else:
             return READ_STATUS_ERROR, (
                 f"unknown read kind: {kind}".encode("utf-8"))

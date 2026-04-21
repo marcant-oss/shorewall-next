@@ -170,7 +170,7 @@ class ProfileBuilder:
                 continue
             link = LinkCollector(name)
             qdisc = QdiscCollector(name)
-            ct_stats = ConntrackStatsCollector(name)
+            ct_stats = ConntrackStatsCollector(name, self._router)
             ct = CtCollector(name, self._router)
             snmp = SnmpCollector(name, self._router)
             netstat = NetstatCollector(name, self._router)

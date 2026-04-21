@@ -7,13 +7,17 @@ Prometheus exporter collectors so that the scrape-thread never has to
 ``setns(2)`` — the worker is already pinned to the target netns and
 can just ``open()`` the file for us.
 
-Two message kinds:
+Three message kinds:
 
 * ``READ_KIND_FILE`` — read up to :data:`MAX_FILE_BYTES` bytes of a
   file, return raw bytes.
 * ``READ_KIND_COUNT_LINES`` — stream-read a file and return its line
   count as a u64 (keeps transfer size O(20 bytes) regardless of file
   size, which matters for ``/proc/net/ipv6_route`` on BGP boxes).
+* ``READ_KIND_CTNETLINK`` — issue a CTNETLINK stats dump via
+  ``NFCTSocket`` (already bound to the worker's netns), sum across
+  CPUs, and return a fixed 56-byte struct of counters. Replaces the
+  last ``_in_netns()`` hop in ``ConntrackStatsCollector``.
 
 Shares SEQPACKET transport + magic-based dispatch with ``batch_codec``:
 the worker's main loop peeks the magic dword to route the datagram to
@@ -29,10 +33,12 @@ Request (``MAGIC_READ_REQ``)::
     offset  size  field      notes
     0       4     magic      0x53575252 ('SWRR')
     4       2     version    WIRE_VERSION (shared with batch_codec)
-    6       2     kind       READ_KIND_FILE=1, READ_KIND_COUNT_LINES=2
+    6       2     kind       READ_KIND_FILE=1, READ_KIND_COUNT_LINES=2,
+                             READ_KIND_CTNETLINK=3
     8       8     req_id     parent-side sequencer
     16      2     path_len   number of UTF-8 bytes that follow
     18      N     path       UTF-8, N == path_len
+                             (unused / zero-length for READ_KIND_CTNETLINK)
 
 Response (``MAGIC_READ_RESP``)::
 
@@ -49,12 +55,16 @@ Response payload semantics (status==OK):
 * ``READ_KIND_FILE`` — raw file bytes (caller decodes to str).
 * ``READ_KIND_COUNT_LINES`` — exactly 8 bytes, big-endian u64, the
   file's line count.
+* ``READ_KIND_CTNETLINK`` — exactly :data:`CT_STATS_STRUCT_SIZE` bytes,
+  packed by :data:`_STRUCT_CT_STATS`; decode with
+  :func:`decode_ct_stats`.
 
 For non-OK status the response carries an optional UTF-8 error string
 in the data slot (no structured fields). ``NOT_FOUND`` means the path
 couldn't be opened (ENOENT/EACCES); ``TOO_LARGE`` means the file
 exceeded :data:`MAX_FILE_BYTES` (caller should use count_lines
-instead); ``ERROR`` is everything else.
+instead); ``ERROR`` is everything else (including CTNETLINK errors
+such as ``ENOENT`` when the netns was just destroyed).
 """
 
 from __future__ import annotations
@@ -69,6 +79,7 @@ MAGIC_READ_RESP = 0x53575253       # b"SWRS"
 
 READ_KIND_FILE = 1
 READ_KIND_COUNT_LINES = 2
+READ_KIND_CTNETLINK = 3
 
 READ_STATUS_OK = 0
 READ_STATUS_NOT_FOUND = 1
@@ -87,6 +98,42 @@ READ_RESP_HEADER_LEN = 20
 
 _STRUCT_READ_REQ = struct.Struct(">I H H Q H")      # 18 bytes
 _STRUCT_READ_RESP = struct.Struct(">I H H Q I")     # 20 bytes
+
+# ── CTNETLINK stats struct ────────────────────────────────────────────
+# Fixed 56-byte payload for READ_KIND_CTNETLINK responses.
+# All fields are big-endian unsigned integers.
+#
+# Byte layout:
+#   0-7   found          u64  lookups that matched an existing entry
+#   8-15  invalid        u64  packets whose state could not be tracked
+#   16-23 ignore         u64  packets not subjected to CT
+#   24-31 insert_failed  u64  insertions that lost the race (concurrent flow)
+#   32-39 drop           u64  packets dropped (CT table full)
+#   40-47 early_drop     u64  entries evicted early to make room
+#   48-55 error          u64  ICMP errors for unknown flows
+#   56-59 search_restart u32  hash-chain search restarts
+#   60-63 _padding       u32  reserved, always 0
+#
+# The 8 x u64 + 2 x u32 layout totals 72 bytes; we use a compact
+# 7 x u64 + 1 u64 (for search_restart stored as u64 for alignment)
+# = 64 bytes. Actual layout: 8 u64 fields = 64 bytes.
+#
+# Field order mirrors _CT_STAT_FIELDS in collectors/conntrack.py so
+# callers can zip without name-lookup overhead.
+_STRUCT_CT_STATS = struct.Struct(">8Q")   # 8 × u64 = 64 bytes
+CT_STATS_STRUCT_SIZE = _STRUCT_CT_STATS.size  # 64
+
+# Ordered field names for _STRUCT_CT_STATS (matches _CT_STAT_FIELDS attr order).
+CT_STATS_FIELDS = (
+    "CTA_STATS_FOUND",
+    "CTA_STATS_INVALID",
+    "CTA_STATS_IGNORE",
+    "CTA_STATS_INSERT_FAILED",
+    "CTA_STATS_DROP",
+    "CTA_STATS_EARLY_DROP",
+    "CTA_STATS_ERROR",
+    "CTA_STATS_SEARCH_RESTART",
+)
 
 
 @dataclass
@@ -114,6 +161,28 @@ class ReadResponse:
     data: bytes
 
 
+@dataclass
+class CtNetlinkStats:
+    """Per-CPU-summed CTNETLINK stats for one netns.
+
+    Field names mirror the ``CTA_STATS_*`` pyroute2 attribute names used
+    by :func:`~shorewalld.collectors.conntrack._sum_ct_stats_cpu` so
+    callers can build the Prometheus totals dict without renaming.
+
+    Matches the 64-byte ``_STRUCT_CT_STATS`` wire layout (8 × u64,
+    big-endian). Use :func:`encode_ct_stats` / :func:`decode_ct_stats`
+    for serialisation.
+    """
+    CTA_STATS_FOUND: int = 0
+    CTA_STATS_INVALID: int = 0
+    CTA_STATS_IGNORE: int = 0
+    CTA_STATS_INSERT_FAILED: int = 0
+    CTA_STATS_DROP: int = 0
+    CTA_STATS_EARLY_DROP: int = 0
+    CTA_STATS_ERROR: int = 0
+    CTA_STATS_SEARCH_RESTART: int = 0
+
+
 class ReadWireError(ValueError):
     """Raised on magic/version/length violations during decode."""
 
@@ -135,8 +204,12 @@ def encode_read_request(
     this path is not hot enough (< 1 request per scrape per file) to
     justify a preallocated buffer. A typical path is < 50 UTF-8 bytes,
     so the allocation is a few dozen bytes.
+
+    For ``READ_KIND_CTNETLINK`` ``path`` is unused; pass an empty string.
+    The wire encoding still includes the (zero-length) path field so the
+    header structure is uniform across all three kinds.
     """
-    if kind not in (READ_KIND_FILE, READ_KIND_COUNT_LINES):
+    if kind not in (READ_KIND_FILE, READ_KIND_COUNT_LINES, READ_KIND_CTNETLINK):
         raise ValueError(f"unknown read kind: {kind}")
     path_bytes = path.encode("utf-8")
     if len(path_bytes) > 0xFFFF:
@@ -148,6 +221,44 @@ def encode_read_request(
     )
     out[READ_REQ_HEADER_LEN:] = path_bytes
     return bytes(out)
+
+
+def encode_ct_stats(stats: CtNetlinkStats) -> bytes:
+    """Serialise a :class:`CtNetlinkStats` to the 64-byte wire format."""
+    return _STRUCT_CT_STATS.pack(
+        stats.CTA_STATS_FOUND,
+        stats.CTA_STATS_INVALID,
+        stats.CTA_STATS_IGNORE,
+        stats.CTA_STATS_INSERT_FAILED,
+        stats.CTA_STATS_DROP,
+        stats.CTA_STATS_EARLY_DROP,
+        stats.CTA_STATS_ERROR,
+        stats.CTA_STATS_SEARCH_RESTART,
+    )
+
+
+def decode_ct_stats(data: bytes) -> CtNetlinkStats:
+    """Deserialise a :class:`CtNetlinkStats` from the 64-byte wire format.
+
+    Raises :class:`ReadWireError` if ``data`` is shorter than
+    :data:`CT_STATS_STRUCT_SIZE`.
+    """
+    if len(data) < CT_STATS_STRUCT_SIZE:
+        raise ReadWireError(
+            f"ct-stats payload too short: {len(data)} < {CT_STATS_STRUCT_SIZE}")
+    (found, invalid, ignore, insert_failed,
+     drop, early_drop, error, search_restart) = _STRUCT_CT_STATS.unpack_from(
+        data, 0)
+    return CtNetlinkStats(
+        CTA_STATS_FOUND=found,
+        CTA_STATS_INVALID=invalid,
+        CTA_STATS_IGNORE=ignore,
+        CTA_STATS_INSERT_FAILED=insert_failed,
+        CTA_STATS_DROP=drop,
+        CTA_STATS_EARLY_DROP=early_drop,
+        CTA_STATS_ERROR=error,
+        CTA_STATS_SEARCH_RESTART=search_restart,
+    )
 
 
 def encode_read_response_into(

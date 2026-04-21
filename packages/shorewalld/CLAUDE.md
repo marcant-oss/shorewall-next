@@ -22,7 +22,7 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
   them for back-compat.
 - `collectors/` — one module per Prometheus collector:
   `nft.py`, `flowtable.py`, `link.py`, `qdisc.py`, `conntrack.py`
-  (CTNETLINK — lone `_in_netns()` hop), `ct.py`, `snmp.py`,
+  (CTNETLINK — proxied via `READ_KIND_CTNETLINK` worker RPC, no setns), `ct.py`, `snmp.py`,
   `netstat.py`, `sockstat.py`, `softnet.py`, `neighbour.py`,
   `address.py`, `worker_router.py` (`WorkerRouterMetricsCollector`).
   Shared helpers in `_shared.py` (`_AF_NAMES`, `_read_int_via_router`).
@@ -100,9 +100,10 @@ Every code path here is hot. Target: 20 000 DNS answers/s across dnstap
   `/sys` reads run inside the already-forked nft worker that owns
   the target netns — see the file-read RPC under `read_codec.py` and
   the "Read RPC: netns-pinned /proc reads" section below. The scrape
-  thread itself never calls `setns(2)`. `ConntrackStatsCollector` is
-  the lone remaining direct `_in_netns()` hop (needs a bound
-  `NFCTSocket` the worker protocol does not yet proxy).
+  thread itself never calls `setns(2)`. `ConntrackStatsCollector` WAS
+  the lone remaining direct `_in_netns()` hop; it has been converted to
+  use `READ_KIND_CTNETLINK` via the worker RPC — the scrape thread is
+  now entirely free of `setns(2)` calls.
 - **Bounded everything.** Every queue, cache, retry counter has an
   explicit cap. Drops are counted as metrics. Growing RSS is not
   acceptable.
@@ -205,7 +206,7 @@ target netns. The scrape thread stays in the default netns; no
 thread-level `setns` race window, no `CAP_SYS_ADMIN` requirement on
 the scrape path.
 
-Two message kinds (`read_codec.py`):
+Three message kinds (`read_codec.py`):
 
 - `READ_KIND_FILE` → worker `open(path).read(MAX_FILE_BYTES + 1)`,
   reply carries raw bytes. `TOO_LARGE` returned if file exceeds
@@ -214,6 +215,13 @@ Two message kinds (`read_codec.py`):
   carries an 8-byte big-endian u64. Used for `/proc/net/route` and
   `/proc/net/ipv6_route` (would otherwise blow the 64 KiB datagram
   cap on a full-BGP v6 table).
+- `READ_KIND_CTNETLINK` → worker opens (or reuses) an `NFCTSocket`
+  already bound to the child's netns, calls `stat()` to get per-CPU
+  counters, sums across CPUs, and returns a fixed 64-byte
+  `CtNetlinkStats` struct. Replaces the last `_in_netns()` hop that
+  `ConntrackStatsCollector` previously used on the scrape thread.
+  `WorkerRouter.ctnetlink_stats_sync(netns)` is the scrape-thread
+  entry point; it mirrors `read_file_sync` / `count_lines_sync`.
 
 Wire format: 18-byte request header + UTF-8 path; 20-byte response
 header + payload. Dispatched by peeking the first four bytes of each
