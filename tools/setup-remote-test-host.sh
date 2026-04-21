@@ -727,7 +727,7 @@ if [ -n "$FW_HOST" ]; then
     esac
 
     # Verify connection
-    if ssh "$REMOTE" "ssh -o BatchMode=yes -o ConnectTimeout=3 "'"$FW_HOST"'" 'echo ok' >/dev/null 2>&1"; then
+    if ssh "$REMOTE" 'ssh -o BatchMode=yes -o ConnectTimeout=3 "'"$FW_HOST"'" "echo ok" >/dev/null 2>&1'; then
         info "SSH to $FW_HOST verified"
     else
         echo "WARNING: SSH to $FW_HOST verification failed" >&2
