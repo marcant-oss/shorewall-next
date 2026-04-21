@@ -133,12 +133,37 @@ class ThroughputRunner(Scenario):
                 "scenario_id": sc.id,
             },
         )
-        return [server_cmd, client_cmd]
+        cmds: list[AgentCommand] = [server_cmd, client_cmd]
+
+        if sc.observe_conntrack and sc.fw_host:
+            sidecar_cmd = AgentCommand(
+                endpoint_name=sc.source,
+                kind="poll_conntrack",
+                spec={
+                    "fw_host": sc.fw_host,
+                    "duration_s": sc.duration_s + 2,
+                    "interval_s": 1.0,
+                    "_conntrack_sidecar": True,
+                },
+            )
+            cmds.append(sidecar_cmd)
+
+        return cmds
 
     def summarize(self, results: list[dict]) -> ScenarioResult:
         sc = self._sc
+        # Separate conntrack sidecar results from main results.
+        sidecar_results = [
+            r for r in results
+            if r.get("_conntrack_sidecar") or r.get("tool") == "poll_conntrack"
+        ]
         # Expect one client result dict (server produces no throughput metric).
-        client_results = [r for r in results if r.get("role") != "server"]
+        client_results = [
+            r for r in results
+            if r.get("role") != "server"
+            and not r.get("_conntrack_sidecar")
+            and r.get("tool") != "poll_conntrack"
+        ]
         if not client_results:
             client_results = results  # fallback: use all
 
@@ -178,6 +203,8 @@ class ThroughputRunner(Scenario):
             raw["latency_p50_ms"] = latency_p50_ms
             raw["latency_p95_ms"] = latency_p95_ms
             raw["latency_p99_ms"] = latency_p99_ms
+        if sidecar_results:
+            raw["conntrack_peak_observed"] = sidecar_results[0].get("peak", 0)
 
         return ScenarioResult(
             scenario_id=sc.id,
@@ -253,27 +280,56 @@ class ConnStormRunner(Scenario):
                 "scenario_id": sc.id,
             },
         )
-        return [start_cmd, storm_cmd, stop_cmd]
+        cmds: list[AgentCommand] = [start_cmd, storm_cmd, stop_cmd]
+
+        if sc.observe_conntrack and sc.fw_host:
+            sidecar_cmd = AgentCommand(
+                endpoint_name=sc.source,
+                kind="poll_conntrack",
+                spec={
+                    "fw_host": sc.fw_host,
+                    "duration_s": sc.hold_s + 2,
+                    "interval_s": 1.0,
+                    "_conntrack_sidecar": True,
+                },
+            )
+            cmds.append(sidecar_cmd)
+
+        return cmds
 
     def summarize(self, results: list[dict]) -> ScenarioResult:
         sc = self._sc
-        # Filter out http-sidecar results; keep only the pyconn storm result.
-        storm_results = [r for r in results if not r.get("_http_sidecar")]
+        # Separate conntrack sidecar results from main results.
+        sidecar_results = [
+            r for r in results
+            if r.get("_conntrack_sidecar") or r.get("tool") == "poll_conntrack"
+        ]
+        # Filter out http-sidecar results AND conntrack sidecar; keep only the pyconn storm result.
+        storm_results = [
+            r for r in results
+            if not r.get("_http_sidecar")
+            and not r.get("_conntrack_sidecar")
+            and r.get("tool") != "poll_conntrack"
+        ]
         r = storm_results[0] if storm_results else (results[0] if results else {})
         established = r.get("connections_established", r.get("established", 0))
         failed = r.get("connections_failed", r.get("failed", 0))
         ok = r.get("ok", False) and established >= sc.target_conns
+
+        raw: dict = {
+            "target_conns": sc.target_conns,
+            "established": established,
+            "failed": failed,
+        }
+        if sidecar_results:
+            raw["conntrack_peak_observed"] = sidecar_results[0].get("peak", 0)
 
         return ScenarioResult(
             scenario_id=sc.id,
             kind="conn_storm",
             ok=ok,
             duration_s=r.get("duration_s", 0.0),
-            raw={
-                "target_conns": sc.target_conns,
-                "established": established,
-                "failed": failed,
-            },
+            raw=raw,
             test_id=getattr(self._sc, "test_id", None),
             standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
         )
@@ -904,19 +960,23 @@ class RuleCoverageMatrixRunner(Scenario):
         commands: list[AgentCommand] = []
         probe_id = 0
 
+        def _first_host_ip(net: ipaddress.IPv4Network | ipaddress.IPv6Network) -> str:
+            """Return the first usable host IP, or network address for /31 or /32."""
+            # Avoid materialising large host lists (e.g. 0.0.0.0/0 = 4B hosts).
+            h = next(iter(net.hosts()), None)
+            return str(h if h is not None else net.network_address)
+
         # Deterministic iteration order: sorted zone names → consistent test+report.
         zones = sorted(sc.zone_subnets.keys())
         for src_zone in zones:
             src_net = ipaddress.ip_network(sc.zone_subnets[src_zone], strict=False)
-            src_hosts = list(src_net.hosts()) or [src_net.network_address]
-            src_ip = str(src_hosts[0])
+            src_ip = _first_host_ip(src_net)
 
             for dst_zone in zones:
                 if dst_zone == src_zone:
                     continue  # skip same-zone (usually accepted implicitly)
                 dst_net = ipaddress.ip_network(sc.zone_subnets[dst_zone], strict=False)
-                dst_hosts = list(dst_net.hosts()) or [dst_net.network_address]
-                dst_ip = str(dst_hosts[0])
+                dst_ip = _first_host_ip(dst_net)
 
                 for proto in sc.protos:
                     ports: list[int] = (

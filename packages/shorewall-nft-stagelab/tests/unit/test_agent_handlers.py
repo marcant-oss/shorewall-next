@@ -804,3 +804,89 @@ def test_stop_http_listener_missing_returns_ok_false() -> None:
     assert resp["tool"] == "http_listener"
     assert resp["ok"] is False
     assert resp["_http_sidecar"] is True
+
+
+# ---------------------------------------------------------------------------
+# poll_conntrack handler
+# ---------------------------------------------------------------------------
+
+
+def test_poll_conntrack_returns_peak() -> None:
+    """poll_conntrack handler SSHes and accumulates peak across samples.
+
+    We mock ``asyncio.create_subprocess_exec`` to emit 100, 200, 150 on
+    successive calls.  To avoid fighting asyncio internals that call
+    ``loop.time()`` on every ``asyncio.sleep``, we instead mock
+    ``asyncio.get_event_loop`` to return a fake loop object whose ``time()``
+    method counts down iterations explicitly: return a value below the
+    deadline for the first three calls (one per SSH iteration), then a value
+    past the deadline so the while loop exits.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    _OUTPUTS = [b"100\n", b"200\n", b"150\n"]
+    ssh_call_count = [0]
+
+    async def _fake_create_subprocess(*args, **kwargs):
+        out = _OUTPUTS[ssh_call_count[0]] if ssh_call_count[0] < len(_OUTPUTS) else b"0\n"
+        ssh_call_count[0] += 1
+        proc = MagicMock()
+        proc.communicate = AsyncMock(return_value=(out, b""))
+        return proc
+
+    # We want exactly 3 SSH calls.  Use a real short duration and override
+    # asyncio.sleep to be instant.  We also override asyncio.wait_for so the
+    # communicate() call completes immediately.
+    # The simplest working approach: patch loop.time() to return a monotonically
+    # increasing sequence with enough values so that asyncio.sleep's internal
+    # calls are satisfied AND the while condition stays true for 3 iterations.
+    # Empirically, asyncio.sleep(x) consumes 2 loop.time() calls.
+    # Each full iteration therefore uses: 1 while-check + 2 sleep = 3 time calls.
+    # Plus 1 deadline setup = 1 call.  For 3 iterations then exit:
+    #   call 0 (deadline): t0
+    #   call 1 (while 1):  t0        < t0+30 → enter
+    #   call 2,3 (sleep1): t0+0, t0+0  (asyncio sleep internals)
+    #   call 4 (while 2):  t0+1      < t0+30 → enter
+    #   call 5,6 (sleep2): t0+1, t0+1
+    #   call 7 (while 3):  t0+2      < t0+30 → enter
+    #   call 8,9 (sleep3): t0+2, t0+2
+    #   call 10 (while 4): t0+31     ≥ t0+30 → exit
+    _t0 = 1000.0
+    _seq = [
+        _t0,                    # deadline setup
+        _t0,     _t0,    _t0,   # iter 1: while + 2×sleep
+        _t0 + 1, _t0+1, _t0+1, # iter 2: while + 2×sleep
+        _t0 + 2, _t0+2, _t0+2, # iter 3: while + 2×sleep
+        _t0 + 31,               # iter 4: while → exit
+    ]
+    seq_idx = [0]
+
+    def _fake_time():
+        v = _seq[seq_idx[0]] if seq_idx[0] < len(_seq) else _t0 + 100
+        seq_idx[0] += 1
+        return v
+
+    loop = asyncio.new_event_loop()
+
+    async def _run():
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=_fake_create_subprocess),
+            patch.object(loop, "time", side_effect=_fake_time),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            from shorewall_nft_stagelab.agent import _handle_poll_conntrack
+            return await _handle_poll_conntrack({
+                "fw_host": "root@fw.example.com",
+                "duration_s": 30.0,
+                "interval_s": 1.0,
+            })
+
+    result = loop.run_until_complete(_run())
+    loop.close()
+
+    assert result["tool"] == "poll_conntrack"
+    assert result["ok"] is True
+    assert result["peak"] == 200
+    assert result["samples_count"] == 3
+    assert result["_conntrack_sidecar"] is True
