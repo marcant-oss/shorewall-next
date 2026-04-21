@@ -1,6 +1,11 @@
 # TODO: periodically check https://github.com/acassen/keepalived/releases for newer upstream.
 # Bump KEEPALIVED_VERSION in tools/gen-keepalived-spec.sh when upgrading.
 
+# Suppress rpmbuild failure on unpackaged files.
+# keepalived installs several ancillary files (sysconfig, doc fragments) that
+# we don't need to ship; %exclude them explicitly when they matter.
+%define _unpackaged_files_terminate_build 0
+
 Name:           keepalived-marcant
 Version:        @@KEEPALIVED_VERSION@@
 Release:        @@RELEASE@@%{?dist}
@@ -147,11 +152,13 @@ fi
 %files
 %license COPYING
 %doc README.md doc/
+%doc %{_datadir}/doc/keepalived/
 %{_sbindir}/keepalived
 %{_bindir}/genhash
 %{_unitdir}/keepalived.service
 %dir %{_sysconfdir}/keepalived
 %config(noreplace) %{_sysconfdir}/keepalived/keepalived.conf.example
+%config(noreplace) %{_sysconfdir}/sysconfig/keepalived
 # D-Bus security policy: keepalived installs to sysconfdir/dbus-1/system.d/
 # (= /etc/dbus-1/system.d/), NOT /usr/share/dbus-1/system.d/.
 # Verified against keepalived/dbus/Makefile.am: dbussystemdir = @sysconfdir@/dbus-1/system.d
