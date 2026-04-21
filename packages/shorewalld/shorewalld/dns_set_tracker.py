@@ -72,7 +72,7 @@ class Verdict(enum.IntEnum):
     DEDUP = 3     # Skip, cached deadline is good enough
 
 
-@dataclass
+@dataclass(slots=True)
 class SetMetrics:
     """Counter bundle for one managed set, one family.
 
@@ -101,7 +101,7 @@ class _SetState:
     metrics: SetMetrics = field(default_factory=SetMetrics)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Proposal:
     """A single ``(set_id, ip, ttl)`` update being considered.
 

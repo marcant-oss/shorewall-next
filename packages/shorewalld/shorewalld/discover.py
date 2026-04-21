@@ -12,8 +12,8 @@ Every profile always includes:
 * ``NeighbourCollector`` — ARP / ND cache entry counts by state
 * ``AddressCollector`` — configured addresses per iface / family
 * ``ConntrackStatsCollector`` — per-netns conntrack engine counters
-  via CTNETLINK (stays on ``_in_netns`` — netlink not routed through
-  the worker IPC)
+  via CTNETLINK, proxied via ``READ_KIND_CTNETLINK`` worker RPC;
+  scrape thread has no ``setns(2)`` calls
 * ``CtCollector`` — conntrack table size + buckets + FIB route
   counts, reads delegated to the netns-pinned nft worker
 * ``SnmpCollector`` — IP/TCP/UDP/ICMP stats from ``/proc/net/snmp``

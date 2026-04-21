@@ -111,6 +111,11 @@ log = get_logger("worker")
 # PR_SET_NAME is handled by ``proctitle.set_proc_name``.
 _PR_SET_PDEATHSIG = 1
 
+# Module-level libc handle — resolved once at import time so both
+# _install_pdeathsig and _enter_netns reuse the same CDLL object
+# instead of calling find_library + CDLL on every worker spawn.
+_LIBC = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+
 # Table / family the workers write to. Shorewall-nft ships one
 # inet table called "shorewall"; the worker's job is to push DNS set
 # elements into that table. Constants here so tests can override if
@@ -147,9 +152,7 @@ def _install_pdeathsig(sig: int = signal.SIGTERM) -> None:
     just not self-cleaning on parent crash.
     """
     try:
-        libc_name = ctypes.util.find_library("c") or "libc.so.6"
-        libc = ctypes.CDLL(libc_name, use_errno=True)
-        libc.prctl(_PR_SET_PDEATHSIG, sig, 0, 0, 0)
+        _LIBC.prctl(_PR_SET_PDEATHSIG, sig, 0, 0, 0)
     except OSError:
         log.debug("prctl PR_SET_PDEATHSIG failed — continuing")
 
@@ -171,9 +174,7 @@ def _enter_netns(name: str) -> None:
     fd = os.open(ns_path, os.O_RDONLY)
     try:
         CLONE_NEWNET = 0x40000000
-        libc_name = ctypes.util.find_library("c") or "libc.so.6"
-        libc = ctypes.CDLL(libc_name, use_errno=True)
-        rc = libc.setns(fd, CLONE_NEWNET)
+        rc = _LIBC.setns(fd, CLONE_NEWNET)
         if rc != 0:
             err = ctypes.get_errno()
             raise OSError(err, f"setns({ns_path}) failed: {os.strerror(err)}")
@@ -190,23 +191,19 @@ def _enter_netns(name: str) -> None:
 def _set_name_for(set_id: int, family: int) -> str:
     """Resolve a ``set_id`` to the nft set name.
 
-    The worker maintains its own mini-registry installed at startup
-    via the set-name table message (Phase 2b). For Phase 2a we keep
-    things simple: every op carries the set *name* in a small
-    extension header. This is a TODO pointer; for the initial
-    ship we hard-code a single resolver from the DnsSetTracker
-    state that the parent maps.
+    This function is intentionally not used in the shipped architecture.
+    The set-name resolver is passed as a closure (``lookup``) into
+    :func:`nft_worker_entrypoint` at fork time: the child inherits a
+    copy-on-write snapshot of the parent's :class:`DnsSetTracker` and
+    the parent builds a ``lookup(set_id, family) → name | None``
+    callable over that snapshot.  :func:`build_nft_script` receives
+    that callable directly — no per-worker registry or IPC round-trip.
 
-    See :class:`ParentWorker` below which owns the table lookup.
+    See :func:`nft_worker_entrypoint` for the shipped wiring.
     """
-    # Intentional placeholder — the parent passes batches whose
-    # ``set_id`` has been pre-resolved to an index the worker can
-    # look up via a side channel. Until that side channel ships
-    # (Phase 2b), tests use ParentWorker.apply_batch_local which
-    # translates in the parent's address space.
     raise NotImplementedError(
-        "worker-local set_id resolver not wired yet — "
-        "use ParentWorker.apply_batch_local in tests")
+        "worker-local set_id resolver is not used — "
+        "pass a lookup closure to nft_worker_entrypoint instead")
 
 
 def build_nft_script(
@@ -247,7 +244,7 @@ def build_nft_script(
         if name is None:
             continue  # allowlist drift — silently skip
         if op.family == 4:
-            elem = ".".join(str(b) for b in op.ip_bytes)
+            elem = socket.inet_ntop(socket.AF_INET, op.ip_bytes)
         else:
             # Compact IPv6 via socket.inet_ntop — still fine here;
             # this path is per-op but in nft-script building, not on
