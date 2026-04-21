@@ -58,7 +58,9 @@ def _populate_tracker(
     now = time.monotonic()
     with tracker._lock:  # type: ignore[attr-defined]
         state = tracker._states[set_id]  # type: ignore[attr-defined]
-        state.elements[ip_bytes] = now + ttl
+        # elements dict keys are big-endian int after the ip-key refactor.
+        ip_int = int.from_bytes(ip_bytes, "big")
+        state.elements[ip_int] = now + ttl
         state.metrics.elements = len(state.elements)
 
 

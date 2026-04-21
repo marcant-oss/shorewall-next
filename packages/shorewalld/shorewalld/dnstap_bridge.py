@@ -150,7 +150,11 @@ class TrackerBridge:
                 if ip is None:
                     continue
                 self._submit(
-                    Proposal(set_id=sid_v4, ip_bytes=ip, ttl=ttl),
+                    Proposal(
+                        set_id=sid_v4,
+                        ip=int.from_bytes(ip, "big"),
+                        ttl=ttl,
+                    ),
                     family=FAMILY_V4,
                 )
 
@@ -161,7 +165,11 @@ class TrackerBridge:
                 if ip is None:
                     continue
                 self._submit(
-                    Proposal(set_id=sid_v6, ip_bytes=ip, ttl=ttl),
+                    Proposal(
+                        set_id=sid_v6,
+                        ip=int.from_bytes(ip, "big"),
+                        ttl=ttl,
+                    ),
                     family=FAMILY_V6,
                 )
 

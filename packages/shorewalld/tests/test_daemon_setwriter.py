@@ -87,7 +87,10 @@ class TestSubmitFlushCycle:
             ok = writer.submit(
                 netns="inproc", family=FAMILY_V4,
                 proposal=Proposal(
-                    set_id=sid, ip_bytes=b"\x01\x02\x03\x04", ttl=600),
+                    set_id=sid,
+                    ip=int.from_bytes(b"\x01\x02\x03\x04", "big"),
+                    ttl=600,
+                ),
             )
             assert ok is True
             # Wait longer than window → drain loop must flush.
@@ -120,7 +123,7 @@ class TestSubmitFlushCycle:
                     netns="inproc", family=FAMILY_V4,
                     proposal=Proposal(
                         set_id=sid,
-                        ip_bytes=bytes([10, 0, 0, i]),
+                        ip=int.from_bytes(bytes([10, 0, 0, i]), "big"),
                         ttl=600,
                     ),
                 )
@@ -146,11 +149,17 @@ class TestSubmitFlushCycle:
             writer.submit(
                 netns="inproc", family=FAMILY_V4,
                 proposal=Proposal(
-                    set_id=sid4, ip_bytes=b"\x01\x02\x03\x04", ttl=600))
+                    set_id=sid4,
+                    ip=int.from_bytes(b"\x01\x02\x03\x04", "big"),
+                    ttl=600,
+                ))
             writer.submit(
                 netns="inproc", family=FAMILY_V6,
                 proposal=Proposal(
-                    set_id=sid6, ip_bytes=bytes([0xAA] * 16), ttl=600))
+                    set_id=sid6,
+                    ip=int.from_bytes(bytes([0xAA] * 16), "big"),
+                    ttl=600,
+                ))
             await asyncio.sleep(0.1)
             assert writer.metrics.batches_flushed_total == 2
             await writer.shutdown()
@@ -172,7 +181,10 @@ class TestSubmitFlushCycle:
             await writer.start()
             sid = tracker.set_id_for("github.com", FAMILY_V4)
             prop = Proposal(
-                set_id=sid, ip_bytes=b"\x01\x02\x03\x04", ttl=600)
+                set_id=sid,
+                ip=int.from_bytes(b"\x01\x02\x03\x04", "big"),
+                ttl=600,
+            )
             writer.submit(netns="inproc", family=FAMILY_V4, proposal=prop)
             await asyncio.sleep(0.05)
             # Same proposal again — tracker should dedup before queue.
@@ -209,7 +221,7 @@ class TestSubmitFlushCycle:
                         netns="inproc", family=FAMILY_V4,
                         proposal=Proposal(
                             set_id=sid,
-                            ip_bytes=bytes([1, 2, 3, i]),
+                            ip=int.from_bytes(bytes([1, 2, 3, i]), "big"),
                             ttl=600,
                         ),
                     )
@@ -259,7 +271,7 @@ class TestSubmitFlushCycle:
                     netns="inproc", family=FAMILY_V4,
                     proposal=Proposal(
                         set_id=sid,
-                        ip_bytes=bytes([10, 0, i >> 8, i & 0xFF]),
+                        ip=int.from_bytes(bytes([10, 0, i >> 8, i & 0xFF]), "big"),
                         ttl=600,
                     ),
                 )
@@ -292,7 +304,7 @@ class TestShutdownFlush:
                 netns="inproc", family=FAMILY_V4,
                 proposal=Proposal(
                     set_id=sid,
-                    ip_bytes=b"\x01\x02\x03\x04",
+                    ip=int.from_bytes(b"\x01\x02\x03\x04", "big"),
                     ttl=600,
                 ),
             )

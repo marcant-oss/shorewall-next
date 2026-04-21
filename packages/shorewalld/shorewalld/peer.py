@@ -439,10 +439,12 @@ class PeerLink:
         for (qname, a_rrs, aaaa_rrs, ttl) in updates:
             upd = env.dns_batch.updates.add()
             upd.qname = qname
+            # Protobuf ≥ 4.x returns bytes directly from repeated-bytes
+            # fields; the bytes() wrap was a redundant no-op copy.
             for ip in a_rrs:
-                upd.a_rrs.append(bytes(ip))
+                upd.a_rrs.append(ip)
             for ip in aaaa_rrs:
-                upd.aaaa_rrs.append(bytes(ip))
+                upd.aaaa_rrs.append(ip)
             upd.ttl = ttl
             # Check size after each append; flush mid-batch if
             # approaching the cap.
@@ -553,6 +555,10 @@ class PeerLink:
             ttl = int(upd.ttl) or 60
             sid_v4 = self._tracker.set_id_for(qn, 4)
             if sid_v4 is not None:
+                # Protobuf ≥ 4.x: upd.a_rrs items are bytes already.
+                assert not upd.a_rrs or isinstance(
+                    upd.a_rrs[0], bytes
+                ), "unexpected non-bytes in a_rrs"
                 for rr in upd.a_rrs:
                     if len(rr) == 4:
                         self._writer.submit(
@@ -560,13 +566,16 @@ class PeerLink:
                             family=4,
                             proposal=Proposal(
                                 set_id=sid_v4,
-                                ip_bytes=bytes(rr),
+                                ip=int.from_bytes(rr, "big"),
                                 ttl=ttl,
                             ),
                         )
                         applied += 1
             sid_v6 = self._tracker.set_id_for(qn, 6)
             if sid_v6 is not None:
+                assert not upd.aaaa_rrs or isinstance(
+                    upd.aaaa_rrs[0], bytes
+                ), "unexpected non-bytes in aaaa_rrs"
                 for rr in upd.aaaa_rrs:
                     if len(rr) == 16:
                         self._writer.submit(
@@ -574,7 +583,7 @@ class PeerLink:
                             family=6,
                             proposal=Proposal(
                                 set_id=sid_v6,
-                                ip_bytes=bytes(rr),
+                                ip=int.from_bytes(rr, "big"),
                                 ttl=ttl,
                             ),
                         )
@@ -679,6 +688,7 @@ class PeerLink:
         state["received"] += 1
 
         if self._writer is not None:
+            # entry.ip is a bytes field in protobuf ≥ 4.x — no copy needed.
             for entry in resp.entries:
                 if entry.family == 4 and len(entry.ip) == 4:
                     sid = self._tracker.set_id_for(
@@ -690,7 +700,7 @@ class PeerLink:
                         family=4,
                         proposal=Proposal(
                             set_id=sid,
-                            ip_bytes=bytes(entry.ip),
+                            ip=int.from_bytes(entry.ip, "big"),
                             ttl=int(entry.remaining_ttl),
                         ),
                     )
@@ -705,7 +715,7 @@ class PeerLink:
                         family=6,
                         proposal=Proposal(
                             set_id=sid,
-                            ip_bytes=bytes(entry.ip),
+                            ip=int.from_bytes(entry.ip, "big"),
                             ttl=int(entry.remaining_ttl),
                         ),
                     )

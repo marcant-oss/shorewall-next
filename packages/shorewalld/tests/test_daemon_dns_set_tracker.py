@@ -59,6 +59,11 @@ def _ip4(s: str) -> bytes:
     return bytes(int(p) for p in s.split("."))
 
 
+def _ip4i(s: str) -> int:
+    """Parse a dotted-decimal IPv4 string to a big-endian int."""
+    return int.from_bytes(_ip4(s), "big")
+
+
 class TestAllowlistManagement:
     def test_loads_registry_assigns_ids(self, tracker):
         gh_v4 = tracker.set_id_for("github.com", FAMILY_V4)
@@ -82,7 +87,7 @@ class TestAllowlistManagement:
     def test_reload_preserves_existing_state(self, tracker, registry):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
         # Write an element
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])
         # Reload same registry — state should survive.
         tracker.load_registry(registry)
@@ -94,7 +99,7 @@ class TestAllowlistManagement:
         sid = tracker.set_id_for("api.stripe.com", FAMILY_V4)
         assert sid is not None
         # Write something
-        p = Proposal(set_id=sid, ip_bytes=_ip4("9.9.9.9"), ttl=300)
+        p = Proposal(set_id=sid, ip=_ip4i("9.9.9.9"), ttl=300)
         tracker.commit([p], [Verdict.ADD])
         # Reload with only github.com
         reg2 = DnsSetRegistry()
@@ -113,25 +118,25 @@ class TestAllowlistManagement:
 class TestPropose:
     def test_unknown_set_returns_dedup(self, tracker):
         verdict = tracker.propose(
-            Proposal(set_id=9999, ip_bytes=_ip4("1.2.3.4"), ttl=300))
+            Proposal(set_id=9999, ip=_ip4i("1.2.3.4"), ttl=300))
         assert verdict == Verdict.DEDUP
 
     def test_first_entry_returns_add(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
         verdict = tracker.propose(
-            Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600))
+            Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600))
         assert verdict == Verdict.ADD
 
     def test_recent_same_entry_returns_dedup(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])
         # Propose same entry immediately — cached deadline is full.
         assert tracker.propose(p) == Verdict.DEDUP
 
     def test_aging_entry_returns_refresh(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])
         # Age past 50% of TTL (600s × 0.5 = 300s).
         tracker._test_clock.advance(350)
@@ -143,7 +148,7 @@ class TestPropose:
         # 300s, so the entry lives much longer than its nominal TTL.
         # Repeating the same low-TTL proposal 50s later should dedup:
         # clamped threshold = 0.5*300 = 150s, remaining = 300-50 = 250s.
-        p_low = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=10)
+        p_low = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=10)
         tracker.commit([p_low], [Verdict.ADD])
         tracker._test_clock.advance(50)
         assert tracker.propose(p_low) == Verdict.DEDUP
@@ -151,18 +156,18 @@ class TestPropose:
     def test_ttl_ceil_applied(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
         # github.com ttl_ceil=3600 — propose with ttl=100000 clamps
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=100000)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=100000)
         tracker.commit([p], [Verdict.ADD])
         tracker._test_clock.advance(3500)  # past ceil-threshold
         # Still within 50% of 3600? 3500 > 0.5*3600 = 1800 → so <=50% remain
         # 3600-3500 = 100 remaining, less than 1800 → REFRESH
         assert tracker.propose(
-            Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=100000)
+            Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=100000)
         ) == Verdict.REFRESH
 
     def test_dedup_hits_counted(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])
         for _ in range(5):
             tracker.propose(p)
@@ -173,7 +178,7 @@ class TestPropose:
 class TestCommit:
     def test_add_populates_state(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])
         snap = tracker.snapshot()
         m = snap.per_set[(sid, FAMILY_V4)]
@@ -183,7 +188,7 @@ class TestCommit:
 
     def test_refresh_does_not_grow_elements(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])
         tracker.commit([p], [Verdict.REFRESH])
         snap = tracker.snapshot()
@@ -195,13 +200,13 @@ class TestCommit:
     def test_unknown_set_commit_is_ignored(self, tracker):
         # Drop-through safety: a late commit for an evicted set_id
         # must not crash the tracker.
-        p = Proposal(set_id=9999, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=9999, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])  # no exception
 
     def test_multiple_entries_per_set(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
-        ips = [_ip4("1.1.1.1"), _ip4("2.2.2.2"), _ip4("3.3.3.3")]
-        props = [Proposal(set_id=sid, ip_bytes=ip, ttl=600) for ip in ips]
+        ips = [_ip4i("1.1.1.1"), _ip4i("2.2.2.2"), _ip4i("3.3.3.3")]
+        props = [Proposal(set_id=sid, ip=ip, ttl=600) for ip in ips]
         tracker.commit(props, [Verdict.ADD] * 3)
         snap = tracker.snapshot()
         assert snap.per_set[(sid, FAMILY_V4)].elements == 3
@@ -210,7 +215,7 @@ class TestCommit:
 class TestPruneExpired:
     def test_removes_past_deadline_entries(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])
         tracker._test_clock.advance(700)  # past deadline
         removed = tracker.prune_expired()
@@ -223,9 +228,9 @@ class TestPruneExpired:
     def test_keeps_live_entries(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
         live = Proposal(
-            set_id=sid, ip_bytes=_ip4("1.1.1.1"), ttl=3600)
+            set_id=sid, ip=_ip4i("1.1.1.1"), ttl=3600)
         dead = Proposal(
-            set_id=sid, ip_bytes=_ip4("2.2.2.2"), ttl=300)
+            set_id=sid, ip=_ip4i("2.2.2.2"), ttl=300)
         tracker.commit([live, dead], [Verdict.ADD, Verdict.ADD])
         tracker._test_clock.advance(500)  # dead expired, live survives
         tracker.prune_expired()
@@ -238,8 +243,8 @@ class TestSnapshot:
         sid1 = tracker.set_id_for("github.com", FAMILY_V4)
         sid2 = tracker.set_id_for("api.stripe.com", FAMILY_V4)
         tracker.commit([
-            Proposal(set_id=sid1, ip_bytes=_ip4("1.1.1.1"), ttl=600),
-            Proposal(set_id=sid2, ip_bytes=_ip4("2.2.2.2"), ttl=600),
+            Proposal(set_id=sid1, ip=_ip4i("1.1.1.1"), ttl=600),
+            Proposal(set_id=sid2, ip=_ip4i("2.2.2.2"), ttl=600),
         ], [Verdict.ADD, Verdict.ADD])
         snap = tracker.snapshot()
         assert snap.totals.elements == 2
@@ -247,7 +252,7 @@ class TestSnapshot:
 
     def test_per_set_is_deep_copy(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])
         snap = tracker.snapshot()
         # Mutating the snapshot must not bleed back.
@@ -266,8 +271,8 @@ class TestStateExportImport:
     def test_round_trip(self, tracker, registry):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
         props = [
-            Proposal(set_id=sid, ip_bytes=_ip4("1.1.1.1"), ttl=600),
-            Proposal(set_id=sid, ip_bytes=_ip4("2.2.2.2"), ttl=600),
+            Proposal(set_id=sid, ip=_ip4i("1.1.1.1"), ttl=600),
+            Proposal(set_id=sid, ip=_ip4i("2.2.2.2"), ttl=600),
         ]
         tracker.commit(props, [Verdict.ADD, Verdict.ADD])
         exported = tracker.export_state()
@@ -296,7 +301,7 @@ class TestStateExportImport:
         # The exported state has github.com, but we reload with api only.
         sid = tracker.set_id_for("github.com", FAMILY_V4)
         tracker.commit(
-            [Proposal(set_id=sid, ip_bytes=_ip4("1.1.1.1"), ttl=600)],
+            [Proposal(set_id=sid, ip=_ip4i("1.1.1.1"), ttl=600)],
             [Verdict.ADD])
         exported = tracker.export_state()
 
@@ -323,8 +328,8 @@ class TestDnsSetMetricsCollector:
     def test_emits_per_set_elements_gauge(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
         tracker.commit(
-            [Proposal(set_id=sid, ip_bytes=_ip4("1.1.1.1"), ttl=600),
-             Proposal(set_id=sid, ip_bytes=_ip4("2.2.2.2"), ttl=600)],
+            [Proposal(set_id=sid, ip=_ip4i("1.1.1.1"), ttl=600),
+             Proposal(set_id=sid, ip=_ip4i("2.2.2.2"), ttl=600)],
             [Verdict.ADD, Verdict.ADD])
 
         families = DnsSetMetricsCollector(tracker).collect()
@@ -336,7 +341,7 @@ class TestDnsSetMetricsCollector:
 
     def test_dedup_split_counters(self, tracker):
         sid = tracker.set_id_for("github.com", FAMILY_V4)
-        p = Proposal(set_id=sid, ip_bytes=_ip4("1.2.3.4"), ttl=600)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
         tracker.commit([p], [Verdict.ADD])
         # 3 dedup hits
         for _ in range(3):
@@ -356,7 +361,7 @@ class TestDnsSetMetricsCollector:
         # never touched → should NOT appear in the age gauge.
         sid = tracker.set_id_for("github.com", FAMILY_V4)
         tracker.commit(
-            [Proposal(set_id=sid, ip_bytes=_ip4("1.1.1.1"), ttl=600)],
+            [Proposal(set_id=sid, ip=_ip4i("1.1.1.1"), ttl=600)],
             [Verdict.ADD])
         tracker._test_clock.advance(42.0)
 
@@ -373,9 +378,12 @@ class TestDnsSetMetricsCollector:
         sid_v4 = tracker.set_id_for("github.com", FAMILY_V4)
         sid_v6 = tracker.set_id_for("github.com", FAMILY_V6)
         tracker.commit(
-            [Proposal(set_id=sid_v4, ip_bytes=_ip4("1.1.1.1"), ttl=600),
-             Proposal(set_id=sid_v6, ip_bytes=b"\x20\x01" + b"\x00"*14,
-                      ttl=600)],
+            [Proposal(set_id=sid_v4, ip=_ip4i("1.1.1.1"), ttl=600),
+             Proposal(
+                 set_id=sid_v6,
+                 ip=int.from_bytes(b"\x20\x01" + b"\x00"*14, "big"),
+                 ttl=600,
+             )],
             [Verdict.ADD, Verdict.ADD])
 
         families = DnsSetMetricsCollector(tracker).collect()
@@ -400,7 +408,7 @@ class TestThreadSafety:
                 for i in range(100):
                     tracker.propose(Proposal(
                         set_id=sid,
-                        ip_bytes=bytes([1, 1, 1, i % 256]),
+                        ip=int.from_bytes(bytes([1, 1, 1, i % 256]), "big"),
                         ttl=600))
             except BaseException as e:  # noqa: BLE001
                 errors.append(e)
@@ -424,3 +432,75 @@ class TestThreadSafety:
         stop.set()
         threads[2].join(timeout=1.0)
         assert not errors
+
+
+class TestProposalIpType:
+    """Proposal.ip must be int, not bytes."""
+
+    def test_proposal_ip_is_int_v4(self):
+        raw = bytes([192, 0, 2, 1])
+        p = Proposal(set_id=1, ip=int.from_bytes(raw, "big"), ttl=300)
+        assert isinstance(p.ip, int)
+        # Round-trip back to bytes must be identity.
+        assert p.ip.to_bytes(4, "big") == raw
+
+    def test_proposal_ip_is_int_v6(self):
+        raw = bytes([0x20, 0x01, 0x0d, 0xb8] + [0] * 12)
+        p = Proposal(set_id=2, ip=int.from_bytes(raw, "big"), ttl=600)
+        assert isinstance(p.ip, int)
+        assert p.ip.to_bytes(16, "big") == raw
+
+    def test_elements_dict_key_is_int(self, tracker):
+        """Internal _SetState.elements dict must key on int, not bytes."""
+        sid = tracker.set_id_for("github.com", FAMILY_V4)
+        p = Proposal(set_id=sid, ip=_ip4i("1.2.3.4"), ttl=600)
+        tracker.commit([p], [Verdict.ADD])
+        with tracker._lock:  # type: ignore[attr-defined]
+            state = tracker._states[sid]  # type: ignore[attr-defined]
+            for k in state.elements:
+                assert isinstance(k, int), (
+                    f"_SetState.elements key must be int, got {type(k)}")
+
+
+class TestDedupAllocationFree:
+    """1000 DEDUP proposals must not allocate O(N) bytes objects.
+
+    Uses tracemalloc to count bytes allocations on the hot path.
+    Baseline: pre-refactor created one bytes() per proposal.
+    After: only the initial ADD commit allocates bytes (in export_state
+    etc.), the 999 DEDUP calls go through int comparison only.
+    """
+
+    def test_dedup_does_not_allocate_bytes_per_proposal(self, tracker):
+        import tracemalloc
+
+        sid = tracker.set_id_for("github.com", FAMILY_V4)
+        ip_val = _ip4i("203.0.113.99")
+        p = Proposal(set_id=sid, ip=ip_val, ttl=600)
+        # Warm up: commit the entry so subsequent proposals DEDUP.
+        tracker.commit([p], [Verdict.ADD])
+
+        n_dedup = 1000
+        tracemalloc.start()
+        snap1 = tracemalloc.take_snapshot()
+        for _ in range(n_dedup):
+            v = tracker.propose(p)
+            assert v == Verdict.DEDUP
+        snap2 = tracemalloc.take_snapshot()
+        tracemalloc.stop()
+
+        # Count bytes objects allocated in the hot path across the two
+        # snapshots. Allow a small constant budget for interpreter
+        # overhead (list resize, etc.) but not O(N).
+        stats = snap2.compare_to(snap1, "lineno")
+        bytes_allocs = sum(
+            s.size_diff for s in stats
+            if s.size_diff > 0 and "dns_set_tracker" in str(s.traceback)
+        )
+        # Each bytes alloc is ~50 bytes; 1000 allocs would be ~50 000 bytes.
+        # The threshold of 4096 bytes comfortably passes the O(1) case and
+        # rejects an O(N) regression (1000 allocs ≈ 50 kB).
+        assert bytes_allocs < 4096, (
+            f"DEDUP hot path allocated {bytes_allocs} bytes across "
+            f"{n_dedup} proposals — expected O(1)"
+        )

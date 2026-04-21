@@ -185,7 +185,7 @@ class TestResolveGroup:
         assert len(writer.submitted) == 1
         _, family, prop = writer.submitted[0]
         assert family == FAMILY_V4
-        assert prop.ip_bytes == ipaddress.IPv4Address("1.2.3.4").packed
+        assert prop.ip == int.from_bytes(ipaddress.IPv4Address("1.2.3.4").packed, "big")
 
     def test_v6_ip_submitted(self):
         resolver, tracker, writer, group = self._make_resolver()
@@ -203,7 +203,7 @@ class TestResolveGroup:
         asyncio.run(_run())
         v6 = [(f, p) for _, f, p in writer.submitted if f == FAMILY_V6]
         assert len(v6) == 1
-        assert v6[0][1].ip_bytes == ipaddress.IPv6Address("2606:50c0::1").packed
+        assert v6[0][1].ip == int.from_bytes(ipaddress.IPv6Address("2606:50c0::1").packed, "big")
 
     def test_next_at_uses_resolve_fraction(self):
         resolver, _, _, group = self._make_resolver()
@@ -277,9 +277,9 @@ class TestResolveGroup:
         asyncio.run(_run())
         set_ids = {p.set_id for _, _, p in writer.submitted}
         assert set_ids == {primary_set_id}
-        ips = {p.ip_bytes for _, _, p in writer.submitted}
-        assert ipaddress.IPv4Address("1.2.3.4").packed in ips
-        assert ipaddress.IPv4Address("5.6.7.8").packed in ips
+        ips = {p.ip for _, _, p in writer.submitted}
+        assert int.from_bytes(ipaddress.IPv4Address("1.2.3.4").packed, "big") in ips
+        assert int.from_bytes(ipaddress.IPv4Address("5.6.7.8").packed, "big") in ips
 
 
 # ---------------------------------------------------------------------------

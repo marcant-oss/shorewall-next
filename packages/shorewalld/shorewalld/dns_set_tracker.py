@@ -36,9 +36,9 @@ Design notes:
   :meth:`commit` to confirm the writes. If a worker crashes mid-flight
   the SetWriter reverts its pending list and propose() is free to
   re-emit the same entries.
-* IP addresses are stored as raw ``bytes`` — 4 bytes for v4, 16 for
-  v6. Never as Python strings. That keeps the dict keys compact and
-  comparable without conversion.
+* IP addresses are stored as big-endian ``int`` in ``_SetState.elements``
+  — avoids a ``bytes`` allocation on the 95%-DEDUP hot path. Bytes are
+  only materialised at write time (``export_state``, ``setwriter``).
 """
 
 from __future__ import annotations
@@ -94,22 +94,24 @@ class _SetState:
     """Per-set tracking data, keyed on the compiled set_id."""
     spec: DnsSetSpec
     family: int
-    # Raw ip bytes → monotonic expiry deadline
-    elements: dict[bytes, float] = field(default_factory=dict)
+    # ip_int (int.from_bytes(ip, "big")) → monotonic expiry deadline.
+    # Storing an int avoids a bytes allocation on the 95%-DEDUP hot path;
+    # bytes are only materialised at write time (export_state, setwriter).
+    elements: dict[int, float] = field(default_factory=dict)
     metrics: SetMetrics = field(default_factory=SetMetrics)
 
 
 @dataclass(frozen=True)
 class Proposal:
-    """A single ``(set_id, ip_bytes, ttl)`` update being considered.
+    """A single ``(set_id, ip, ttl)`` update being considered.
 
     Decoder threads build these straight from protobuf frames.
-    ``ip_bytes`` is 4 bytes for v4, 16 for v6 — the caller is
-    responsible for passing the right length for the target set's
-    family. The tracker does not convert.
+    ``ip`` is the IPv4 or IPv6 address as a big-endian integer
+    (``int.from_bytes(raw_bytes, "big")``).  The caller is responsible
+    for passing an int derived from the correct address family.
     """
     set_id: int
-    ip_bytes: bytes
+    ip: int
     ttl: int
 
 
@@ -380,7 +382,7 @@ class DnsSetTracker:
             spec = state.spec
             ttl = max(spec.ttl_floor, min(prop.ttl, spec.ttl_ceil))
             new_deadline = now + ttl
-            existing = state.elements.get(prop.ip_bytes)
+            existing = state.elements.get(prop.ip)
 
             if existing is None:
                 return Verdict.ADD
@@ -417,13 +419,13 @@ class DnsSetTracker:
                     spec.ttl_floor, min(prop.ttl, spec.ttl_ceil))
                 deadline = now + ttl
                 if verdict == Verdict.ADD:
-                    state.elements[prop.ip_bytes] = deadline
+                    state.elements[prop.ip] = deadline
                     state.metrics.elements = len(state.elements)
                     state.metrics.adds_total += 1
                     state.metrics.dedup_misses_total += 1
                     state.metrics.last_update_mono = now
                 elif verdict == Verdict.REFRESH:
-                    state.elements[prop.ip_bytes] = deadline
+                    state.elements[prop.ip] = deadline
                     state.metrics.refreshes_total += 1
                     state.metrics.dedup_misses_total += 1
                     state.metrics.last_update_mono = now
@@ -552,10 +554,15 @@ class DnsSetTracker:
                     state = self._states.get(set_id)
                     if state is None:
                         continue
-                    for ip_bytes, deadline in state.elements.items():
+                    nbytes = 4 if family == FAMILY_V4 else 16
+                    for ip_int, deadline in state.elements.items():
                         remaining = deadline - now
                         if remaining > 0:
-                            out.append((qname, family, ip_bytes, int(remaining)))
+                            out.append((
+                                qname, family,
+                                ip_int.to_bytes(nbytes, "big"),
+                                int(remaining),
+                            ))
         return out
 
     # ── state-file persistence support ───────────────────────────────
@@ -576,8 +583,13 @@ class DnsSetTracker:
                 if key is None:
                     continue
                 qname, family = key
-                for ip_bytes, deadline in state.elements.items():
-                    out.append((qname, family, ip_bytes, deadline))
+                nbytes = 4 if family == FAMILY_V4 else 16
+                for ip_int, deadline in state.elements.items():
+                    out.append((
+                        qname, family,
+                        ip_int.to_bytes(nbytes, "big"),
+                        deadline,
+                    ))
         out.sort(key=lambda x: (x[0], x[1], x[2]))
         return out
 
@@ -606,7 +618,7 @@ class DnsSetTracker:
                     # load entry for the metric.
                     continue
                 state = self._states[set_id]
-                state.elements[ip_bytes] = deadline
+                state.elements[int.from_bytes(ip_bytes, "big")] = deadline
                 state.metrics.elements = len(state.elements)
                 installed += 1
         return installed
