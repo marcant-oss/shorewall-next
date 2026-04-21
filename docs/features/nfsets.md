@@ -444,20 +444,6 @@ hostnames flow into the single shared nft set.
 
 ---
 
-## Deferred features
-
-The following are planned but not yet implemented:
-
-- **SRV record resolution** (`dnstype=srv`) — tracked as a future extension.
-- **Renaming inline `dns:` → `dnst:`** — a syntax alias for inline dnstap-style
-  sets; deferred to a future wave.
-- **`nfset:` support in Masq/tcrules** — the address-parsing logic in those
-  sections has not been updated; use `dns:` inline for now.
-- **`zone:dnsr:` / `zone:dnst:` pseudo-zones** — inline alternative syntax;
-  if they exist in the codebase, they are not documented here yet.
-
----
-
 ## Verification recipe
 
 ```bash

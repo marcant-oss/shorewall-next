@@ -23,6 +23,17 @@ description: nfsets, full man-page coverage, Prometheus nfsets metrics, VrrpColl
 - **VRRP observability** — `VrrpCollector` scrapes keepalived D-Bus state
   and optionally augments it via SNMP, providing per-instance state,
   priority, VIP status, and master-transition counters in Prometheus.
+- **SRV-record resolution** — `dnstype=srv` in an `nfsets` entry resolves
+  SRV records and populates an nft concat set (`ipv4_addr . inet_service`).
+  Useful for service endpoint sets (SIP, XMPP federation, Kubernetes).
+- **Additive multi-backend per nfset name** — two `nfsets` rows with the
+  same name and different backends coexist; both trackers write to the same
+  nft set.
+- **Classic `+setname[src]` / `+setname[dst]` / `+[a,b]` syntax** —
+  accepted in all rule files for compatibility with existing configs.
+  Classic `+setname` maps to nft-native sets; no ipset kernel module required.
+- **`shorewall-nft apply-tc`** — native pyroute2-backed TC apply;
+  no `tc` shell-out required.
 
 ---
 
@@ -174,6 +185,45 @@ Minimum runtime: Python 3.11, Linux kernel ≥ 5.8, nftables ≥ 0.9.3.
 
 ---
 
+## Quickstart snippets (W12–W21)
+
+**SRV-record set** (`nfsets` + `dnstype=srv`):
+
+```
+#NAME       HOSTS                         OPTIONS
+sip-peers   _sip._udp.example.org         resolver,dnstype=srv,refresh=5m
+```
+
+Reference in `rules`:
+
+```
+#ACTION  SOURCE  DEST              PROTO  DPORT
+ACCEPT   net     fw:nfset:sip-peers  udp    5060
+```
+
+**`dnst:` inline set** (preferred alias for `dns:`):
+
+```
+#ACTION  SOURCE              DEST  PROTO  DPORT
+ACCEPT   fw                  net:dnst:updates.example.org  tcp  443
+```
+
+**Classic ipsets bracket syntax** (no ipset kernel module required — maps to nft-native sets):
+
+```
+#ACTION  SOURCE               DEST  PROTO  DPORT
+DROP     net:+blocklist[src]  fw
+ACCEPT   net:+allowlist[src]  fw    tcp    22
+```
+
+**Apply TC rules via pyroute2** (no `tc` binary required):
+
+```bash
+shorewall-nft apply-tc /etc/shorewall --netns fw
+```
+
+---
+
 ## Known issues
 
 - `keepalived 2.2.8-6.el10` on RHEL 10 / AlmaLinux 10 / CentOS Stream 10
@@ -182,5 +232,3 @@ Minimum runtime: Python 3.11, Linux kernel ≥ 5.8, nftables ≥ 0.9.3.
 - `shorewalld_plainlist_refresh_duration_seconds` is emitted as an empty
   `HistogramMetricFamily` alongside the populated `_sum`/`_count` pair —
   visible in scrape output but benign. Will be cleaned up post-release.
-- `nfset:` syntax is not yet supported in `Masq` or `tcrules` sections;
-  use inline `dns:` syntax there for now.
