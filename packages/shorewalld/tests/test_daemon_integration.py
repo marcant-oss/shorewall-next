@@ -430,9 +430,9 @@ class TestSnapshotResync:
         # Populate the source tracker.
         sid = tracker.set_id_for("github.com", FAMILY_V4)
         tracker.commit([
-            Proposal(set_id=sid, ip_bytes=b"\x01\x01\x01\x01", ttl=600),
-            Proposal(set_id=sid, ip_bytes=b"\x02\x02\x02\x02", ttl=600),
-            Proposal(set_id=sid, ip_bytes=b"\x03\x03\x03\x03", ttl=600),
+            Proposal(set_id=sid, ip=int.from_bytes(b"\x01\x01\x01\x01", "big"), ttl=600),
+            Proposal(set_id=sid, ip=int.from_bytes(b"\x02\x02\x02\x02", "big"), ttl=600),
+            Proposal(set_id=sid, ip=int.from_bytes(b"\x03\x03\x03\x03", "big"), ttl=600),
         ], [Verdict.ADD] * 3)
 
         harness = _Harness(tracker, event_loop)

@@ -439,7 +439,11 @@ class PullResolver:
                 if set_id is None:
                     skipped_no_set_id += 1
                     continue
-                prop = Proposal(set_id=set_id, ip_bytes=ip_bytes, ttl=ttl)
+                prop = Proposal(
+                    set_id=set_id,
+                    ip=int.from_bytes(ip_bytes, "big"),
+                    ttl=ttl,
+                )
                 for netns in self._netns_for(group.primary_qname):
                     self._writer.submit(
                         netns=netns, family=family, proposal=prop)

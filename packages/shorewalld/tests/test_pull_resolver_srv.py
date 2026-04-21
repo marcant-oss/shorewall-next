@@ -159,11 +159,11 @@ class TestSrvBasicResolution:
 
         asyncio.run(_run())
 
-        ips = {p.ip_bytes for _, _, p in writer.submitted}
-        assert ipaddress.IPv4Address("198.51.100.10").packed in ips
-        assert ipaddress.IPv4Address("203.0.113.20").packed in ips
-        assert ipaddress.IPv6Address("2001:db8::a").packed in ips
-        assert ipaddress.IPv6Address("2001:db8::b").packed in ips
+        ips = {p.ip for _, _, p in writer.submitted}
+        assert int.from_bytes(ipaddress.IPv4Address("198.51.100.10").packed, "big") in ips
+        assert int.from_bytes(ipaddress.IPv4Address("203.0.113.20").packed, "big") in ips
+        assert int.from_bytes(ipaddress.IPv6Address("2001:db8::a").packed, "big") in ips
+        assert int.from_bytes(ipaddress.IPv6Address("2001:db8::b").packed, "big") in ips
         assert len(writer.submitted) == 4
 
     def test_correct_set_id_used(self):
@@ -252,11 +252,11 @@ class TestSrvTargetFailureIsolation:
                 await resolver._resolve_group(group)
 
         asyncio.run(_run())
-        ips = {p.ip_bytes for _, _, p in writer.submitted}
+        ips = {p.ip for _, _, p in writer.submitted}
         # target-b IP present
-        assert ipaddress.IPv4Address("203.0.113.20").packed in ips
+        assert int.from_bytes(ipaddress.IPv4Address("203.0.113.20").packed, "big") in ips
         # target-a produced nothing — not in results
-        assert ipaddress.IPv4Address("198.51.100.10").packed not in ips
+        assert int.from_bytes(ipaddress.IPv4Address("198.51.100.10").packed, "big") not in ips
 
     def test_srv_nxdomain_returns_empty(self):
         """NXDOMAIN on the SRV query itself returns empty result + increments metric."""

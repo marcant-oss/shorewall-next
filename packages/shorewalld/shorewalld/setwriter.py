@@ -273,14 +273,17 @@ class SetWriter:
             state.builder.reset()
             self._batches[key] = state
 
-        ip = op.proposal.ip_bytes
+        # Materialise bytes from the int key only once per flush-bound
+        # write — the DEDUP path in the tracker never reaches here.
+        nbytes = 4 if op.family == 4 else 16
+        ip_bytes = op.proposal.ip.to_bytes(nbytes, "big")
         try:
             state.builder.append(
                 set_id=op.proposal.set_id,
                 family=op.family,
                 op_kind=BATCH_OP_ADD,
                 ttl=op.proposal.ttl,
-                ip_bytes=ip,
+                ip_bytes=ip_bytes,
             )
         except OverflowError:
             await self._flush_one(key, reason="full")
@@ -295,7 +298,7 @@ class SetWriter:
                 family=op.family,
                 op_kind=BATCH_OP_ADD,
                 ttl=op.proposal.ttl,
-                ip_bytes=ip,
+                ip_bytes=ip_bytes,
             )
         state.proposals.append(op.proposal)
         state.verdicts.append(op.verdict)
