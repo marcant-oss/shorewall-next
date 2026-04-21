@@ -98,7 +98,7 @@ tests:
       kind: throughput
       proto: udp
       family: ipv4
-      source_role: wan-uplink
+      source_role: wan-native
       sink_role: lan-downstream
       duration_s: 20
       parallel: 2
