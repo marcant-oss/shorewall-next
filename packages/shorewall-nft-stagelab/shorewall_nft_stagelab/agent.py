@@ -143,6 +143,9 @@ _PROBE_FIELDS = frozenset({
     "probe_type", "tcp_flags", "tcp_window",
     "frag_overlap", "udp_bad_checksum", "expected_verdict",
 })
+_CONNTRACK_FIELDS = frozenset({
+    "fw_host", "duration_s", "interval_s",
+})
 
 
 async def handle_setup_endpoint(
@@ -332,8 +335,18 @@ async def handle_run_scenario(
             raise TypeError(
                 f"send_probe requires probe endpoint; {endpoint_name!r} is {type(handle).__name__}"
             )
+        # Build kwargs using only ProbeSpec constructor fields; strip scenario-level
+        # keys (probe_type, tcp_window, frag_overlap, udp_bad_checksum, expected_verdict …).
+        # Map tcp_flags (emitted by EvasionProbesRunner) → ProbeSpec.flags.
+        _PROBE_SPEC_FIELDS = frozenset({
+            "proto", "src_ip", "dst_ip", "src_port", "dst_port",
+            "family", "flags", "payload_len", "vlan", "src_mac", "dst_mac",
+        })
+        probe_kwargs = {k: v for k, v in spec.items() if k in _PROBE_SPEC_FIELDS}
+        if "flags" not in probe_kwargs and "tcp_flags" in spec:
+            probe_kwargs["flags"] = spec["tcp_flags"]
         frame = trafgen_scapy.build_frame(
-            trafgen_scapy.ProbeSpec(**{k: v for k, v in spec.items() if k in _PROBE_FIELDS})
+            trafgen_scapy.ProbeSpec(**probe_kwargs)
         )
         if not handle.tap_fds:
             raise RuntimeError(f"endpoint {endpoint_name!r} has no TAP fds")
@@ -547,6 +560,9 @@ async def handle_run_scenario(
 
     if kind == "conntrack_overflow_inspect":
         return await _handle_conntrack_overflow_inspect(spec)
+
+    if kind == "poll_conntrack":
+        return await _handle_poll_conntrack(spec)
 
     if kind == "start_http_listener":
         return await _handle_start_http_listener(spec, state, endpoint_name)
@@ -863,6 +879,48 @@ async def _handle_conntrack_overflow_inspect(
         "count": count,
         "max": ct_max,
         "dmesg_hits": dmesg_hits,
+    }
+
+
+async def _handle_poll_conntrack(spec: dict[str, Any]) -> dict[str, Any]:
+    """SSH to fw_host and poll ``conntrack -L | wc -l`` every interval_s for duration_s.
+
+    Returns the peak count and the number of samples taken.  All SSH errors are
+    swallowed (soft-fail) so a temporarily unreachable firewall does not abort
+    the enclosing scenario.
+
+    Spec keys: fw_host (str), duration_s (float), interval_s (float, default 1.0).
+    """
+    fw_host: str = spec["fw_host"]
+    duration_s: float = float(spec.get("duration_s", 0))
+    interval_s: float = float(spec.get("interval_s", 1.0))
+
+    peak = 0
+    samples: list[int] = []
+    deadline = asyncio.get_event_loop().time() + duration_s
+
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                fw_host, "conntrack -L 2>/dev/null | wc -l",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            count = int(out.strip())
+            samples.append(count)
+            if count > peak:
+                peak = count
+        except Exception:  # noqa: BLE001 — soft-fail; don't abort the scenario
+            pass
+        await asyncio.sleep(interval_s)
+
+    return {
+        "tool": "poll_conntrack",
+        "ok": True,
+        "peak": peak,
+        "samples_count": len(samples),
+        "_conntrack_sidecar": True,
     }
 
 

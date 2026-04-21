@@ -358,3 +358,171 @@ def test_build_runner_unknown_kind_raises():
 
     with pytest.raises(ValueError, match="does_not_exist"):
         build_runner(_FakeScenario())  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Conntrack observability sidecar — ThroughputRunner
+# ---------------------------------------------------------------------------
+
+
+def test_throughput_plan_emits_conntrack_sidecar_when_observe_set():
+    """plan() appends a poll_conntrack cmd when observe_conntrack=True + fw_host set."""
+    sc = ThroughputScenario(
+        id="tp-ct1",
+        kind="throughput",
+        source="src",
+        sink="sink",
+        proto="tcp",
+        duration_s=10,
+        parallel=1,
+        expect_min_gbps=0.1,
+        observe_conntrack=True,
+        fw_host="root@fw.example.com",
+    )
+    cfg = _base_cfg([sc])
+    runner = build_runner(sc)
+    cmds = runner.plan(cfg)
+
+    assert len(cmds) == 3
+    sidecar = cmds[2]
+    assert sidecar.kind == "poll_conntrack"
+    assert sidecar.spec["fw_host"] == "root@fw.example.com"
+    assert sidecar.spec["duration_s"] == 12  # duration_s + 2
+    assert sidecar.spec["interval_s"] == 1.0
+    assert sidecar.spec["_conntrack_sidecar"] is True
+
+
+def test_throughput_plan_no_sidecar_when_observe_false():
+    """plan() emits exactly 2 commands (no sidecar) when observe_conntrack=False."""
+    sc = ThroughputScenario(
+        id="tp-ct2",
+        kind="throughput",
+        source="src",
+        sink="sink",
+        proto="tcp",
+        duration_s=10,
+        parallel=1,
+        expect_min_gbps=0.1,
+        observe_conntrack=False,
+    )
+    cfg = _base_cfg([sc])
+    runner = build_runner(sc)
+    cmds = runner.plan(cfg)
+
+    assert len(cmds) == 2
+    assert all(c.kind != "poll_conntrack" for c in cmds)
+
+
+def test_throughput_summarize_captures_peak():
+    """summarize() stores sidecar peak under raw['conntrack_peak_observed']."""
+    sc = ThroughputScenario(
+        id="tp-ct3",
+        kind="throughput",
+        source="src",
+        sink="sink",
+        proto="tcp",
+        duration_s=10,
+        parallel=1,
+        expect_min_gbps=0.1,
+        observe_conntrack=True,
+        fw_host="root@fw.example.com",
+    )
+    runner = build_runner(sc)
+    results = [
+        {"tool": "iperf3", "ok": True, "throughput_gbps": 5.0, "duration_s": 10.0},
+        {
+            "tool": "poll_conntrack", "ok": True,
+            "peak": 12345, "samples_count": 10,
+            "_conntrack_sidecar": True,
+        },
+    ]
+    result = runner.summarize(results)
+    assert result.raw["conntrack_peak_observed"] == 12345
+    # Main throughput aggregation must be unaffected.
+    assert result.raw["throughput_gbps"] == 5.0
+
+
+# ---------------------------------------------------------------------------
+# Conntrack observability sidecar — ConnStormRunner
+# ---------------------------------------------------------------------------
+
+
+def test_conn_storm_plan_emits_conntrack_sidecar_when_observe_set():
+    """plan() appends a poll_conntrack cmd when observe_conntrack=True + fw_host set."""
+    sc = ConnStormScenario(
+        id="cs-ct1",
+        kind="conn_storm",
+        source="src",
+        sink="sink",
+        target_conns=1000,
+        rate_per_s=200,
+        hold_s=15,
+        observe_conntrack=True,
+        fw_host="root@fw.example.com",
+    )
+    cfg = _base_cfg([sc])
+    runner = build_runner(sc)
+    cmds = runner.plan(cfg)
+
+    assert len(cmds) == 4
+    sidecar = cmds[3]
+    assert sidecar.kind == "poll_conntrack"
+    assert sidecar.spec["fw_host"] == "root@fw.example.com"
+    assert sidecar.spec["duration_s"] == 17  # hold_s + 2
+    assert sidecar.spec["interval_s"] == 1.0
+    assert sidecar.spec["_conntrack_sidecar"] is True
+
+
+def test_conn_storm_plan_no_sidecar_when_observe_false():
+    """plan() emits exactly 3 commands (no sidecar) when observe_conntrack=False."""
+    sc = ConnStormScenario(
+        id="cs-ct2",
+        kind="conn_storm",
+        source="src",
+        sink="sink",
+        target_conns=1000,
+        rate_per_s=200,
+        hold_s=5,
+        observe_conntrack=False,
+    )
+    cfg = _base_cfg([sc])
+    runner = build_runner(sc)
+    cmds = runner.plan(cfg)
+
+    assert len(cmds) == 3
+    assert all(c.kind != "poll_conntrack" for c in cmds)
+
+
+def test_conn_storm_summarize_captures_peak():
+    """summarize() stores sidecar peak under raw['conntrack_peak_observed'] without
+    affecting ok/established aggregation."""
+    sc = ConnStormScenario(
+        id="cs-ct3",
+        kind="conn_storm",
+        source="src",
+        sink="sink",
+        target_conns=100,
+        rate_per_s=50,
+        hold_s=5,
+        observe_conntrack=True,
+        fw_host="root@fw.example.com",
+    )
+    runner = build_runner(sc)
+    results = [
+        {"tool": "http_listener", "ok": True, "pid": 1, "port": 80, "_http_sidecar": True},
+        {
+            "tool": "pyconn", "ok": True,
+            "connections_established": 100, "connections_failed": 0,
+            "duration_s": 5.0, "traffic_bps": 0,
+        },
+        {"tool": "http_listener", "ok": True, "pid": 1, "port": 80, "_http_sidecar": True},
+        {
+            "tool": "poll_conntrack", "ok": True,
+            "peak": 12345, "samples_count": 7,
+            "_conntrack_sidecar": True,
+        },
+    ]
+    result = runner.summarize(results)
+    assert result.raw["conntrack_peak_observed"] == 12345
+    assert result.raw["established"] == 100
+    assert result.ok is True
