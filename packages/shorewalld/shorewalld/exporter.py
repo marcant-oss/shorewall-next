@@ -24,18 +24,21 @@ Data-source split, at a glance:
 * **nft / libnftables** — ``NftCollector`` and ``FlowtableCollector``
   share one :class:`NftScraper` snapshot per scrape.
 * **pyroute2** — ``LinkCollector``, ``QdiscCollector``,
-  ``NeighbourCollector``, ``AddressCollector`` open an
-  ``IPRoute(netns=…)`` per scrape; pyroute2 forks internally to bind
-  the socket to the target netns.
+  ``NeighbourCollector``, ``AddressCollector`` share one cached
+  ``IPRoute(netns=…)`` per managed netns via
+  ``collectors._shared.get_rtnl``; pyroute2 forks once on first use
+  and the handle is reused across all scrapes.  Evicted on
+  ``NetlinkError`` (stale netns); closed on daemon shutdown via
+  ``close_all_rtnl()``.
 * **``/proc`` + ``/sys`` readers** — ``CtCollector``,
   ``SnmpCollector``, ``NetstatCollector``, ``SockstatCollector``,
   ``SoftnetCollector`` route their reads through the nft-worker
   already pinned to the target netns
   (:meth:`WorkerRouter.read_file_sync` / ``count_lines_sync``). No
   ``setns(2)`` on the scrape thread.
-* **CTNETLINK** — ``ConntrackStatsCollector`` is the lone exception:
-  it keeps a direct ``_in_netns()`` hop because the read RPC doesn't
-  proxy ``NFCTSocket`` yet.
+* **CTNETLINK** — ``ConntrackStatsCollector`` is proxied via the
+  ``READ_KIND_CTNETLINK`` worker RPC; the scrape thread has no
+  ``setns(2)`` calls.
 
 prometheus_client is an optional dep (``pip install .[daemon]``); its
 imports are deferred so importing this file without the package still
