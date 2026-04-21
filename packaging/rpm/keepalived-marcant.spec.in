@@ -167,6 +167,8 @@ fi
 %{_mandir}/man1/genhash.1*
 %{_mandir}/man5/keepalived.conf.5*
 %{_mandir}/man8/keepalived.8*
+%exclude %{_sysconfdir}/keepalived/keepalived.conf.sample
+%exclude %{_sysconfdir}/keepalived/samples
 
 %changelog
 @@CHANGELOG_ENTRY@@
