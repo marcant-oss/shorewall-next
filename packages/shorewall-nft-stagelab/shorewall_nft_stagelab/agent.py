@@ -228,8 +228,10 @@ async def handle_setup_endpoint(
     mode: str = spec.get("mode", "native")
 
     if mode == "native":
+        _vlan_raw = spec.get("vlan")
         ep_spec = NativeEndpointSpec(
-            name=name, nic=spec["nic"], vlan=int(spec["vlan"]),
+            name=name, nic=spec["nic"],
+            vlan=int(_vlan_raw) if _vlan_raw is not None else None,
             ipv4=spec["ipv4"], ipv4_gw=spec["ipv4_gw"],
             ipv6=spec.get("ipv6"), ipv6_gw=spec.get("ipv6_gw"),
         )
