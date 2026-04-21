@@ -117,6 +117,12 @@ Result: any controller-side crash (clean exit, Python traceback,
 signal, SIGKILL) leaves no leftover `/run/netns/<name>` and no
 leaked kernel net namespace. Verified on the test VM.
 
+> **Runtime dependency note:** simlab no longer requires the `iproute2`
+> binary (`ip netns exec`) at runtime.  All netns operations — sysctl
+> writes, nft ruleset loads, flowtable queries, and the optional nft
+> trace spawn — go through `shorewall-nft-netkit`'s `run_in_netns_fork`
+> / `_in_netns` primitives (pyroute2 + libnftables + fork+setns).
+
 ### Packet construction
 
 `simlab/packets.py` builds wire-format bytes via scapy:
