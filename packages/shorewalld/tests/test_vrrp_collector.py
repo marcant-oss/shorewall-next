@@ -287,7 +287,11 @@ class TestVrrpCollectorHappyPath:
 
         with patch("shorewalld.collectors.vrrp.open_dbus_connection",
                    return_value=fake_conn):
-            c = VrrpCollector(cache_ttl=999.0)
+            # Use cache_ttl=-1.0 so time.monotonic()-based cache is always
+            # expired and _scrape() is called regardless of runner uptime.
+            # cache_ttl=999.0 would silently skip the scrape on fresh CI
+            # runners whose time.monotonic() is still < 999 s since boot.
+            c = VrrpCollector(cache_ttl=-1.0)
             families = c.collect()
         return c, fake_conn, families
 
