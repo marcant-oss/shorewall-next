@@ -112,20 +112,20 @@ def _make_snmp_str_val(text: str):
 # Rows keyed by instance index string ("1", "2").
 _CANNED_SNMP_ROWS: dict[str, dict[str, object]] = {
     "1": {
-        "name":         _make_snmp_str_val("fw_master_v4"),
-        "state":        _make_snmp_val(2),    # master
-        "vrid":         _make_snmp_val(51),
-        "eff_prio":     _make_snmp_val(150),
-        "vips_status":  _make_snmp_val(1),    # allSet
-        "become_master": _make_snmp_val(3),
+        "name":        _make_snmp_str_val("fw_master_v4"),
+        "state":       _make_snmp_val(2),    # master
+        "vrid":        _make_snmp_val(51),
+        "base_prio":   _make_snmp_val(150),  # vrrpInstanceBasePriority (.7)
+        "eff_prio":    _make_snmp_val(150),  # vrrpInstanceEffectivePriority (.8)
+        "vips_status": _make_snmp_val(1),    # allSet
     },
     "2": {
-        "name":         _make_snmp_str_val("fw_backup_v6"),
-        "state":        _make_snmp_val(1),    # backup
-        "vrid":         _make_snmp_val(10),
-        "eff_prio":     _make_snmp_val(100),
-        "vips_status":  _make_snmp_val(2),    # notAllSet
-        "become_master": _make_snmp_val(1),
+        "name":        _make_snmp_str_val("fw_backup_v6"),
+        "state":       _make_snmp_val(1),    # backup
+        "vrid":        _make_snmp_val(10),
+        "base_prio":   _make_snmp_val(100),
+        "eff_prio":    _make_snmp_val(100),
+        "vips_status": _make_snmp_val(2),    # notAllSet
     },
 }
 
@@ -225,12 +225,13 @@ class TestSnmpHappyPath:
         assert sd.get(("org.keepalived.Vrrp1", "fw_master_v4", "51", "ipv4")) == 1.0  # allSet
         assert sd.get(("org.keepalived.Vrrp1", "fw_backup_v6", "10", "ipv6")) == 2.0  # notAllSet
 
-    def test_master_transitions_filled_from_snmp(self):
+    def test_master_transitions_zero_from_snmp(self):
+        # vrrpInstanceBecomeMaster does not exist in the MIB; transitions always 0.
         families = self._collect_with_snmp()
         trans = _get_family(families, "shorewalld_vrrp_master_transitions_total")
         sd = _samples_dict(trans)
-        assert sd.get(("org.keepalived.Vrrp1", "fw_master_v4", "51")) == 3.0
-        assert sd.get(("org.keepalived.Vrrp1", "fw_backup_v6", "10")) == 1.0
+        assert sd.get(("org.keepalived.Vrrp1", "fw_master_v4", "51")) == 0.0
+        assert sd.get(("org.keepalived.Vrrp1", "fw_backup_v6", "10")) == 0.0
 
     def test_state_and_labels_unchanged(self):
         """D-Bus state and labels must not change after SNMP merge."""
@@ -359,12 +360,12 @@ class TestSnmpStateInitMapping:
     def test_state_zero_init_preserved(self):
         rows = {
             "1": {
-                "name":          _make_snmp_str_val("fw_init_v4"),
-                "state":         _make_snmp_val(0),   # 0=init (only in SNMP)
-                "vrid":          _make_snmp_val(99),
-                "eff_prio":      _make_snmp_val(100),
-                "vips_status":   _make_snmp_val(2),
-                "become_master": _make_snmp_val(0),
+                "name":        _make_snmp_str_val("fw_init_v4"),
+                "state":       _make_snmp_val(0),   # 0=init (only in SNMP)
+                "vrid":        _make_snmp_val(99),
+                "base_prio":   _make_snmp_val(100),
+                "eff_prio":    _make_snmp_val(100),
+                "vips_status": _make_snmp_val(2),
             },
         }
         instances = _build_instances_from_snmp(rows)
@@ -375,12 +376,12 @@ class TestSnmpStateInitMapping:
     def test_state_zero_in_metric_output(self):
         rows = {
             "1": {
-                "name":          _make_snmp_str_val("fw_init_v4"),
-                "state":         _make_snmp_val(0),
-                "vrid":          _make_snmp_val(99),
-                "eff_prio":      _make_snmp_val(100),
-                "vips_status":   _make_snmp_val(1),
-                "become_master": _make_snmp_val(0),
+                "name":        _make_snmp_str_val("fw_init_v4"),
+                "state":       _make_snmp_val(0),
+                "vrid":        _make_snmp_val(99),
+                "base_prio":   _make_snmp_val(100),
+                "eff_prio":    _make_snmp_val(100),
+                "vips_status": _make_snmp_val(1),
             },
         }
         cfg = VrrpSnmpConfig()
@@ -413,12 +414,11 @@ class TestSnmpNoSuchColumn:
         """Row with no eff_prio column → effective_priority=0, rest populated."""
         rows = {
             "1": {
-                "name":         _make_snmp_str_val("fw_partial"),
-                "state":        _make_snmp_val(2),
-                "vrid":         _make_snmp_val(10),
+                "name":        _make_snmp_str_val("fw_partial"),
+                "state":       _make_snmp_val(2),
+                "vrid":        _make_snmp_val(10),
                 # eff_prio deliberately absent (simulates NoSuchObject skip).
-                "vips_status":  _make_snmp_val(1),
-                "become_master": _make_snmp_val(5),
+                "vips_status": _make_snmp_val(1),
             },
         }
         instances = _build_instances_from_snmp(rows)
@@ -428,7 +428,7 @@ class TestSnmpNoSuchColumn:
         assert inst.state == 2
         assert inst.effective_priority == 0   # missing → default 0
         assert inst.vip_count == 1
-        assert inst.master_transitions == 5
+        assert inst.master_transitions == 0   # not in MIB, always 0
 
     def test_nosuchobject_skipped_in_walk(self):
         """_snmp_walk_table skips NoSuchObject values; row still emits with field=0.
@@ -442,12 +442,11 @@ class TestSnmpNoSuchColumn:
         # the behaviour when a NoSuchObject skips a column during the walk.
         partial_rows: dict[str, dict[str, object]] = {
             "1": {
-                "name":         _make_snmp_str_val("fw_ns_test"),
-                "state":        _make_snmp_val(2),
-                "vrid":         _make_snmp_val(7),
+                "name":        _make_snmp_str_val("fw_ns_test"),
+                "state":       _make_snmp_val(2),
+                "vrid":        _make_snmp_val(7),
                 # eff_prio absent — simulates NoSuchObject skip in walker.
-                "vips_status":  _make_snmp_val(1),
-                "become_master": _make_snmp_val(2),
+                "vips_status": _make_snmp_val(1),
             },
         }
         instances = _build_instances_from_snmp(partial_rows)
@@ -456,7 +455,7 @@ class TestSnmpNoSuchColumn:
         assert inst.vrrp_name == "fw_ns_test"
         assert inst.effective_priority == 0  # absent column → 0
         assert inst.vip_count == 1
-        assert inst.master_transitions == 2
+        assert inst.master_transitions == 0  # not in MIB, always 0
 
 
 # ---------------------------------------------------------------------------
@@ -469,17 +468,18 @@ class TestMergeHelpers:
     def test_merge_known_name(self):
         rows = {
             "1": {
-                "name":         _make_snmp_str_val("fw_master_v4"),
-                "eff_prio":     _make_snmp_val(200),
-                "vips_status":  _make_snmp_val(1),
-                "become_master": _make_snmp_val(7),
+                "name":        _make_snmp_str_val("fw_master_v4"),
+                "base_prio":   _make_snmp_val(200),
+                "eff_prio":    _make_snmp_val(200),
+                "vips_status": _make_snmp_val(1),
             },
         }
         merged = _merge_snmp_into_instances(_DBUS_INSTANCES, rows)
         inst = next(i for i in merged if i.vrrp_name == "fw_master_v4")
+        assert inst.priority == 200
         assert inst.effective_priority == 200
         assert inst.vip_count == 1
-        assert inst.master_transitions == 7
+        assert inst.master_transitions == 0  # not in MIB
         # D-Bus fields preserved.
         assert inst.bus_name == "org.keepalived.Vrrp1"
         assert inst.nic == "eth0"
