@@ -271,6 +271,7 @@ class ConnStormScenario(BaseModel):
     rate_per_s: int
     hold_s: int
     target_port: int = 80              # TCP port on the sink that pyconn connects to
+    family: Literal["ipv4", "ipv6"] = "ipv4"  # address family for IPv6 twin scenarios
     # observe_conntrack: if True, poll `conntrack -L | wc -l` on fw_host once per second
     # as a sidecar during the storm phase.  Peak count recorded in
     # ScenarioResult.metrics["conntrack_peak_observed"].
@@ -321,6 +322,7 @@ class RuleScanScenario(BaseModel):
     source: str
     target_subnet: str
     random_count: int
+    family: Literal["ipv4", "ipv6"] = "ipv4"  # address family for IPv6 twin scenarios
     test_id: str | None = None
     standard_refs: list[str] = []
     acceptance_criteria: dict[str, Any] = {}
@@ -672,6 +674,7 @@ class RuleCoverageMatrixScenario(BaseModel):
     tcp_ports: list[int] = [22, 80, 443]
     udp_ports: list[int] = [53, 123]
     probe_count_per_tuple: int = 1       # how many probes per (src-zone, dst-zone, proto, port)
+    family: Literal["ipv4", "ipv6"] = "ipv4"  # address family for IPv6 twin scenarios
     test_id: str | None = None
     standard_refs: list[str] = []
     acceptance_criteria: dict[str, Any] = {}
@@ -750,6 +753,7 @@ class EvasionProbesScenario(BaseModel):
     kind: Literal["evasion_probes"]
     source: str                             # endpoint name (probe mode preferred)
     target_ip: str                          # destination IP
+    family: Literal["ipv4", "ipv6"] = "ipv4"  # address family for IPv6 twin scenarios
     probe_types: list[Literal[
         "tcp_null", "tcp_xmas", "tcp_fin_no_syn",
         "tcp_shrinking_window",
