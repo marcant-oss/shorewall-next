@@ -50,7 +50,9 @@ fi
 # ---- build and runtime dependencies (AL10 only for now) ----
 # AL10 ships libnftnl + libnftables from BaseOS, libipset from BaseOS,
 # net-snmp-devel from BaseOS/AppStream, glib2-devel from BaseOS.
-# libbpf-devel from BaseOS (libbpf 2.0.x); included so --enable-ebpf is attempted.
+# NOTE: libbpf-devel is intentionally absent — keepalived v2.3.4 has no
+# eBPF/XDP support (no --enable-ebpf configure flag, zero BPF source files).
+# See docs/testing/keepalived-features-roadmap.md for the deferral rationale.
 BUILD_REQUIRES='BuildRequires:  gcc make autoconf automake libtool
 BuildRequires:  libnl3-devel
 BuildRequires:  libnftnl-devel
@@ -61,7 +63,6 @@ BuildRequires:  glib2-devel
 BuildRequires:  dbus-devel
 BuildRequires:  openssl-devel
 BuildRequires:  libpcre2-devel
-BuildRequires:  libbpf-devel
 BuildRequires:  systemd-devel
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  pkgconf-pkg-config'
