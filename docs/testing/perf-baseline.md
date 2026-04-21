@@ -156,14 +156,23 @@ once `fw_host` is set to a resolvable address (see follow-up item 1).
 
 | Run | target_conns | established | failed | OK? | Notes |
 |-----|-------------|-------------|--------|-----|-------|
-| `udp-rerun` | 100 000 | 0 | 100 000 | FAIL | No HTTP listener on port 80 at `lan-downstream` |
+| `udp-rerun` | 100 000 | 0 | 100 000 | FAIL | HTTP listener died before storm connected (pre-fix) |
 
-The `perf-conntrack-observe-conn-storm` catalogue entry opens 100 000 TCP
-connections to port 80 on `lan-downstream`.  There is no HTTP server running
-at that endpoint, so all connections are refused immediately.  The scenario
-needs an HTTP listener (e.g. `start_http_listener` sidecar) on the sink
-endpoint, or a well-known open port.  This is a pre-existing catalogue gap,
-not a code regression.
+### Root cause (fixed, commit ceff3a528)
+
+`ConnStormRunner` emits `[start_http_listener(sink), run_tcpkali(source),
+stop_http_listener(sink)]`.  The controller groups by host and runs groups
+concurrently.  The sink group (tester02) ran start→stop sequentially, stopping
+the HTTP listener immediately after starting it, before the source group
+(tester01) even began connecting.
+
+**Fix**: `stop_http_listener` now carries `delay_before_s = hold_s + 2` so the
+listener stays alive for the entire storm duration.  The controller timeout for
+`start/stop_http_listener` is now `delay_before_s + 30 s` (was fixed 120 s).
+
+**Expected post-fix result**: ~100 000 connections established (L2-local
+path, no FW forwarding involved; port 80 served by stdlib HTTP server in the
+`lan-downstream` netns).
 
 ---
 
