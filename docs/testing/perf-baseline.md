@@ -55,10 +55,17 @@ scenario, which uses `wan-native` (native mode with IPv4 `203.0.113.253/24`).
 
 ## IPv4 UDP throughput
 
-Not yet measured on native endpoints.  The `perf-ipv4-udp-throughput`
-catalogue entry targets `wan-uplink` (probe mode, no IPv4 address) and
-returns 0.  A separate test with `wan-native` as source is needed to capture
-this baseline.
+| Run | Date | Scenario | Gbps | Duration | Parallel streams | OK? |
+|-----|------|----------|------|----------|------------------|-----|
+| `ipv4udp-baseline` | 2026-04-20 | perf-ipv4-udp-throughput | **6.48** | 20 s | 2 | PASS |
+
+Source: `wan-native` → `lan-downstream`, IPv4, UDP, 2 parallel iperf3 streams,
+`udp_bandwidth_mbps: 0` (unlimited).  SLO: ≥ 5.0 Gbps.
+
+Fix: the entry previously used `source_role: wan-uplink` (probe mode, no IPv4
+stack — iperf3 cannot run against probe endpoints).  Retargeted to
+`source_role: wan-native` (tester01 eth1.20 with real IPv4 `203.0.113.253/24`)
+in commit `fix(catalogue): IPv4 UDP throughput uses wan-native endpoint`.
 
 ---
 
@@ -187,17 +194,18 @@ for sc in data['scenarios']:
 
 ## Follow-up items for operator
 
-1. **IPv4 UDP native baseline**: add a `perf-ipv4-udp-throughput` catalogue
-   entry that uses `source_role: wan-native` (not `wan-uplink`) to get a
-   native-mode IPv4 UDP number.
-
-2. **Conntrack sidecar**: update `fw_host: root@fw-primary` to
+1. **Conntrack sidecar**: update `fw_host: root@fw-primary` to
    `fw_host: root@192.0.2.70` in `docs/testing/security-test-plan.ipv6-perf.yaml`
    and deploy tester01's SSH key to the FW.
 
-3. **conn-storm HTTP listener**: add a `start_http_listener` sidecar command
+2. **conn-storm HTTP listener**: add a `start_http_listener` sidecar command
    in `ConnStormRunner` (or in the catalogue entry) so port 80 on `lan-downstream`
    is served before the storm starts.
+
+3. **IPv4 TCP native baseline**: `perf-ipv4-tcp-throughput` still targets
+   `source_role: wan-uplink` (probe mode, no IPv4 stack) and records 0 Gbps.
+   Retargeting to `wan-native` is a separate follow-up (same fix pattern as
+   this task).
 
 4. **DPDK line-rate** (task #31): provision physical NIC via Proxmox PCI
    passthrough for real 10–40 Gbps measurements.  The current virtio-net

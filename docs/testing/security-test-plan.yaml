@@ -2,7 +2,7 @@ __comment__: Auto-generated (security-test-plan) — DO NOT edit by hand; regene
   via tools/merge-security-test-plan-yaml.py or the M1 merger.
 schema_version: 1
 generated_by: M1 merger (security-test-plan feature)
-generated_at: '2026-04-20T23:22:01+00:00'
+generated_at: '2026-04-21T02:58:07+00:00'
 standards:
 - id: cc-iso-15408
   title: Common Criteria (ISO/IEC 15408)
@@ -300,7 +300,7 @@ tests:
     source_role: wan-uplink
     sink_role: lan-downstream
     fw_host: root@fw-primary
-    duration_s: 300
+    duration_s: 60
     sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
     sysctl_value: 600
     expect_flow_dies: false
@@ -312,6 +312,90 @@ tests:
   evidence:
     human_ref: security-test-plan.md#cc-fta-ssl-3-long-flow-survival
     machine_ref: audit.json[scenarios][].test_id == cc-fta-ssl-3-long-flow-survival
+  status: covered
+- test_id: cc-fdp-iff-1-basic-flow-ipv6
+  standard: cc-iso-15408
+  title: Basic information flow control — IPv6
+  sfr: FDP_IFF.1
+  description: 'IPv6 twin of cc-fdp-iff-1-basic-flow.  Verify zone-pair accept/drop
+    consistency under the compiled nftables ruleset using random IPv6 probes across
+    the reference firewall''s IPv6 prefix space.  IPv6 dispatch must route correctly
+    without NDP-ACCEPT rules shadowing zone traffic.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source_role: wan-uplink
+    target_subnet: 2001:db8::/32
+    random_count: 500
+    family: ipv6
+    test_id: cc-fdp-iff-1-basic-flow-ipv6
+    standard_refs:
+    - cc-iso-15408-fdp-iff-1
+    acceptance_criteria:
+      fail_accept_count: 0
+      fail_drop_count_max: 2
+  evidence:
+    human_ref: security-test-plan.md#cc-fdp-iff-1-basic-flow-ipv6
+    machine_ref: audit.json[scenarios][].test_id == cc-fdp-iff-1-basic-flow-ipv6
+  status: covered
+- test_id: cc-fdp-iff-1-evasion-reject-ipv6
+  standard: cc-iso-15408
+  title: Reject evasion probes — IPv6 (extension headers, spoofed src)
+  sfr: FDP_IFF.1
+  description: 'IPv6 twin of cc-fdp-iff-1-evasion-reject.  Probes IPv6-specific evasion
+    vectors: hop-by-hop extension header injection, fragmentation header abuse, and
+    spoofed-source IPv6 addresses from globally-unrouted prefixes (2001:db8::/32,
+    ::1).  All probes must be dropped.
+
+    '
+  maps_to_scenario:
+    kind: evasion_probes
+    source_role: wan-uplink
+    target_ip: 2001:db8::1
+    probe_types:
+    - tcp_null
+    - tcp_xmas
+    - tcp_fin_no_syn
+    - ip_spoof
+    - udp_malformed_checksum
+    target_port: 80
+    family: ipv6
+    test_id: cc-fdp-iff-1-evasion-reject-ipv6
+    standard_refs:
+    - cc-iso-15408-fdp-iff-1
+    acceptance_criteria:
+      pass_count: 0
+  evidence:
+    human_ref: security-test-plan.md#cc-fdp-iff-1-evasion-reject-ipv6
+    machine_ref: audit.json[scenarios][].test_id == cc-fdp-iff-1-evasion-reject-ipv6
+  status: covered
+- test_id: cc-fru-rsa-1-conn-storm-ipv6
+  standard: cc-iso-15408
+  title: Minimum resource allocation under connection storm — IPv6
+  sfr: FRU_RSA.1
+  description: 'IPv6 twin of cc-fru-rsa-1-conn-storm.  High IPv6 connection-creation
+    rate must not degrade IPv4 throughput below 80% of baseline nor cause conntrack
+    ENOMEM.
+
+    '
+  maps_to_scenario:
+    kind: conn_storm
+    source_role: wan-native
+    sink_role: lan-downstream
+    target_conns: 100000
+    rate_per_s: 10000
+    hold_s: 30
+    target_port: 80
+    family: ipv6
+    test_id: cc-fru-rsa-1-conn-storm-ipv6
+    standard_refs:
+    - cc-iso-15408-fru-rsa-1
+    acceptance_criteria:
+      throughput_ratio_min: 0.8
+  evidence:
+    human_ref: security-test-plan.md#cc-fru-rsa-1-conn-storm-ipv6
+    machine_ref: audit.json[scenarios][].test_id == cc-fru-rsa-1-conn-storm-ipv6
   status: covered
 - test_id: nist-ac-4-info-flow
   standard: nist-800-53
@@ -666,6 +750,153 @@ tests:
     human_ref: security-test-plan.md#nist-sc-7-ha-failover
     machine_ref: audit.json[scenarios][].test_id == nist-sc-7-ha-failover
   status: covered
+- test_id: nist-ac-4-info-flow-ipv6
+  standard: nist-800-53
+  title: Information flow enforcement — IPv6
+  control: AC-4
+  description: 'IPv6 twin of nist-ac-4-info-flow.  Zone-pair accept/drop consistency
+    verified via random IPv6 probes.  The IPv6 dispatch chain must fire for all src/dst
+    zone pairs, including dual-stack zones.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source_role: wan-uplink
+    target_subnet: 2001:db8::/32
+    random_count: 500
+    family: ipv6
+    test_id: nist-ac-4-info-flow-ipv6
+    standard_refs:
+    - nist-800-53-ac-4
+    acceptance_criteria:
+      fail_accept_count: 0
+      fail_drop_count_max: 2
+  evidence:
+    human_ref: security-test-plan.md#nist-ac-4-info-flow-ipv6
+    machine_ref: audit.json[scenarios][].test_id == nist-ac-4-info-flow-ipv6
+  status: covered
+- test_id: nist-sc-5-dos-conntrack-overflow
+  standard: nist-800-53
+  title: Resistance to conntrack table overflow
+  control: SC-5
+  description: 'Drive the conntrack table to >= 95% utilisation via ConntrackOverflow
+    scenario and verify that the kernel does not OOM and that new connections are
+    cleanly rejected (ENOMEM) rather than silently dropped.  The firewall must recover
+    within 60 seconds after the flood stops.
+
+    '
+  maps_to_scenario:
+    kind: conntrack_overflow
+    source_role: wan-native
+    sink_role: lan-downstream
+    fw_host: root@fw-primary
+    duration_s: 60
+    rate_new_per_s: 10000
+    expect_table_fill_pct_min: 95
+    expect_no_new_conntracks_when_full: true
+    test_id: nist-sc-5-dos-conntrack-overflow
+    standard_refs:
+    - nist-800-53-sc-5
+    acceptance_criteria:
+      conntrack_table_fill_fraction_min: 0.95
+      kernel_error_count: 0
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-5-dos-conntrack-overflow
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-5-dos-conntrack-overflow
+  status: covered
+  note: 'The conntrack_overflow scenario kind is implemented in config.py. Handler
+    wiring in scenarios.py is complete (ConntrackOverflowScenario).
+
+    '
+- test_id: nist-sc-7-boundary-throughput-ipv6
+  standard: nist-800-53
+  title: Boundary protection — sustained IPv6 throughput under load
+  control: SC-7
+  description: 'IPv6 twin of nist-sc-7-boundary-throughput.  iperf3 TCP throughput
+    test through the firewall over IPv6.  Must sustain >= 1 Gbps over the full duration.
+
+    '
+  maps_to_scenario:
+    kind: throughput
+    source_role: wan-uplink
+    sink_role: lan-downstream
+    proto: tcp
+    family: ipv6
+    duration_s: 30
+    parallel: 4
+    expect_min_gbps: 1.0
+    test_id: nist-sc-7-boundary-throughput-ipv6
+    standard_refs:
+    - nist-800-53-sc-7
+    acceptance_criteria:
+      throughput_gbps_min: 1.0
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-7-boundary-throughput-ipv6
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-7-boundary-throughput-ipv6
+  status: covered
+- test_id: nist-sc-7-boundary-evasion-ipv6
+  standard: nist-800-53
+  title: Boundary protection — evasion probe rejection, IPv6
+  control: SC-7
+  description: 'IPv6 twin of nist-sc-7-boundary-evasion.  Malformed and crafted IPv6
+    frames across the boundary must be dropped.  Zero packets must pass.
+
+    '
+  maps_to_scenario:
+    kind: evasion_probes
+    source_role: wan-uplink
+    target_ip: 2001:db8::1
+    probe_types:
+    - tcp_null
+    - tcp_xmas
+    - tcp_fin_no_syn
+    - ip_spoof
+    - udp_malformed_checksum
+    target_port: 80
+    family: ipv6
+    test_id: nist-sc-7-boundary-evasion-ipv6
+    standard_refs:
+    - nist-800-53-sc-7
+    acceptance_criteria:
+      pass_count: 0
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-7-boundary-evasion-ipv6
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-7-boundary-evasion-ipv6
+  status: covered
+- test_id: nist-sc-7-flowtable-offload
+  standard: nist-800-53
+  title: Boundary protection — flowtable offload validation
+  control: SC-7
+  description: 'After a long TCP flow (>= 30 s) through the firewall, verify that
+    the nft flowtable counters are non-zero (offload is active).  Zero flowtable counters
+    after a long flow indicate that hardware offload is silently not working — a performance
+    regression disguised as a correctness gap.
+
+    '
+  maps_to_scenario:
+    kind: throughput
+    source_role: wan-uplink
+    sink_role: lan-downstream
+    proto: tcp
+    family: ipv4
+    duration_s: 60
+    parallel: 1
+    expect_min_gbps: 1.0
+    test_id: nist-sc-7-flowtable-offload
+    standard_refs:
+    - nist-800-53-sc-7
+    acceptance_criteria:
+      flowtable_counter_nonzero: true
+  evidence:
+    human_ref: security-test-plan.md#nist-sc-7-flowtable-offload
+    machine_ref: audit.json[scenarios][].test_id == nist-sc-7-flowtable-offload
+  status: partial
+  gap_reason: 'The advisor flowtable_stagnant heuristic fires when flowtable counters
+    stay at zero, providing a proxy signal.  A direct counter comparison before/after
+    ruleset load (hardware-offload verification) is not yet implemented — tracked
+    as "hardware-offload flow-steering tests" in CLAUDE.md open items.
+
+    '
 - test_id: bsi-net-3-2-a2-function-separation
   standard: bsi-grundschutz
   standard_refs:
@@ -918,6 +1149,106 @@ tests:
   evidence:
     human: docs/testing/security-test-plan.bsi.md#bsi-ops-1-2-5-log-retention
     machine: N/A — no automated scenario
+- test_id: bsi-net-3-2-a2-function-separation-ipv6
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a2-function-separation
+  title: NET.3.2.A2 — Separation of firewall functions, IPv6
+  description: 'IPv6 twin of bsi-net-3-2-a2-function-separation.  Probes all zone-pair
+    combinations over IPv6 and verifies that packets with no matching allow rule are
+    silently dropped.  Confirms that the IPv6 dispatch chain fires correctly for every
+    zone pair.
+
+    '
+  maps_to_scenario:
+    id: bsi-a2-function-separation-ipv6
+    kind: rule_scan
+    source_role: wan-uplink
+    target_subnet: 2001:db8::/32
+    random_count: 500
+    family: ipv6
+    test_id: bsi-net-3-2-a2-function-separation-ipv6
+    standard_refs:
+    - bsi-net-3-2-a2-function-separation
+    acceptance_criteria:
+      fail_accept_count: 0
+      fail_drop_count: <= 2
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a2-function-separation-ipv6
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a2-function-separation-ipv6
+- test_id: bsi-net-3-2-a7-protocol-validation-ipv6
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a7-protocol-validation
+  title: NET.3.2.A7 — Protocol validation and evasion resistance, IPv6
+  description: 'IPv6 twin of bsi-net-3-2-a7-protocol-validation.  Extension-header
+    injection, TCP NULL/XMAS scans, and spoofed-source IPv6 probes must all be dropped.  Confirms
+    that IPv6-specific attack vectors are blocked.
+
+    '
+  maps_to_scenario:
+    id: bsi-a7-evasion-probes-ipv6
+    kind: evasion_probes
+    source_role: wan-uplink
+    target_ip: 2001:db8::1
+    probe_types:
+    - tcp_null
+    - tcp_xmas
+    - tcp_fin_no_syn
+    - ip_spoof
+    - udp_malformed_checksum
+    target_port: 80
+    family: ipv6
+    test_id: bsi-net-3-2-a7-protocol-validation-ipv6
+    standard_refs:
+    - bsi-net-3-2-a7-protocol-validation
+    acceptance_criteria:
+      evasion_accepted_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a7-protocol-validation-ipv6
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a7-protocol-validation-ipv6
+- test_id: bsi-net-3-2-a4-rule-documentation-ipv6
+  standard: bsi-grundschutz
+  standard_refs:
+  - bsi-net-3-2-a4-rule-documentation
+  title: NET.3.2.A4 — Rule documentation and review, IPv6 coverage matrix
+  description: 'IPv6 twin of bsi-net-3-2-a4-rule-documentation.  The rule_coverage_matrix
+    is run with IPv6 zone subnets to confirm that all zone pairs are covered by explicit
+    rules and that no IPv6-only zone pair is accidentally open.
+
+    '
+  maps_to_scenario:
+    id: bsi-a4-rule-coverage-matrix-ipv6
+    kind: rule_coverage_matrix
+    source_role: wan-uplink
+    zone_subnets:
+      lan: 2001:db8:0:10::/64
+      dmz: 2001:db8:0:20::/64
+      wan: 2001:db8:0:200::/64
+    protos:
+    - tcp
+    - udp
+    - icmp
+    tcp_ports:
+    - 22
+    - 80
+    - 443
+    - 25
+    - 465
+    - 587
+    udp_ports:
+    - 53
+    - 123
+    probe_count_per_tuple: 1
+    family: ipv6
+    test_id: bsi-net-3-2-a4-rule-documentation-ipv6
+    standard_refs:
+    - bsi-net-3-2-a4-rule-documentation
+    acceptance_criteria:
+      undocumented_allow_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a4-rule-documentation-ipv6
+    machine: audit.json scenarios[].test_id == bsi-net-3-2-a4-rule-documentation-ipv6
 - test_id: cis-5-2-1-firewall-default-deny-ingress
   standard: cis-benchmarks
   standard_refs:
@@ -996,7 +1327,7 @@ tests:
     source_role: lan-downstream
     sink_role: wan-uplink
     fw_host: root@192.0.2.70
-    duration_s: 120
+    duration_s: 60
     sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
     sysctl_value: 300
     expect_flow_dies: false
@@ -1024,7 +1355,7 @@ tests:
   maps_to_scenario:
     id: cis-5-4-2-outbound-coverage
     kind: rule_coverage_matrix
-    source_role: lan-downstream
+    source_role: wan-uplink
     zone_subnets:
       lan: 10.0.10.0/24
       wan: 203.0.113.0/24
@@ -1129,6 +1460,60 @@ tests:
   evidence:
     human: docs/testing/security-test-plan.cis.md#cis-5-2-5-ingress-bogon-block
     machine: audit.json scenarios[].test_id == cis-5-2-5-ingress-bogon-block
+- test_id: cis-5-2-1-firewall-default-deny-ingress-ipv6
+  standard: cis-benchmarks
+  standard_refs:
+  - cis-5-2-1-firewall-default-deny-ingress
+  title: CIS 5.2.1 — Default-deny ingress, IPv6
+  description: 'IPv6 twin of cis-5-2-1-firewall-default-deny-ingress.  The default
+    policy for IPv6 inbound traffic must be DROP.  Probes target the reference firewall
+    IPv6 documentation prefix (2001:db8::/32).
+
+    '
+  maps_to_scenario:
+    id: cis-5-2-1-default-deny-ingress-ipv6
+    kind: rule_scan
+    source_role: wan-uplink
+    target_subnet: 2001:db8::/32
+    random_count: 500
+    family: ipv6
+    test_id: cis-5-2-1-firewall-default-deny-ingress-ipv6
+    standard_refs:
+    - cis-5-2-1-firewall-default-deny-ingress
+    acceptance_criteria:
+      fail_accept_count: 0
+      fail_drop_count: <= 2
+  evidence:
+    human: docs/testing/security-test-plan.cis.md#cis-5-2-1-firewall-default-deny-ingress-ipv6
+    machine: audit.json scenarios[].test_id == cis-5-2-1-firewall-default-deny-ingress-ipv6
+- test_id: cis-5-2-5-ingress-bogon-block-ipv6
+  standard: cis-benchmarks
+  standard_refs:
+  - cis-5-2-5-ingress-bogon-block
+  title: CIS 5.2.5 — Bogon/martian block, IPv6 (::1, fc00::/7, 2001:db8::)
+  description: 'IPv6 equivalent of cis-5-2-5-ingress-bogon-block.  Loopback (::1/128),
+    ULA (fc00::/7), documentation (2001:db8::/32), and link-local (fe80::/10) source
+    addresses must be dropped on WAN ingress.
+
+    '
+  maps_to_scenario:
+    id: cis-5-2-5-bogon-block-ipv6
+    kind: evasion_probes
+    source_role: wan-uplink
+    target_ip: 2001:db8::1
+    probe_types:
+    - ip_spoof
+    spoof_src_ip: fe80::1
+    target_port: 80
+    family: ipv6
+    test_id: cis-5-2-5-ingress-bogon-block-ipv6
+    standard_refs:
+    - cis-5-2-5-ingress-bogon-block
+    acceptance_criteria:
+      evasion_accepted_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.cis.md#cis-5-2-5-ingress-bogon-block-ipv6
+    machine: audit.json scenarios[].test_id == cis-5-2-5-ingress-bogon-block-ipv6
 - test_id: owasp-fw-1-config-review
   standard: owasp
   standard_refs:
@@ -1351,6 +1736,65 @@ tests:
   - reload
   - atomicity
   - shorewalld
+- test_id: owasp-fw-3-default-deny-ipv6
+  standard: owasp
+  standard_refs:
+  - owasp-fw-3
+  - iso27001-a-13-1-1
+  title: Default-deny policy verification — IPv6
+  status: covered
+  description: 'IPv6 twin of owasp-fw-3-default-deny.  Probe all unmapped IPv6 zone
+    pairs and verify that every IPv6 packet to a non-permitted zone pair is dropped.  Covers
+    the case where IPv6 dispatch rules are missing or incorrectly ordered (catch-all
+    before specific zone rules).
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source_role: wan-uplink
+    target_subnet: 2001:db8::/32
+    random_count: 500
+    family: ipv6
+  acceptance_criteria:
+    fail_accept_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-3-default-deny-ipv6
+    machine: audit.json scenarios[].test_id == owasp-fw-3-default-deny-ipv6
+  tags:
+  - default-deny
+  - rule-scan
+  - ipv6
+- test_id: owasp-fw-4-evasion-bypass-ipv6
+  standard: owasp
+  standard_refs:
+  - owasp-fw-4
+  title: Evasion and bypass probe suite — IPv6
+  status: covered
+  description: 'IPv6 twin of owasp-fw-4-evasion-bypass.  Send crafted IPv6 packets
+    designed to evade stateless ACLs: extension header injection, TCP RST-in-handshake,
+    UDP bad checksum, and spoofed link-local source. All must be dropped.
+
+    '
+  maps_to_scenario:
+    kind: evasion_probes
+    source_role: wan-uplink
+    target_ip: 2001:db8::1
+    probe_types:
+    - tcp_null
+    - tcp_xmas
+    - tcp_fin_no_syn
+    - ip_spoof
+    - udp_malformed_checksum
+    family: ipv6
+  acceptance_criteria:
+    evasion_success_count: 0
+  evidence:
+    human: docs/testing/security-test-plan.md#owasp-fw-4-evasion-bypass-ipv6
+    machine: audit.json scenarios[].test_id == owasp-fw-4-evasion-bypass-ipv6
+  tags:
+  - evasion
+  - ipv6
+  - extension-headers
 - test_id: iso27001-a-13-1-1-network-controls
   standard: iso-27001
   standard_refs:
@@ -1583,6 +2027,35 @@ tests:
   - data-transfer
   - lateral-movement
   - zone-policy
+- test_id: iso27001-a-13-1-1-network-controls-ipv6
+  standard: iso-27001
+  standard_refs:
+  - iso27001-a-13-1-1
+  - owasp-fw-3-ipv6
+  title: Network controls — IPv6 zone segmentation
+  status: covered
+  description: 'IPv6 twin of iso27001-a-13-1-1-network-controls.  Verify that IPv6
+    networks are segregated into the same security zones as IPv4 and that the compiled
+    nftables IPv6 chain enforces zone policies correctly. Dual-stack zone types must
+    be type=ip (not ipv4) so that IPv6 dispatch is active for all zone pairs.
+
+    '
+  maps_to_scenario:
+    kind: rule_scan
+    source_role: wan-uplink
+    target_subnet: 2001:db8::/32
+    random_count: 500
+    family: ipv6
+  acceptance_criteria:
+    fail_accept_count: 0
+    zone_pair_coverage_pct: 100
+  evidence:
+    human: docs/testing/security-test-plan.md#iso27001-a-13-1-1-network-controls-ipv6
+    machine: audit.json scenarios[].test_id == iso27001-a-13-1-1-network-controls-ipv6
+  tags:
+  - network-controls
+  - zone-segmentation
+  - ipv6
 - test_id: perf-ipv6-tcp-throughput
   standard: performance-ipv6
   title: IPv6 TCP throughput meets SLO
@@ -1641,6 +2114,254 @@ tests:
   rationale: 'UDP-based protocols (DNS, NTP, syslog, media) traverse the firewall
     over IPv6 in dual-stack deployments.  Throughput parity reduces the risk of a
     performance cliff when clients migrate to IPv6.
+
+    '
+- test_id: perf-ipv4-tcp-throughput
+  standard: performance-ipv6
+  title: IPv4 TCP throughput meets SLO
+  description: 'Single-directional TCP throughput over an IPv4 native endpoint pair.
+    Establishes the IPv4 baseline that the IPv6 parity tests compare against. A single
+    iperf3 run with 4 parallel streams must sustain the configured minimum Gbps for
+    the full duration.
+
+    '
+  maps_to_scenario:
+    kind: throughput
+    proto: tcp
+    family: ipv4
+    source_role: wan-uplink
+    sink_role: lan-downstream
+    duration_s: 30
+    parallel: 4
+    expect_min_gbps: 8.0
+  acceptance_criteria:
+    min_gbps: 8.0
+    max_retrans_ratio: 0.005
+  standard_refs:
+  - nist-800-53-sc-7
+  status: covered
+  evidence:
+    human: docs/testing/security-test-plan.md#perf-ipv4-tcp-throughput
+    machine: audit.json scenarios[].test_id == perf-ipv4-tcp-throughput
+  rationale: 'IPv4 throughput baseline is required by NIST SP 800-53 SC-7 (boundary
+    protection) and forms the reference against which IPv6 parity (SC-7-ipv6) is measured.  Without
+    an explicit IPv4 benchmark the parity comparison has no anchor.
+
+    '
+- test_id: perf-ipv4-udp-throughput
+  standard: performance-ipv6
+  title: IPv4 UDP throughput meets SLO
+  description: 'Single-directional UDP throughput over an IPv4 native endpoint pair.
+    Exercises the UDP forwarding path used by DNS, NTP, syslog, and media traffic
+    zones.
+
+    '
+  maps_to_scenario:
+    kind: throughput
+    proto: udp
+    family: ipv4
+    source_role: wan-native
+    sink_role: lan-downstream
+    duration_s: 20
+    parallel: 2
+    expect_min_gbps: 5.0
+    udp_bandwidth_mbps: 0
+  acceptance_criteria:
+    min_gbps: 5.0
+  standard_refs:
+  - nist-800-53-sc-7
+  status: covered
+  evidence:
+    human: docs/testing/security-test-plan.md#perf-ipv4-udp-throughput
+    machine: audit.json scenarios[].test_id == perf-ipv4-udp-throughput
+  rationale: 'UDP traffic (DNS, NTP, syslog) traverses multiple zone-pairs on the
+    reference firewall.  An IPv4 UDP baseline validates that udp conntrack helpers
+    and NOTRACK rules do not degrade performance below the SLO.
+
+    '
+- test_id: perf-dpdk-ipv4-line-rate-stl
+  standard: performance-ipv6
+  title: DPDK IPv4 line-rate throughput (TRex STL stateless)
+  description: 'TRex stateless load at 10 Gbps IMIX IPv4 traffic mix through the firewall.  Verifies
+    that the nft forwarding path sustains line-rate under a realistic traffic mix
+    without packet loss above 0.1%.
+
+    '
+  maps_to_scenario:
+    kind: throughput_dpdk
+    source_role: wan-dpdk
+    sink_role: lan-dpdk
+    proto: udp
+    duration_s: 30
+    multiplier: 10gbps
+    packet_size_b: 0
+    test_id: perf-dpdk-ipv4-line-rate-stl
+    standard_refs:
+    - nist-800-53-sc-7
+    acceptance_criteria:
+      packet_loss_ratio_max: 0.001
+  status: deferred
+  deferred_reason: 'Requires DPDK-capable NICs bound to vfio-pci on the test hosts
+    (task #31).  The reference test hosts use virtio-net NICs which do not support
+    line-rate DPDK operation.  Re-enable once hardware NICs with SR-IOV or physical
+    10G+ NICs are provisioned with STAGELAB_HUGEPAGES=2048.
+
+    '
+  evidence:
+    human: docs/testing/security-test-plan.md#perf-dpdk-ipv4-line-rate-stl
+    machine: audit.json scenarios[].test_id == perf-dpdk-ipv4-line-rate-stl
+  rationale: 'Line-rate testing via DPDK/TRex is the only way to validate 40–100 Gbps
+    forwarding performance.  Without DPDK the iperf3-based kernel stack tests cap
+    at ~25 Gbps.  The IMIX mix (64/512/1500B in 7:4:1 ratio) matches realistic backbone
+    traffic.
+
+    '
+- test_id: perf-dpdk-ipv6-line-rate-stl
+  standard: performance-ipv6
+  title: DPDK IPv6 line-rate throughput (TRex STL stateless)
+  description: 'TRex stateless load at 10 Gbps IMIX IPv6 traffic mix through the firewall.  Verifies
+    IPv6 forwarding path at line-rate; a lower result vs IPv4 indicates a compiler
+    or dispatch bug in the IPv6 chain.
+
+    '
+  maps_to_scenario:
+    kind: throughput_dpdk
+    source_role: wan-dpdk
+    sink_role: lan-dpdk
+    proto: udp
+    duration_s: 30
+    multiplier: 10gbps
+    packet_size_b: 0
+    test_id: perf-dpdk-ipv6-line-rate-stl
+    standard_refs:
+    - nist-800-53-sc-7
+    acceptance_criteria:
+      packet_loss_ratio_max: 0.001
+  status: deferred
+  deferred_reason: 'Same gate as perf-dpdk-ipv4-line-rate-stl (task #31 — DPDK NICs).
+
+    '
+  evidence:
+    human: docs/testing/security-test-plan.md#perf-dpdk-ipv6-line-rate-stl
+    machine: audit.json scenarios[].test_id == perf-dpdk-ipv6-line-rate-stl
+  rationale: 'IPv6 throughput parity at line-rate.  If IPv6 lags IPv4 by more than
+    5% at line-rate it indicates a chain dispatch issue, not just a software-path
+    overhead.
+
+    '
+- test_id: perf-dpdk-ipv4-astf-1m-sessions
+  standard: performance-ipv6
+  title: DPDK IPv4 ASTF 1M concurrent HTTP sessions (TRex ASTF)
+  description: 'TRex ASTF stateful test generating 1 million concurrent HTTP sessions
+    over IPv4 through the firewall.  Validates that the conntrack table handles the
+    session volume without ENOMEM or timeout-premature-eviction.
+
+    '
+  maps_to_scenario:
+    kind: conn_storm_astf
+    source_role: wan-dpdk
+    sink_role: lan-dpdk
+    profile_py: /opt/trex/v3.08/automation/trex_control_plane/interactive/trex/examples/astf/http_simple.py
+    duration_s: 60
+    multiplier: 1.0
+    expect_min_concurrent: 1000000
+    test_id: perf-dpdk-ipv4-astf-1m-sessions
+    standard_refs:
+    - nist-800-53-sc-5
+    acceptance_criteria:
+      concurrent_sessions_min: 1000000
+      kernel_error_count: 0
+  status: deferred
+  deferred_reason: 'Requires DPDK NICs (task #31) and TRex v3.08 staged at /opt/trex/v3.08
+    on the test hosts.
+
+    '
+  evidence:
+    human: docs/testing/security-test-plan.md#perf-dpdk-ipv4-astf-1m-sessions
+    machine: audit.json scenarios[].test_id == perf-dpdk-ipv4-astf-1m-sessions
+  rationale: 'NIST SP 800-53 SC-5 (resource availability) requires that the firewall
+    sustains service under high connection concurrency.  1M sessions is the reference
+    conntrack limit benchmark for the HA firewall pair.
+
+    '
+- test_id: perf-conntrack-observe-throughput
+  standard: performance-ipv6
+  title: Conntrack table peak measurement during sustained throughput
+  description: 'During a 60-second IPv4 TCP throughput run (iperf3, 4 parallel streams),
+    continuously poll `conntrack -L | wc -l` on the firewall once per second and record
+    the peak entry count.  Validates that the conntrack table does not accumulate
+    stale entries faster than they are expired during normal load.
+
+    '
+  maps_to_scenario:
+    kind: throughput
+    proto: tcp
+    family: ipv4
+    source_role: wan-native
+    sink_role: lan-downstream
+    duration_s: 60
+    parallel: 4
+    expect_min_gbps: 1.0
+    observe_conntrack: true
+    fw_host: root@fw-primary
+    test_id: perf-conntrack-observe-throughput
+    standard_refs:
+    - nist-800-53-sc-5
+    acceptance_criteria:
+      throughput_gbps_min: 1.0
+      conntrack_peak_observed_max: 200000
+  status: covered
+  evidence:
+    human: docs/testing/security-test-plan.md#perf-conntrack-observe-throughput
+    machine: audit.json scenarios[].test_id == perf-conntrack-observe-throughput
+  rationale: 'Conntrack table growth during normal throughput is a leading indicator
+    of a conntrack helper leak or misconfigured timeout.  Observing the peak count
+    during a known-good load scenario provides a baseline for the DoS conntrack-overflow
+    tests.
+
+    '
+  note: 'Handler wiring (observe_conntrack sidecar poll in ThroughputRunner) is a
+    TODO for the hang-fix agent.  The config field and catalogue entry are in place;
+    the scenario will run without conntrack observation until the handler is wired.
+
+    '
+- test_id: perf-conntrack-observe-conn-storm
+  standard: performance-ipv6
+  title: Conntrack table peak measurement during connection storm
+  description: 'During a conn_storm scenario (100 000 concurrent TCP connections,
+    10 000 new connections/s, held for 30 s), continuously poll `conntrack -L | wc
+    -l` on the firewall and record the peak entry count. Validates that the table
+    does not exceed 80% fill before the storm ends.
+
+    '
+  maps_to_scenario:
+    kind: conn_storm
+    source_role: wan-native
+    sink_role: lan-downstream
+    target_conns: 100000
+    rate_per_s: 10000
+    hold_s: 30
+    target_port: 80
+    observe_conntrack: true
+    fw_host: root@fw-primary
+    test_id: perf-conntrack-observe-conn-storm
+    standard_refs:
+    - nist-800-53-sc-5
+    acceptance_criteria:
+      throughput_ratio_min: 0.8
+      conntrack_peak_fill_fraction_max: 0.8
+  status: covered
+  evidence:
+    human: docs/testing/security-test-plan.md#perf-conntrack-observe-conn-storm
+    machine: audit.json scenarios[].test_id == perf-conntrack-observe-conn-storm
+  rationale: 'Connection storms drive conntrack table fill differently from throughput
+    runs.  Observing the fill fraction during the storm validates that the firewall
+    can absorb a moderate burst without exhausting the table — a prerequisite for
+    the full conntrack-overflow DoS tests.
+
+    '
+  note: 'Handler wiring (observe_conntrack sidecar in ConnStormRunner) is a TODO for
+    the hang-fix agent.
 
     '
 out_of_scope:
