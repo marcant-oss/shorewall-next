@@ -226,7 +226,6 @@ _IPV6_NO_ADDR_YAML = textwrap.dedent("""\
 
 def test_plan_ipv6_uses_endpoint_ipv6() -> None:
     """family=ipv6 → src_ip must be stripped endpoint.ipv6, not endpoint.ipv4."""
-    import pytest
     cfg = _load(_IPV6_YAML)
     sc_cfg = cfg.scenarios[0]
     runner = EvasionProbesRunner(sc_cfg)  # type: ignore[arg-type]
