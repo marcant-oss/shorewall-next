@@ -239,6 +239,86 @@ tests:
       human: "docs/testing/security-test-plan.bsi.md#bsi-ops-1-2-5-log-retention"
       machine: "N/A — no automated scenario"
 
+  - test_id: bsi-net-3-2-a2-function-separation-ipv6
+    standard_refs: [bsi-net-3-2-a2-function-separation]
+    title: "NET.3.2.A2 — Separation of firewall functions, IPv6"
+    description: >
+      IPv6 twin of bsi-net-3-2-a2-function-separation.  Probes all zone-pair
+      combinations over IPv6 and verifies that packets with no matching allow
+      rule are silently dropped.  Confirms that the IPv6 dispatch chain fires
+      correctly for every zone pair.
+    maps_to_scenario:
+      id: bsi-a2-function-separation-ipv6
+      kind: rule_scan
+      source_role: wan-uplink
+      target_subnet: 2001:db8::/32
+      random_count: 500
+      family: ipv6
+      test_id: bsi-net-3-2-a2-function-separation-ipv6
+      standard_refs: [bsi-net-3-2-a2-function-separation]
+      acceptance_criteria:
+        fail_accept_count: 0
+        fail_drop_count: "<= 2"
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a2-function-separation-ipv6"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a2-function-separation-ipv6"
+
+  - test_id: bsi-net-3-2-a7-protocol-validation-ipv6
+    standard_refs: [bsi-net-3-2-a7-protocol-validation]
+    title: "NET.3.2.A7 — Protocol validation and evasion resistance, IPv6"
+    description: >
+      IPv6 twin of bsi-net-3-2-a7-protocol-validation.  Extension-header
+      injection, TCP NULL/XMAS scans, and spoofed-source IPv6 probes must all
+      be dropped.  Confirms that IPv6-specific attack vectors are blocked.
+    maps_to_scenario:
+      id: bsi-a7-evasion-probes-ipv6
+      kind: evasion_probes
+      source_role: wan-uplink
+      target_ip: "2001:db8::1"
+      probe_types:
+        - tcp_null
+        - tcp_xmas
+        - tcp_fin_no_syn
+        - ip_spoof
+        - udp_malformed_checksum
+      target_port: 80
+      family: ipv6
+      test_id: bsi-net-3-2-a7-protocol-validation-ipv6
+      standard_refs: [bsi-net-3-2-a7-protocol-validation]
+      acceptance_criteria:
+        evasion_accepted_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a7-protocol-validation-ipv6"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a7-protocol-validation-ipv6"
+
+  - test_id: bsi-net-3-2-a4-rule-documentation-ipv6
+    standard_refs: [bsi-net-3-2-a4-rule-documentation]
+    title: "NET.3.2.A4 — Rule documentation and review, IPv6 coverage matrix"
+    description: >
+      IPv6 twin of bsi-net-3-2-a4-rule-documentation.  The rule_coverage_matrix
+      is run with IPv6 zone subnets to confirm that all zone pairs are covered
+      by explicit rules and that no IPv6-only zone pair is accidentally open.
+    maps_to_scenario:
+      id: bsi-a4-rule-coverage-matrix-ipv6
+      kind: rule_coverage_matrix
+      source_role: wan-uplink
+      zone_subnets:
+        lan: "2001:db8:0:10::/64"
+        dmz: "2001:db8:0:20::/64"
+        wan: "2001:db8:0:200::/64"
+      protos: [tcp, udp, icmp]
+      tcp_ports: [22, 80, 443, 25, 465, 587]
+      udp_ports: [53, 123]
+      probe_count_per_tuple: 1
+      family: ipv6
+      test_id: bsi-net-3-2-a4-rule-documentation-ipv6
+      standard_refs: [bsi-net-3-2-a4-rule-documentation]
+      acceptance_criteria:
+        undocumented_allow_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.bsi.md#bsi-net-3-2-a4-rule-documentation-ipv6"
+      machine: "audit.json scenarios[].test_id == bsi-net-3-2-a4-rule-documentation-ipv6"
+
 out_of_scope:
   - test_id: bsi-net-3-2-a9-time-sync
     control: "NET.3.2.A9"

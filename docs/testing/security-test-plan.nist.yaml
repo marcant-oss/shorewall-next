@@ -344,6 +344,149 @@ tests:
       machine_ref: "audit.json[scenarios][].test_id == nist-sc-7-ha-failover"
     status: covered
 
+  - test_id: nist-ac-4-info-flow-ipv6
+    title: "Information flow enforcement — IPv6"
+    control: AC-4
+    description: >
+      IPv6 twin of nist-ac-4-info-flow.  Zone-pair accept/drop consistency
+      verified via random IPv6 probes.  The IPv6 dispatch chain must fire
+      for all src/dst zone pairs, including dual-stack zones.
+    maps_to_scenario:
+      kind: rule_scan
+      source_role: wan-uplink
+      target_subnet: 2001:db8::/32
+      random_count: 500
+      family: ipv6
+      test_id: nist-ac-4-info-flow-ipv6
+      standard_refs:
+        - nist-800-53-ac-4
+      acceptance_criteria:
+        fail_accept_count: 0
+        fail_drop_count_max: 2
+    evidence:
+      human_ref: "security-test-plan.md#nist-ac-4-info-flow-ipv6"
+      machine_ref: "audit.json[scenarios][].test_id == nist-ac-4-info-flow-ipv6"
+    status: covered
+
+  - test_id: nist-sc-5-dos-conntrack-overflow
+    title: "Resistance to conntrack table overflow"
+    control: SC-5
+    description: >
+      Drive the conntrack table to >= 95% utilisation via ConntrackOverflow
+      scenario and verify that the kernel does not OOM and that new connections
+      are cleanly rejected (ENOMEM) rather than silently dropped.  The firewall
+      must recover within 60 seconds after the flood stops.
+    maps_to_scenario:
+      kind: conntrack_overflow
+      source_role: wan-native
+      sink_role: lan-downstream
+      fw_host: "root@fw-primary"
+      duration_s: 60
+      rate_new_per_s: 10000
+      expect_table_fill_pct_min: 95
+      expect_no_new_conntracks_when_full: true
+      test_id: nist-sc-5-dos-conntrack-overflow
+      standard_refs:
+        - nist-800-53-sc-5
+      acceptance_criteria:
+        conntrack_table_fill_fraction_min: 0.95
+        kernel_error_count: 0
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-5-dos-conntrack-overflow"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-5-dos-conntrack-overflow"
+    status: covered
+    note: >
+      The conntrack_overflow scenario kind is implemented in config.py.
+      Handler wiring in scenarios.py is complete (ConntrackOverflowScenario).
+
+  - test_id: nist-sc-7-boundary-throughput-ipv6
+    title: "Boundary protection — sustained IPv6 throughput under load"
+    control: SC-7
+    description: >
+      IPv6 twin of nist-sc-7-boundary-throughput.  iperf3 TCP throughput
+      test through the firewall over IPv6.  Must sustain >= 1 Gbps over the
+      full duration.
+    maps_to_scenario:
+      kind: throughput
+      source_role: wan-uplink
+      sink_role: lan-downstream
+      proto: tcp
+      family: ipv6
+      duration_s: 30
+      parallel: 4
+      expect_min_gbps: 1.0
+      test_id: nist-sc-7-boundary-throughput-ipv6
+      standard_refs:
+        - nist-800-53-sc-7
+      acceptance_criteria:
+        throughput_gbps_min: 1.0
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-7-boundary-throughput-ipv6"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-7-boundary-throughput-ipv6"
+    status: covered
+
+  - test_id: nist-sc-7-boundary-evasion-ipv6
+    title: "Boundary protection — evasion probe rejection, IPv6"
+    control: SC-7
+    description: >
+      IPv6 twin of nist-sc-7-boundary-evasion.  Malformed and crafted IPv6
+      frames across the boundary must be dropped.  Zero packets must pass.
+    maps_to_scenario:
+      kind: evasion_probes
+      source_role: wan-uplink
+      target_ip: 2001:db8::1
+      probe_types:
+        - tcp_null
+        - tcp_xmas
+        - tcp_fin_no_syn
+        - ip_spoof
+        - udp_malformed_checksum
+      target_port: 80
+      family: ipv6
+      test_id: nist-sc-7-boundary-evasion-ipv6
+      standard_refs:
+        - nist-800-53-sc-7
+      acceptance_criteria:
+        pass_count: 0
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-7-boundary-evasion-ipv6"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-7-boundary-evasion-ipv6"
+    status: covered
+
+  - test_id: nist-sc-7-flowtable-offload
+    title: "Boundary protection — flowtable offload validation"
+    control: SC-7
+    description: >
+      After a long TCP flow (>= 30 s) through the firewall, verify that
+      the nft flowtable counters are non-zero (offload is active).  Zero
+      flowtable counters after a long flow indicate that hardware offload
+      is silently not working — a performance regression disguised as a
+      correctness gap.
+    maps_to_scenario:
+      kind: throughput
+      source_role: wan-uplink
+      sink_role: lan-downstream
+      proto: tcp
+      family: ipv4
+      duration_s: 60
+      parallel: 1
+      expect_min_gbps: 1.0
+      test_id: nist-sc-7-flowtable-offload
+      standard_refs:
+        - nist-800-53-sc-7
+      acceptance_criteria:
+        flowtable_counter_nonzero: true
+    evidence:
+      human_ref: "security-test-plan.md#nist-sc-7-flowtable-offload"
+      machine_ref: "audit.json[scenarios][].test_id == nist-sc-7-flowtable-offload"
+    status: partial
+    gap_reason: >
+      The advisor flowtable_stagnant heuristic fires when flowtable counters
+      stay at zero, providing a proxy signal.  A direct counter comparison
+      before/after ruleset load (hardware-offload verification) is not yet
+      implemented — tracked as "hardware-offload flow-steering tests" in
+      CLAUDE.md open items.
+
 out_of_scope:
   - control_family: "SC-6 (Resource Availability)"
     reason: >

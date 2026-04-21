@@ -202,6 +202,54 @@ tests:
       human: "docs/testing/security-test-plan.cis.md#cis-5-2-5-ingress-bogon-block"
       machine: "audit.json scenarios[].test_id == cis-5-2-5-ingress-bogon-block"
 
+  - test_id: cis-5-2-1-firewall-default-deny-ingress-ipv6
+    standard_refs: [cis-5-2-1-firewall-default-deny-ingress]
+    title: "CIS 5.2.1 — Default-deny ingress, IPv6"
+    description: >
+      IPv6 twin of cis-5-2-1-firewall-default-deny-ingress.  The default
+      policy for IPv6 inbound traffic must be DROP.  Probes target the
+      reference firewall IPv6 documentation prefix (2001:db8::/32).
+    maps_to_scenario:
+      id: cis-5-2-1-default-deny-ingress-ipv6
+      kind: rule_scan
+      source_role: wan-uplink
+      target_subnet: 2001:db8::/32
+      random_count: 500
+      family: ipv6
+      test_id: cis-5-2-1-firewall-default-deny-ingress-ipv6
+      standard_refs: [cis-5-2-1-firewall-default-deny-ingress]
+      acceptance_criteria:
+        fail_accept_count: 0
+        fail_drop_count: "<= 2"
+    evidence:
+      human: "docs/testing/security-test-plan.cis.md#cis-5-2-1-firewall-default-deny-ingress-ipv6"
+      machine: "audit.json scenarios[].test_id == cis-5-2-1-firewall-default-deny-ingress-ipv6"
+
+  - test_id: cis-5-2-5-ingress-bogon-block-ipv6
+    standard_refs: [cis-5-2-5-ingress-bogon-block]
+    title: "CIS 5.2.5 — Bogon/martian block, IPv6 (::1, fc00::/7, 2001:db8::)"
+    description: >
+      IPv6 equivalent of cis-5-2-5-ingress-bogon-block.  Loopback (::1/128),
+      ULA (fc00::/7), documentation (2001:db8::/32), and link-local
+      (fe80::/10) source addresses must be dropped on WAN ingress.
+    maps_to_scenario:
+      id: cis-5-2-5-bogon-block-ipv6
+      kind: evasion_probes
+      source_role: wan-uplink
+      target_ip: "2001:db8::1"
+      probe_types:
+        - ip_spoof
+      spoof_src_ip: "fe80::1"
+      target_port: 80
+      family: ipv6
+      test_id: cis-5-2-5-ingress-bogon-block-ipv6
+      standard_refs: [cis-5-2-5-ingress-bogon-block]
+      acceptance_criteria:
+        evasion_accepted_count: 0
+    evidence:
+      human: "docs/testing/security-test-plan.cis.md#cis-5-2-5-ingress-bogon-block-ipv6"
+      machine: "audit.json scenarios[].test_id == cis-5-2-5-ingress-bogon-block-ipv6"
+
 out_of_scope:
   - test_id: cis-5-3-loopback-rules
     control: "5.3"
