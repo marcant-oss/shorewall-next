@@ -56,13 +56,13 @@ fi
 BUILD_REQUIRES='BuildRequires:  gcc make autoconf automake libtool
 BuildRequires:  libnl3-devel
 BuildRequires:  libnftnl-devel
-BuildRequires:  libnftables-devel
-BuildRequires:  libipset-devel
+BuildRequires:  nftables-devel
+BuildRequires:  ipset-devel
 BuildRequires:  net-snmp-devel
 BuildRequires:  glib2-devel
 BuildRequires:  dbus-devel
 BuildRequires:  openssl-devel
-BuildRequires:  libpcre2-devel
+BuildRequires:  pcre2-devel
 BuildRequires:  systemd-devel
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  pkgconf-pkg-config'
@@ -71,8 +71,8 @@ BuildRequires:  pkgconf-pkg-config'
 # EPEL is required on the target host for some of these.
 DISTRO_REQUIRES='Requires:       net-snmp
 Requires:       libnftnl
-Requires:       libnftables
-Requires:       libipset
+Requires:       nftables
+Requires:       ipset-libs
 Requires:       iproute-tc
 Requires:       systemd
 Recommends:     python3-dbus'
