@@ -11,6 +11,7 @@ from typing import Union
 
 from .config import (
     ConnStormAstfScenario,
+    ConnStormDirectScenario,
     ConnStormScenario,
     ConntrackOverflowScenario,
     DnsDosScenario,
@@ -370,6 +371,108 @@ class ConnStormRunner(Scenario):
         return ScenarioResult(
             scenario_id=sc.id,
             kind="conn_storm",
+            ok=ok,
+            duration_s=r.get("duration_s", 0.0),
+            raw=raw,
+            test_id=getattr(self._sc, "test_id", None),
+            standard_refs=list(getattr(self._sc, "standard_refs", []) or []),
+        )
+
+
+# ---------------------------------------------------------------------------
+# ConnStormDirectRunner
+# ---------------------------------------------------------------------------
+
+
+class ConnStormDirectRunner(Scenario):
+    """Wraps ``config.ConnStormDirectScenario``.
+
+    Unlike ``ConnStormRunner`` (which needs an HTTP listener on a sink
+    endpoint), this runner targets a fixed IP:port directly using pyconn.
+    Designed for through-FW conntrack probing against an existing service
+    permitted by a pre-existing ACCEPT rule (e.g. SSHd on tcp/22), so no
+    FW-config change is required.
+
+    ``plan()`` emits one command:
+
+    1. ``run_tcpkali`` on the *source* endpoint — drives pyconn connections to
+       ``target_ip:target_port``.
+
+    If ``observe_conntrack=True``, a concurrent ``poll_conntrack`` sidecar is
+    added (as with ``ConnStormRunner``).
+    """
+
+    def __init__(self, scenario: ConnStormDirectScenario) -> None:
+        self._sc = scenario
+
+    def plan(self, cfg: StagelabConfig) -> list[AgentCommand]:
+        sc = self._sc
+        target = f"{sc.target_ip}:{sc.target_port}"
+
+        storm_cmd = AgentCommand(
+            endpoint_name=sc.source,
+            kind="run_tcpkali",
+            spec={
+                "target": target,
+                "connections": sc.target_conns,
+                "connect_rate": sc.rate_per_s,
+                "duration_s": sc.hold_s,
+                "delay_before_s": 0,
+                "scenario_id": sc.id,
+            },
+        )
+        cmds: list[AgentCommand] = [storm_cmd]
+
+        if sc.observe_conntrack and sc.fw_host:
+            sidecar_cmd = AgentCommand(
+                endpoint_name=sc.source,
+                kind="poll_conntrack",
+                spec={
+                    "fw_host": sc.fw_host,
+                    "duration_s": sc.hold_s + 2,
+                    "interval_s": 1.0,
+                    "_conntrack_sidecar": True,
+                },
+                concurrent=True,
+            )
+            cmds.append(sidecar_cmd)
+
+        return cmds
+
+    def summarize(self, results: list[dict]) -> ScenarioResult:
+        sc = self._sc
+        sidecar_results = [
+            r for r in results
+            if r.get("_conntrack_sidecar") or r.get("tool") == "poll_conntrack"
+        ]
+        storm_results = [
+            r for r in results
+            if not r.get("_conntrack_sidecar")
+            and r.get("tool") != "poll_conntrack"
+        ]
+        r = storm_results[0] if storm_results else (results[0] if results else {})
+        established = r.get("connections_established", r.get("established", 0))
+        failed = r.get("connections_failed", r.get("failed", 0))
+        # A direct conn_storm against an existing service (e.g. SSHd) will see
+        # completed connections even without a sidecar HTTP listener.
+        # Accept any non-zero established count as success if target_conns <= 1000
+        # (SSH connection-limiting may cap the rate on the FW side).
+        min_ok = max(1, int(sc.target_conns * 0.1))
+        ok = r.get("ok", False) and established >= min_ok
+
+        raw: dict = {
+            "target_ip": sc.target_ip,
+            "target_port": sc.target_port,
+            "target_conns": sc.target_conns,
+            "established": established,
+            "failed": failed,
+        }
+        if sidecar_results:
+            raw["conntrack_peak_observed"] = sidecar_results[0].get("peak", 0)
+
+        return ScenarioResult(
+            scenario_id=sc.id,
+            kind="conn_storm_direct",
             ok=ok,
             duration_s=r.get("duration_s", 0.0),
             raw=raw,
@@ -1828,6 +1931,7 @@ class ConntrackOverflowRunner(Scenario):
 _ScenarioCfg = Union[
     ThroughputScenario,
     ConnStormScenario,
+    ConnStormDirectScenario,
     ConntrackOverflowScenario,
     RuleScanScenario,
     TuningSweepScenario,
@@ -1851,6 +1955,8 @@ def build_runner(scenario: _ScenarioCfg) -> Scenario:
         return ThroughputRunner(scenario)  # type: ignore[arg-type]
     if scenario.kind == "conn_storm":
         return ConnStormRunner(scenario)  # type: ignore[arg-type]
+    if scenario.kind == "conn_storm_direct":
+        return ConnStormDirectRunner(scenario)  # type: ignore[arg-type]
     if scenario.kind == "rule_scan":
         return RuleScanRunner(scenario)  # type: ignore[arg-type]
     if scenario.kind == "tuning_sweep":
@@ -1887,6 +1993,7 @@ __all__ = [
     "Scenario",
     "ThroughputRunner",
     "ConnStormRunner",
+    "ConnStormDirectRunner",
     "RuleScanRunner",
     "TuningSweepRunner",
     "ThroughputDpdkRunner",

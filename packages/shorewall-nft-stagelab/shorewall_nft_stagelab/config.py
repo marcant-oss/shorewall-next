@@ -325,6 +325,78 @@ class ConnStormScenario(BaseModel):
         return v
 
 
+class ConnStormDirectScenario(BaseModel):
+    """conn_storm variant that targets a fixed IP:port (no sink endpoint needed).
+
+    Designed for through-FW conntrack probing against an existing service on
+    the firewall host itself (e.g. SSHd on tcp/22 permitted by a pre-existing
+    ACCEPT rule) without requiring FW-config changes.
+
+    pyconn opens ``target_conns`` TCP connections to ``target_ip:target_port``
+    from the ``source`` endpoint netns.  Each connection completes a real
+    3-way handshake so conntrack records an ESTABLISHED entry.  If
+    ``observe_conntrack`` is True, a concurrent sidecar SSHes into ``fw_host``
+    and polls ``conntrack -L | wc -l`` every second, storing the peak in
+    ``ScenarioResult.raw["conntrack_peak_observed"]``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal["conn_storm_direct"]
+    source: str                       # endpoint name (native-mode); must be in the permitted zone
+    target_ip: str                    # IP of the service to connect to (e.g. FW VIP)
+    target_port: int = 22             # TCP port (must be permitted by an existing FW ACCEPT rule)
+    target_conns: int = 1000          # total new TCP connections to open
+    rate_per_s: int = 200             # connection-open rate (conn/s)
+    hold_s: int = 30                  # how long to hold each connection before closing
+    observe_conntrack: bool = False
+    fw_host: str | None = None        # SSH target for conntrack polling; required when observe_conntrack=True
+    test_id: str | None = None
+    standard_refs: list[str] = []
+    acceptance_criteria: dict[str, Any] = {}
+
+    @model_validator(mode="after")
+    def _check_observe_conntrack(self) -> "ConnStormDirectScenario":
+        if self.observe_conntrack and self.fw_host is None:
+            raise ValueError(
+                "fw_host must be set when observe_conntrack=True"
+            )
+        return self
+
+    @field_validator("target_ip")
+    @classmethod
+    def _validate_target_ip(cls, v: str) -> str:
+        try:
+            ipaddress.ip_address(v)
+        except ValueError as exc:
+            raise ValueError(f"invalid target_ip {v!r}: {exc}") from exc
+        return v
+
+    @field_validator("target_port")
+    @classmethod
+    def _validate_target_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError(f"target_port={v} out of range 1–65535")
+        return v
+
+    @field_validator("test_id")
+    @classmethod
+    def _validate_test_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_test_id_slug(v)
+        return v
+
+    @field_validator("standard_refs")
+    @classmethod
+    def _validate_standard_refs(cls, v: list[str]) -> list[str]:
+        for item in v:
+            _validate_test_id_slug(item)
+        if len(set(v)) != len(v):
+            raise ValueError("standard_refs must not contain duplicates")
+        return v
+
+
 class RuleScanScenario(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1019,6 +1091,7 @@ Scenario = Annotated[
     Union[
         ThroughputScenario,
         ConnStormScenario,
+        ConnStormDirectScenario,
         RuleScanScenario,
         TuningSweepScenario,
         ThroughputDpdkScenario,
@@ -1319,10 +1392,9 @@ class StagelabConfig(BaseModel):
                     raise ValueError(
                         f"native endpoint {ep.name!r} must set 'nic'"
                     )
-                if ep.vlan is None:
-                    raise ValueError(
-                        f"native endpoint {ep.name!r} must set 'vlan'"
-                    )
+                # vlan=None is allowed for untagged backbone endpoints (NIC
+                # moved directly into netns).  vlan must be set for tagged
+                # endpoints so that topology_native creates the VLAN sub-iface.
                 if ep.ipv4 is None:
                     raise ValueError(
                         f"native endpoint {ep.name!r} must set 'ipv4'"
@@ -1330,10 +1402,21 @@ class StagelabConfig(BaseModel):
             # mode == "dpdk": validated by Endpoint._check_dpdk_fields
 
         # 8. (host, nic, vlan) must be unique — two endpoints cannot claim the
-        #    same VLAN on the same NIC on the same host
+        #    same VLAN on the same NIC on the same host.
+        #    For untagged native endpoints (vlan=None), the uniqueness key is
+        #    (host, nic) alone — only one untagged endpoint may own a given NIC.
         seen_nic_vlan: set[tuple[str, str, int]] = set()
+        seen_nic_untagged: set[tuple[str, str]] = set()
         for ep in self.endpoints:
-            if ep.nic is None or ep.vlan is None:
+            if ep.nic is None:
+                continue
+            if ep.vlan is None:
+                key_untagged = (ep.host, ep.nic)
+                if key_untagged in seen_nic_untagged:
+                    raise ValueError(
+                        f"duplicate (host={ep.host!r}, nic={ep.nic!r}) untagged native endpoint"
+                    )
+                seen_nic_untagged.add(key_untagged)
                 continue
             key3 = (ep.host, ep.nic, ep.vlan)
             if key3 in seen_nic_vlan:
@@ -1448,6 +1531,7 @@ __all__ = [
     "Endpoint",
     "ThroughputScenario",
     "ConnStormScenario",
+    "ConnStormDirectScenario",
     "RuleScanScenario",
     "TuningSweepScenario",
     "ThroughputDpdkScenario",
