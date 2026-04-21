@@ -227,8 +227,9 @@ class ThroughputScenario(BaseModel):
     udp_bandwidth_mbps: int = 0    # UDP only; 0 = unlimited (iperf3 -b 0), >0 = cap in Mbps
     # observe_conntrack: if True, poll `conntrack -L | wc -l` on fw_host once per second
     # in a sidecar while the throughput scenario runs.  Peak count is recorded in
-    # ScenarioResult.metrics["conntrack_peak_observed"].
-    # TODO(hang-fix agent): wire the sidecar poll in scenarios.py ThroughputRunner.
+    # ScenarioResult.raw["conntrack_peak_observed"].  The sidecar runs concurrently
+    # with the iperf3 client in the controller (not through the agent IPC channel)
+    # to ensure the poll overlaps with active flows rather than running sequentially after.
     observe_conntrack: bool = False
     fw_host: str | None = None  # SSH target for conntrack observation; required when observe_conntrack=True
     test_id: str | None = None
