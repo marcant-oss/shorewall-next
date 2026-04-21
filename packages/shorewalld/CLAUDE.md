@@ -77,12 +77,21 @@ Every code path here is hot. Target: 20 000 DNS answers/s across dnstap
 - **Filter before decode.** Two-pass decoder: walk varint stream far enough
   to read discriminator fields (message type, qname), consult the allowlist,
   *only then* do the full parse. 99 % of frames are waste.  Both passes are
-  active: ``_peek_message_type()`` in ``dnstap.py`` walks the outer Dnstap
-  varint stream to field 14 (``Message``), then the inner stream to field 1
+  active in both ingestion paths:
+  ``_peek_message_type()`` in ``dnstap.py`` walks the outer Dnstap varint
+  stream to field 14 (``Message``), then the inner stream to field 1
   (``type``), and returns the enum int without calling ``ParseFromString``.
   ``DecodeWorkerPool._decode_one()`` calls the peek first; only frames whose
   type is in ``RESPONSE_MESSAGE_TYPES`` reach the full parse.  Skipped frames
   are counted in ``shorewalld_dnstap_frames_skipped_by_type_total``.
+  ``_peek_type_and_qname()`` in ``pbdns.py`` walks the PBDNSMessage varint
+  stream to field 1 (``type``) and field 12 (``question``), descends into
+  the DNSQuestion sub-message to extract field 1 (``qName``), and returns
+  ``(type_int, qname_bytes)`` without calling ``ParseFromString``.
+  ``decode_pbdns_frame()`` calls the peek first; non-response types are
+  dropped (``shorewalld_pbdns_frames_skipped_by_type_total``) and RESPONSE
+  frames with an unregistered qname are dropped before the full parse
+  (``shorewalld_pbdns_frames_skipped_by_qname_total``).
 - **Batch at the netlink boundary.** Every `add element` is a round-trip.
   Coalesce per `(set, netns)` in a short window. Single updates at 20 k/s
   melt the scheduler.

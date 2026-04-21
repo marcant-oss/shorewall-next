@@ -152,14 +152,20 @@ class TestDecodePbdnsFrame:
         assert metrics.frames_by_type_response_total == 0
 
     def test_nxdomain_counted_not_submitted(self, bridge_setup):
+        # nonexistent.example is not registered in the tracker, so the
+        # two-pass pre-filter skips it before the full parse.  The
+        # invariant that matters is still satisfied: zero proposals.
         bridge, writer, router, scripts, tracker = bridge_setup
         metrics = _PbdnsMetricsDummy()
         msg = _make_response(qname="nonexistent.example", rcode=3)
         decode_pbdns_frame(msg.SerializeToString(), bridge, metrics)
-        assert metrics.frames_by_rcode_nxdomain_total == 1
+        assert metrics.frames_skipped_by_qname_total == 1
         assert bridge.metrics.proposals_total == 0
 
     def test_unknown_qname_dropped_at_bridge(self, bridge_setup):
+        # unknown.example is not in the tracker allowlist.  The new
+        # pre-filter catches it at the qname peek stage, before
+        # ParseFromString, so frames_accepted_total stays 0.
         bridge, writer, router, scripts, tracker = bridge_setup
         metrics = _PbdnsMetricsDummy()
         msg = _make_response(
@@ -167,7 +173,7 @@ class TestDecodePbdnsFrame:
             a=[b"\x01\x02\x03\x04"],
         )
         decode_pbdns_frame(msg.SerializeToString(), bridge, metrics)
-        assert metrics.frames_accepted_total == 1
+        assert metrics.frames_skipped_by_qname_total == 1
         assert bridge.metrics.proposals_total == 0
 
     def test_malformed_bytes_increment_error(self, bridge_setup):
@@ -281,6 +287,8 @@ class _PbdnsMetricsDummy:
         self.frames_empty_rrs_total = 0
         self.bytes_received_total = 0
         self.last_frame_mono = 0.0
+        self.frames_skipped_by_type_total = 0
+        self.frames_skipped_by_qname_total = 0
 
     def inc(self, attr: str, n: int = 1) -> None:
         setattr(self, attr, getattr(self, attr) + n)
