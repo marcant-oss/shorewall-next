@@ -104,6 +104,13 @@ Every code path here is hot. Target: 20 000 DNS answers/s across dnstap
   the lone remaining direct `_in_netns()` hop; it has been converted to
   use `READ_KIND_CTNETLINK` via the worker RPC — the scrape thread is
   now entirely free of `setns(2)` calls.
+- **pyroute2 handles cached per netns.** Four collectors (`LinkCollector`,
+  `QdiscCollector`, `NeighbourCollector`, `AddressCollector`) share one
+  `IPRoute` per managed netns via `collectors._shared.get_rtnl`. A single
+  pyroute2 fork happens on first use; all subsequent scrapes reuse the
+  live netlink socket.  Handles are evicted on `NetlinkError` (stale
+  netns) and closed cleanly on daemon shutdown via `close_all_rtnl()`.
+  Current cache size is reported as `shorewalld_rtnl_handles_cached`.
 - **Bounded everything.** Every queue, cache, retry counter has an
   explicit cap. Drops are counted as metrics. Growing RSS is not
   acceptable.
