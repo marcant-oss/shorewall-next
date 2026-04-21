@@ -114,6 +114,8 @@ _FLOAT_KEYS = frozenset({
     "STATE_PERSIST_INTERVAL",
     "LOG_RATE_LIMIT_WINDOW",
     "VRRP_SNMP_TIMEOUT",
+    "DNS_DEDUP_REFRESH_THRESHOLD",
+    "BATCH_WINDOW_SECONDS",
 })
 
 
@@ -181,6 +183,9 @@ class ConfDefaults:
     vrrp_snmp_port: int | None = None
     vrrp_snmp_community: str | None = None
     vrrp_snmp_timeout: float | None = None
+    # DNS-set pipeline tuning knobs (M-3).
+    dns_dedup_refresh_threshold: float | None = None
+    batch_window_seconds: float | None = None
 
 
 # Map config key → ConfDefaults attribute. Keys not in this map are
@@ -215,6 +220,8 @@ _CONF_KEY_MAP: dict[str, str] = {
     "VRRP_SNMP_PORT": "vrrp_snmp_port",
     "VRRP_SNMP_COMMUNITY": "vrrp_snmp_community",
     "VRRP_SNMP_TIMEOUT": "vrrp_snmp_timeout",
+    "DNS_DEDUP_REFRESH_THRESHOLD": "dns_dedup_refresh_threshold",
+    "BATCH_WINDOW_SECONDS": "batch_window_seconds",
 }
 
 

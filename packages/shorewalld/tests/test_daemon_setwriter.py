@@ -315,3 +315,71 @@ class TestShutdownFlush:
 
         event_loop.run_until_complete(run())
         assert len(scripts) == 1
+
+
+# ── M-3: batch_window_sec injection tests ───────────────────────────────────
+
+
+class TestBatchWindowInjection:
+    """Verify that a larger batch_window_sec delays flushing.
+
+    Two proposals arrive together; with a very short window (0.020 s) both
+    flush within the window in a single batch, while with a long window
+    (60 s) they won't have flushed by window-time — they only flush on
+    shutdown.  The key assertion is that the flush_reason is 'window' for
+    the short case and 'shutdown' for the long case.
+    """
+
+    def test_short_window_flushes_via_window(
+        self, tracker, event_loop, router_with_inproc
+    ):
+        router, scripts = router_with_inproc
+        writer = SetWriter(
+            tracker, router, batch_window_sec=0.020, loop=event_loop)
+
+        async def run():
+            await writer.start()
+            sid = tracker.set_id_for("github.com", FAMILY_V4)
+            for i in range(2):
+                writer.submit(
+                    netns="inproc", family=FAMILY_V4,
+                    proposal=Proposal(
+                        set_id=sid,
+                        ip=int.from_bytes(bytes([1, 2, 3, i + 1]), "big"),
+                        ttl=600,
+                    ),
+                )
+            # Wait longer than the window so the drain loop fires.
+            await asyncio.sleep(0.15)
+            assert writer.metrics.flush_reason_window_total >= 1
+            await writer.shutdown()
+
+        event_loop.run_until_complete(run())
+        assert len(scripts) >= 1
+
+    def test_large_window_defers_flush_to_shutdown(
+        self, tracker, event_loop, router_with_inproc
+    ):
+        router, scripts = router_with_inproc
+        writer = SetWriter(
+            tracker, router, batch_window_sec=60.0, loop=event_loop)
+
+        async def run():
+            await writer.start()
+            sid = tracker.set_id_for("github.com", FAMILY_V4)
+            writer.submit(
+                netns="inproc", family=FAMILY_V4,
+                proposal=Proposal(
+                    set_id=sid,
+                    ip=int.from_bytes(b"\x0a\x00\x00\x01", "big"),
+                    ttl=600,
+                ),
+            )
+            # No window flush — only 0.05s have passed, window is 60s.
+            await asyncio.sleep(0.05)
+            assert writer.metrics.flush_reason_window_total == 0
+            await writer.shutdown()
+            assert writer.metrics.flush_reason_shutdown_total >= 1
+
+        event_loop.run_until_complete(run())
+        assert len(scripts) >= 1

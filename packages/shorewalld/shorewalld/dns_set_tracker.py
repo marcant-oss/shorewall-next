@@ -60,8 +60,11 @@ FAMILY_V6 = 6
 
 # How much of the existing deadline must remain for a new answer to
 # be considered a duplicate. 0.5 means "if the current entry still
-# has >=50% of the proposed TTL left, skip the write". Operators can
-# tune via the ``DNS_DEDUP_REFRESH_THRESHOLD`` shorewall.conf knob.
+# has >=50% of the proposed TTL left, skip the write".
+# This value is the module-level default; the actual threshold is
+# injected at construction time via ``DnsSetTracker(refresh_threshold=…)``.
+# Operators tune it via ``DNS_DEDUP_REFRESH_THRESHOLD`` in
+# ``shorewalld.conf`` or ``--dns-dedup-refresh-threshold`` on the CLI.
 DEFAULT_REFRESH_THRESHOLD = 0.5
 
 
