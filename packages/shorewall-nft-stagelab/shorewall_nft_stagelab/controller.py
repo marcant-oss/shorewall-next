@@ -497,7 +497,24 @@ class StagelabController:
 
         for scenario_cfg in self._config.scenarios:
             runner = build_runner(scenario_cfg)
-            commands = runner.plan(self._config)
+            try:
+                commands = runner.plan(self._config)
+            except ValueError as exc:
+                # plan() raises ValueError when a prerequisite is missing
+                # (e.g. family=ipv6 but endpoint has no IPv6 address).
+                # Emit a warning and skip the scenario rather than aborting
+                # the entire run — other scenarios in the same config are
+                # unaffected.
+                log.warning(
+                    "scenario %r: plan() raised ValueError — skipping: %s",
+                    scenario_cfg.id,
+                    exc,
+                )
+                print(
+                    f"WARNING: scenario {scenario_cfg.id!r} skipped: {exc}",
+                    file=sys.stderr,
+                )
+                continue
             log.debug("scenario %r: %d commands", scenario_cfg.id, len(commands))
 
             # Capture wall-clock start time for DoS window-delta computation.
