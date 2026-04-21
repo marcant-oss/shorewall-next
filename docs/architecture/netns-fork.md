@@ -76,16 +76,74 @@ result: NftResult = run_nft_in_netns_zc("fw", nft_script_text)
 
 IPC layout for `run_nft_in_netns_zc`:
 
-| Channel | Content | Direction |
-|---------|---------|-----------|
-| `memfd` (sealed) | nft script bytes | parent → child |
-| stdout pipe | JSON output from `nft.cmd()` | child → parent |
-| stderr pipe | error text | child → parent |
-| rc pipe | result tag + int32 rc | child → parent |
+| Channel | Content | Direction | When |
+|---------|---------|-----------|------|
+| `memfd` (sealed) | nft script bytes | parent → child | always |
+| stdout pipe | JSON output (inline) | child → parent | `len(stdout) < stdout_threshold` |
+| stdout output | JSON output via memfd-dup | child → parent | `len(stdout) >= stdout_threshold` (default 4 MiB) |
+| stderr pipe | error text | child → parent | always |
+| rc pipe | control message (see below) | child → parent | always |
+| ack pipe | 1-byte parent ack | parent → child | memfd path only |
+
+**stdout output modes**
+
+When `len(stdout_bytes) < stdout_threshold` (default 4 MiB), the child
+writes stdout to the **stdout pipe** as before. The rc pipe carries:
+```
+[tag=0x10 u8][rc int32 BE]   (5 bytes)
+```
+
+When `len(stdout_bytes) >= stdout_threshold`, the child routes stdout
+through an **anonymous memfd**. The rc pipe carries:
+```
+[tag=0x11 u8][rc int32 BE][size uint32 BE][fd_number uint32 BE]   (13 bytes)
+```
+
+The child then **blocks** on the ack pipe until the parent writes a single
+ack byte. This keeps the child's fd table (and therefore
+`/proc/<child_pid>/fd/<fd_number>`) alive long enough for the parent to
+acquire its own file descriptor via the `/proc/<pid>/fd/<n>` dup idiom:
+
+```
+parent: open("/proc/<child_pid>/fd/<fd_number>", O_RDONLY)
+parent: mmap(size, ACCESS_READ) → read stdout bytes
+parent: write(ack_w, b"\x01")   ← releases the child
+child:  read ack → close memfd → os._exit(0)
+```
+
+**Why `/proc/<pid>/fd/<n>` instead of `SCM_RIGHTS`**
+
+`/proc/<pid>/fd/<n>` is the simplest "cross-process fd dup" on Linux.  It
+requires no extra `SOCK_DGRAM` socketpair (as `SCM_RIGHTS` would), produces
+no portability concerns (we are Linux-only throughout), and is well-supported
+in containers that allow `/proc`. The ack-pipe round-trip serialises the
+parent's `open()` call against the child's exit — a simpler ordering
+guarantee than the three-way handshake SCM_RIGHTS would need.
+
+**`stdout_as_memoryview` option**
+
+Pass `stdout_as_memoryview=True` to receive a `memoryview` into the parent's
+mmap without an extra `bytes` allocation:
+
+```python
+with run_nft_in_netns_zc("fw", "list table inet fw",
+                          stdout_threshold=0,
+                          stdout_as_memoryview=True) as result:
+    # result.stdout_mv is a memoryview into the mmap
+    data = json.loads(result.stdout_mv)
+# on exit, mmap is released
+```
+
+`NftResult` is a context manager; call `result.close()` or use `with` to
+release the mmap. After `close()`, any `memoryview` derived from the mmap
+becomes invalid. Callers must release (`.release()`) the `memoryview` before
+calling `close()` — `mmap.close()` raises `BufferError` if an exported
+pointer still exists.
 
 The script memfd is sealed before fork — the child receives an immutable
-read-only view. stdout/stderr pipes are drained by dedicated threads in the
-parent to prevent deadlock on large output.
+read-only view. The stderr pipe is always drained by a dedicated thread in
+the parent; the stdout pipe is drained by a thread for the inline-pipe path
+(thread exits immediately with empty bytes in the memfd path).
 
 ## Contract
 
@@ -102,12 +160,18 @@ One-shot. Fork, setns, run `fn(*args, **kwargs)`, return result.
 - On timeout: SIGTERM → 1 s grace → SIGKILL → reap → `NetnsForkTimeout`.
 - Large args (> `large_payload_threshold`) go through the memfd path.
 
-### `run_nft_in_netns_zc(netns, script, *, check_only=False, timeout=60.0)`
+### `run_nft_in_netns_zc(netns, script, *, check_only=False, timeout=60.0, stdout_threshold=4MiB, stdout_as_memoryview=False)`
 
 Specialised. Fork, setns, run `nft.cmd(script)` via libnftables, return
 `NftResult(rc, stdout, stderr)`. Script transferred via sealed memfd.
+stdout transferred via inline pipe (small) or child-created memfd acquired by
+parent via `/proc/<pid>/fd/<n>` dup (large, `>= stdout_threshold`).
 
 Raises `NftError` (rc != 0) unless `check_only=True`.
+
+`NftResult` supports `close()` and context-manager usage to release any
+stdout mmap. `stdout_mv` is a `memoryview` into the mmap when
+`stdout_as_memoryview=True` and the memfd path was taken.
 
 ### `PersistentNetnsWorker(netns, child_main)`
 
@@ -198,10 +262,12 @@ available. On kernels < 3.17 or Python < 3.8:
 | Fork+exec cost | Per call | Per call (fork only) | Per call (fork only) |
 | Requires `ip` binary | Yes | No | No |
 | In-process libnftables | Not possible | Yes | Yes |
-| Large script zero-copy | No | No | Yes (memfd) |
+| Large script zero-copy | No | No | Yes (sealed memfd) |
+| Large JSON output zero-copy | No | No | Yes (child memfd + `/proc` dup) |
 | JSON output | No | Manual | Automatic |
 | Auto-reap | No | Yes | Yes |
 | Timeout | No | Yes | Yes |
+| memoryview output (no extra alloc) | No | No | Yes (`stdout_as_memoryview=True`) |
 
 For one-off nft script execution, `run_nft_in_netns_zc` is the preferred
 approach. For arbitrary Python callables inside a netns, use
