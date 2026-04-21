@@ -47,10 +47,31 @@ log = get_logger("pbdns")
 # ── Constants mirrored from the protobuf enum ────────────────────────
 PBDNS_TYPE_QUERY = 1
 PBDNS_TYPE_RESPONSE = 2             # — we care about this
+# DNSIncomingResponseType is the recursor's "response received from
+# upstream" frame type (value 4). Accept both so a single shorewalld
+# instance can ingest from a recursor configured to log both CLIENT and
+# INCOMING response events.
+PBDNS_TYPE_INCOMING_RESPONSE = 4
+
+RESPONSE_TYPES = frozenset({PBDNS_TYPE_RESPONSE, PBDNS_TYPE_INCOMING_RESPONSE})
 
 # DNS RR types we extract
 RRTYPE_A = 1
 RRTYPE_AAAA = 28
+
+# ── PBDNSMessage wire-tag constants ───────────────────────────────────
+# Pre-computed tag bytes for the fields peeked by _peek_type_and_qname.
+# tag = (field_number << 3) | wire_type.
+#
+# PBDNSMessage:
+#   type      → field 1,  wire type 0 (varint)           → 0x08
+#   question  → field 12, wire type 2 (length-delimited) → 0x62
+#
+# DNSQuestion:
+#   qName     → field 1,  wire type 2 (length-delimited) → 0x0A
+_TAG_PBDNS_TYPE     = 0x08   # (1  << 3) | 0
+_TAG_PBDNS_QUESTION = 0x62   # (12 << 3) | 2
+_TAG_DNSQ_QNAME    = 0x0A   # (1  << 3) | 2
 
 # Soft cap on a single protobuf message body. pdns recursor's
 # typical response frame is < 2 KiB; anything over 64 KiB is
@@ -88,6 +109,13 @@ class PbdnsMetrics:
     connections: int = 0
     connections_total: int = 0
     last_frame_mono: float = 0.0
+    # Two-pass pre-filter counters (mirroring dnstap's skipped_by_type):
+    # frames_skipped_by_type_total  — type peek said non-response before
+    #     the full ParseFromString.
+    # frames_skipped_by_qname_total — type peek passed, but qname peek
+    #     showed the qname is not in the tracker allowlist.
+    frames_skipped_by_type_total: int = 0
+    frames_skipped_by_qname_total: int = 0
 
     _lock: "threading.Lock" = field(default_factory=threading.Lock)
 
@@ -129,7 +157,211 @@ class PbdnsMetrics:
                 "last_frame_age_seconds":
                     (time.monotonic() - self.last_frame_mono)
                     if self.last_frame_mono else 0.0,
+                "frames_skipped_by_type_total":
+                    self.frames_skipped_by_type_total,
+                "frames_skipped_by_qname_total":
+                    self.frames_skipped_by_qname_total,
             }
+
+
+# ── Two-pass pre-filter ───────────────────────────────────────────────
+
+
+def _peek_type_and_qname(
+    frame: bytes | memoryview,
+) -> tuple[int | None, bytes | None]:
+    """Return ``(type_int, qname_bytes)`` from a PBDNSMessage without a
+    full protobuf parse.
+
+    Walks the outer PBDNSMessage varint stream and extracts:
+
+    * ``type``     — field 1, wire type 0 (varint). The
+      ``PBDNSMessage.Type`` enum value (1 = QUERY, 2 = RESPONSE, …).
+    * ``question`` — field 12, wire type 2 (length-delimited). Descends
+      into the ``DNSQuestion`` sub-message and extracts ``qName`` (field
+      1, wire type 2 / string). Returned as lowercase ``bytes``.
+
+    The walk stops as soon as both fields have been found. Unknown
+    fields at both the outer and inner level are skipped using only
+    the wire type — no copies, no string construction.
+
+    Returns ``(None, None)`` on any malformed / truncated frame.
+
+    Allocation budget: one ``memoryview`` wrap (if the caller passes
+    ``bytes``), then one ``bytes`` object for the returned qname.
+    No intermediate allocations.
+    """
+    mv = memoryview(frame) if not isinstance(frame, memoryview) else frame
+    n = len(mv)
+    i = 0
+    found_type: int | None = None
+    found_qname: bytes | None = None
+
+    while i < n:
+        # ── Read tag varint ──────────────────────────────────────────
+        b = mv[i]
+        i += 1
+        if b & 0x80:
+            tag = b & 0x7F
+            shift = 7
+            while True:
+                if i >= n:
+                    return None, None
+                b = mv[i]
+                i += 1
+                tag |= (b & 0x7F) << shift
+                if not (b & 0x80):
+                    break
+                shift += 7
+                if shift > 63:
+                    return None, None
+        else:
+            tag = b
+
+        wire_type = tag & 0x7
+
+        if wire_type == 0:  # varint value
+            if tag == _TAG_PBDNS_TYPE:
+                # Decode varint in place
+                val = 0
+                shift = 0
+                while True:
+                    if i >= n:
+                        return None, None
+                    b = mv[i]
+                    i += 1
+                    val |= (b & 0x7F) << shift
+                    if not (b & 0x80):
+                        break
+                    shift += 7
+                    if shift > 63:
+                        return None, None
+                found_type = val
+            else:
+                # Skip varint
+                while i < n:
+                    b = mv[i]
+                    i += 1
+                    if not (b & 0x80):
+                        break
+                else:
+                    return None, None
+
+        elif wire_type == 2:  # length-delimited
+            # Read length varint
+            length = 0
+            shift = 0
+            while True:
+                if i >= n:
+                    return None, None
+                b = mv[i]
+                i += 1
+                length |= (b & 0x7F) << shift
+                if not (b & 0x80):
+                    break
+                shift += 7
+                if shift > 63:
+                    return None, None
+
+            if tag == _TAG_PBDNS_QUESTION:
+                # Descend into DNSQuestion sub-message
+                end = i + length
+                if end > n:
+                    return None, None
+                j = i
+                while j < end:
+                    # Read inner tag
+                    b = mv[j]
+                    j += 1
+                    if b & 0x80:
+                        inner_tag = b & 0x7F
+                        shift = 7
+                        while True:
+                            if j >= end:
+                                return None, None
+                            b = mv[j]
+                            j += 1
+                            inner_tag |= (b & 0x7F) << shift
+                            if not (b & 0x80):
+                                break
+                            shift += 7
+                            if shift > 63:
+                                return None, None
+                    else:
+                        inner_tag = b
+
+                    inner_wire = inner_tag & 0x7
+
+                    if inner_tag == _TAG_DNSQ_QNAME:
+                        # Read qName length then bytes
+                        qlen = 0
+                        shift = 0
+                        while True:
+                            if j >= end:
+                                return None, None
+                            b = mv[j]
+                            j += 1
+                            qlen |= (b & 0x7F) << shift
+                            if not (b & 0x80):
+                                break
+                            shift += 7
+                            if shift > 63:
+                                return None, None
+                        if j + qlen > end:
+                            return None, None
+                        # One allocation: the qname bytes (lowercase)
+                        found_qname = bytes(mv[j:j + qlen]).lower()
+                        break
+                    elif inner_wire == 0:  # varint — skip
+                        while j < end:
+                            b = mv[j]
+                            j += 1
+                            if not (b & 0x80):
+                                break
+                        else:
+                            return None, None
+                    elif inner_wire == 2:  # length-delimited — skip
+                        ilen = 0
+                        shift = 0
+                        while True:
+                            if j >= end:
+                                return None, None
+                            b = mv[j]
+                            j += 1
+                            ilen |= (b & 0x7F) << shift
+                            if not (b & 0x80):
+                                break
+                            shift += 7
+                            if shift > 63:
+                                return None, None
+                        j += ilen
+                    elif inner_wire == 1:  # 64-bit fixed — skip
+                        j += 8
+                    elif inner_wire == 5:  # 32-bit fixed — skip
+                        j += 4
+                    else:
+                        return None, None
+                i = end
+            else:
+                # Skip over the payload
+                i += length
+
+        elif wire_type == 1:  # 64-bit fixed — skip
+            if i + 8 > n:
+                return None, None
+            i += 8
+        elif wire_type == 5:  # 32-bit fixed — skip
+            if i + 4 > n:
+                return None, None
+            i += 4
+        else:
+            return None, None  # unsupported wire type
+
+        # Early-exit once both fields have been found
+        if found_type is not None and found_qname is not None:
+            return found_type, found_qname
+
+    return found_type, found_qname
 
 
 # ── Decoder ──────────────────────────────────────────────────────────
@@ -142,20 +374,51 @@ def decode_pbdns_frame(
 ) -> None:
     """Decode one PBDNSMessage and hand RRs to the bridge.
 
-    Short-circuit checks (in order):
+    Two-pass pre-filter (CLAUDE.md §Performance doctrine "Filter
+    before decode"):
 
-    1. Cheap: parse protobuf, reject non-Response types.
-    2. Cheap: check qname against allowlist (tracker has no
-       entry for unknown names, so the bridge's internal check
-       is the two-pass filter for this path).
-    3. Walk the repeated RR list, extracting A/AAAA rdata bytes
-       directly — no DNS wire parse.
-    4. Compute the minimum TTL across the answer RRs; the
-       tracker clamps against per-name floor/ceil at propose time.
+    Pass 0 — cheap varint peek: read ``type`` + ``question.qName``
+    from the wire without calling ``ParseFromString``.  Non-response
+    types are discarded immediately (both the new
+    ``frames_skipped_by_type_total`` counter *and* the legacy
+    ``frames_by_type_query/other_total`` counters are incremented so
+    existing dashboards keep working). Unknown / non-allowlisted
+    qnames are counted in ``frames_skipped_by_qname_total`` and
+    dropped before the full parse.
+
+    Pass 1 — full parse: only reached for RESPONSE frames whose
+    qname is registered in the tracker. Walks the repeated RR list
+    extracting A/AAAA rdata bytes directly — no DNS wire parse.
 
     Errors increment ``frames_decode_error_total`` and return
     without raising so the server loop keeps draining frames.
     """
+    # ── Pass 0: cheap varint peek ────────────────────────────────────
+    peeked_type, peeked_qname = _peek_type_and_qname(buf)
+
+    if peeked_type is None:
+        # Malformed / truncated frame — fall through to full parse so
+        # the decode-error counter fires on the actual parse error.
+        pass
+    elif peeked_type not in RESPONSE_TYPES:
+        # Skip the full parse for non-response frames — the ~majority
+        # of pdns traffic is queries.
+        metrics.inc("frames_skipped_by_type_total")
+        # Also maintain legacy per-type counters so existing dashboards
+        # and tests that check frames_by_type_query_total keep working.
+        if peeked_type == PBDNS_TYPE_QUERY:
+            metrics.inc("frames_by_type_query_total")
+        else:
+            metrics.inc("frames_by_type_other_total")
+        return
+    else:
+        # Type is a response — check qname allowlist before full parse.
+        if peeked_qname is not None and not bridge.has_qname_bytes(
+                peeked_qname):
+            metrics.inc("frames_skipped_by_qname_total")
+            return
+
+    # ── Pass 1: full protobuf parse ──────────────────────────────────
     try:
         msg = dnsmessage_pb2.PBDNSMessage()
         msg.ParseFromString(buf)
@@ -168,7 +431,7 @@ def decode_pbdns_frame(
     metrics.inc("bytes_received_total", len(buf))
     metrics.set_last_frame_now()
 
-    if msg.type == PBDNS_TYPE_RESPONSE:
+    if msg.type in RESPONSE_TYPES:
         metrics.inc("frames_by_type_response_total")
     elif msg.type == PBDNS_TYPE_QUERY:
         metrics.inc("frames_by_type_query_total")
@@ -458,6 +721,15 @@ class PbdnsMetricsCollector:
         counter("shorewalld_pbdns_connections_total",
                 "Cumulative PBDNSMessage producer connections",
                 snap["connections_total"])
+        counter("shorewalld_pbdns_frames_skipped_by_type_total",
+                "PBDNSMessage frames dropped by the pre-filter varint peek "
+                "before ParseFromString (message type not in RESPONSE_TYPES "
+                "or peek returned None for a malformed outer message)",
+                snap["frames_skipped_by_type_total"])
+        counter("shorewalld_pbdns_frames_skipped_by_qname_total",
+                "PBDNSMessage RESPONSE frames skipped before ParseFromString "
+                "because the peeked qname is not in the tracker allowlist",
+                snap["frames_skipped_by_qname_total"])
         gauge("shorewalld_pbdns_connections",
               "Currently connected PBDNSMessage producers",
               snap["connections"])
