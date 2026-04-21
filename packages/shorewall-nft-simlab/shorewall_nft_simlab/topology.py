@@ -21,10 +21,12 @@ with its BGP VTEP addresses, ``lo``) are silently dropped. The
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pyroute2 import NetNS, netns
 from pyroute2.netlink.exceptions import NetlinkError
+from shorewall_nft_netkit.netns_fork import run_in_netns_fork
 
 from .dumps import FwState, Route, iface_needs_tap
 from .nsstub import spawn_nsstub, stop_nsstub
@@ -32,6 +34,23 @@ from .tundev import close_tuntap, create_tuntap
 
 if TYPE_CHECKING:
     pass
+
+
+# ---------------------------------------------------------------------------
+# Module-level helper for run_in_netns_fork (must be pickleable)
+# ---------------------------------------------------------------------------
+
+
+def _write_sysctl_in_child(path: str, value: str) -> None:
+    """Write ``value`` to sysctl ``path`` inside the target netns.
+
+    Silently ignores FileNotFoundError (non-existent sysctls such as
+    ``ipv6.accept_local`` on older kernels).
+    """
+    try:
+        Path(path).write_text(value)
+    except FileNotFoundError:
+        pass
 
 
 NS_FW_DEFAULT = "simlab-fw"
@@ -163,25 +182,17 @@ class SimFwTopology:
                 ["net", "ipv4", "conf", "default", "rp_filter"], "0")
 
     def _sysctl_write(self, path_parts: list[str], value: str) -> None:
-        """Write a sysctl inside NS_FW via a short setns() hop."""
-        import ctypes
-        import ctypes.util
-        libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6",
-                           use_errno=True)
-        saved = os.open("/proc/self/ns/net", os.O_RDONLY)
-        try:
-            if libc.setns(self._ns_fd, 0x40000000) != 0:
-                raise OSError(ctypes.get_errno(), "setns failed")
-            with open("/proc/sys/" + "/".join(path_parts), "w") as f:
-                f.write(value)
-        except (OSError, FileNotFoundError) as e:
-            # Silently ignore non-existent sysctls (e.g. ipv6.accept_local)
-            # but log unexpected errors
-            if not isinstance(e, FileNotFoundError):
-                pass
-        finally:
-            libc.setns(saved, 0x40000000)
-            os.close(saved)
+        """Write a sysctl inside NS_FW via run_in_netns_fork.
+
+        Uses a forked child to avoid the racy setns-in-parent pattern
+        (any async callback that fires during the setns window would see
+        the wrong netns).  The child opens the sysctl path after entering
+        the target namespace; FileNotFoundError is silently ignored.
+        """
+        sysctl_path = "/proc/sys/" + "/".join(path_parts)
+        run_in_netns_fork(
+            self.ns_name, _write_sysctl_in_child, sysctl_path, value
+        )
 
     def _create_all_tuntaps(self) -> None:
         """Step 1: for each real iface, create a TUN or TAP in host NS

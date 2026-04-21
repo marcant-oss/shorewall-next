@@ -30,6 +30,56 @@ import time
 from pathlib import Path
 from typing import Any
 
+from shorewall_nft.nft.netlink import _in_netns
+from shorewall_nft_netkit.netns_fork import run_in_netns_fork
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for run_in_netns_fork (must be pickleable)
+# ---------------------------------------------------------------------------
+
+
+def _write_file_in_child(path: str, value: str) -> None:
+    """Write ``value`` to ``path`` inside the target netns.  Module-level for pickle.
+    """
+    Path(path).write_text(value)
+
+
+def _libnftables_list_flowtables_in_child() -> dict:
+    """Query flowtables via libnftables inside the target netns."""
+    try:
+        import nftables as _nft_mod
+    except ImportError:
+        import sys as _sys
+        _sys.path.insert(0, "/usr/lib/python3/dist-packages")
+        import nftables as _nft_mod
+    nft = _nft_mod.Nftables()
+    nft.set_json_output(True)
+    nft.set_handle_output(True)
+    rc, out, _err = nft.cmd("list flowtables")
+    if rc != 0:
+        return {}
+    import json as _json
+    return _json.loads(out) if out else {}
+
+
+def _libnftables_run_cmd_in_child(cmd_args: list[str]) -> tuple[int, str]:
+    """Run an nft command (expressed as a text string) inside the target netns."""
+    try:
+        import nftables as _nft_mod
+    except ImportError:
+        import sys as _sys
+        _sys.path.insert(0, "/usr/lib/python3/dist-packages")
+        import nftables as _nft_mod
+    nft = _nft_mod.Nftables()
+    nft.set_json_output(False)
+    nft.set_handle_output(False)
+    # Reconstruct the nft command text from the argument list
+    # (strip the leading "nft" if present)
+    args = [a for a in cmd_args if a != "nft"]
+    cmd_text = " ".join(args)
+    rc, _out, err = nft.cmd(cmd_text)
+    return (rc, err or "")
+
 # Defaults assume the bootstrap state laid down by
 # tools/setup-remote-test-host.sh
 DEFAULT_CONFIG_DIR = Path("/etc/shorewall46")
@@ -282,18 +332,14 @@ def _apply_sysctls(ns_name: str | None = None) -> list[str]:
     # Also set forwarding inside the FW netns if given, so the netns
     # kernel sees forwarded packets from its own perspective.
     if ns_name:
-        import subprocess
         for path, value in [
             ("/proc/sys/net/ipv4/ip_forward",          "1"),
             ("/proc/sys/net/ipv6/conf/all/forwarding", "1"),
         ]:
-            r = subprocess.run(
-                ["ip", "netns", "exec", ns_name, "sh", "-c", f"echo {value} > {path}"],
-                capture_output=True, timeout=5,
-            )
-            if r.returncode == 0:
+            try:
+                run_in_netns_fork(ns_name, _write_file_in_child, path, value)
                 applied.append(f"[{ns_name}] {path} → {value}")
-            else:
+            except Exception:
                 applied.append(f"[{ns_name}] {path}: FAILED")
     return applied
 
@@ -957,19 +1003,11 @@ def _flowtable_state(ns_name: str) -> str | None:
     fast-path is engaged at the end of a run — non-zero entry
     count proves at least one flow took the bypass.
 
-    Implementation: subprocess via ip-netns-exec, safe from the event loop.
-    Single call at the end of the run, not in the hot path.
+    Implementation: run_in_netns_fork with a libnftables child, safe from
+    the event loop.  Single call at the end of the run, not in the hot path.
     """
-    import json
-    import subprocess
     try:
-        r = subprocess.run(
-            ["ip", "netns", "exec", ns_name, "nft", "-j", "list", "flowtables"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if r.returncode != 0:
-            return None
-        data = json.loads(r.stdout)
+        data = run_in_netns_fork(ns_name, _libnftables_list_flowtables_in_child)
     except Exception:
         return None
     flowtables = [
@@ -1375,18 +1413,25 @@ def cmd_full(args: argparse.Namespace) -> int:
     # which nft rule each IPv6 packet hits.  Writes to nft-trace.log.
     _nft_trace_proc = None
     if os.environ.get("SIMLAB_NFT_TRACE"):
-        import subprocess as _sp
         _trace_target = os.environ["SIMLAB_NFT_TRACE"]  # e.g. ip6 daddr
-        _sp.run(["ip", "netns", "exec", ctl.ns_name, "nft", "insert",
-                 "rule", "inet", "shorewall", "forward",
-                 "meta", "nfproto", "ipv6",
-                 "ip6", "daddr", _trace_target,
-                 "meta", "nftrace", "set", "1"],
-                capture_output=True)
-        _trace_log = open("nft-trace.log", "w")
-        _nft_trace_proc = _sp.Popen(
-            ["ip", "netns", "exec", ctl.ns_name, "nft", "monitor", "trace"],
-            stdout=_trace_log, stderr=_sp.DEVNULL)
+        _insert_args = [
+            "insert", "rule", "inet", "shorewall", "forward",
+            "meta", "nfproto", "ipv6",
+            "ip6", "daddr", _trace_target,
+            "meta", "nftrace", "set", "1",
+        ]
+        run_in_netns_fork(
+            ctl.ns_name, _libnftables_run_cmd_in_child, _insert_args
+        )
+        _trace_log = open("nft-trace.log", "w")  # noqa: SIM115
+        # Long-lived process: use Option A — enter netns via context manager,
+        # spawn nft monitor, restore parent netns.  Child keeps running in
+        # the target netns after the context manager exits.
+        with _in_netns(ctl.ns_name):
+            _nft_trace_proc = subprocess.Popen(  # noqa: S603
+                ["nft", "monitor", "trace"],
+                stdout=_trace_log, stderr=subprocess.DEVNULL,
+            )
         _flush_print(f"nft trace: enabled for ip6 daddr {_trace_target}")
 
     _ndp_warmup(all_probes, topo_mac, ctl, timeout_s=args.probe_timeout)

@@ -5,11 +5,12 @@ Provides direct interaction with the kernel nftables subsystem:
 - Live counter/set queries without spawning processes
 - Set element manipulation (dynamic blacklist)
 - Dry-run validation (nft -c)
-- Native network namespace support via setns() — no fork required
+- Native network namespace support via fork+setns — no subprocess needed
 
 Priority: libnftables (C bindings) > nft subprocess text.
-For netns: save /proc/self/ns/net → setns() into target → run →
-setns() back. Stays in the same process so libnftables stays hot.
+For netns: fork → child enters netns via setns() → child opens libnftables
+→ child does the work → child returns result via IPC → parent reaps child.
+This avoids re-binding cached netlink sockets (which setns() cannot do).
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from shorewall_nft_netkit.netns_fork import run_in_netns_fork
 
 # nft binary path — search common locations (for fallback path only)
 _NFT_PATHS = ["/usr/sbin/nft", "/sbin/nft", "/usr/bin/nft"]
@@ -50,6 +53,46 @@ def _find_nft() -> str:
 
 class NftError(Exception):
     """Error from nft operation."""
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for run_in_netns_fork (must be pickleable)
+# ---------------------------------------------------------------------------
+
+
+def _libnftables_cmd_in_child(
+    script: str, *, check_only: bool = False
+) -> tuple[int, str, str]:
+    """Run a libnftables command in the child process (must be module-level
+    for pickle compatibility).  Called via run_in_netns_fork.
+    """
+    try:
+        import nftables as _nft_mod
+    except ImportError:
+        import sys
+        sys.path.insert(0, "/usr/lib/python3/dist-packages")
+        import nftables as _nft_mod
+    nft = _nft_mod.Nftables()
+    nft.set_json_output(True)
+    nft.set_handle_output(True)
+    if check_only:
+        try:
+            nft.set_dry_run(True)
+        except AttributeError:
+            pass  # older libnftables without set_dry_run
+    rc, out, err = nft.cmd(script)
+    return (rc, out or "", err or "")
+
+
+def _invoke_subprocess(
+    args: list[str], **kwargs
+) -> tuple[int, bytes | str | None, bytes | str | None]:
+    """Run a subprocess in the child process and return a serialisable tuple.
+
+    Returns (returncode, stdout, stderr) — safe to pickle.
+    """
+    result = subprocess.run(args, **kwargs)  # noqa: S603
+    return (result.returncode, result.stdout, result.stderr)
 
 
 @contextlib.contextmanager
@@ -94,9 +137,10 @@ class NftInterface:
     """Interface to nftables — uses libnftables if available, subprocess otherwise.
 
     All methods that take ``netns=`` run in the current namespace when
-    netns is None (libnftables in-process).  When netns is given, a
-    subprocess ``ip netns exec`` is used so the netlink socket is created
-    inside the target namespace (cached sockets cannot be moved via setns).
+    netns is None (libnftables in-process).  When netns is given,
+    ``run_in_netns_fork`` forks a child that enters the target namespace
+    before opening a fresh libnftables handle — cached sockets cannot be
+    moved via setns, so the fork is the only correct approach.
     """
 
     def __init__(self):
@@ -143,10 +187,10 @@ class NftInterface:
         """Run one or more nft text commands, return JSON dict.
 
         Uses libnftables in-process when netns is None (current namespace).
-        When netns is given, always uses subprocess: libnftables caches its
-        netlink socket in the namespace it was first used in, so setns() before
-        cmd() doesn't redirect it — the subprocess fork+exec enters the
-        namespace before opening any sockets, which is the only correct way.
+        When netns is given, delegates to ``_subprocess_text`` which uses
+        ``run_in_netns_fork``: libnftables caches its netlink socket on first
+        use; the fork enters the target namespace before opening any sockets,
+        which is the only safe way to reach a different netns.
         """
         if self._use_lib and netns is None:
             rc, output, error = self._nft.cmd(nft_text)
@@ -157,12 +201,22 @@ class NftInterface:
 
     def _subprocess_text(self, nft_text: str, *,
                          netns: str | None = None) -> dict[str, Any]:
-        """Run nft via subprocess with JSON output (fallback path)."""
-        cmd: list[str] = []
+        """Run nft via subprocess with JSON output (fallback path).
+
+        When netns is set, uses run_in_netns_fork so the child opens a fresh
+        libnftables handle after entering the target namespace.  When netns is
+        None the nft binary is invoked directly (no libnftables available on
+        this path).
+        """
         if netns:
-            cmd = ["ip", "netns", "exec", netns]
-        cmd.extend([self._nft_bin, "-j", nft_text])
-        result = subprocess.run(cmd, capture_output=True, text=True)
+            rc, out, _err = run_in_netns_fork(
+                netns, _libnftables_cmd_in_child, nft_text
+            )
+            if rc != 0:
+                raise NftError(f"nft: {_err.strip()}")
+            return json.loads(out) if out else {}
+        cmd = [self._nft_bin, "-j", nft_text]
+        result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
         if result.returncode != 0:
             raise NftError(f"nft: {result.stderr.strip()}")
         return json.loads(result.stdout) if result.stdout else {}
@@ -216,14 +270,21 @@ class NftInterface:
                 if rc != 0:
                     raise NftError(f"nft -f{'c' if check_only else ''}: {error}")
                 return
-        cmd: list[str] = []
         if netns:
-            cmd = ["ip", "netns", "exec", netns]
-        cmd.extend([self._nft_bin])
+            # Pass the script text to the child — avoids a TOCTOU race on the
+            # path and works even if the child doesn't share the filesystem.
+            script = Path(path).read_text()
+            rc, _out, err = run_in_netns_fork(
+                netns, _libnftables_cmd_in_child, script, check_only=check_only
+            )
+            if rc != 0:
+                raise NftError(f"nft -f{'c' if check_only else ''}: {err.strip()}")
+            return
+        cmd = [self._nft_bin]
         if check_only:
             cmd.append("-c")
         cmd.extend(["-f", str(path)])
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
         if result.returncode != 0:
             raise NftError(f"nft -f: {result.stderr.strip()}")
 
@@ -366,8 +427,11 @@ class NftInterface:
                      **kwargs) -> "subprocess.CompletedProcess[str]":
         """Run a subprocess, entering *netns* via in-process setns() if provided.
 
-        Uses _in_netns() so the forked child inherits the target namespace
-        without a sudo round-trip.  Falls back to ``ip netns exec`` on EPERM.
+        Primary path: uses ``_in_netns()`` context manager so the forked
+        subprocess child inherits the target namespace without a privilege
+        round-trip.  EPERM fallback: uses ``run_in_netns_fork`` with
+        ``_invoke_subprocess`` — a child that enters the namespace first and
+        then spawns the subprocess from within it.
 
         ``netns=None`` runs the command in the current namespace unchanged.
         Pass ``capture_output=True, text=True`` in *kwargs* as needed.
@@ -375,11 +439,21 @@ class NftInterface:
         if netns:
             try:
                 with _in_netns(netns):
-                    return subprocess.run(args, **kwargs)
+                    return subprocess.run(args, **kwargs)  # noqa: S603
             except OSError:
-                full_args = ["ip", "netns", "exec", netns] + list(args)
-                return subprocess.run(full_args, **kwargs)
-        return subprocess.run(args, **kwargs)
+                # EPERM: cannot setns in the parent — fork a child that enters
+                # the netns before running the subprocess.
+                rc, stdout, stderr = run_in_netns_fork(
+                    netns, _invoke_subprocess, list(args), **kwargs
+                )
+                # Reconstruct a CompletedProcess from the serialised tuple.
+                return subprocess.CompletedProcess(
+                    args=list(args),
+                    returncode=rc,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+        return subprocess.run(args, **kwargs)  # noqa: S603
 
     # ── back-compat alias for callers still using _subprocess_cmd ───
 

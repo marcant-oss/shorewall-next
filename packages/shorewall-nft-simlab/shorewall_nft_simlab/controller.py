@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from shorewall_nft_netkit.netns_fork import run_in_netns_fork
+
 from .dumps import FwState, load_fw_state
 from .packets import (
     PacketSummary,
@@ -51,6 +53,26 @@ from .topology import NS_FW_DEFAULT, SimFwTopology
 # Synthetic MAC for every TAP the controller services. Same MAC on
 # every TAP is fine: each TAP is its own L2 segment.
 _WORKER_MAC = "02:00:00:5e:00:01"
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for run_in_netns_fork (must be pickleable)
+# ---------------------------------------------------------------------------
+
+
+def _libnftables_load_script_in_child(script: str) -> tuple[int, str]:
+    """Load an nft script via libnftables inside the target netns."""
+    try:
+        import nftables as _nft_mod
+    except ImportError:
+        import sys as _sys
+        _sys.path.insert(0, "/usr/lib/python3/dist-packages")
+        import nftables as _nft_mod
+    nft = _nft_mod.Nftables()
+    nft.set_json_output(False)
+    nft.set_handle_output(False)
+    rc, _out, err = nft.cmd(script)
+    return (rc, err or "")
 
 
 def _mac_to_link_local(mac: str) -> str:
@@ -236,14 +258,18 @@ class SimController:
                 self._iface_pcap[iface] = writer
 
     def load_nft(self, nft_script_path: str) -> None:
-        """Load an nft script into NS_FW via subprocess (safe from test process)."""
-        import subprocess
-        r = subprocess.run(
-            ["ip", "netns", "exec", self.ns_name, "nft", "-f", nft_script_path],
-            capture_output=True, text=True, timeout=30,
+        """Load an nft script into NS_FW via run_in_netns_fork (safe from event loop).
+
+        Reads the script text in the parent (path is always accessible here)
+        then passes the text to a forked child that enters NS_FW and feeds it
+        to a fresh libnftables handle — avoids cached netlink socket issues.
+        """
+        script = Path(nft_script_path).read_text()
+        rc, err = run_in_netns_fork(
+            self.ns_name, _libnftables_load_script_in_child, script
         )
-        if r.returncode != 0:
-            raise RuntimeError(f"nft -f failed (rc={r.returncode}):\n{r.stderr[:2000]}")
+        if rc != 0:
+            raise RuntimeError(f"nft -f failed (rc={rc}):\n{err[:2000]}")
 
     # ── probe dispatch ────────────────────────────────────────────
 
