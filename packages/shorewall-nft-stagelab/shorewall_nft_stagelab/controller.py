@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from .advisor import AdvisorInput, analyze
-from .config import Host, StagelabConfig
+from .config import Endpoint, Host, StagelabConfig
+from .fw_rules import discover_accept_rules, find_best_rule
 from .ipc import (
     AckMessage,
     ConnectionClosedError,
@@ -666,8 +667,93 @@ class StagelabController:
             seq_results, conc_results = await asyncio.gather(seq_task, conc_task)
             return seq_results + conc_results
 
+        # ── L2-Local detection helper ───────────────────────────────────────────────
+        def _is_l2_local(ep1: Endpoint, ep2: Endpoint) -> bool:
+            """True if both endpoints are L2-adjacent (same VLAN/bridge).
+
+            L2-local traffic never traverses the firewall, so conntrack/flowtable
+            observation will show zero entries. This is used to trigger automatic
+            rule discovery to adapt the scenario to a through-FW target.
+            """
+            if ep1.mode != "native" or ep2.mode != "native":
+                return False
+            return (ep1.vlan is not None and ep1.vlan == ep2.vlan) or (
+                ep1.bridge is not None and ep1.bridge == ep2.bridge
+            )
+
+        # ── Endpoint lookup map for L2-Local detection ───────────────────────────────
+        ep_map: dict[str, Endpoint] = {ep.name: ep for ep in self._config.endpoints}
+
         for scenario_cfg in self._config.scenarios:
-            runner = build_runner(scenario_cfg)
+            # ── L2-Local Fix: discover and adapt ThroughputScenario ─────────────────────
+            # When observe_conntrack=True but source/sink are L2-adjacent, traffic never
+            # crosses the firewall and conntrack shows zero entries. We discover ACCEPT
+            # rules on the firewall and adapt the scenario to target a through-FW service.
+            adapted_scenario = scenario_cfg
+            if (
+                hasattr(scenario_cfg, "kind")
+                and scenario_cfg.kind == "throughput"
+                and getattr(scenario_cfg, "observe_conntrack", False)
+            ):
+                source_ep = ep_map.get(scenario_cfg.source)
+                sink_ep = ep_map.get(scenario_cfg.sink)
+                if source_ep and sink_ep and _is_l2_local(source_ep, sink_ep):
+                    fw_host = getattr(scenario_cfg, "fw_host", None)
+                    if fw_host:
+                        log.info(
+                            "L2-Local detected for scenario %r: source=%r sink=%r "
+                            "(same VLAN/bridge), discovering FW ACCEPT rule to adapt...",
+                            scenario_cfg.id,
+                            scenario_cfg.source,
+                            scenario_cfg.sink,
+                        )
+                        rules = await discover_accept_rules(fw_host)
+                        proto = scenario_cfg.proto
+                        target_port = getattr(scenario_cfg, "target_port", None) or 5201
+                        # Note: find_best_rule now requires zone_src and zone_dst.
+                        # Since we don't have zone information from endpoints, we pass
+                        # empty strings to match any zone.
+                        best = find_best_rule(rules, proto, target_port, "", "")
+                        if best:
+                            log.info(
+                                "L2-Local scenario %r: adapting to proto=%r port=%r "
+                                "(zone_src=%r zone_dst=%r)",
+                                scenario_cfg.id,
+                                best.proto,
+                                best.port,
+                                best.zone_src,
+                                best.zone_dst,
+                            )
+                            # Create a modified copy of the scenario with the new proto/port
+                            adapted_scenario = scenario_cfg.model_copy(
+                                update={
+                                    "proto": best.proto,
+                                    # Note: we don't change the sink endpoint IP here;
+                                    # that would require endpoint lookup. The adaptation
+                                    # is limited to proto/port changes for now.
+                                }
+                            )
+                            # Store the original rule info for reporting
+                            if not hasattr(adapted_scenario, "_l2_local_adaptation"):
+                                adapted_scenario._l2_local_adaptation = {  # type: ignore[attr-defined]
+                                    "reason": "l2_local",
+                                    "original_proto": scenario_cfg.proto,
+                                    "original_port": target_port,
+                                    "adapted_proto": best.proto,
+                                    "adapted_port": best.port,
+                                    "zone_src": best.zone_src,
+                                    "zone_dst": best.zone_dst,
+                                }
+                        else:
+                            log.warning(
+                                "L2-Local scenario %r: no matching ACCEPT rule found for "
+                                "proto=%r port=%r — conntrack observation may show zero entries",
+                                scenario_cfg.id,
+                                proto,
+                                target_port,
+                            )
+
+            runner = build_runner(adapted_scenario)
             try:
                 commands = runner.plan(self._config)
             except ValueError as exc:

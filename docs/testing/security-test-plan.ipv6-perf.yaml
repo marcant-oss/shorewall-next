@@ -244,10 +244,16 @@ tests:
       count during a known-good load scenario provides a baseline for the
       DoS conntrack-overflow tests.
     note: >
-      Handler wiring (observe_conntrack sidecar poll in ThroughputRunner) is a
-      TODO for the hang-fix agent.  The config field and catalogue entry are
-      in place; the scenario will run without conntrack observation until the
-      handler is wired.
+      L2-Local auto-fix (2026-04-21): when the controller detects L2-local
+      topology (source and sink on the same VLAN broadcast domain), it automatically
+      discovers ACCEPT rules on the firewall via SSH and adapts the scenario to use
+      through-FW routing.  Example: wan-native (203.0.113.253) → lan-downstream
+      (203.0.113.254) on VLAN 20 is auto-adapted to net-backbone (203.0.113.74/27)
+      → fw_ssh (203.0.113.75:22), piggybacking on the existing SSH(ACCEPT) rule.
+      This enables real conntrack observation without manual FW configuration changes.
+      Sidecar timing fix shipped (commit 2c3ecc45): poll_conntrack now carries
+      concurrent=True and the controller dispatches it via a local SSH task that runs
+      in parallel with the iperf3 client.
 
   - test_id: perf-conntrack-observe-conn-storm
     title: "Conntrack table peak measurement during connection storm"

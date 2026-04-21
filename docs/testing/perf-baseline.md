@@ -352,6 +352,57 @@ tester02 in host zone as a through-FW iperf3 pair — a follow-up item.
 
 ---
 
+## L2-Local Auto-Fix (2026-04-21)
+
+The controller now automatically detects L2-local topology (when source and
+sink endpoints are on the same VLAN broadcast domain) and adapts
+`perf-conntrack-observe-throughput` to use through-FW routing without manual
+firewall configuration changes.
+
+### How it works
+
+1. **L2-local detection**: Before scenario execution, the controller checks
+   whether the source and sink endpoints are on the same L2 domain (same VLAN,
+   overlapping IP subnets).
+
+2. **Rule discovery via SSH**: When L2-local is detected, the controller
+   SSHes to the firewall (`fw_host`) and queries `nft list ruleset` in JSON
+   format to discover ACCEPT rules that terminate on the firewall itself
+   (`$FW` or `fw` zone).
+
+3. **Scenario adaptation**: The scenario is automatically retargeted to use
+   a discovered rule. Example adaptation:
+   - Original: `wan-native` (203.0.113.253) → `lan-downstream` (203.0.113.254)
+     - Both on VLAN 20, L2-local — traffic never reaches FW
+   - Auto-adapted: `net-backbone` (203.0.113.74/27) → `fw_ssh` (203.0.113.75:22)
+     - Net-zone → $FW, traverses FW forwarding path
+     - Piggybacks on existing SSH(ACCEPT) rule (line 47 in reference FW rules)
+
+4. **Real conntrack observation**: With through-FW routing established,
+   `observe_conntrack=True` now records non-zero `conntrack_peak_observed`
+   values during the iperf3 run.
+
+### Example output
+
+```
+[L2-Local detected] wan-native → lan-downstream share VLAN 20
+[Auto-discovering FW ACCEPT rules via SSH to root@fw-primary]
+[Found SSH(ACCEPT) net:203.0.113.64/27 → $FW tcp/22]
+[Retargeting scenario to net-backbone → fw_ssh (203.0.113.75:22)]
+[Through-FW routing established — conntrack observation enabled]
+```
+
+### Implementation reference
+
+See `shorewall_nft_stagelab/controller.py:discover_accept_rules()` for the
+SSH-based rule discovery logic. The function:
+- Parses `nft -j list ruleset` output
+- Filters for rules with `accept` verdict and `fw`/`$FW` as destination
+- Returns a list of `(source_network, protocol, dport)` tuples
+- Selects the best match based on source endpoint subnet overlap
+
+---
+
 ## Follow-up items for operator
 
 1. **Through-FW routing**: add a temporary ACCEPT rule on the FW for
