@@ -450,6 +450,97 @@ def test_throughput_summarize_captures_peak():
 
 
 # ---------------------------------------------------------------------------
+# Flowtable observability sidecar — ThroughputRunner
+# ---------------------------------------------------------------------------
+
+
+def test_throughput_plan_emits_flowtable_sidecar_when_observe_set():
+    """plan() appends a poll_flowtable cmd when observe_flowtable=True + fw_host set."""
+    sc = ThroughputScenario(
+        id="tp-ft1",
+        kind="throughput",
+        source="src",
+        sink="sink",
+        proto="tcp",
+        duration_s=30,
+        parallel=1,
+        expect_min_gbps=0.1,
+        observe_flowtable=True,
+        fw_host="root@fw.example.com",
+    )
+    cfg = _base_cfg([sc])
+    runner = build_runner(sc)
+    cmds = runner.plan(cfg)
+
+    assert len(cmds) == 3  # server + client + flowtable sidecar
+    ft_sidecar = cmds[2]
+    assert ft_sidecar.kind == "poll_flowtable"
+    assert ft_sidecar.spec["fw_host"] == "root@fw.example.com"
+    assert ft_sidecar.spec["duration_s"] == 30
+    assert ft_sidecar.spec["_flowtable_sidecar"] is True
+    assert ft_sidecar.concurrent is True
+
+
+def test_throughput_summarize_captures_flowtable_delta():
+    """summarize() stores flowtable_packets_delta and evaluates criterion."""
+    sc = ThroughputScenario(
+        id="tp-ft2",
+        kind="throughput",
+        source="src",
+        sink="sink",
+        proto="tcp",
+        duration_s=30,
+        parallel=1,
+        expect_min_gbps=0.1,
+        observe_flowtable=True,
+        fw_host="root@fw.example.com",
+        acceptance_criteria={"flowtable_counter_nonzero": True},
+    )
+    runner = build_runner(sc)
+    results = [
+        {"tool": "iperf3", "ok": True, "throughput_gbps": 5.0, "duration_s": 30.0},
+        {
+            "tool": "poll_flowtable", "ok": True,
+            "packets_before": 1000, "packets_after": 5000, "packets_delta": 4000,
+            "_flowtable_sidecar": True,
+        },
+    ]
+    result = runner.summarize(results)
+    assert result.raw["flowtable_packets_delta"] == 4000
+    assert result.raw["throughput_gbps"] == 5.0
+    assert result.criteria_results.get("flowtable_counter_nonzero") is True
+
+
+def test_throughput_summarize_flowtable_criterion_fails_when_delta_zero():
+    """flowtable_counter_nonzero criterion fails when packets_delta == 0."""
+    sc = ThroughputScenario(
+        id="tp-ft3",
+        kind="throughput",
+        source="src",
+        sink="sink",
+        proto="tcp",
+        duration_s=30,
+        parallel=1,
+        expect_min_gbps=0.1,
+        observe_flowtable=True,
+        fw_host="root@fw.example.com",
+        acceptance_criteria={"flowtable_counter_nonzero": True},
+    )
+    runner = build_runner(sc)
+    results = [
+        {"tool": "iperf3", "ok": True, "throughput_gbps": 5.0, "duration_s": 30.0},
+        {
+            "tool": "poll_flowtable", "ok": True,
+            "packets_before": 0, "packets_after": 0, "packets_delta": 0,
+            "_flowtable_sidecar": True,
+        },
+    ]
+    result = runner.summarize(results)
+    assert result.raw["flowtable_packets_delta"] == 0
+    assert result.criteria_results.get("flowtable_counter_nonzero") is False
+
+
+# ---------------------------------------------------------------------------
 # Conntrack observability sidecar — ConnStormRunner
 # ---------------------------------------------------------------------------
 
