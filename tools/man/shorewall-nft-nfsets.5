@@ -48,9 +48,15 @@ OPTIONS	yes	Backend keyword + per-backend options (comma-separated)
 
 Multiple rows with the same
 .I NAME
-are merged: their
+and the same backend are merged: their
 .I HOSTS
-lists are concatenated and the backend must be the same in all rows.
+lists are concatenated.
+Multiple rows with the same
+.I NAME
+but different backends are stored additively — both backends populate the
+same nft sets simultaneously (see the
+.B MULTIPLE BACKENDS FOR ONE SET
+section below).
 
 .SS Brace expansion
 The
@@ -114,13 +120,34 @@ Minimum re-resolve interval (e.g.
 .BR 5m ,
 .BR 1h ).
 .TP
-.BI dnstype= a | aaaa
-Restrict to one address family.
+.BI dnstype= a | aaaa | srv
+Restrict to one address family, or query SRV records.
 .PP
 .RS
-Example:
+.TP
+.B dnstype=a
+Resolve A records only (IPv4).
+.TP
+.B dnstype=aaaa
+Resolve AAAA records only (IPv6).
+.TP
+.B dnstype=srv
+Query the SRV RRset for the hostname.  For each
+.I Target
+in the answer, resolve its A and AAAA records and write the resulting IPs
+into the nft set.  The SRV port is discarded \(em the set is IP-only.
+At most 32 SRV targets are processed per RRset.
+.RE
+.PP
+.RS
+Example (standard A/AAAA):
 .nf
 cdn  api.example.com www.example.com  resolver,dns=198.51.100.53,refresh=5m
+.fi
+.PP
+Example (SRV):
+.nf
+sip  _sip._udp.example.org           resolver,dnstype=srv,refresh=10m
 .fi
 .RE
 
@@ -207,6 +234,7 @@ filter=dim=val	ip-list	Provider filter dimension
 refresh=DURATION	resolver, ip-list, ip-list-plain	Re-fetch/re-resolve interval
 inotify	ip-list-plain	Watch file via inotify
 dnstype=a/aaaa	dnstap, resolver	Address family restriction
+dnstype=srv	resolver	Query SRV; resolve each target's A+AAAA
 .TE
 
 Duration syntax: integer seconds, or integer followed by
@@ -264,20 +292,58 @@ DROP     net:!nfset:trusted   fw
 .SH nft SET FLAGS
 The compiler selects
 .B flags
-based on the mix of backends:
+.I per logical set name
+based on the mix of backends feeding that name (W15 per-set flags):
 
 .TS
 l l.
-Backend mix	nft flags
+Backend mix for the name	nft flags
 _
-All dnstap / resolver	flags timeout
-All ip-list / ip-list-plain	flags interval
-Mixed DNS + ip-list	flags timeout, interval
+Only dnstap / resolver	flags timeout
+Only ip-list / ip-list-plain	flags interval
+Mix of DNS + ip-list backends	flags timeout, interval
 .TE
 
+When only one backend type feeds a set, the minimal correct flags are used.
+When multiple backends feed the same set name (additive model), the union
+flags are emitted.
+
 Default
-.BR size :
-512 for DNS-only sets; 65536 when any ip-list backend is present.
+.B size
+per name group:
+.BR 4096 " for DNS-only names;"
+.BR 262144 " when any ip-list backend is present."
+Override per entry with
+.BI size= N
+in the OPTIONS column.
+
+.SH MULTIPLE BACKENDS FOR ONE SET
+Two or more rows with the same
+.I NAME
+but different backends are stored additively.
+shorewalld routes each row to its own tracker; both trackers write to the
+same pair of nft sets simultaneously.
+.PP
+Example:
+.RS
+.nf
+# name    hosts                             options
+web       cdn.example.org,edge.example.org  resolver,refresh=5m
+web       /etc/shorewall46/web-blocks.txt   ip-list-plain,refresh=1h
+.fi
+.RE
+.PP
+The compiler emits one
+.B set nfset_web_v4
+and one
+.B set nfset_web_v6
+with
+.BR "flags timeout, interval" .
+shorewalld routes the
+.B resolver
+row to PullResolver and the
+.B ip-list-plain
+row to PlainListTracker; both write IPs into the shared nft sets.
 
 .SH RELATIONSHIP TO shorewalld
 .PP

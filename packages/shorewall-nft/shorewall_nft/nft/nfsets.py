@@ -66,10 +66,15 @@ _SIZE_MAX = 64 * 1024 * 1024  # 64M entries
 class NfSetEntry:
     """One logical named set declared in the ``nfsets`` config file.
 
-    Multiple ``nfsets`` rows with the **same** ``name`` are merged into one
-    entry: their ``hosts`` lists are concatenated (after brace expansion),
-    and options must be compatible (same backend, non-conflicting options).
-    A :exc:`ValueError` is raised on a conflicting option.
+    Multiple ``nfsets`` rows with the **same** ``name`` and the **same**
+    ``backend`` are merged into one entry: their ``hosts`` lists are
+    concatenated (after brace expansion).  Options must be compatible
+    (non-conflicting); a :exc:`ValueError` is raised on conflict.
+
+    Multiple ``nfsets`` rows with the **same** ``name`` but **different**
+    backends are stored as separate entries (N6 additive model).  The
+    resulting logical nft set receives writes from all backends
+    simultaneously.  See :func:`build_nfset_registry` for details.
     """
 
     name: str
@@ -111,13 +116,28 @@ class NfSetEntry:
 
 @dataclass
 class NfSetRegistry:
-    """Collection of all named sets declared in the ``nfsets`` config file."""
+    """Collection of all named sets declared in the ``nfsets`` config file.
+
+    Each :class:`NfSetEntry` in :attr:`entries` represents one
+    ``(name, backend)`` combination.  Multiple entries may share the same
+    ``name`` when the N6 additive model is in use (different backends for
+    the same logical nft set).  :attr:`set_names` is the set of distinct
+    logical names, regardless of backend count.
+    """
 
     entries: list[NfSetEntry] = field(default_factory=list)
-    """Ordered list of entries (insertion order from the config file)."""
+    """Ordered list of entries (insertion order from the config file).
+
+    Multiple entries with the same :attr:`~NfSetEntry.name` are possible
+    when different backends feed the same nft set.
+    """
 
     set_names: set[str] = field(default_factory=set)
-    """Logical set names already registered — used for duplicate detection."""
+    """Logical set names already registered.
+
+    Always the set of *distinct* names — not affected by how many backends
+    a single name has.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -304,8 +324,15 @@ def build_nfset_registry(lines: list) -> NfSetRegistry:
     """Parse ``ConfigLine`` rows from the ``nfsets`` file into an
     :class:`NfSetRegistry`.
 
-    Rows with the same logical ``name`` are **merged** — their ``hosts``
-    lists are concatenated.  Options must be compatible (same backend).
+    **Same name, same backend** — rows are merged: their ``hosts`` lists are
+    concatenated and options are combined (the last ``refresh=`` wins,
+    ``inotify`` accumulates, ``dns=`` servers accumulate).
+
+    **Same name, different backend** (N6 additive model) — rows are stored as
+    separate :class:`NfSetEntry` objects.  Both backends will write to the
+    same pair of nft sets (``nfset_<name>_v4`` / ``nfset_<name>_v6``)
+    simultaneously at runtime.  The emitter computes per-name flags as the
+    union of all backends for that name.
 
     Brace expansion (``{a,b}.host.org``) is applied to the ``hosts``
     column at parse time.
@@ -314,12 +341,13 @@ def build_nfset_registry(lines: list) -> NfSetRegistry:
     parser); each must have at least two columns (name, hosts).  The third
     column (options) is optional and defaults to ``"-"`` when absent.
 
-    Raises :exc:`ValueError` on unknown option tokens, conflicting backends,
-    or other parse errors.
+    Raises :exc:`ValueError` on unknown option tokens or other parse errors.
     """
+    import logging as _logging
+
     registry = NfSetRegistry()
-    # name → NfSetEntry for merging.
-    by_name: dict[str, NfSetEntry] = {}
+    # (name, backend) → NfSetEntry for same-name-same-backend merging.
+    by_name_backend: dict[tuple[str, str], NfSetEntry] = {}
 
     for line in lines:
         cols = list(line.columns) if hasattr(line, "columns") else list(line)
@@ -355,13 +383,11 @@ def build_nfset_registry(lines: list) -> NfSetRegistry:
         if opts["size"] is not None:
             parsed_size = _parse_size(opts["size"], entry_name=name)
 
-        # Merge with existing entry for same name, or create new.
-        if name in by_name:
-            entry = by_name[name]
-            if entry.backend != backend:
-                raise ValueError(
-                    f"nfsets entry {name!r}: conflicting backends "
-                    f"{entry.backend!r} vs {backend!r}")
+        key = (name, backend)
+
+        # Merge with existing entry for same (name, backend), or create new.
+        if key in by_name_backend:
+            entry = by_name_backend[key]
             entry.hosts.extend(expanded_hosts)
             entry.dns_servers.extend(opts["dns_servers"])
             if opts["filter"]:
@@ -373,7 +399,16 @@ def build_nfset_registry(lines: list) -> NfSetRegistry:
             if opts["dnstype"] is not None:
                 entry.dnstype = opts["dnstype"]
             if parsed_size is not None:
-                entry.size = parsed_size
+                if entry.size is not None and parsed_size != entry.size:
+                    _logging.debug(
+                        "nfsets entry %r backend %r: multiple size= values "
+                        "(%d, %d); using max %d",
+                        name, backend, entry.size, parsed_size,
+                        max(entry.size, parsed_size),
+                    )
+                    entry.size = max(entry.size, parsed_size)
+                else:
+                    entry.size = parsed_size
         else:
             entry = NfSetEntry(
                 name=name,
@@ -386,7 +421,7 @@ def build_nfset_registry(lines: list) -> NfSetRegistry:
                 dnstype=opts["dnstype"],
                 size=parsed_size,
             )
-            by_name[name] = entry
+            by_name_backend[key] = entry
             registry.entries.append(entry)
             registry.set_names.add(name)
 
@@ -403,31 +438,28 @@ def emit_nfset_declarations(
 ) -> list[str]:
     """Return nft script lines declaring all named sets in *registry*.
 
-    Each entry produces two sets — one for ``ipv4_addr`` and one for
-    ``ipv6_addr``.
+    **One set declaration per logical name** (per family) — not per entry.
+    When multiple entries share a name (N6 additive model), they all feed
+    the same nft set, so only a single ``set`` block is emitted per
+    ``(name, family)`` pair.
 
-    **Flags** are determined by the backend mix across **all** entries
-    (registry-wide, not per entry — TODO: per-set flags optimisation):
+    **Flags** are determined per name group (W15 per-set flags):
 
-    * All ``dnstap`` / ``resolver`` → ``flags timeout``
-    * All ``ip-list`` / ``ip-list-plain`` → ``flags interval``
-    * Mixed → ``flags timeout, interval``
+    * Group has only ``dnstap`` / ``resolver`` backends → ``flags timeout``
+    * Group has only ``ip-list`` / ``ip-list-plain`` backends → ``flags interval``
+    * Group has a mix → ``flags timeout, interval``
 
-    **Size** is resolved per entry:
+    **Size** is resolved per name group:
 
-    1. If the entry has an explicit ``size=N`` override (set via the options
-       string, accepting k/M suffixes), that value is used.
-    2. Otherwise, the backend-specific default applies:
+    1. If any entry in the group specifies an explicit ``size=N``, take the
+       maximum across all explicit overrides in the group.  A ``logging.debug``
+       note is emitted when multiple conflicting values are found.
+    2. Otherwise, if any entry in the group uses an ``ip-list`` or
+       ``ip-list-plain`` backend, use the ip-list default (**262144**).
+    3. Otherwise use the DNS default (**4096**).
 
-       * ``ip-list`` / ``ip-list-plain`` → **262144** (suitable for AWS ranges,
-         Cloudflare prefixes, and typical threat-intel feeds up to ~256k entries)
-       * ``dnstap`` / ``resolver`` → **4096** (covers typical per-instance DNS
-         allow/block lists without wasting memory)
-
-    Operators can override the default per entry by adding ``size=N`` to the
-    options string.  Valid range: 1 – 67108864 (64M).  Example::
-
-        blocklist  https://example.org/ips.txt  ip-list,size=1M
+    Valid size range: 1 – 67108864 (64M).  Accepts k/M suffixes via the
+    options string: ``size=1M`` → 1048576.
 
     .. note::
         Existing nft sets compiled with the old defaults (size 65536 for
@@ -437,46 +469,59 @@ def emit_nfset_declarations(
         ``shorewall-nft restart``).  No action needed for correctness; stale
         sets simply keep the old capacity until next restart.
     """
+    import logging as _logging
+
     if not registry.entries:
         return []
 
-    backends = {e.backend for e in registry.entries}
-    has_dns = bool(backends & _DNS_BACKENDS)
-    has_ip = bool(backends & _IPLIST_BACKENDS)
-
-    # TODO: per-set flags optimisation — a pure DNS set only needs
-    # ``flags timeout`` and a pure ip-list set only needs ``flags interval``;
-    # the mixed case over-allocates slightly.  For now the registry-wide
-    # flags_str is kept to avoid complexity.
-    if has_dns and has_ip:
-        flags_str = "timeout, interval"
-    elif has_ip:
-        flags_str = "interval"
-    else:
-        flags_str = "timeout"
-
     _DEFAULT_SIZE_IPLIST = 262144
     _DEFAULT_SIZE_DNS = 4096
+
+    # Group entries by logical name, preserving first-seen order.
+    groups: dict[str, list[NfSetEntry]] = {}
+    for entry in registry.entries:
+        groups.setdefault(entry.name, []).append(entry)
 
     lines: list[str] = []
     lines.append("")
     lines.append(f"{indent}# Named nft sets (populated by shorewalld nfsets manager)")
 
-    for entry in registry.entries:
-        if entry.size is not None:
-            set_size = entry.size
-        elif entry.backend in _IPLIST_BACKENDS:
+    for name, group_entries in groups.items():
+        # Per-name backend set → per-set flags.
+        group_backends = {e.backend for e in group_entries}
+        has_dns = bool(group_backends & _DNS_BACKENDS)
+        has_ip = bool(group_backends & _IPLIST_BACKENDS)
+        if has_dns and has_ip:
+            flags_str = "timeout, interval"
+        elif has_ip:
+            flags_str = "interval"
+        else:
+            flags_str = "timeout"
+
+        # Per-name size resolution.
+        explicit_sizes = [e.size for e in group_entries if e.size is not None]
+        if explicit_sizes:
+            if len(set(explicit_sizes)) > 1:
+                _logging.debug(
+                    "nfsets name %r: multiple size= values %r; using max %d",
+                    name, explicit_sizes, max(explicit_sizes),
+                )
+            set_size = max(explicit_sizes)
+        elif has_ip:
             set_size = _DEFAULT_SIZE_IPLIST
         else:
             set_size = _DEFAULT_SIZE_DNS
 
-        v4_name = nfset_to_set_name(entry.name, "v4")
-        v6_name = nfset_to_set_name(entry.name, "v6")
+        # Backend list for the comment (sorted for determinism).
+        backends_label = ", ".join(sorted(group_backends))
+
+        v4_name = nfset_to_set_name(name, "v4")
+        v6_name = nfset_to_set_name(name, "v6")
         for set_name, nft_type in (
             (v4_name, "ipv4_addr"),
             (v6_name, "ipv6_addr"),
         ):
-            lines.append(f"{indent}# nfset:{entry.name} ({entry.backend})")
+            lines.append(f"{indent}# nfset:{name} ({backends_label})")
             lines.append(f"{indent}set {set_name} {{")
             lines.append(f"{indent}\ttype {nft_type};")
             lines.append(f"{indent}\tflags {flags_str};")

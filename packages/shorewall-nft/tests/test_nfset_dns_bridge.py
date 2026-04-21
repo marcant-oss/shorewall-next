@@ -4,7 +4,8 @@ Tests cover:
 - DnsSetSpec with set_name field
 - DnsSetRegistry.add_with_target
 - DnsrRegistry.add_with_target
-- nfset_registry_to_dns_registries
+- DnsrGroup.dnstype (Wave 12)
+- nfset_registry_to_dns_registries (including dnstype propagation)
 
 All hostnames use example.com / example.org (RFC 2606).
 All IP addresses use RFC 5737 (198.51.100.x, 203.0.113.x) or RFC 1918.
@@ -309,3 +310,104 @@ class TestNfsetRegistryToDnsRegistries:
         assert len(dnsr_reg.groups) == 1
         group = dnsr_reg.groups["api.example.com"]
         assert "nfset_target=" in group.comment
+
+
+# ---------------------------------------------------------------------------
+# Wave 12: DnsrGroup.dnstype field
+# ---------------------------------------------------------------------------
+
+class TestDnsrGroupDnstype:
+    def test_default_is_none(self):
+        """DnsrGroup.dnstype defaults to None (A+AAAA behaviour)."""
+        from shorewall_nft.nft.dns_sets import DnsrGroup
+        g = DnsrGroup(primary_qname="api.example.com", qnames=["api.example.com"])
+        assert g.dnstype is None
+
+    def test_add_with_target_dnstype_srv_stored(self):
+        """add_with_target(..., dnstype='srv') stores the value correctly."""
+        reg = DnsrRegistry()
+        group = reg.add_with_target(
+            primary="_sip._udp.example.org",
+            qnames=["_sip._udp.example.org"],
+            set_name="nfset_sip",
+            dnstype="srv",
+        )
+        assert group.dnstype == "srv"
+        # Also verify it's stored in the registry
+        stored = reg.groups["_sip._udp.example.org"]
+        assert stored.dnstype == "srv"
+
+    def test_add_with_target_dnstype_a(self):
+        reg = DnsrRegistry()
+        group = reg.add_with_target(
+            primary="api.example.com",
+            qnames=["api.example.com"],
+            set_name="nfset_api",
+            dnstype="a",
+        )
+        assert group.dnstype == "a"
+
+    def test_add_with_target_dnstype_aaaa(self):
+        reg = DnsrRegistry()
+        group = reg.add_with_target(
+            primary="api.example.com",
+            qnames=["api.example.com"],
+            set_name="nfset_api",
+            dnstype="aaaa",
+        )
+        assert group.dnstype == "aaaa"
+
+    def test_add_with_target_dnstype_default_none(self):
+        """Omitting dnstype kwarg keeps None — backward compat."""
+        reg = DnsrRegistry()
+        group = reg.add_with_target(
+            primary="api.example.com",
+            qnames=["api.example.com"],
+            set_name="nfset_api",
+        )
+        assert group.dnstype is None
+
+
+class TestNfsetRegistryToDnsRegistriesDnstype:
+    def test_dnstype_srv_propagated(self):
+        """nfset_registry_to_dns_registries propagates entry.dnstype='srv'."""
+        entry = NfSetEntry(
+            name="sip",
+            hosts=["_sip._udp.example.org"],
+            backend="resolver",
+            dnstype="srv",
+        )
+        nfsets = _make_nfsets(entry)
+        _, dnsr_reg = nfset_registry_to_dns_registries(nfsets)
+
+        group = dnsr_reg.groups.get("_sip._udp.example.org")
+        assert group is not None, "group must be registered"
+        assert group.dnstype == "srv", (
+            f"expected dnstype='srv', got {group.dnstype!r}")
+
+    def test_dnstype_none_propagated(self):
+        """Entries with no dnstype produce groups with dnstype=None."""
+        entry = NfSetEntry(
+            name="api",
+            hosts=["api.example.com"],
+            backend="resolver",
+        )
+        nfsets = _make_nfsets(entry)
+        _, dnsr_reg = nfset_registry_to_dns_registries(nfsets)
+
+        group = dnsr_reg.groups.get("api.example.com")
+        assert group is not None
+        assert group.dnstype is None
+
+    def test_dnstype_a_propagated(self):
+        """dnstype='a' propagates through the bridge."""
+        entry = NfSetEntry(
+            name="v4only",
+            hosts=["api.example.com"],
+            backend="resolver",
+            dnstype="a",
+        )
+        nfsets = _make_nfsets(entry)
+        _, dnsr_reg = nfset_registry_to_dns_registries(nfsets)
+        group = dnsr_reg.groups["api.example.com"]
+        assert group.dnstype == "a"

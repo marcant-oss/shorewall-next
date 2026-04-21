@@ -49,8 +49,10 @@ aws-ec2   aws                           ip-list,filter=region=us-east-1
 | `HOSTS` | yes | One or more entries (space-separated within row); brace-expanded |
 | `OPTIONS` | yes | Backend keyword + options; see below |
 
-Multiple rows with the **same** `NAME` are merged: their `HOSTS` lists are
-concatenated and the backend must be identical.
+Multiple rows with the **same** `NAME` and the **same** backend are merged:
+their `HOSTS` lists are concatenated.  Multiple rows with the **same** `NAME`
+but **different** backends are stored additively — both backends populate the
+same nft sets simultaneously (see [Multiple backends for one set](#multiple-backends-for-one-set)).
 
 ---
 
@@ -107,12 +109,45 @@ control).
 | `dns=<ip>` | Use this DNS server (can repeat for multiple servers) |
 | `refresh=<duration>` | Minimum re-resolve interval (e.g. `5m`, `1h`) |
 | `dnstype=a` / `dnstype=aaaa` | Resolve only one address family |
+| `dnstype=srv` | Query SRV; resolve each target's A+AAAA into the set |
 
 **Example**:
 
 ```
 cdn  api.example.com www.example.com  resolver,dns=198.51.100.53,refresh=5m
 ```
+
+#### SRV records (`dnstype=srv`)
+
+When `dnstype=srv` is set, shorewalld queries the SRV RRset for the
+hostname instead of A/AAAA directly.  For each `Target` hostname in the
+SRV answer, shorewalld resolves both A and AAAA records and writes the
+resulting IPs into the nft sets with a TTL equal to
+`min(srv_ttl, child_ttl)` clamped to `[ttl_floor, ttl_ceil]`.
+
+**Port information from the SRV record is discarded** — the set is
+IP-only; port matching must be done separately in the `rules` file.
+
+**Example** (allow traffic to SIP servers discovered via SRV):
+
+```
+# nfsets
+# name    hosts                          options
+sip       _sip._udp.example.org           resolver,dnstype=srv,refresh=10m
+```
+
+shorewalld queries `_sip._udp.example.org SRV`, extracts target
+hostnames (e.g. `sip1.example.org`, `sip2.example.org`), resolves their
+A and AAAA records, and writes the IPs into `nfset_sip_v4` and
+`nfset_sip_v6`.
+
+**Hard cap**: at most 32 SRV targets are processed per RRset.  If a
+RRset is larger, a rate-limited warning is logged and only the first 32
+targets are resolved.
+
+**No recursive SRV**: if an SRV target's A/AAAA lookup encounters a
+CNAME, dnspython resolves the chain transparently.  A second SRV query
+is never issued on any target — resolution is exactly one level deep.
 
 ### `ip-list` — Cloud provider prefix lists
 
@@ -177,11 +212,10 @@ dynblock    exec:/usr/local/bin/gen-list         ip-list-plain,refresh=15m
 | `refresh=<duration>` | `resolver`, `ip-list`, `ip-list-plain` | Re-fetch / re-resolve interval |
 | `inotify` | `ip-list-plain` | Watch file via inotify for immediate reload |
 | `dnstype=a` / `dnstype=aaaa` | `dnstap`, `resolver` | Restrict to one address family |
+| `dnstype=srv` | `resolver` | Query SRV; resolve each target's A+AAAA into the set |
 
 **Duration syntax**: integer seconds, or numeric + unit suffix `s` / `m` / `h` / `d`.
 Examples: `300`, `5m`, `1h`, `2d`.
-
-> **Deferred**: `dnstype=srv` (SRV record resolution) is tracked but not implemented.
 
 ---
 
@@ -254,13 +288,58 @@ remain supported. Use `nfset:` when you need:
 
 ## nft set flags
 
-The compiler selects flags based on the mix of backends across all entries:
+The compiler selects flags **per logical set name** based on the mix of
+backends feeding that name:
 
-| Backend mix | nft flags |
-|-------------|-----------|
-| All `dnstap` / `resolver` | `flags timeout` |
-| All `ip-list` / `ip-list-plain` | `flags interval` |
-| Mixed DNS + ip-list | `flags timeout, interval` |
+| Backend mix for the name | nft flags |
+|--------------------------|-----------|
+| Only `dnstap` / `resolver` | `flags timeout` |
+| Only `ip-list` / `ip-list-plain` | `flags interval` |
+| Mix of DNS + ip-list backends | `flags timeout, interval` |
+
+When only one backend type feeds a name, the set is declared with the
+minimal correct flags — no over-allocation.  When multiple backends
+feed the same name (additive model), the union flags are used.
+
+## Multiple backends for one set
+
+Two or more `nfsets` rows with the **same** `NAME` but **different** backends
+are stored additively.  shorewalld routes each row to its own tracker; all
+trackers write to the same pair of nft sets (`nfset_<name>_v4` /
+`nfset_<name>_v6`) simultaneously.
+
+**Example**: a CDN set populated by both active resolver lookups and a static
+plain-text blocklist:
+
+```
+# nfsets
+# name    hosts                             options
+web       cdn.example.org,edge.example.org  resolver,refresh=5m
+web       /etc/shorewall46/web-blocks.txt   ip-list-plain,refresh=1h
+```
+
+Emitted nft set (one declaration, union flags):
+
+```nft
+set nfset_web_v4 {
+    type ipv4_addr;
+    flags timeout, interval;
+    size 262144;
+}
+set nfset_web_v6 {
+    type ipv6_addr;
+    flags timeout, interval;
+    size 262144;
+}
+```
+
+shorewalld routes the `resolver` row to `PullResolver` and the
+`ip-list-plain` row to `PlainListTracker`; both write IPs into
+`nfset_web_v4` and `nfset_web_v6`.
+
+**Size** when multiple backends are present: the ip-list default (262144) is
+used unless overridden.  If multiple rows specify `size=N`, the largest value
+wins.
 
 ## nft set sizing
 
