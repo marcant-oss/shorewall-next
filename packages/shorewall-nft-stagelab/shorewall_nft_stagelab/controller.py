@@ -248,6 +248,7 @@ async def spawn_ssh(host: Host) -> asyncio.subprocess.Process:
     """
     return await asyncio.create_subprocess_exec(
         "ssh",
+        "-A",
         host.address,
         f"{host.work_dir}/.venv/bin/python",
         "-m",
