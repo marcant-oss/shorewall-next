@@ -63,7 +63,7 @@ class Hook(Enum):
     POSTROUTING = "postrouting"
 
 
-@dataclass
+@dataclass(slots=True)
 class Match:
     """A single match condition in a rule."""
     field: str      # e.g. "iifname", "ip saddr", "tcp dport", "ct state"
@@ -76,7 +76,7 @@ class Match:
     force_side: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class Rule:
     """A single firewall rule."""
     matches: list[Match] = field(default_factory=list)
@@ -95,7 +95,7 @@ class Rule:
     source_raw: str = ""  # Trimmed raw source line for debug comments
 
 
-@dataclass
+@dataclass(slots=True)
 class Chain:
     """A chain containing rules."""
     name: str
