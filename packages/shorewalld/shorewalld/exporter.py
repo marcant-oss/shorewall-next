@@ -396,17 +396,6 @@ class ShorewalldRegistry:
 # should import from ``shorewalld.collectors`` directly.
 
 from shorewalld.collectors import (  # noqa: E402,F401
-    _CT_STAT_FIELDS,
-    _LINK_STAT_FIELDS,
-    _QDISC_FIELDS,
-    _QDISC_LABELS,
-    _SNMP_ICMP_FIELDS,
-    _SNMP_IP_FIELDS,
-    _SNMP_TCP_FIELDS,
-    _SNMP_UDP_FIELDS,
-    _SOCKSTAT_FIELDS,
-    _SOFTNET_FIELDS,
-    _TCPEXT_FIELDS,
     AddressCollector,
     ConntrackStatsCollector,
     CtCollector,
@@ -423,12 +412,38 @@ from shorewalld.collectors import (  # noqa: E402,F401
     VrrpCollector,
     VrrpInstance,
     VrrpSnmpConfig,
-    _extract_qdisc_row,
-    _format_tc_handle,
-    _neigh_state_name,
-    _parse_proc_net_snmp,
-    _parse_proc_net_snmp6,
-    _parse_proc_net_sockstat,
-    _parse_proc_net_softnet_stat,
-    _sum_ct_stats_cpu,
 )
+
+# ── Public surface ───────────────────────────────────────────────────
+#
+# Defines the stable public API of this module.  Private helpers
+# (_MetricFamily, _fmt_bucket_bound, _FileReader, …) remain importable
+# but are not part of the guaranteed public surface.  Concrete-collector
+# private symbols (_CT_STAT_FIELDS, _extract_qdisc_row, …) are no longer
+# re-exported here — import from ``shorewalld.collectors.<module>`` directly.
+
+__all__ = [
+    # ── Core infrastructure (defined in this module) ──
+    "CollectorBase",
+    "Histogram",
+    "NftScraper",
+    "ShorewalldRegistry",
+    # ── Collector classes (re-exported from shorewalld.collectors) ──
+    "AddressCollector",
+    "ConntrackStatsCollector",
+    "CtCollector",
+    "FlowtableCollector",
+    "LinkCollector",
+    "NeighbourCollector",
+    "NetstatCollector",
+    "NfsetsCollector",
+    "NftCollector",
+    "QdiscCollector",
+    "SnmpCollector",
+    "SockstatCollector",
+    "SoftnetCollector",
+    "VrrpCollector",
+    # ── Public dataclasses consumed by tests / integrations ──
+    "VrrpInstance",
+    "VrrpSnmpConfig",
+]

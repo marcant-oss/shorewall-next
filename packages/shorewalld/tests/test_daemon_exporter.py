@@ -12,6 +12,13 @@ from typing import Any
 
 import pytest
 
+from shorewalld.collectors.conntrack import _CT_STAT_FIELDS, _sum_ct_stats_cpu
+from shorewalld.collectors.link import _LINK_STAT_FIELDS
+from shorewalld.collectors.neighbour import _neigh_state_name
+from shorewalld.collectors.qdisc import _extract_qdisc_row, _format_tc_handle, _QDISC_FIELDS
+from shorewalld.collectors.snmp import _parse_proc_net_snmp, _parse_proc_net_snmp6
+from shorewalld.collectors.sockstat import _parse_proc_net_sockstat
+from shorewalld.collectors.softnet import _parse_proc_net_softnet_stat
 from shorewalld.exporter import (
     CollectorBase,
     CtCollector,
@@ -24,19 +31,8 @@ from shorewalld.exporter import (
     SnmpCollector,
     SockstatCollector,
     SoftnetCollector,
-    _CT_STAT_FIELDS,
-    _extract_qdisc_row,
     _fmt_bucket_bound,
-    _format_tc_handle,
-    _LINK_STAT_FIELDS,
     _MetricFamily,
-    _QDISC_FIELDS,
-    _neigh_state_name,
-    _parse_proc_net_snmp,
-    _parse_proc_net_snmp6,
-    _parse_proc_net_sockstat,
-    _parse_proc_net_softnet_stat,
-    _sum_ct_stats_cpu,
 )
 from shorewall_nft.nft.netlink import NftError
 
