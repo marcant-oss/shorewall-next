@@ -208,7 +208,7 @@ Normally, the configuration files for Shorewall are kept in /etc/shorewall/ and 
 
 # More information about IPv6
 
-I strongly suggest that you read the [Linux IPv6 HOWTO](http://tldp.org/HOWTO/Linux+IPv6-HOWTO/). The [6to4 Tunnels](6to4.md) page also includes instructions for setting up your first IPv6 environment.
+I strongly suggest that you read the [Linux IPv6 HOWTO](http://tldp.org/HOWTO/Linux+IPv6-HOWTO/). The 6to4 Tunnels article (not ported to shorewall-nft) also includes instructions for setting up your first IPv6 environment; see [GenericTunnels.md](GenericTunnels.md) for current tunnel configuration.
 
 In addition to the Linux IPv6 HOWTO, I have found the following two books to be useful:
 

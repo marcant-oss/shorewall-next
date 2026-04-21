@@ -403,6 +403,6 @@ nft list set inet shorewall nfset_web_v4
 ## Cross-links
 
 - [shorewalld operator reference](../shorewalld/index.md)
-- [dynamic sets (ipset-based)](dynamic.md)
+- [dynamic sets (ipset-based)](Dynamic.md)
 - [ipsets](ipsets.md)
 - [docs/index.md](../index.md)
