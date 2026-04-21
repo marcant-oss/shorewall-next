@@ -20,7 +20,10 @@
 #   tools/setup-remote-test-host.sh root@host --role stagelab-agent
 #   tools/setup-remote-test-host.sh root@host --role stagelab-agent-dpdk
 #   tools/setup-remote-test-host.sh root@host --check-trex-updates
+#   tools/setup-remote-test-host.sh root@host --fw-host root@fw-primary
 #
+# --fw-host HOST setup passwordless SSH from REMOTE to HOST (firewall)
+#               Idempotent: checks if key/auth already configured
 # --role ROLE   choose bootstrap role:
 #               "default"              simlab/simulate (AlmaLinux 10 or Debian/grml)
 #               "stagelab-agent"       adds iperf3/nmap/ethtool + high-pps sysctls
@@ -55,6 +58,7 @@ DEPLOY_JSON="$DEPLOY_JSON_DEFAULT"
 REMOTE=""
 ROLE="default"
 CHECK_TREX_UPDATES=0
+FW_HOST=""  # Optional: firewall host for SSH key setup (e.g., root@fw-primary)
 
 # TRex installation pin. Update TREX_VERSION_LATEST_KNOWN when a newer
 # release is verified to work. Set STAGELAB_TREX_VERSION in the env to
@@ -74,9 +78,10 @@ while [ $# -gt 0 ]; do
         --simulate-src)      SIMULATE_SRC="$2"; shift 2 ;;
         --deploy-json)       DEPLOY_JSON="$2"; shift 2 ;;
         --role)              ROLE="$2"; shift 2 ;;
+        --fw-host)           FW_HOST="$2"; shift 2 ;;
         --check-trex-updates) CHECK_TREX_UPDATES=1; shift ;;
         -h|--help)
-            sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -91,7 +96,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$REMOTE" ] || { echo "usage: $0 user@host [--simulate-src DIR] [--role default|stagelab-agent|stagelab-agent-dpdk] [--check-trex-updates]" >&2; exit 1; }
+[ -n "$REMOTE" ] || { echo "usage: $0 user@host [--simulate-src DIR] [--role default|stagelab-agent|stagelab-agent-dpdk] [--fw-host HOST] [--check-trex-updates]" >&2; exit 1; }
 
 if [ "${CHECK_TREX_UPDATES}" = "1" ]; then
     # shellcheck source=tools/lib/trex-install.sh
@@ -672,6 +677,62 @@ if [ -d /root/simulate-data/etc/shorewall/plugins ]; then
 fi
 echo "merged: $(find /etc/shorewall46 -maxdepth 1 -type f | wc -l) files"
 '
+
+# ──────────────────────────────────────────────────────────────────
+# SSH key setup to firewall host (idempotent)
+# ──────────────────────────────────────────────────────────────────
+if [ -n "$FW_HOST" ]; then
+    info "setting up passwordless SSH from $REMOTE to $FW_HOST (idempotent)"
+    # Check if key already exists on remote
+    _key_exists=$(ssh "$REMOTE" '
+        if [ -f ~/.ssh/id_ed25519 ]; then
+            if ssh -o BatchMode=yes -o ConnectTimeout=3 "'"$FW_HOST"'" "echo ok" >/dev/null 2>&1; then
+                echo "already_configured"
+            else
+                echo "key_exists_no_auth"
+            fi
+        else
+            echo "no_key"
+        fi
+    ' 2>/dev/null || echo "no_key")
+
+    case "$_key_exists" in
+        already_configured)
+            info "SSH key to $FW_HOST already configured"
+            ;;
+        key_exists_no_auth)
+            info "SSH key exists but no auth to $FW_HOST, running ssh-copy-id..."
+            ssh "$REMOTE" 'ssh-copy-id -o ConnectTimeout=5 -o StrictHostKeyChecking=no "'"$FW_HOST"'" 2>/dev/null || {
+                echo "ERROR: ssh-copy-id to $FW_HOST failed" >&2
+                echo "  Ensure password authentication is enabled or run manually:" >&2
+                echo "  ssh root@tester01 'ssh-copy-id root@fw-primary'" >&2
+                exit 1
+            }
+            info "SSH key copied to $FW_HOST"
+            ;;
+        no_key)
+            info "No SSH key on $REMOTE, generating ed25519 key..."
+            ssh "$REMOTE" '
+                ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519 </dev/null
+                ssh-copy-id -o ConnectTimeout=5 -o StrictHostKeyChecking=no "'"$FW_HOST"'" 2>/dev/null || {
+                    echo "ERROR: ssh-copy-id to $FW_HOST failed after keygen" >&2
+                    exit 1
+                }
+            '
+            info "SSH key generated and copied to $FW_HOST"
+            ;;
+        *)
+            info "SSH key setup skipped ($_key_exists)"
+            ;;
+    esac
+
+    # Verify connection
+    if ssh "$REMOTE" "ssh -o BatchMode=yes -o ConnectTimeout=3 "'"$FW_HOST"'" 'echo ok' >/dev/null 2>&1"; then
+        info "SSH to $FW_HOST verified"
+    else
+        echo "WARNING: SSH to $FW_HOST verification failed" >&2
+    fi
+fi
 
 info "done. next steps on the remote:"
 info "  # run full test suite (fully isolated — cannot crash the host network):"
