@@ -22,8 +22,8 @@ from typing import Any
 _libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
 _CLONE_NEWNET = 0x40000000
 
-from shorewall_nft_stagelab import metrics as _metrics
-from shorewall_nft_stagelab import (
+from shorewall_nft_stagelab import metrics as _metrics  # noqa: E402
+from shorewall_nft_stagelab import (  # noqa: E402
     topology_dpdk,
     trafgen_iperf3,
     trafgen_nmap,
@@ -32,7 +32,7 @@ from shorewall_nft_stagelab import (
     trafgen_trex,
     tuning,
 )
-from shorewall_nft_stagelab.ipc import (
+from shorewall_nft_stagelab.ipc import (  # noqa: E402
     AckMessage,
     ErrorMessage,
     JsonLineChannel,
@@ -45,14 +45,14 @@ from shorewall_nft_stagelab.ipc import (
     decode,
     new_id,
 )
-from shorewall_nft_stagelab.topology_bridge import (
+from shorewall_nft_stagelab.topology_bridge import (  # noqa: E402
     BridgeMemberSpec,
     ProbeBridgeHandle,
     ProbeBridgeSpec,
     setup_probe_bridge,
     teardown_probe_bridge,
 )
-from shorewall_nft_stagelab.topology_native import (
+from shorewall_nft_stagelab.topology_native import (  # noqa: E402
     NativeEndpointHandle,
     NativeEndpointSpec,
     setup_native_endpoint,

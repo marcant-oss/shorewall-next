@@ -41,12 +41,20 @@ class AgentCommand:
 
     The controller resolves ``endpoint_name`` → host for transport.
     Scenarios do not know transport details.
+
+    ``concurrent`` marks commands that must run *in parallel* with the other
+    commands on the same host rather than sequentially.  Typical use:
+    sidecar pollers (``poll_conntrack``) that must overlap with the main
+    traffic-gen command on the same host.  The controller groups all
+    concurrent commands for a host into a single ``asyncio.gather`` call
+    that runs alongside the sequential batch for that host.
     """
 
     endpoint_name: str
     kind: str   # "run_iperf3_server" | "run_iperf3_client" | "run_tcpkali" |
                 # "run_nmap" | "send_probe" | "collect_oracle_verdict"
     spec: dict
+    concurrent: bool = False  # if True, run in parallel with sibling commands on the same host
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +153,7 @@ class ThroughputRunner(Scenario):
                     "interval_s": 1.0,
                     "_conntrack_sidecar": True,
                 },
+                concurrent=True,  # must overlap with the iperf3 client
             )
             cmds.append(sidecar_cmd)
 
@@ -292,6 +301,7 @@ class ConnStormRunner(Scenario):
                     "interval_s": 1.0,
                     "_conntrack_sidecar": True,
                 },
+                concurrent=True,  # must overlap with the pyconn storm
             )
             cmds.append(sidecar_cmd)
 

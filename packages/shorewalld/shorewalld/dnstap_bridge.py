@@ -96,6 +96,22 @@ class TrackerBridge:
         """
         self._default_netns = netns
 
+    def has_qname_bytes(self, qname_lower: bytes) -> bool:
+        """Return ``True`` if *qname_lower* (lowercase bytes from the peek)
+        is registered in the tracker for at least one address family.
+
+        Used by ``decode_pbdns_frame``\'s Pass-0 pre-filter to skip the full
+        ``ParseFromString`` for frames whose qname is not in the allowlist.
+        The argument must already be lowercased (the peek normalises it).
+
+        This is intentionally a pure boolean check with no side-effects:
+        no counter increments, no lock beyond the tracker\'s own internal
+        lock on ``set_id_for``.
+        """
+        qn = canonical_qname(qname_lower.decode("ascii", errors="replace"))
+        return (self._tracker.set_id_for(qn, FAMILY_V4) is not None
+                or self._tracker.set_id_for(qn, FAMILY_V6) is not None)
+
     def early_filter_from_wire(
         self, wire: memoryview | bytes
     ) -> str | None:

@@ -468,6 +468,8 @@ class StagelabController:
                 _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 60.0
             elif cmd.kind in ("run_iperf3_client", "run_tcpkali"):
                 _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 30.0
+            elif cmd.kind == "poll_conntrack":
+                _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 30.0
             else:
                 _cmd_timeout = 120.0
             try:
@@ -490,11 +492,111 @@ class StagelabController:
                         host_name, type(response).__name__)
             return idx, {"ok": False, "error": "unexpected response"}
 
+        async def _run_conntrack_poll_local(
+            idx: int, cmd
+        ) -> tuple[int, dict]:
+            """Run poll_conntrack via SSH directly from the controller.
+
+            This avoids going through the agent IPC channel (which is
+            strictly request-response and cannot handle concurrent commands
+            on the same host).  The controller SSHes to ``fw_host`` directly
+            using ``-A`` agent-forwarding — identical to what the agent does,
+            but executed here so it runs concurrently with the scenario.
+            """
+            spec = cmd.spec
+            fw_host: str = spec["fw_host"]
+            duration_s: float = float(spec.get("duration_s", 0))
+            interval_s: float = float(spec.get("interval_s", 1.0))
+
+            peak = 0
+            samples: list[int] = []
+            deadline = asyncio.get_event_loop().time() + duration_s
+
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "ssh", "-A", "-o", "BatchMode=yes",
+                        "-o", "ConnectTimeout=5",
+                        fw_host, "conntrack -L 2>/dev/null | wc -l",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    out_bytes, _ = await asyncio.wait_for(
+                        proc.communicate(), timeout=10.0
+                    )
+                    count = int(out_bytes.strip())
+                    samples.append(count)
+                    if count > peak:
+                        peak = count
+                    log.debug("conntrack poll: fw=%r count=%d peak=%d", fw_host, count, peak)
+                except Exception:  # noqa: BLE001 — soft-fail; never abort the scenario
+                    pass
+                await asyncio.sleep(interval_s)
+
+            log.info(
+                "conntrack sidecar done: fw=%r peak=%d samples=%d",
+                fw_host, peak, len(samples),
+            )
+            return idx, {
+                "ok": True,
+                "tool": "poll_conntrack",
+                "peak": peak,
+                "samples_count": len(samples),
+                "_conntrack_sidecar": True,
+            }
+
         async def _run_host_group(group: list[tuple[int, object]]) -> list[tuple[int, dict]]:
-            out: list[tuple[int, dict]] = []
-            for idx, cmd in group:
-                out.append(await _run_one(idx, cmd))
-            return out
+            """Run a host's commands sequentially.
+
+            Commands marked ``concurrent=True`` (e.g. poll_conntrack sidecars)
+            are extracted and run as a parallel asyncio task alongside the
+            sequential batch.  For poll_conntrack specifically, the controller
+            runs SSH directly rather than dispatching through the agent IPC
+            (which is strictly request-response and cannot multiplex concurrent
+            commands on the same connection).
+            """
+            from .scenarios import AgentCommand
+
+            seq: list[tuple[int, object]] = []
+            concurrent_cmds: list[tuple[int, object]] = []
+            for pair in group:
+                cmd = pair[1]
+                if isinstance(cmd, AgentCommand) and getattr(cmd, "concurrent", False):
+                    concurrent_cmds.append(pair)
+                else:
+                    seq.append(pair)
+
+            async def _run_sequential() -> list[tuple[int, dict]]:
+                out: list[tuple[int, dict]] = []
+                for idx, cmd in seq:
+                    out.append(await _run_one(idx, cmd))
+                return out
+
+            async def _run_concurrent_sidecars() -> list[tuple[int, dict]]:
+                tasks = []
+                for idx, cmd in concurrent_cmds:
+                    if hasattr(cmd, "kind") and cmd.kind == "poll_conntrack":
+                        tasks.append(_run_conntrack_poll_local(idx, cmd))
+                    else:
+                        # Unknown concurrent kind — fall back to sequential dispatch.
+                        tasks.append(_run_one(idx, cmd))
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                out: list[tuple[int, dict]] = []
+                for i, res in enumerate(results):
+                    if isinstance(res, Exception):
+                        idx = concurrent_cmds[i][0]
+                        out.append((idx, {"ok": False, "error": str(res)}))
+                    else:
+                        out.append(res)  # type: ignore[arg-type]
+                return out
+
+            if not concurrent_cmds:
+                return await _run_sequential()
+
+            seq_task = asyncio.create_task(_run_sequential())
+            conc_task = asyncio.create_task(_run_concurrent_sidecars())
+            seq_results, conc_results = await asyncio.gather(seq_task, conc_task)
+            return seq_results + conc_results
 
         for scenario_cfg in self._config.scenarios:
             runner = build_runner(scenario_cfg)

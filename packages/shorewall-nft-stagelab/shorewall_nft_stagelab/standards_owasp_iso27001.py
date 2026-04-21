@@ -46,6 +46,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "FW-3",
         "Default-deny policy verification",
     ),
+    "owasp-fw-3-default-deny-ipv6": (
+        "owasp",
+        "FW-3",
+        "Default-deny policy verification — IPv6",
+    ),
 
     # FW-4: Evasion / bypass — packet-level techniques that bypass stateless
     # ACLs (fragmentation, overlapping offsets, TTL tricks).
@@ -55,6 +60,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "owasp",
         "FW-4",
         "Evasion and bypass probe suite",
+    ),
+    "owasp-fw-4-evasion-bypass-ipv6": (
+        "owasp",
+        "FW-4",
+        "Evasion and bypass probe suite — IPv6 (extension headers, fragmentation)",
     ),
 
     # FW-5: Stateful inspection — verify that the firewall correctly
@@ -105,6 +115,11 @@ TEST_ID_FRAGMENT: dict[str, tuple[str, str, str]] = {
         "iso-27001",
         "A.13.1.1",
         "Network controls (segmentation and access policy)",
+    ),
+    "iso27001-a-13-1-1-network-controls-ipv6": (
+        "iso-27001",
+        "A.13.1.1",
+        "Network controls — IPv6 (dual-stack segmentation and access policy)",
     ),
 
     # A.13.1.2: Security of network services — identify and include security
