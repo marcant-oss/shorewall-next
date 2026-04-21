@@ -4,11 +4,17 @@ One ``IPRoute(netns=…).get_links()`` dump per scrape feeds every metric
 in :data:`_LINK_STAT_FIELDS` plus ``IFLA_CARRIER_CHANGES`` (link up/down
 event count) and ``IFLA_MTU`` (current MTU) — no extra netlink
 round-trips for the expanded counter surface.
+
+The ``IPRoute`` handle is obtained from the shared cache in
+:mod:`shorewalld.collectors._shared` (``get_rtnl``). One handle per
+netns is kept alive across scrapes; no per-scrape fork overhead.
 """
 
 from __future__ import annotations
 
 from shorewalld.exporter import CollectorBase, _MetricFamily
+
+from ._shared import close_rtnl, get_rtnl
 
 # Every field kernel ``rtnl_link_stats64`` exposes that we surface as
 # its own prometheus metric. Order is the kernel struct order so the
@@ -102,24 +108,16 @@ class LinkCollector(CollectorBase):
             return [*families.values(), oper, carrier_changes, mtu]
 
         try:
-            from pyroute2 import IPRoute  # type: ignore[import-untyped]
+            ipr = get_rtnl(self.netns or None)
         except ImportError:
             return _all()
-
-        kwargs = {"netns": self.netns} if self.netns else {}
-        try:
-            ipr = IPRoute(**kwargs)
         except Exception:
             return _all()
         try:
             links = ipr.get_links()
         except Exception:
+            close_rtnl(self.netns or None)
             return _all()
-        finally:
-            try:
-                ipr.close()
-            except Exception:
-                pass
 
         oper_map = {"UP": 1.0, "DOWN": 0.0}
 

@@ -254,6 +254,10 @@ class Daemon:
             list(self._profile_builder.profiles),
         )
 
+        # Register the rtnl-handle-count gauge (process-wide singleton).
+        from .collectors._shared import RtnlHandlesCollector
+        self._registry.add(RtnlHandlesCollector())  # type: ignore[arg-type]
+
         # Optional VRRP D-Bus collector (opt-in, requires jeepney).
         if self.enable_vrrp_collector:
             from .collectors.vrrp import VrrpCollector as _VrrpCollector
@@ -1249,6 +1253,14 @@ class Daemon:
             except Exception:
                 log.exception("profile teardown failed")
             self._profile_builder = None
+
+        # 4a. Close all cached pyroute2 IPRoute handles (link/qdisc/
+        #     neighbour/address collectors share one handle per netns).
+        try:
+            from .collectors._shared import close_all_rtnl
+            close_all_rtnl()
+        except Exception:
+            log.debug("close_all_rtnl on shutdown failed, ignoring")
 
         # 5. Wake the main loop so run() returns.
         if self._stop_event is not None and not self._stop_event.is_set():

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from shorewalld.exporter import CollectorBase, _MetricFamily
 
-from ._shared import _AF_NAMES
+from ._shared import _AF_NAMES, close_rtnl, get_rtnl
 
 
 class AddressCollector(CollectorBase):
@@ -23,25 +23,17 @@ class AddressCollector(CollectorBase):
             ["netns", "iface", "family"])
 
         try:
-            from pyroute2 import IPRoute  # type: ignore[import-untyped]
+            ipr = get_rtnl(self.netns or None)
         except ImportError:
             return [addrs]
-
-        kwargs = {"netns": self.netns} if self.netns else {}
-        try:
-            ipr = IPRoute(**kwargs)
         except Exception:
             return [addrs]
         try:
             links = ipr.get_links()
             rows = ipr.get_addr()
         except Exception:
+            close_rtnl(self.netns or None)
             return [addrs]
-        finally:
-            try:
-                ipr.close()
-            except Exception:
-                pass
 
         idx_to_name: dict[int, str] = {}
         for link in links:

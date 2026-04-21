@@ -11,6 +11,8 @@ from typing import Any
 
 from shorewalld.exporter import CollectorBase, _MetricFamily
 
+from ._shared import close_rtnl, get_rtnl
+
 
 def _format_tc_handle(raw: int) -> str:
     """Render a u32 tc handle as ``major:minor`` hex, or a reserved name.
@@ -142,25 +144,17 @@ class QdiscCollector(CollectorBase):
             return list(families.values())
 
         try:
-            from pyroute2 import IPRoute  # type: ignore[import-untyped]
+            ipr = get_rtnl(self.netns or None)
         except ImportError:
             return _all()
-
-        kwargs = {"netns": self.netns} if self.netns else {}
-        try:
-            ipr = IPRoute(**kwargs)
         except Exception:
             return _all()
         try:
             links = ipr.get_links()
             qdiscs = ipr.get_qdiscs()
         except Exception:
+            close_rtnl(self.netns or None)
             return _all()
-        finally:
-            try:
-                ipr.close()
-            except Exception:
-                pass
 
         idx_to_name: dict[int, str] = {}
         for link in links:
