@@ -78,6 +78,11 @@ DEFAULT_JITTER = 0.1            # ±10% jitter on re-resolve deadline
 DEFAULT_CONCURRENCY = 8         # max in-flight resolves
 DEFAULT_DNS_TIMEOUT = 3.0       # per-query DNS lifetime (seconds)
 
+# Hard cap on the number of SRV targets processed per RRset.
+# Prevents a pathologically large SRV record set from triggering
+# O(N) A/AAAA sub-queries that could overload the resolver.
+MAX_SRV_TARGETS = 32
+
 
 @dataclass(order=True)
 class _Entry:
@@ -285,9 +290,11 @@ class PullResolver:
         group = self._primaries.get(primary_qname)
         if group is None:
             return []
+        dnstype = getattr(group, "dnstype", None)
         async with self._sem:
             tasks = [
-                self._resolve_qname(q, group.ttl_floor, group.ttl_ceil)
+                self._resolve_qname(q, group.ttl_floor, group.ttl_ceil,
+                                    dnstype=dnstype)
                 for q in group.qnames
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -402,8 +409,10 @@ class PullResolver:
         Returns the monotonic timestamp for the next resolve.
         """
         t_start = time.monotonic()
+        dnstype = getattr(group, "dnstype", None)
         tasks = [
-            self._resolve_qname(q, group.ttl_floor, group.ttl_ceil)
+            self._resolve_qname(q, group.ttl_floor, group.ttl_ceil,
+                                dnstype=dnstype)
             for q in group.qnames
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -477,10 +486,34 @@ class PullResolver:
         qname: str,
         ttl_floor: int,
         ttl_ceil: int,
+        *,
+        dnstype: str | None = None,
     ) -> list[tuple[bytes, int]]:
-        """Resolve A and AAAA; return ``[(ip_bytes, clamped_ttl), …]``."""
+        """Resolve and return ``[(ip_bytes, clamped_ttl), …]``.
+
+        Dispatch by *dnstype*:
+
+        * ``None`` / ``"a+aaaa"`` → query A and AAAA (default behaviour).
+        * ``"a"`` → query A only.
+        * ``"aaaa"`` → query AAAA only.
+        * ``"srv"`` → query SRV; for each target resolve A+AAAA recursively
+          (one level deep); collect all IPs.  TTL = ``min(srv_ttl, child_ttl)``
+          clamped to ``[ttl_floor, ttl_ceil]``.
+        """
+        if dnstype == "srv":
+            return await self._resolve_qname_srv(qname, ttl_floor, ttl_ceil)
+
+        # Determine which address families to query.
+        if dnstype == "a":
+            families: list[tuple[str, int]] = [("A", 4)]
+        elif dnstype == "aaaa":
+            families = [("AAAA", 6)]
+        else:
+            # None or any unrecognised value → both families.
+            families = [("A", 4), ("AAAA", 6)]
+
         results: list[tuple[bytes, int]] = []
-        for rdtype, af in (("A", 4), ("AAAA", 6)):
+        for rdtype, af in families:
             try:
                 answer = await self._resolver.resolve(qname, rdtype)
                 raw_ttl = answer.rrset.ttl if answer.rrset else ttl_floor
@@ -504,6 +537,83 @@ class PullResolver:
                     log, ("dns_exception", qname, rdtype),
                     "pull_resolver: %s %s query failed: %s",
                     qname, rdtype, exc,
+                )
+        return results
+
+    async def _resolve_qname_srv(
+        self,
+        qname: str,
+        ttl_floor: int,
+        ttl_ceil: int,
+    ) -> list[tuple[bytes, int]]:
+        """Query SRV for *qname*; resolve each target's A+AAAA.
+
+        Returns ``[(ip_bytes, clamped_ttl), …]`` for all IPs across all
+        targets.  Per-target failures are logged at DEBUG and skipped so
+        a single unreachable target does not abort the whole group.
+
+        Hard cap: at most :data:`MAX_SRV_TARGETS` targets are processed.
+        A rate-limited warning is emitted when the RRset is truncated.
+        """
+        # Step 1: resolve the SRV RRset.
+        try:
+            srv_answer = await self._resolver.resolve(qname, "SRV")
+        except dns.resolver.NXDOMAIN:
+            self.metrics.nxdomain_total += 1
+            self._rate_limiter.info(
+                log, ("nxdomain", qname, "SRV"),
+                "pull_resolver: %s NXDOMAIN (SRV)", qname,
+            )
+            return []
+        except dns.resolver.NoAnswer:
+            return []
+        except dns.exception.DNSException as exc:
+            self._rate_limiter.warn(
+                log, ("dns_exception", qname, "SRV"),
+                "pull_resolver: %s SRV query failed: %s", qname, exc,
+            )
+            return []
+
+        srv_ttl = srv_answer.rrset.ttl if srv_answer.rrset else ttl_floor
+
+        # Step 2: collect target hostnames from SRV RRs (dedup, cap at MAX).
+        targets: list[str] = []
+        seen_targets: set[str] = set()
+        rdata_list = list(srv_answer)
+        if len(rdata_list) > MAX_SRV_TARGETS:
+            self._rate_limiter.warn(
+                log, ("srv_cap", qname),
+                "pull_resolver: %s SRV RRset has %d targets; "
+                "processing first %d only (MAX_SRV_TARGETS=%d)",
+                qname, len(rdata_list), MAX_SRV_TARGETS, MAX_SRV_TARGETS,
+            )
+            rdata_list = rdata_list[:MAX_SRV_TARGETS]
+        for rdata in rdata_list:
+            target_str = rdata.target.to_text(omit_final_dot=True).lower()
+            if target_str not in seen_targets:
+                seen_targets.add(target_str)
+                targets.append(target_str)
+
+        if not targets:
+            return []
+
+        # Step 3: resolve each target's A + AAAA.
+        results: list[tuple[bytes, int]] = []
+        for target in targets:
+            try:
+                child_ips = await self._resolve_qname(
+                    target, ttl_floor, ttl_ceil,
+                    dnstype=None,  # A+AAAA; no second SRV hop
+                )
+                for ip_bytes, child_ttl in child_ips:
+                    # TTL = min of SRV TTL and child A/AAAA TTL.
+                    combined = max(ttl_floor, min(
+                        min(srv_ttl, child_ttl), ttl_ceil))
+                    results.append((ip_bytes, combined))
+            except Exception as exc:  # noqa: BLE001
+                log.debug(
+                    "pull_resolver: SRV target %s (from %s) resolve failed: %s",
+                    target, qname, exc,
                 )
         return results
 

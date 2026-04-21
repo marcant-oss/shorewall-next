@@ -196,13 +196,30 @@ class TestMergingSameNameRows:
         assert "a.example.org" in e.hosts
         assert "b.example.org" in e.hosts
 
-    def test_conflicting_backends_raises(self):
+    def test_same_name_different_backends_additive(self):
+        """N6: same name, different backends → two separate entries, not an error."""
         rows = _lines(
-            ("mycdn", "a.example.org", "dnstap"),
-            ("mycdn", "b.example.org", "resolver"),
+            ("web", "cdn.example.org,edge.example.org", "resolver,refresh=5m"),
+            ("web", "/etc/shorewall46/web-blocks.txt", "ip-list-plain,refresh=1h"),
         )
-        with pytest.raises(ValueError, match="conflicting backends"):
-            build_nfset_registry(rows)
+        reg = build_nfset_registry(rows)
+        # Two distinct entries, both named "web".
+        assert len(reg.entries) == 2
+        assert reg.set_names == {"web"}
+        backends = {e.backend for e in reg.entries}
+        assert backends == {"resolver", "ip-list-plain"}
+
+    def test_same_name_different_backends_each_has_correct_hosts(self):
+        """N6: each entry holds only its own hosts."""
+        rows = _lines(
+            ("web", "cdn.example.org", "resolver,refresh=5m"),
+            ("web", "/etc/shorewall46/web-blocks.txt", "ip-list-plain"),
+        )
+        reg = build_nfset_registry(rows)
+        resolver_entry = next(e for e in reg.entries if e.backend == "resolver")
+        plain_entry = next(e for e in reg.entries if e.backend == "ip-list-plain")
+        assert "cdn.example.org" in resolver_entry.hosts
+        assert "/etc/shorewall46/web-blocks.txt" in plain_entry.hosts
 
     def test_dns_servers_accumulate_across_rows(self):
         rows = _lines(
@@ -285,9 +302,15 @@ class TestEmitNfsetDeclarations:
         assert "flags interval;" in out
         assert "flags timeout" not in out
 
-    def test_mixed_flags_timeout_interval(self):
-        reg = self._reg(self._make_entry("a", "dnstap"),
-                        self._make_entry("b", "ip-list"))
+    def test_mixed_flags_timeout_interval_same_name(self):
+        # W15: mixed flags only apply when one logical name has both dns and
+        # ip-list backends (N6 additive model).  Two separate names each get
+        # their own flags.
+        entries = [
+            self._make_entry("mixed", "dnstap"),
+            self._make_entry("mixed", "ip-list"),
+        ]
+        reg = NfSetRegistry(entries=entries, set_names={"mixed"})
         out = "\n".join(emit_nfset_declarations(reg))
         assert "flags timeout, interval;" in out
 
@@ -498,14 +521,115 @@ class TestEmitNfsetDeclarationsExplicitSize:
         out = "\n".join(emit_nfset_declarations(reg))
         assert "size 4096;" in out
 
-    def test_mixed_registry_global_flags_unchanged(self):
-        # Flags must remain registry-wide (not per-set) — global logic unchanged.
+    def test_mixed_registry_each_set_gets_own_flags(self):
+        # W15: flags are per-name group, so pure-dns names get timeout only,
+        # pure-iplist names get interval only (two different names here).
         reg = self._reg(
             self._make_entry("a", "dnstap"),
             self._make_entry("b", "ip-list"),
         )
         out = "\n".join(emit_nfset_declarations(reg))
+        # "a" is DNS-only → timeout; "b" is ip-list-only → interval.
+        assert "flags timeout;" in out
+        assert "flags interval;" in out
+        # No mixed flags when names are separate.
+        assert "flags timeout, interval;" not in out
+
+
+# ---------------------------------------------------------------------------
+# W15 per-set flags + N6 additive multi-backend emit
+# ---------------------------------------------------------------------------
+
+
+class TestPerSetFlagsAndMultiBackendEmit:
+    """W15: flags computed per logical name group; N6: one set per (name, family)."""
+
+    def _make_entry(self, name, backend, size=None) -> NfSetEntry:
+        return NfSetEntry(
+            name=name, hosts=["h.example.org"], backend=backend, size=size
+        )
+
+    def _reg(self, *entries: NfSetEntry) -> NfSetRegistry:
+        return NfSetRegistry(entries=list(entries),
+                             set_names={e.name for e in entries})
+
+    def test_per_set_dns_only_flags_timeout(self):
+        """Pure DNS name → flags timeout; pure ip-list name → flags interval."""
+        reg = self._reg(
+            self._make_entry("dnsname", "dnstap"),
+            self._make_entry("ipname", "ip-list"),
+        )
+        out = "\n".join(emit_nfset_declarations(reg))
+        # DNS set has timeout; ip-list set has interval — no mixed.
+        assert "flags timeout;" in out
+        assert "flags interval;" in out
+        assert "flags timeout, interval;" not in out
+
+    def test_per_set_mixed_backend_same_name_flags_timeout_interval(self):
+        """N6: same name, different backends → mixed flags on the shared set."""
+        entries = [
+            self._make_entry("web", "resolver"),
+            self._make_entry("web", "ip-list-plain"),
+        ]
+        # Entries share the same name — must share set_names too.
+        reg = NfSetRegistry(entries=entries, set_names={"web"})
+        out = "\n".join(emit_nfset_declarations(reg))
         assert "flags timeout, interval;" in out
+        # Exactly one v4 and one v6 declaration (not two of each).
+        assert out.count("nfset_web_v4") == 1
+        assert out.count("nfset_web_v6") == 1
+
+    def test_one_declaration_per_name_family_for_multi_backend(self):
+        """N6 via build_nfset_registry: two rows same name different backends
+        produce one set declaration per family."""
+        rows = _lines(
+            ("web", "cdn.example.org", "resolver,refresh=5m"),
+            ("web", "/etc/shorewall46/web-blocks.txt", "ip-list-plain,refresh=1h"),
+        )
+        reg = build_nfset_registry(rows)
+        out = "\n".join(emit_nfset_declarations(reg))
+        # Only one v4 and one v6 set declared.
+        assert out.count("nfset_web_v4") == 1
+        assert out.count("nfset_web_v6") == 1
+        # Mixed flags because name group contains both dns and ip-list backends.
+        assert "flags timeout, interval;" in out
+
+    def test_multi_backend_size_takes_max_of_explicit(self):
+        """When two entries for same name have different explicit sizes, take max."""
+        entries = [
+            self._make_entry("web", "resolver", size=4096),
+            self._make_entry("web", "ip-list-plain", size=262144),
+        ]
+        reg = NfSetRegistry(entries=entries, set_names={"web"})
+        out = "\n".join(emit_nfset_declarations(reg))
+        assert "size 262144;" in out
+        assert "size 4096;" not in out
+
+    def test_multi_backend_no_explicit_size_uses_iplist_default(self):
+        """Group with ip-list backend and no explicit size → ip-list default."""
+        entries = [
+            self._make_entry("web", "resolver"),
+            self._make_entry("web", "ip-list-plain"),
+        ]
+        reg = NfSetRegistry(entries=entries, set_names={"web"})
+        out = "\n".join(emit_nfset_declarations(reg))
+        assert "size 262144;" in out
+
+    def test_payload_round_trip_preserves_multi_backend_entries(self):
+        """N6: payload round-trip keeps both entries for same-name multi-backend."""
+        from shorewall_nft.nft.nfsets import nfset_registry_to_payload, payload_to_nfset_registry
+        rows = _lines(
+            ("web", "cdn.example.org", "resolver,refresh=5m"),
+            ("web", "/etc/shorewall46/web-blocks.txt", "ip-list-plain,refresh=1h"),
+        )
+        reg = build_nfset_registry(rows)
+        assert len(reg.entries) == 2
+        payload = nfset_registry_to_payload(reg)
+        reg2 = payload_to_nfset_registry(payload)
+        assert len(reg2.entries) == 2
+        assert reg2.set_names == {"web"}
+        backends = {e.backend for e in reg2.entries}
+        assert backends == {"resolver", "ip-list-plain"}
 
 
 # ---------------------------------------------------------------------------

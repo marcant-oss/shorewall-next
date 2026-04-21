@@ -228,6 +228,13 @@ class DnsrGroup:
 
     Single-host ``dns:host`` does not create a group at all (no alias
     needed).
+
+    ``dnstype`` narrows the DNS record type for pull-resolver groups:
+
+    * ``None`` (default): resolve both A and AAAA.
+    * ``"a"``: resolve only A (IPv4).
+    * ``"aaaa"``: resolve only AAAA (IPv6).
+    * ``"srv"``: query SRV; extract target hostnames; resolve their A+AAAA.
     """
     primary_qname: str           # determines the set name (dns_<primary>_v4/v6)
     qnames: list[str]            # all hostnames (primary first, then secondaries)
@@ -236,6 +243,7 @@ class DnsrGroup:
     size: int = DEFAULT_SET_SIZE
     comment: str = ""
     pull_enabled: bool = True
+    dnstype: str | None = None   # None = A+AAAA; "a", "aaaa", or "srv"
 
 
 @dataclass
@@ -302,6 +310,7 @@ class DnsrRegistry:
         ttl_ceil: int | None = None,
         size: int | None = None,
         comment: str = "",
+        dnstype: str | None = None,
     ) -> "DnsrGroup":
         """Register a pull-resolver group that populates a named nfset.
 
@@ -310,6 +319,11 @@ class DnsrRegistry:
         annotation) so the shorewalld-side tracker can route IPs into
         the correct nft set instead of the default ``dns_<primary>``
         set.
+
+        ``dnstype`` narrows the DNS query type for this group:
+        ``None`` (default) resolves both A and AAAA; ``"a"`` / ``"aaaa"``
+        restrict to one family; ``"srv"`` queries SRV and resolves the
+        extracted target hostnames.
 
         Returns the created or extended :class:`DnsrGroup`.
         """
@@ -326,6 +340,7 @@ class DnsrRegistry:
                 size=size if size is not None else self.default_size,
                 comment=annotated_comment,
                 pull_enabled=pull_enabled,
+                dnstype=dnstype,
             )
         else:
             existing = self.groups[pqn]
@@ -506,7 +521,7 @@ ALLOWLIST_HEADER = (
 
 _DNSR_SECTION_HEADER = (
     "\n[dnsr]\n"
-    "# primary_qname\tttl_floor\tttl_ceil\tsize\tqnames\tpull\tcomment\n"
+    "# primary_qname\tttl_floor\tttl_ceil\tsize\tqnames\tpull\tcomment\tdnstype\n"
 )
 
 
@@ -548,10 +563,11 @@ def write_compiled_allowlist(
             comment = group.comment.replace("\t", " ").replace("\n", " ")
             qnames_str = ",".join(group.qnames)
             pull = "1" if group.pull_enabled else "0"
+            dnstype_col = group.dnstype if group.dnstype is not None else ""
             parts.append(
                 f"{group.primary_qname}\t{group.ttl_floor}\t"
                 f"{group.ttl_ceil}\t{group.size}\t{qnames_str}\t"
-                f"{pull}\t{comment}\n")
+                f"{pull}\t{comment}\t{dnstype_col}\n")
     tmp.write_text("".join(parts))
     tmp.replace(path)
 
@@ -645,6 +661,12 @@ def read_compiled_dnsr_allowlist(path: Path) -> DnsrRegistry:
             else:
                 # Legacy: column 5 is the comment.
                 comment = pull_col
+        # Optional col[7]: dnstype (empty string means None).
+        dnstype: str | None = None
+        if len(cols) > 7:
+            dt = cols[7].strip()
+            if dt:
+                dnstype = dt
         if not qnames:
             qnames = [primary]
         registry.groups[primary] = DnsrGroup(
@@ -655,6 +677,7 @@ def read_compiled_dnsr_allowlist(path: Path) -> DnsrRegistry:
             size=size,
             comment=comment,
             pull_enabled=pull_enabled,
+            dnstype=dnstype,
         )
     return registry
 
@@ -939,6 +962,7 @@ def nfset_registry_to_dns_registries(
                 set_name=base_name,
                 pull_enabled=True,
                 comment=f"nfset:{entry.name}",
+                dnstype=entry.dnstype,
             )
         # ip-list / ip-list-plain: handled by NfSetsManager (Wave 3).
 

@@ -268,3 +268,99 @@ class TestMixedPayload:
         assert len(list(dnsr_reg.iter_sorted())) > 0
         assert len(mgr.iplist_configs()) == 1
         assert len(mgr.plain_list_configs()) == 1
+
+
+class TestN6AdditiveMultiBackend:
+    """N6: payload with two entries for the same name, different backends.
+
+    Both entries must be routed to the correct tracker; both must resolve
+    to the same nft set name.
+    """
+
+    def test_resolver_and_plain_same_name_both_routed(self):
+        """resolver + ip-list-plain on 'web' → each tracker gets one entry."""
+        from shorewall_nft.nft.nfsets import (
+            NfSetRegistry,
+            nfset_registry_to_payload,
+            nfset_to_set_name,
+        )
+        from shorewalld.nfsets_manager import NfSetsManager
+
+        # Build the registry with two entries for the same name.
+        reg = NfSetRegistry()
+        resolver_entry = NfSetEntry(
+            name="web",
+            hosts=["cdn.example.org", "edge.example.org"],
+            backend="resolver",
+            refresh=300,
+        )
+        plain_entry = NfSetEntry(
+            name="web",
+            hosts=["/etc/shorewall46/web-blocks.txt"],
+            backend="ip-list-plain",
+            refresh=3600,
+        )
+        reg.entries.append(resolver_entry)
+        reg.entries.append(plain_entry)
+        reg.set_names.add("web")
+        payload = nfset_registry_to_payload(reg)
+
+        mgr = NfSetsManager(payload)
+
+        # resolver entry → dns_registries (DnsrRegistry).
+        _, dnsr_reg = mgr.dns_registries()
+        groups = list(dnsr_reg.iter_sorted())
+        assert len(groups) > 0, "resolver entry must reach DnsrRegistry"
+
+        # ip-list-plain entry → plain_list_configs.
+        plain_cfgs = mgr.plain_list_configs()
+        assert len(plain_cfgs) == 1
+        cfg = plain_cfgs[0]
+        assert cfg.name == "nfset_web"
+        assert cfg.source == "/etc/shorewall46/web-blocks.txt"
+
+        # Both entries resolve to the same nft set names.
+        expected_v4 = nfset_to_set_name("web", "v4")
+        expected_v6 = nfset_to_set_name("web", "v6")
+        assert cfg.set_v4 == expected_v4
+        assert cfg.set_v6 == expected_v6
+
+    def test_dnstap_and_iplist_same_name_each_goes_to_own_tracker(self):
+        """dnstap + ip-list on 'cdn' → dns tracker and iplist tracker, same set name."""
+        from shorewall_nft.nft.nfsets import (
+            NfSetRegistry,
+            nfset_registry_to_payload,
+            nfset_to_set_name,
+        )
+        from shorewalld.nfsets_manager import NfSetsManager
+
+        reg = NfSetRegistry()
+        dnstap_entry = NfSetEntry(
+            name="cdn",
+            hosts=["a.example.com", "b.example.com"],
+            backend="dnstap",
+        )
+        iplist_entry = NfSetEntry(
+            name="cdn",
+            hosts=["https://example.org/cdn-prefixes.txt"],
+            backend="ip-list-plain",
+        )
+        reg.entries.append(dnstap_entry)
+        reg.entries.append(iplist_entry)
+        reg.set_names.add("cdn")
+        payload = nfset_registry_to_payload(reg)
+
+        mgr = NfSetsManager(payload)
+
+        dns_reg, _ = mgr.dns_registries()
+        qnames = {s.qname for s in dns_reg.iter_sorted()}
+        assert "a.example.com" in qnames
+        assert "b.example.com" in qnames
+
+        plain_cfgs = mgr.plain_list_configs()
+        assert len(plain_cfgs) == 1
+        cfg = plain_cfgs[0]
+        assert cfg.name == "nfset_cdn"
+        # Both point to the same nft set names.
+        assert cfg.set_v4 == nfset_to_set_name("cdn", "v4")
+        assert cfg.set_v6 == nfset_to_set_name("cdn", "v6")
