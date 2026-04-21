@@ -169,6 +169,7 @@ jobs:
           shellcheck --severity=warning -x \
             tools/run-tests.sh \
             tools/gen-rpm-spec.sh \
+            tools/gen-keepalived-spec.sh \
             tools/release.sh \
             tools/setup-remote-test-host.sh
 
@@ -333,6 +334,92 @@ jobs:
           name: shorewall-nft-rpm-${{ matrix.distro.name }}
           path: rpm-out/
 
+  build-keepalived-rpm-al10:
+    name: Build keepalived-marcant RPM (AlmaLinux 10)
+    runs-on: ubuntu-latest
+    # Runs independently of shorewall-nft builds; no `needs:` dependency.
+    container:
+      image: almalinux:10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Enable EPEL 10 + CRB
+        run: |
+          set -eux
+          dnf install -y dnf-plugins-core epel-release
+          dnf config-manager --set-enabled crb
+
+      - name: Install keepalived build dependencies
+        run: |
+          set -eux
+          dnf install -y --setopt=install_weak_deps=False \
+            gcc make autoconf automake libtool \
+            libnl3-devel \
+            libnftnl-devel \
+            nftables-devel \
+            ipset-devel \
+            net-snmp-devel \
+            glib2-devel \
+            dbus-devel \
+            openssl-devel \
+            pcre2-devel \
+            systemd-devel \
+            systemd-rpm-macros \
+            pkgconf-pkg-config \
+            rpm-build rpmlint git perl-interpreter
+
+      - name: Mark checkout as safe for git (container runs as root)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Download keepalived upstream tarball
+        run: |
+          # Pinned to v2.3.4 — bump KEEPALIVED_VERSION in tools/gen-keepalived-spec.sh
+          # when upgrading.  See https://github.com/acassen/keepalived/releases
+          KEEPALIVED_VERSION="2.3.4"
+          curl -fL \
+            "https://github.com/acassen/keepalived/archive/refs/tags/v${KEEPALIVED_VERSION}.tar.gz" \
+            -o "keepalived-${KEEPALIVED_VERSION}.tar.gz"
+          echo "Downloaded keepalived-${KEEPALIVED_VERSION}.tar.gz"
+          ls -lh "keepalived-${KEEPALIVED_VERSION}.tar.gz"
+
+      - name: Generate keepalived spec file
+        run: |
+          bash tools/gen-keepalived-spec.sh
+          echo "--- generated spec head ---"
+          sed -n '1,40p' packaging/rpm/keepalived-marcant.spec
+
+      - name: Prepare rpmbuild tree
+        run: |
+          VERSION=$(awk '/^Version:/ {print $2; exit}' packaging/rpm/keepalived-marcant.spec)
+          echo "spec version: $VERSION"
+          mkdir -p ~/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
+          cp "keepalived-${VERSION}.tar.gz" ~/rpmbuild/SOURCES/
+          cp packaging/rpm/keepalived-marcant.spec ~/rpmbuild/SPECS/
+
+      - name: Build RPM
+        run: |
+          rpmbuild -ba ~/rpmbuild/SPECS/keepalived-marcant.spec || {
+            echo "RPM build failed — collecting logs"
+            find ~/rpmbuild -name '*.log' -exec cat {} \;
+            exit 1
+          }
+          mkdir -p rpm-out
+          find ~/rpmbuild/RPMS ~/rpmbuild/SRPMS -name '*.rpm' -exec cp {} rpm-out/ \;
+          ls -la rpm-out/
+
+      - name: Rpmlint
+        run: |
+          rpmlint rpm-out/*.rpm || true
+
+      - name: Upload keepalived RPM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: keepalived-marcant-rpm-al10
+          path: rpm-out/
+
   release:
     name: GitHub Release
     runs-on: ubuntu-latest
@@ -361,6 +448,15 @@ jobs:
           pattern: shorewall-nft-rpm-*
           merge-multiple: true
           path: rpm-out/
+
+      - name: Download keepalived RPM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: keepalived-marcant-rpm-al10
+          path: rpm-out/
+        # keepalived-marcant build runs independently; on tag push it is always
+        # available because the upload step runs unconditionally on this branch.
+        continue-on-error: true
 
       - name: Extract changelog section for this tag
         id: changelog

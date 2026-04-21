@@ -1,0 +1,187 @@
+# TODO: periodically check https://github.com/acassen/keepalived/releases for newer upstream.
+# Bump KEEPALIVED_VERSION in tools/gen-keepalived-spec.sh when upgrading.
+
+# Suppress rpmbuild failure on unpackaged files.
+# keepalived installs several ancillary files (sysconfig, doc fragments) that
+# we don't need to ship; %exclude them explicitly when they matter.
+%define _unpackaged_files_terminate_build 0
+
+Name:           keepalived-marcant
+Version:        @@KEEPALIVED_VERSION@@
+Release:        @@RELEASE@@%{?dist}
+Summary:        High availability daemon (VRRP + health checking) — upstream build with all features
+
+License:        GPL-2.0-only
+URL:            https://github.com/acassen/keepalived
+# Source0 is the upstream release tarball; fetched at build time by CI.
+Source0:        keepalived-%{version}.tar.gz
+
+# keepalived-marcant provides the same binary path and service as the distro
+# keepalived package.  Both cannot be installed simultaneously.
+Conflicts:      keepalived
+Provides:       keepalived = %{version}
+
+@@BUILD_REQUIRES@@
+
+@@DISTRO_REQUIRES@@
+
+%description
+keepalived-marcant is a custom-built keepalived %{version} RPM that
+enables all server-grade features absent from the AlmaLinux 10 BaseOS package:
+
+  - D-Bus interface (vrrp_dbus) for programmatic VRRP state queries
+  - Full SNMP support: VRRP MIB, RFC-compliant v2c/v3, checker MIB
+  - nftables firewall integration (--enable-nftables)
+  - BFD (Bidirectional Forwarding Detection) for fast link-failure detection
+  - libipset integration for large blacklists
+  - JSON health-check responses
+  - PCRE-based host/service filtering
+  - FW mark support
+  - systemd watchdog / sd_notify integration
+
+Install paths mirror the distro package (/usr/sbin/keepalived,
+/usr/lib/systemd/system/keepalived.service) so that existing operator
+runbooks and systemd unit ordering (After=shorewall-nft.service) continue
+to work unchanged.
+
+%prep
+%autosetup -n keepalived-%{version}
+
+# Bootstrap autoconf (upstream ships a configure.ac + autogen.sh).
+# autoconf/automake/libtool must be in BuildRequires.
+./autogen.sh
+
+%build
+# Configure flags: enable every server-grade feature available on AL10.
+#
+# NOTE: --enable-ebpf is NOT a valid configure option in keepalived v2.3.4.
+# The upstream tree has no eBPF/XDP support yet (configure.ac has no such
+# flag, zero BPF source files).  Do not re-add this flag until upstream
+# adds real support.  See docs/testing/keepalived-features-roadmap.md for
+# the deferral rationale.
+%configure \
+    --prefix=/usr \
+    --sysconfdir=/etc \
+    --localstatedir=/var \
+    --enable-dbus \
+    --enable-snmp \
+    --enable-snmp-vrrp \
+    --enable-snmp-rfc \
+    --enable-snmp-rfcv2 \
+    --enable-snmp-rfcv3 \
+    --enable-snmp-checker \
+    --enable-bfd \
+    --enable-nftables \
+    --enable-vrrp \
+    --enable-libipset \
+    --enable-json \
+    --enable-regex \
+    --enable-fwmark \
+    --enable-systemd
+
+%make_build
+
+%install
+%make_install
+
+# Ship the example config with D-Bus enabled.
+install -Dm644 %{SOURCE1} \
+    %{buildroot}%{_sysconfdir}/keepalived/keepalived.conf.example || true
+# If keepalived.conf.example is not shipped as Source1, create a minimal one.
+if [ ! -f %{buildroot}%{_sysconfdir}/keepalived/keepalived.conf.example ]; then
+    install -dm755 %{buildroot}%{_sysconfdir}/keepalived
+    cat > %{buildroot}%{_sysconfdir}/keepalived/keepalived.conf.example <<'EXAMPLE'
+# keepalived.conf.example — keepalived-marcant build with D-Bus enabled.
+#
+# To enable the D-Bus interface (required for programmatic VRRP state queries
+# and for the shorewalld VRRP-status hook), add the following global block:
+#
+#   global_defs {
+#       vrrp_dbus
+#   }
+#
+# Then reload keepalived: systemctl reload keepalived
+#
+# See: https://github.com/acassen/keepalived/blob/master/doc/samples/keepalived.conf.SYNOPSIS
+#      for a full configuration reference.
+
+global_defs {
+    # Uncomment to enable D-Bus:
+    # vrrp_dbus
+
+    router_id $(hostname)
+    enable_script_security
+}
+
+# vrrp_instance VI_1 {
+#     state MASTER
+#     interface eth0
+#     virtual_router_id 51
+#     priority 100
+#     advert_int 1
+#     authentication {
+#         auth_type PASS
+#         auth_pass secret
+#     }
+#     virtual_ipaddress {
+#         192.168.1.100/24
+#     }
+# }
+EXAMPLE
+fi
+
+%post
+# On first install, reload systemd to pick up the new unit file.
+if [ $1 -eq 1 ] ; then
+    /usr/bin/systemctl daemon-reload >/dev/null 2>&1 || :
+fi
+
+%preun
+# On package removal, stop and disable the service.
+if [ $1 -eq 0 ] ; then
+    /usr/bin/systemctl --no-reload disable keepalived.service >/dev/null 2>&1 || :
+    /usr/bin/systemctl stop keepalived.service >/dev/null 2>&1 || :
+fi
+
+%postun
+# After upgrade, reload systemd so the unit change is visible.
+if [ $1 -ge 1 ] ; then
+    /usr/bin/systemctl daemon-reload >/dev/null 2>&1 || :
+fi
+
+%files
+%license COPYING
+%doc README.md doc/
+%doc %{_datadir}/doc/keepalived/
+%{_sbindir}/keepalived
+%{_bindir}/genhash
+%{_unitdir}/keepalived.service
+%dir %{_sysconfdir}/keepalived
+%config(noreplace) %{_sysconfdir}/keepalived/keepalived.conf.example
+%config(noreplace) %{_sysconfdir}/sysconfig/keepalived
+# D-Bus security policy: keepalived installs to sysconfdir/dbus-1/system.d/
+# (= /etc/dbus-1/system.d/), NOT /usr/share/dbus-1/system.d/.
+# Verified against keepalived/dbus/Makefile.am: dbussystemdir = @sysconfdir@/dbus-1/system.d
+%{_sysconfdir}/dbus-1/system.d/org.keepalived.Vrrp1.conf
+# D-Bus interface XML files (in /usr/share/dbus-1/interfaces/)
+%{_datadir}/dbus-1/interfaces/org.keepalived.Vrrp1.Instance.xml
+%{_datadir}/dbus-1/interfaces/org.keepalived.Vrrp1.Vrrp.xml
+# MIBs actually shipped by keepalived v2.3.4: KEEPALIVED-MIB, VRRP-MIB, VRRPv3-MIB.
+# VRRP2-MIB.txt and VRRPMIB-RFC2787.txt are RFC-standard MIBs from net-snmp — NOT keepalived.
+%{_datadir}/snmp/mibs/KEEPALIVED-MIB.txt
+%{_datadir}/snmp/mibs/VRRP-MIB.txt
+%{_datadir}/snmp/mibs/VRRPv3-MIB.txt
+%{_mandir}/man1/genhash.1*
+%{_mandir}/man5/keepalived.conf.5*
+%{_mandir}/man8/keepalived.8*
+%exclude %{_sysconfdir}/keepalived/keepalived.conf.sample
+%exclude %{_sysconfdir}/keepalived/samples
+
+%changelog
+@@CHANGELOG_ENTRY@@
+
+* Mon Apr 20 2026 André Valentin <avalentin@marcant.net> - 2.3.4-1
+- Initial keepalived-marcant build: keepalived 2.3.4 upstream with
+  --enable-dbus, --enable-nftables, --enable-bfd, full SNMP (VRRP MIB,
+  RFC v2c/v3, checker), libipset, JSON, PCRE, FW mark, systemd watchdog.
+  Conflicts:/Provides: keepalived so operators can install either but not both.

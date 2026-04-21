@@ -1,6 +1,12 @@
 # RPM packaging
 
-The `.spec` file for shorewall-nft is **generated**, not hand-edited.
+The `.spec` files in this directory are **generated**, not hand-edited.
+Two independent packages are built here:
+
+1. **shorewall-nft** — the firewall compiler (Python, noarch)
+2. **keepalived-marcant** — upstream keepalived with all server-grade features
+   enabled; `Conflicts: keepalived` / `Provides: keepalived` so only one
+   can be installed at a time
 
 ## Files
 
@@ -8,16 +14,22 @@ The `.spec` file for shorewall-nft is **generated**, not hand-edited.
 | --- | --- |
 | `shorewall-nft.spec.in` | Template with `@@PLACEHOLDERS@@`. Checked in. |
 | `shorewall-nft.spec` | Generated artifact. `.gitignore`d. |
-| `../../tools/gen-rpm-spec.sh` | Generator. Substitutes version, release, distro-specific Requires, and a changelog entry. |
+| `../../tools/gen-rpm-spec.sh` | Generator for shorewall-nft. Substitutes version, release, distro-specific Requires, and a changelog entry. |
+| `keepalived-marcant.spec.in` | Template for keepalived-marcant. Checked in. |
+| `keepalived-marcant.spec` | Generated artifact. `.gitignore`d. |
+| `../../tools/gen-keepalived-spec.sh` | Generator for keepalived-marcant. Pins `KEEPALIVED_VERSION`; release derives from git like gen-rpm-spec.sh. |
 
 ## Generating a spec locally
 
 ```bash
-# Fedora 40 profile
+# shorewall-nft — Fedora 40 profile
 ./tools/gen-rpm-spec.sh --distro fedora
 
-# AlmaLinux 10 profile (different protobuf / pytest / python minimums)
+# shorewall-nft — AlmaLinux 10 profile (different protobuf / pytest / python minimums)
 ./tools/gen-rpm-spec.sh --distro almalinux10
+
+# keepalived-marcant (AL10 only for now; version pinned in the script)
+./tools/gen-keepalived-spec.sh
 ```
 
 The script reads git to pick the version:
@@ -67,18 +79,31 @@ deps.
 
 ## CI integration
 
+### shorewall-nft
+
 `.github/workflows/build.yaml` → `rpm-build` is a matrix over
 `{fedora40, almalinux10}`. Each entry:
 
 1. Installs per-distro build deps (+ EPEL/CRB for AL10).
 2. Runs `./tools/gen-rpm-spec.sh --distro <profile>`.
 3. Tarballs the tree, runs `rpmbuild -bb`.
-4. Uploads RPMs to an artifact named
-   `shorewall-nft-rpm-<distro-name>`.
+4. Uploads RPMs to an artifact named `shorewall-nft-rpm-<distro-name>`.
 
-The `release` job (tag pushes only) downloads every
-`shorewall-nft-rpm-*` artifact via `pattern:` + `merge-multiple:` and
-attaches all RPMs to the GitHub Release.
+### keepalived-marcant
+
+`.github/workflows/build.yaml` → `build-keepalived-rpm-al10` (separate job,
+runs in parallel to the shorewall-nft build). Steps:
+
+1. Enables EPEL 10 + CRB on the `almalinux:10` container.
+2. Installs C build deps (gcc, libnftnl-devel, net-snmp-devel, libbpf-devel …).
+3. Downloads the pinned upstream tarball from GitHub releases.
+4. Runs `./tools/gen-keepalived-spec.sh` to produce the spec.
+5. `rpmbuild -ba` (binary + source RPMs).
+6. Uploads `.rpm` + `.src.rpm` to artifact `keepalived-marcant-rpm-al10`.
+
+The `release` job (tag pushes only) also downloads
+`keepalived-marcant-rpm-al10` (`continue-on-error: true`) and attaches all
+RPMs to the GitHub Release alongside the shorewall-nft artifacts.
 
 ## What the old checked-in spec looked like
 
