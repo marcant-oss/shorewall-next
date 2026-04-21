@@ -72,7 +72,23 @@ endpoints:
     vlan: 20
     ipv4: 217.14.168.254/24
     ipv4_gw: 217.14.168.1
+    ipv6: 2a00:f88:0:3168::254/64
+    ipv6_gw: 2a00:f88:0:3168::1
     role: lan-downstream
+
+  # tester01 native-mode VLAN 20 endpoint — L2 peer of lan-downstream for
+  # IPv6 throughput benches. NOT through-FW (both endpoints on same L2),
+  # but validates the IPv6 code path with real 2a00:f88:0:3168::/64 prefix.
+  - name: wan-native
+    host: tester01
+    mode: native
+    nic: eth1
+    vlan: 20
+    ipv4: 217.14.168.253/24
+    ipv4_gw: 217.14.168.1
+    ipv6: 2a00:f88:0:3168::253/64
+    ipv6_gw: 2a00:f88:0:3168::1
+    role: wan-native
 
 metrics:
   poll_interval_s: 10

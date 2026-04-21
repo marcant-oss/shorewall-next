@@ -110,7 +110,7 @@ In this case, your configuration takes the following approach:
     rem1            tun+:10.0.0.0/24
     rem2            tun+:10.0.1.0/24
 
-The `/etc/shorewall/hosts` file is also used with [kernel 2.6 native IPSEC](IPSEC-2.6.md).
+The `/etc/shorewall/hosts` file is also used with kernel 2.6 native IPSEC (see [IPSEC](IPSEC.md)).
 
 # Eliminating the /etc/shorewall/tunnels file
 
@@ -196,6 +196,6 @@ Tunnel type "pptpclient" simply reverses the direction of the tcp port 1723 rule
 
 - [OpenVPN](OPENVPN.md)
 
-- [IPSEC](IPSEC-2.6.md)
+- [IPSEC](IPSEC.md)
 
-- [PPTP](PPTP.md)
+- PPTP (PPTP documentation was not ported to shorewall-nft)

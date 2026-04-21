@@ -14,7 +14,7 @@ The information in this article is only applicable if you plan to have IPSEC end
 
 This documentation is incomplete regarding using IPSEC and the 2.6 Kernel. Netfilter currently lacks full support for the 2.6 kernel's implementation of IPSEC. Until that implementation is complete, only a simple network-network tunnel is described for 2.6.
 
-UPDATE: Some distributions such as SUSE are now shipping Kernels and iptables with the IPSEC-Netfilter patches and policy match support. Check [this article](IPSEC-2.6.md) for information concerning this support and Shorewall.
+UPDATE: Some distributions such as SUSE are now shipping Kernels and iptables with the IPSEC-Netfilter patches and policy match support. The IPSEC-2.6 article was not ported to shorewall-nft documentation.
 
 </div>
 

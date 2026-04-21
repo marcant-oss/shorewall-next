@@ -273,7 +273,7 @@ The bottom line is that if you want traffic to go out through a particular provi
 
 Shorewall itself provides no mechanism for dealing with provider links that are in the up state but not responsive. If you want transparent failover when a link is unresponsive, you must configure all provider interfaces as **optional** ([shorewall-interfaces(5)](https://shorewall.org/manpages/shorewall-interfaces.html)) then [install and configure FOOLSM](#LinkMonitor).
 
-[Shorewall-init](Shorewall-init.md) provides for handling links that go hard down and are later brought back up.
+Shorewall-init (shorewall-init documentation was not ported to shorewall-nft) provides for handling links that go hard down and are later brought back up.
 
 ## ./etc/shorewall/masq (/etc/shorewall/snat) and Multi-ISP
 
@@ -812,7 +812,7 @@ Beginning with Shorewall 4.5.15, Shorewall also supports "unreachable" and "proh
                    ... 
                    post-up ip route add 10.1.0.0/24 dev eth0 table main
 
-    2.  A more elegant solution is, in addition to the "standard" shorewall package (shorewall-lite, shorewall, etc), to add [shorewall-init](Shorewall-init.md) to take care of this automatically.
+    2.  A more elegant solution is, in addition to the "standard" shorewall package (shorewall-lite, shorewall, etc), to add shorewall-init (shorewall-init documentation was not ported to shorewall-nft) to take care of this automatically.
 
         With this approach, when the network interface is brought back up, the OS passes control to /sbin/ifup-local, which forms part of the shorewall-init package, and that script, in turn, executes the appropriate command to reload the network device settings in the already-compiled \${VARDIR}/firewall file.
 

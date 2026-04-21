@@ -69,10 +69,77 @@ packages/shorewall-nft/
 
 ```
 packages/shorewalld/
+  shorewalld/collectors/    Eine Datei pro Metrik-Familie:
+                            nft.py, link.py, ct.py, flowtable.py,
+                            conntrack.py, qdisc.py, nfsets.py,
+                            vrrp.py, snmp.py, worker_router.py, …
   shorewalld/exporter.py    NftScraper, LinkCollector, CtCollector
   shorewalld/discover.py    netns auto-discovery
   shorewalld/core.py        Daemon-Lifecycle
-  docs/shorewalld/index.md  #metrics
+  docs/shorewalld/metrics.md  Vollständige Metrik-Referenz mit PromQL-Beispielen
+  tools/man/shorewalld.8      METRICS-Abschnitt
+```
+
+### VRRP-State wird nicht gemeldet / D-Bus-Fehler
+
+**Symptom:** `shorewalld_vrrp_state` fehlt, `dbus_unavailable`, falsche Priorität
+
+```
+packages/shorewalld/
+  shorewalld/collectors/vrrp.py    VrrpCollector (D-Bus via jeepney; SNMP-Augmentation)
+
+Upstream-Referenzen:
+  https://github.com/acassen/keepalived/blob/master/keepalived/dbus/org.keepalived.Vrrp1.Instance.xml
+  https://github.com/acassen/keepalived/blob/master/doc/mibs/KEEPALIVED-MIB.txt
+  Lokal (falls vorhanden): /tmp/keepalived-eval/
+
+  # Triage:
+  # AL10: keepalived 2.2.8-6.el10 ist ohne --enable-dbus gebaut → kein D-Bus.
+  # Fallback: --vrrp-snmp-enable (benötigt keepalived --enable-snmp-vrrp + snmpd).
+  # Caveat: D-Bus liefert nur Name + State; priority/vip_count/master_transitions
+  #         kommen ausschließlich via SNMP-Augmentation.
+  docs/shorewalld/metrics.md  Abschnitt "VRRP" mit Cardinality + Caveats
+```
+
+### nfset-Backend hinzufügen / ändern
+
+**Symptom:** Neuer Provider-Typ, neues Fetch-Protokoll, neues Backend-Keyword
+
+```
+packages/shorewall-nft/
+  shorewall_nft/nft/nfsets.py     NfSetEntry, NfSetRegistry — Datenmodell
+
+packages/shorewalld/
+  shorewalld/nfsets_manager.py    Consumer: routet Einträge nach Backend
+  shorewalld/collectors/nfsets.py NfsetsCollector — Prometheus-Metriken
+
+  docs/features/nfsets.md         Operator-Referenz (Backends, Optionen, Beispiele)
+```
+
+### Neue Config-Tabelle hinzufügen
+
+**Symptom:** Neue Shorewall-Konfigurationsdatei, neues Schema-Feld
+
+```
+packages/shorewall-nft/
+  shorewall_nft/config/schema.py  Pydantic-Schema für alle Tabellen
+  shorewall_nft/compiler/ir.py    IR-Transformation
+  shorewall_nft/nft/emitter.py    nft-Ausgabe
+
+  tools/man/shorewall-nft-<table>.5   Man-Page (neu anlegen)
+  # Konvention: Core-first (schema → ir → emit), dann Doku, dann Tests.
+```
+
+### Neuen CLI-Unterbefehl hinzufügen
+
+**Symptom:** Neuer `shorewall-nft <subcommand>`, neue CLI-Option
+
+```
+packages/shorewall-nft/
+  shorewall_nft/runtime/cli.py    @cli.command(…) — Click-Dekorator
+
+  docs/reference/commands.json    Ggf. regenerieren (tooling-Befehl prüfen)
+  tools/man/shorewall-nft.8       COMMANDS-Abschnitt ergänzen
 ```
 
 ### DNS-Sets populieren nicht
@@ -223,11 +290,15 @@ docs/
   index.md                    Einstieg mit 4-Paket-Übersicht (inkl. Stagelab)
   quick-start.md              Anfänger + Migrations-Pfad
   shorewall-nft/              7 Dateien: merge-config, plugins, debug, optimizer, config-hash, config-dirs, plugin-dev
-  shorewalld/index.md         Daemon-Referenz (Metriken, DNS-Sets, HA, tap)
+  shorewalld/index.md         Daemon-Referenz (DNS-Sets, HA, tap)
+  shorewalld/metrics.md       Vollständige Prometheus-Metrik-Referenz (nfsets, VRRP, worker, iplist, plainlist)
+  features/nfsets.md          Named dynamic nft sets (dnstap/resolver/ip-list/ip-list-plain)
   testing/                    Simlab + Stagelab + Setup, Suite, Debugging, Verification
-  testing/stagelab.md         Stagelab-Operator-Referenz (NEU)
+  testing/stagelab.md         Stagelab-Operator-Referenz
   cli/commands.md             CLI-Referenz aller shorewall-nft-Befehle
   concepts/ features/         Shorewall config-language Referenz
+  reference/glossary.md       Terminologie-Glossar (nfset, VRRP, fastaccept, pseudo-zone, …)
+  roadmap/nfsets-deferred.md  Backlog offener nfsets-Features + W7b-Audit-Items
 ```
 
 ### Release

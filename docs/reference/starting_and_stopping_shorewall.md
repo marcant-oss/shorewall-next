@@ -36,7 +36,7 @@ To get further information about a particular command, use the `man` command:
 
 The program **/sbin/shorewall-lite** performs a similar role with Shorewall-lite.
 
-For a more complete description of the files and directories involved in Shorewall and Shorewall-lite, see the [Shorewall Anatomy article](../concepts/Anatomy.md).
+For a more complete description of the files and directories involved in Shorewall and Shorewall-lite, see the [Introduction to Shorewall](../concepts/Introduction.md).
 
 # Starting, Stopping and Clearing
 

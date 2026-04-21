@@ -156,7 +156,7 @@ This information is valid only for Shorewall 3.2 or later.
     ACCEPT     <destination>  <source>         51
     ACCEPT     <destination>  <source>         udp        500
 
-Lots more information [here](IPSEC-2.6.md) and [here](VPN.md).
+Lots more information in the IPSEC article (IPSEC-2.6 documentation not ported) and [here](VPN.md).
 
 # LDAP
 
@@ -231,7 +231,7 @@ This information is valid only for Shorewall 3.2 or later
     ACCEPT     <source>  <destination>    47    
     ACCEPT     <source>  <destination>    tcp        1723
 
-Lots more information [here](PPTP.md) and [here](VPN.md).
+Lots more information in the PPTP article (PPTP documentation not ported to shorewall-nft) and [here](VPN.md).
 
 # rdate
 

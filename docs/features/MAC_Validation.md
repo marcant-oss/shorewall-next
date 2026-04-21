@@ -22,7 +22,7 @@ All traffic from an interface or from a subnet on an interface can be verified t
 
 <div class="important">
 
-**DO NOT use MAC verification as your only security measure . MAC addresses can be easily spoofed. You can use it in combination with either [IPSEC](IPSEC-2.6.md) or [OpenVPN](OPENVPN.md).**
+**DO NOT use MAC verification as your only security measure . MAC addresses can be easily spoofed. You can use it in combination with either [IPSEC](IPSEC.md) or [OpenVPN](OPENVPN.md).**
 
 </div>
 

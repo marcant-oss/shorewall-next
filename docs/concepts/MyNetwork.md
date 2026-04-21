@@ -12,7 +12,7 @@ The configuration described in this article represents the network at shorewall.
 
 - A DMZ with three "systems" using [Proxy ARP](../features/ProxyARP.md) and running in [Linux Containers (LXC)](../legacy/OpenVZ.md)
 
-- [IPv6 Access through two 6to4 Tunnels](../features/6to4.md)
+- IPv6 Access through two 6to4 Tunnels (see [IPv6 Support](../features/IPv6Support.md#6to4))
 
 - [Ipsets](../features/ipsets.md)
 

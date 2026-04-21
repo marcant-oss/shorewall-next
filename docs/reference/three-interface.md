@@ -61,7 +61,7 @@ Configuration notes that are unique to Debian and it's derivatives are marked wi
 
 # PPTP/ADSL
 
-If you have an ADSL Modem and you use PPTP to communicate with a server in that modem, you must make the [changes recommended here](../features/PPTP.md#PPTP_ADSL) in addition to those detailed below. ADSL with PPTP is most commonly found in Europe, notably in Austria.
+If you have an ADSL Modem and you use PPTP to communicate with a server in that modem, you must make the changes recommended in the PPTP/ADSL notes (PPTP documentation was not ported to shorewall-nft) in addition to those detailed below. ADSL with PPTP is most commonly found in Europe, notably in Austria.
 
 # Shorewall Concepts
 
@@ -541,7 +541,7 @@ Also, I don't recommend using “`shorewall reload`”; it is better to create a
 
 </div>
 
-The firewall will start after your network interfaces have been brought up. This leaves a small window between the time that the network interface are working and when the firewall is controlling connections through those interfaces. If this is a concern, you can close that window by installing the [Shorewall Init Package](../features/Shorewall-init.md).
+The firewall will start after your network interfaces have been brought up. This leaves a small window between the time that the network interface are working and when the firewall is controlling connections through those interfaces. If this is a concern, you can close that window by installing the Shorewall Init Package (shorewall-init documentation was not ported to shorewall-nft).
 
 # If it Doesn't Work
 

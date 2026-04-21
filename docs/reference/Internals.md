@@ -36,7 +36,7 @@ The components of the Shorewall product suite fall into five broad categories:
 
 The Shorewall Build/Install subsystem packages the products for release and installs them on an end-user's or a packager's system. It is diagrammed in the following graphic.
 
-The build environment components are not released and are discussed in the [Shorewall Build Article](Build.md).
+The build environment components are not released and are discussed in the Shorewall Build Article (not ported to shorewall-nft documentation).
 
 The end-user/packager environment consists of the `configure` and `configure.pl` programs in Shorewall-core and an `install.sh` program in each product.
 

@@ -54,7 +54,7 @@
 
   - [IPsec, GRE, IPIP and OpenVPN Tunnels](https://shorewall.org/manpages/shorewall-tunnels.html).
 
-  - [PPTP](../features/PPTP.md) clients and Servers.
+  - PPTP clients and Servers (PPTP documentation was not ported to shorewall-nft).
 
 - Support for [**Traffic** Control/**Shaping**](../features/simple_traffic_shaping.md).
 

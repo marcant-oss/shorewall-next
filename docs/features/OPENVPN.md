@@ -344,7 +344,7 @@ Server (conventional routed server config):
 >
 >     ifconfig-push 172.20.0.11 172.20.0.10
 >
-> From `/etc/network/interfaces` (very standard [6to4 tunnel configuration](6to4.md#SixInFour)):
+> From `/etc/network/interfaces` (very standard 6to4 tunnel configuration — see [IPv6 Support](IPv6Support.md) for current tunnel guidance):
 >
 >     auto mac
 >     iface mac inet6 v4tunnel
