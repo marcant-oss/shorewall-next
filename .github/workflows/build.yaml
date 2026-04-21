@@ -359,14 +359,13 @@ jobs:
             gcc make autoconf automake libtool \
             libnl3-devel \
             libnftnl-devel \
-            libnftables-devel \
-            libipset-devel \
+            nftables-devel \
+            ipset-devel \
             net-snmp-devel \
             glib2-devel \
             dbus-devel \
             openssl-devel \
-            libpcre2-devel \
-            libbpf-devel \
+            pcre2-devel \
             systemd-devel \
             systemd-rpm-macros \
             pkgconf-pkg-config \
