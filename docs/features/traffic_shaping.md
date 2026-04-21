@@ -1081,3 +1081,44 @@ To start traffic shaping when you bring up your network interfaces, you will hav
 # Testing Tools
 
 At least one Shorewall user has found this tool helpful: <http://e2epi.internet2.edu/network-performance-toolkit.html>
+
+# Applying TC Configuration with shorewall-nft
+
+shorewall-nft provides two paths for applying `tcdevices` / `tcclasses` /
+`tcfilters` configuration to the kernel.
+
+## apply-tc (preferred)
+
+```
+shorewall-nft apply-tc [DIRECTORY] [OPTIONS]
+```
+
+Applies qdiscs, HTB classes, and fwmark filters directly via
+[pyroute2](https://pyroute2.org/) — no `tc(8)` binary is required.
+
+Options:
+
+- `--netns NAME` — apply inside a named network namespace.  pyroute2's
+  `IPRoute(netns=NAME)` is used to bind the netlink socket directly to the
+  target namespace; no `ip netns exec` fork is performed.
+- `--dry-run` — print the planned operations as a bulleted list without
+  applying anything to the kernel.
+
+The command is idempotent: existing qdiscs are deleted and re-added on
+each run so that re-applying after a config change is safe.
+
+## generate-tc (portable fallback)
+
+```
+shorewall-nft generate-tc [DIRECTORY]
+```
+
+Prints a `#!/bin/sh` script with `tc qdisc`/`tc class`/`tc filter` commands.
+Useful when `tc(8)` is guaranteed to be present on the target, or when you
+want to inspect the planned configuration before applying it.
+
+Pipe to `sh` to apply:
+
+```sh
+shorewall-nft generate-tc /etc/shorewall46 | sh
+```

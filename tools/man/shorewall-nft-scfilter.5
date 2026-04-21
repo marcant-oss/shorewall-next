@@ -47,6 +47,16 @@ bond0.99    10.0.99.0/24
 .fi
 .RE
 
+.SH NFSET / DNS TOKENS
+The HOSTS column is a static CIDR allowlist evaluated at compile time.
+.BR nfset: ,
+.BR dns: ,
+and
+.BR dnsr:
+tokens are
+.B not
+supported here — the allowlist must consist of literal IP addresses or
+CIDR prefixes only.
 .SH SEE ALSO
 .BR shorewall\-nft (8),
 .BR shorewall\-nft\-interfaces (5),

@@ -52,6 +52,16 @@ icmp_traffic    0        0
 .fi
 .RE
 
+.SH NFSET / DNS TOKENS
+The
+.I nfacct
+file declares counter names only — it contains no source or destination
+address columns.
+.BR nfset: ,
+.BR dns: ,
+and
+.BR dnsr:
+tokens are not applicable here.
 .SH SEE ALSO
 .BR shorewall\-nft (8),
 .BR shorewalld (8),

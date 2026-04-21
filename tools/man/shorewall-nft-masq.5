@@ -63,9 +63,24 @@ eth0        10.0.0.0/8       -   udp
 .fi
 .RE
 
+.SH NFSET / DNS TOKENS
+The SOURCE column (col 2) accepts
+.BR nfset:<name> ,
+.BR dns:<hostname> ,
+and
+.BR dnsr:<hostname>
+tokens — see
+.BR shorewall\-nft\-rules (5)
+and
+.BR shorewall\-nft\-nfsets (5)
+for the full grammar.
+The ADDRESS column (SNAT target) does
+.I not
+accept these tokens; a literal IP address or CIDR is required there.
 .SH SEE ALSO
 .BR shorewall\-nft (8),
 .BR shorewall\-nft\-rules (5),
+.BR shorewall\-nft\-nfsets (5),
 .BR shorewall\-nft\-netmap (5),
 .BR shorewall\-nft\-rawnat (5)
 

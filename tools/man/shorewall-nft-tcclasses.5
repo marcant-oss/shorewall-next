@@ -7,10 +7,13 @@ The
 file defines the traffic classes for the interfaces declared in
 .IR shorewall\-nft\-tcdevices (5).
 Each row defines a class with a guaranteed rate, a ceiling rate, and a
-priority.  shorewall-nft generates
+priority.  shorewall-nft can apply HTB class configuration directly via
+.BR "shorewall\-nft apply\-tc"
+(preferred — uses pyroute2, no tc(8) binary required) or generate a
 .BR tc (8)
-class commands via
-.BR "shorewall\-nft generate\-tc" .
+shell script via
+.BR "shorewall\-nft generate\-tc"
+(portable fallback).
 
 Packets are assigned to classes by nft mark rules derived from
 .I tcrules

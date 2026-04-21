@@ -487,6 +487,41 @@ Preview changes without modifying disk (prints a unified diff).
 
 .SH GENERATOR COMMANDS
 
+.SS apply\-tc [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
+Configure kernel qdiscs, HTB classes, and fwmark filters declared in the
+.IR tcdevices ,
+.IR tcclasses ,
+and
+.I tcfilters
+config files.  Uses pyroute2 to open a netlink socket directly — no
+.BR tc (8)
+binary is required.
+
+.RS
+.TP
+.BI \-\-netns " NAME"
+Apply inside the named network namespace.  pyroute2's
+.B IPRoute(netns=NAME)
+constructor is used to bind the netlink socket directly to the target
+namespace; no
+.B ip\-netns\-exec
+fork is performed.
+.TP
+.B \-\-dry\-run
+Parse and validate the TC config, then print the planned operations as a
+bulleted list.  Nothing is applied to the kernel.
+.RE
+
+Accepts the config directory flags.
+.PP
+Idempotence: existing qdiscs are deleted then re-added before each run so
+that re-running the command after a config change is safe (same semantics
+as
+.BR generate\-tc ).
+The preferred apply path; use
+.B generate\-tc
+as a portable fallback or for human review before applying.
+
 .SS generate\-systemd [\fIOPTIONS\fR]
 Print a systemd service unit to stdout (or write to a directory with
 .BR \-o ).
@@ -520,6 +555,13 @@ commands to set up the traffic control classes and qdiscs declared in the
 and
 .I tcclasses
 config files.  Accepts the config directory flags.
+.PP
+This is the portable fallback path (outputs a shell script that can be
+inspected or run manually).  Use
+.B apply\-tc
+to apply the configuration directly via pyroute2 without a
+.BR tc (8)
+binary.
 
 .SS generate\-set\-loader [\fIDIRECTORY\fR]
 Print a shell script that loads external sets (GeoIP prefix files, ipset

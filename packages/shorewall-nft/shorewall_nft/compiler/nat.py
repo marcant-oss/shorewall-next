@@ -14,6 +14,8 @@ from shorewall_nft.compiler.ir import (
     Match,
     Rule,
     Verdict,
+    _expand_line_for_tokens,
+    _has_set_token,
 )
 from shorewall_nft.config.parser import ConfigLine
 
@@ -60,9 +62,29 @@ def _process_masq_line(ir: FirewallIR, line: ConfigLine) -> None:
         bond1            192.0.2.35  198.51.100.34
         bond1::198.51.100.21,198.51.100.193  192.0.2.35  198.51.100.34
         bond1::198.51.100.107  192.0.2.200  203.0.113.100  tcp  443
+
+    SOURCE (col 1) accepts nfset:/dns:/dnsr: tokens.
+    ADDRESS (col 2) is a single SNAT target IP/range and MUST NOT carry
+    set tokens — raise ValueError if one is found.
     """
     cols = line.columns
     if len(cols) < 3:
+        return
+
+    # Reject set tokens in the ADDRESS column (SNAT target).
+    snat_addr_raw = cols[2]
+    if _has_set_token(snat_addr_raw):
+        raise ValueError(
+            f"masq {line.file}:{line.lineno}: ADDRESS column (SNAT target) "
+            f"does not accept nfset:/dns:/dnsr: tokens — got {snat_addr_raw!r}. "
+            f"Use a literal IP address or CIDR instead."
+        )
+
+    # nfset/dns/dnsr token pre-pass on SOURCE (col 1) only.
+    found, expanded = _expand_line_for_tokens(line, 1, None, ir)
+    if found:
+        for exp_line in expanded:
+            _process_masq_line(ir, exp_line)
         return
 
     iface_spec = cols[0]
@@ -124,9 +146,29 @@ def _process_dnat_line(ir: FirewallIR, line: ConfigLine) -> None:
     Examples:
         DNAT  net  host:203.0.113.38:3389  tcp  13389  -  203.0.113.38
         DNAT  all  loc:192.0.2.201          tcp  80,443 -  203.0.113.100
+
+    SOURCE (col 1) accepts nfset:/dns:/dnsr: tokens.
+    DEST (col 2) is a zone:ip[:port] DNAT target and MUST NOT carry set
+    tokens — raise ValueError if one is found.
     """
     cols = line.columns
     if len(cols) < 4:
+        return
+
+    # Reject set tokens in the DEST column (DNAT target).
+    dest_spec_raw = cols[2] if len(cols) > 2 else "-"
+    if _has_set_token(dest_spec_raw):
+        raise ValueError(
+            f"dnat {line.file}:{line.lineno}: DEST column (DNAT target) "
+            f"does not accept nfset:/dns:/dnsr: tokens — got {dest_spec_raw!r}. "
+            f"Use a literal zone:ip[:port] target instead."
+        )
+
+    # nfset/dns/dnsr token pre-pass on SOURCE (col 1) only.
+    found, expanded = _expand_line_for_tokens(line, 1, None, ir)
+    if found:
+        for exp_line in expanded:
+            _process_dnat_line(ir, exp_line)
         return
 
     source_spec = cols[1] if len(cols) > 1 else "all"
@@ -157,11 +199,16 @@ def _process_dnat_line(ir: FirewallIR, line: ConfigLine) -> None:
         if len(parts) > 2:
             dest_port = parts[2]
 
-    # Parse source zone
+    # Parse source zone.  A rewritten set-reference sentinel starts with
+    # '+' (e.g. ``+nfset_allowed_v4``) and contains no zone prefix — use
+    # it directly as the saddr match value.
     src_zone = None
     src_addr = None
     if source_spec and source_spec != "-":
-        if ":" in source_spec:
+        if source_spec.startswith("+") or source_spec.startswith("!+"):
+            # Pre-rewritten set sentinel — use as address directly.
+            src_addr = source_spec
+        elif ":" in source_spec:
             src_zone, src_addr = source_spec.split(":", 1)
         else:
             src_zone = source_spec

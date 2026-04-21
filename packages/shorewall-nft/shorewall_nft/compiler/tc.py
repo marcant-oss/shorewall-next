@@ -9,10 +9,16 @@ Note: nftables does not do tc/qdisc directly. TC shaping is handled
 by setting marks in nft which are then used by tc qdiscs configured
 separately. The tcdevices/tcclasses/tcfilters configs generate the
 corresponding `tc` commands, not nft rules.
+
+Native kernel apply path: ``apply_tc`` uses pyroute2 to configure
+qdiscs/classes/filters directly via netlink — no tc(8) binary needed.
+The ``emit_tc_commands`` / ``generate-tc`` bash-script path is kept as
+a portable fallback.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from shorewall_nft.compiler.ir import (
@@ -23,9 +29,12 @@ from shorewall_nft.compiler.ir import (
     Match,
     Rule,
     Verdict,
+    _expand_line_for_tokens,
 )
 from shorewall_nft.config.parser import ConfigLine
 from shorewall_nft.config.zones import ZoneModel
+
+logger = logging.getLogger("shorewall_nft.compiler.tc")
 
 
 @dataclass
@@ -151,6 +160,219 @@ def emit_tc_commands(tc: TcConfig) -> str:
     return "\n".join(lines)
 
 
+@dataclass
+class TcApplyResult:
+    """Summary of a native TC apply operation via pyroute2."""
+    applied: int
+    failed: int
+    errors: list[str]
+
+
+def apply_tc(tc: TcConfig, *, netns: str | None = None) -> TcApplyResult:
+    """Apply TC config via pyroute2.
+
+    Configures kernel qdiscs, classes, and fwmark filters directly
+    via netlink — no tc(8) binary required.  Opens
+    ``IPRoute(netns=netns)`` when *netns* is set, otherwise uses the
+    default (caller's) network namespace.
+
+    Idempotence: qdiscs are deleted then re-added (same semantics as
+    the bash script ``emit_tc_commands`` generates).  A
+    ``NetlinkError`` with ``errno=ENOENT`` (2) during the delete step
+    is silently ignored — the qdisc was simply not present yet.
+
+    Returns a :class:`TcApplyResult` with counts of successfully
+    applied and failed operations.  Failed operations are logged at
+    WARNING level; no exception is raised.
+    """
+    try:
+        from pyroute2 import IPRoute
+        from pyroute2.netlink.exceptions import NetlinkError
+    except ImportError:
+        return TcApplyResult(
+            applied=0, failed=0,
+            errors=["pyroute2 not installed — cannot apply TC config natively"],
+        )
+
+    applied = 0
+    failed = 0
+    errors: list[str] = []
+
+    def _record_error(msg: str) -> None:
+        nonlocal failed
+        failed += 1
+        errors.append(msg)
+        logger.warning("apply_tc: %s", msg)
+
+    try:
+        ipr: IPRoute = IPRoute(netns=netns) if netns else IPRoute()
+    except Exception as ex:
+        return TcApplyResult(
+            applied=0, failed=0,
+            errors=[f"IPRoute init failed: {ex}"],
+        )
+
+    # Cache interface name → index.
+    iface_idx: dict[str, int] = {}
+
+    def _idx(name: str) -> int | None:
+        if name in iface_idx:
+            return iface_idx[name]
+        try:
+            links = ipr.link_lookup(ifname=name)
+        except NetlinkError:
+            return None
+        if not links:
+            return None
+        iface_idx[name] = links[0]
+        return links[0]
+
+    try:
+        # ── Devices: root HTB qdisc (egress) and ingress qdisc ──────────
+        for dev in tc.devices:
+            idx = _idx(dev.interface)
+            if idx is None:
+                _record_error(
+                    f"device {dev.interface!r}: interface not found, skipped")
+                continue
+
+            if dev.out_bandwidth:
+                # Teardown existing root qdisc (idempotent).
+                try:
+                    ipr.tc("del", "htb", idx, 0x10000)
+                except NetlinkError as ex:
+                    if ex.code != 2:  # ENOENT → already absent
+                        _record_error(
+                            f"device {dev.interface!r}: "
+                            f"del root qdisc failed: {ex}")
+                        continue
+
+                # Add HTB root qdisc: handle 1: default class 1.
+                try:
+                    ipr.tc("add", "htb", idx, 0x10000, default=1)
+                except NetlinkError as ex:
+                    _record_error(
+                        f"device {dev.interface!r}: "
+                        f"add root htb qdisc failed: {ex}")
+                    continue
+
+                # Add root class 1:1 with out_bandwidth as rate and ceil.
+                try:
+                    ipr.tc(
+                        "add", "htb", idx,
+                        handle=0x00010001,   # classid 1:1
+                        parent=0x10000,      # parent 1:
+                        rate=dev.out_bandwidth,
+                        ceil=dev.out_bandwidth,
+                        prio=0,
+                    )
+                    applied += 1
+                except NetlinkError as ex:
+                    _record_error(
+                        f"device {dev.interface!r}: "
+                        f"add root class 1:1 failed: {ex}")
+                    continue
+
+            if dev.in_bandwidth:
+                # Teardown existing ingress qdisc (idempotent).
+                try:
+                    ipr.tc("del", "ingress", idx, 0xffff0000)
+                except NetlinkError as ex:
+                    if ex.code != 2:  # ENOENT → already absent
+                        _record_error(
+                            f"device {dev.interface!r}: "
+                            f"del ingress qdisc failed: {ex}")
+                        # Non-fatal; attempt add anyway.
+
+                try:
+                    ipr.tc("add", "ingress", idx, 0xffff0000)
+                    applied += 1
+                except NetlinkError as ex:
+                    _record_error(
+                        f"device {dev.interface!r}: "
+                        f"add ingress qdisc failed: {ex}")
+
+        # ── Classes: HTB leaf classes under root class 1:1 ──────────────
+        for cls in tc.classes:
+            idx = _idx(cls.interface)
+            if idx is None:
+                _record_error(
+                    f"class {cls.interface!r}/{cls.mark}: "
+                    f"interface not found, skipped")
+                continue
+
+            ceil = cls.ceil or cls.rate
+            # classid 1:<mark>  parent 1:1
+            classid = (1 << 16) | (cls.mark & 0xFFFF)
+            parent = 0x00010001  # 1:1
+            try:
+                ipr.tc(
+                    "add", "htb", idx,
+                    handle=classid,
+                    parent=parent,
+                    rate=cls.rate,
+                    ceil=ceil,
+                    prio=cls.priority,
+                )
+                applied += 1
+            except NetlinkError as ex:
+                _record_error(
+                    f"class {cls.interface!r}/{cls.mark}: "
+                    f"add htb class failed: {ex}")
+
+        # ── Filters: fwmark → classid mapping ───────────────────────────
+        # Each TcFilter references a CLASS string like "eth0:1".
+        # We add a fw (fwmark) filter: protocol ip parent 1:0 prio 1
+        # handle <mark> fw classid 1:<mark>
+        for flt in tc.filters:
+            # Parse "INTERFACE:MARK" from tc_class field.
+            if ":" not in flt.tc_class:
+                _record_error(
+                    f"filter class {flt.tc_class!r}: "
+                    f"expected INTERFACE:MARK, skipped")
+                continue
+            iface_part, mark_part = flt.tc_class.rsplit(":", 1)
+            try:
+                mark_int = int(mark_part)
+            except ValueError:
+                _record_error(
+                    f"filter class {flt.tc_class!r}: "
+                    f"mark {mark_part!r} not an integer, skipped")
+                continue
+
+            idx = _idx(iface_part)
+            if idx is None:
+                _record_error(
+                    f"filter {flt.tc_class!r}: "
+                    f"interface {iface_part!r} not found, skipped")
+                continue
+
+            classid = (1 << 16) | (mark_int & 0xFFFF)
+            # parent 1:0  (root qdisc handle, minor=0)
+            parent = 0x10000
+            try:
+                ipr.tc(
+                    "add-filter", "fw", idx,
+                    parent=parent,
+                    prio=1,
+                    handle=mark_int,
+                    classid=classid,
+                )
+                applied += 1
+            except NetlinkError as ex:
+                _record_error(
+                    f"filter {flt.tc_class!r}: "
+                    f"add fw filter failed: {ex}")
+
+    finally:
+        try:
+            ipr.close()
+        except Exception:
+            pass
+
+    return TcApplyResult(applied=applied, failed=failed, errors=errors)
+
+
 def process_mangle(ir: FirewallIR, tcrules: list[ConfigLine],
                    mangle: list[ConfigLine], zones: ZoneModel) -> None:
     """Process mangle/tcrules into nft mark rules."""
@@ -175,9 +397,19 @@ def _process_mark_rule(ir: FirewallIR, line: ConfigLine,
 
     tcrules format: MARK_VALUE SOURCE DEST PROTO PORT(S) ...
     mangle format:  ACTION SOURCE DEST PROTO PORT(S) ...
+
+    SOURCE (col 1) and DEST (col 2) accept nfset:/dns:/dnsr: tokens.
+    When tokens are present the rule is cloned for v4 and v6 families.
     """
     cols = line.columns
     if len(cols) < 2:
+        return
+
+    # nfset/dns/dnsr token pre-pass on SOURCE(col 1) + DEST(col 2).
+    found, expanded = _expand_line_for_tokens(line, 1, 2, ir)
+    if found:
+        for exp_line in expanded:
+            _process_mark_rule(ir, exp_line, zones)
         return
 
     action = cols[0]
@@ -228,13 +460,19 @@ def _process_mark_rule(ir: FirewallIR, line: ConfigLine,
             return
 
     if source_spec and source_spec != "-":
-        if ":" in source_spec:
+        # A rewritten set sentinel starts with '+'; use directly as addr.
+        if source_spec.startswith("+") or source_spec.startswith("!+"):
+            rule.matches.append(Match(field="ip saddr", value=source_spec))
+        elif ":" in source_spec:
             _, addr = source_spec.split(":", 1)
             if addr:
                 rule.matches.append(Match(field="ip saddr", value=addr))
 
     if dest_spec and dest_spec != "-":
-        if ":" in dest_spec:
+        # A rewritten set sentinel starts with '+'; use directly as addr.
+        if dest_spec.startswith("+") or dest_spec.startswith("!+"):
+            rule.matches.append(Match(field="ip daddr", value=dest_spec))
+        elif ":" in dest_spec:
             _, addr = dest_spec.split(":", 1)
             if addr:
                 rule.matches.append(Match(field="ip daddr", value=addr))

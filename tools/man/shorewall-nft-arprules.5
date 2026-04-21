@@ -55,10 +55,22 @@ ACCEPT   -   -   eth1   00:11:22:33:44:55
 .fi
 .RE
 
+.SH NFSET / DNS TOKENS
+The SOURCE and DEST columns accept
+.BR nfset:<name> ,
+.BR dns:<hostname> ,
+and
+.BR dnsr:<hostname>
+tokens — see
+.BR shorewall\-nft\-rules (5)
+and
+.BR shorewall\-nft\-nfsets (5)
+for the full grammar.
 .SH SEE ALSO
 .BR shorewall\-nft (8),
 .BR shorewall\-nft\-interfaces (5),
-.BR shorewall\-nft\-maclist (5)
+.BR shorewall\-nft\-maclist (5),
+.BR shorewall\-nft\-nfsets (5)
 
 .SH AUTHOR
 André Valentin <avalentin@marcant.net>
