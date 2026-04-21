@@ -10,16 +10,25 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
 
 - `cli.py`, `ctl.py`, `iplist_cli.py` — Click entry points (`shorewalld`,
   `shorewalld-ctl`, `shorewalld-iplist`).
-- `core.py` — `Daemon.run()`: asyncio event loop, subsystem lifecycle.
+- `core.py` — `Daemon.run()`: asyncio event loop, subsystem lifecycle;
+  control-socket handlers live in `control_handlers.py` for testability.
 - `config.py` — `shorewalld.conf` + allowlist loader.
-- `control.py` — control unix socket (`register-instance`,
-  `reload-instance`, status queries from `shorewall-nft`).
+- `control.py` — control unix socket protocol (`ControlServer`, dispatch,
+  `ping` built-in). Wire format: one JSON object per line.
+- `control_handlers.py` — `ControlHandlers`: one async method per
+  control-socket command (`handle_register_instance`,
+  `handle_reload_instance`, `handle_deregister_instance`,
+  `handle_instance_status`, `handle_refresh_iplist`,
+  `handle_iplist_status`, `handle_refresh_dns`). Constructed with
+  subsystem refs; no reference to the whole Daemon — fully unit-testable.
 - `instance.py` — `InstanceManager`: per-netns allowlist state,
   register-resync wiring.
 - `exporter.py` — shared Prometheus infrastructure: `NftScraper`,
   `ShorewalldRegistry`, `CollectorBase`, `Histogram`, `_MetricFamily`.
   Concrete collectors live under `collectors/`; this module re-exports
-  them for back-compat.
+  the public collector classes for back-compat. Private helpers
+  (`_CT_STAT_FIELDS`, `_extract_qdisc_row`, etc.) are no longer
+  re-exported — import from `shorewalld.collectors.<module>` directly.
 - `collectors/` — one module per Prometheus collector:
   `nft.py`, `flowtable.py`, `link.py`, `qdisc.py`, `conntrack.py`
   (CTNETLINK — proxied via `READ_KIND_CTNETLINK` worker RPC, no setns), `ct.py`, `snmp.py`,
@@ -123,6 +132,13 @@ Every code path here is hot. Target: 20 000 DNS answers/s across dnstap
 - **Bounded everything.** Every queue, cache, retry counter has an
   explicit cap. Drops are counted as metrics. Growing RSS is not
   acceptable.
+- **Atomic-int counter bumps.** `PbdnsMetrics` / `DnstapMetrics` /
+  shared `_IngressMetricsBase` rely on GIL atomicity of
+  `dict[int] += 1` for pre-registered counter keys — no lock on the
+  hot path.  Adding a new counter requires an entry in the subclass's
+  `_COUNTER_NAMES` tuple; forgetting raises `KeyError` in tests (fail
+  fast).  `snapshot()` returns a lock-free `dict.copy()` (single C
+  call, GIL-safe).
 - **Measure before optimising.** Scrape-duration histograms, per-stage
   queue depths, batch-size histograms are first-class metrics.
 - **Peer-link UDP: never fragment at IP.** `IP_MTU_DISCOVER=IP_PMTUDISC_DO`
