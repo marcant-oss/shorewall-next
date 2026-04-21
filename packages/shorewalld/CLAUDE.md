@@ -11,8 +11,15 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
 - `cli.py`, `ctl.py`, `iplist_cli.py` — Click entry points (`shorewalld`,
   `shorewalld-ctl`, `shorewalld-iplist`).
 - `core.py` — `Daemon.run()`: asyncio event loop, subsystem lifecycle;
+  receives runtime config as a single typed `DaemonConfig` (`daemon_config.py`);
+  kwargs accepted for back-compat with a `DeprecationWarning`;
   control-socket handlers live in `control_handlers.py` for testability.
-- `config.py` — `shorewalld.conf` + allowlist loader.
+- `daemon_config.py` — `DaemonConfig` frozen dataclass (`frozen=True`,
+  `slots=True`), 34 fields covering all daemon runtime knobs. Built by
+  `cli.py` after merging `ConfDefaults` (from shorewalld.conf) with argparse
+  CLI flags. Pass as `Daemon(config=DaemonConfig(...))`.
+- `config.py` — `shorewalld.conf` + allowlist loader; `ConfDefaults` holds
+  the file-parsed view with `| None` fields (unset = CLI default wins).
 - `control.py` — control unix socket protocol (`ControlServer`, dispatch,
   `ping` built-in). Wire format: one JSON object per line.
 - `control_handlers.py` — `ControlHandlers`: one async method per

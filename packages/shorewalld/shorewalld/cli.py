@@ -394,6 +394,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Imported lazily so --help works without prometheus_client installed.
     from .core import Daemon
+    from .daemon_config import DaemonConfig
 
     socket_mode_int: int | None = None
     if args.socket_mode is not None:
@@ -418,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             parser.error(f"IPLIST_* config parse error: {e}")
 
-    daemon = Daemon(
+    cfg = DaemonConfig(
         prom_host=prom_host,
         prom_port=prom_port,
         api_socket=args.listen_api,
@@ -444,10 +445,10 @@ def main(argv: list[str] | None = None) -> int:
         state_enabled=not args.no_state,
         state_no_load=args.no_state_load,
         state_flush=args.state_flush,
-        instances=list(args.instances),
+        instances=tuple(args.instances),
         control_socket=args.control_socket,
         control_socket_netns=args.control_socket_netns,
-        iplist_configs=iplist_cfgs,
+        iplist_configs=tuple(iplist_cfgs),
         enable_vrrp_collector=args.enable_vrrp_collector,
         vrrp_snmp_enabled=args.vrrp_snmp_enable,
         vrrp_snmp_host=args.vrrp_snmp_host,
@@ -457,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
         dns_dedup_refresh_threshold=args.dns_dedup_refresh_threshold,
         batch_window_seconds=args.batch_window_seconds,
     )
+    daemon = Daemon(config=cfg)
     try:
         return asyncio.run(daemon.run())
     except KeyboardInterrupt:

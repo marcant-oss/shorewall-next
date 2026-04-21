@@ -15,6 +15,7 @@ import pytest
 
 from shorewalld import core as core_mod
 from shorewalld.core import Daemon
+from shorewalld.daemon_config import DaemonConfig
 from shorewall_nft.nft.dns_sets import DnsSetRegistry, DnsSetSpec, write_compiled_allowlist
 
 
@@ -89,15 +90,20 @@ def allowlist_file(tmp_path: Path) -> Path:
 def test_daemon_without_allowlist_does_not_build_pipeline(
     monkeypatch, tmp_path: Path,
 ):
-    """Baseline: default Daemon has no tracker / router / bridge."""
+    """Baseline: default Daemon has no tracker / router / bridge.
+
+    Uses the typed DaemonConfig path as a happy-path regression for the
+    config object (no DeprecationWarning should be emitted here).
+    """
     # Skip the exporter side (prometheus_client / libnftables).
     monkeypatch.setattr(Daemon, "_start_prom_server", lambda self: None)
 
     async def run():
-        d = Daemon(
+        cfg = DaemonConfig(
             prom_host="127.0.0.1", prom_port=0, api_socket=None,
             netns_spec=[""], scrape_interval=30.0, reprobe_interval=300.0,
         )
+        d = Daemon(config=cfg)
 
         async def trigger_stop():
             await asyncio.sleep(0.05)

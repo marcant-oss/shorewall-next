@@ -103,23 +103,35 @@ def test_unknown_keys_are_ignored(tmp_path: Path):
     assert d.listen_prom == ":9748"
 
 
+def _capture_daemon_config(captured: dict):
+    """Return a FakeDaemon class that captures the DaemonConfig fields."""
+    from shorewalld.daemon_config import DaemonConfig
+
+    class _FakeDaemon:
+        def __init__(self, config: DaemonConfig | None = None, **kw):
+            if config is not None:
+                # New path: capture config fields as flat dict for assertions.
+                for f in config.__dataclass_fields__:
+                    captured[f] = getattr(config, f)
+            else:
+                captured.update(kw)
+
+        async def run(self):
+            return 0
+
+    return _FakeDaemon
+
+
 def test_cli_merges_conf_defaults(tmp_path: Path, monkeypatch):
     """Smoke test: CLI main() picks up conf values when no flag passed."""
     conf = tmp_path / "shorewalld.conf"
     conf.write_text("LISTEN_PROM=127.0.0.1:9900\nSTATE_DIR=/tmp/foo\n")
     captured: dict = {}
 
-    class _FakeDaemon:
-        def __init__(self, **kw):
-            captured.update(kw)
-
-        async def run(self):
-            return 0
-
     import shorewalld.core as core_mod
     from shorewalld import cli as cli_mod
 
-    monkeypatch.setattr(core_mod, "Daemon", _FakeDaemon)
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
     # configure_logging mutates the shorewalld logger tree — stub it
     # out so these tests don't leak handlers into later tests.
     monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
@@ -136,17 +148,10 @@ def test_cli_flag_overrides_conf(tmp_path: Path, monkeypatch):
     conf.write_text("LISTEN_PROM=127.0.0.1:9900\n")
     captured: dict = {}
 
-    class _FakeDaemon:
-        def __init__(self, **kw):
-            captured.update(kw)
-
-        async def run(self):
-            return 0
-
     import shorewalld.core as core_mod
     from shorewalld import cli as cli_mod
 
-    monkeypatch.setattr(core_mod, "Daemon", _FakeDaemon)
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
     # configure_logging mutates the shorewalld logger tree — stub it
     # out so these tests don't leak handlers into later tests.
     monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
@@ -209,17 +214,10 @@ def test_cli_dns_dedup_threshold_override(tmp_path: Path, monkeypatch):
     conf.write_text("DNS_DEDUP_REFRESH_THRESHOLD=0.75\n")
     captured: dict = {}
 
-    class _FakeDaemon:
-        def __init__(self, **kw):
-            captured.update(kw)
-
-        async def run(self):
-            return 0
-
     import shorewalld.core as core_mod
     from shorewalld import cli as cli_mod
 
-    monkeypatch.setattr(core_mod, "Daemon", _FakeDaemon)
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
     monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
     rc = cli_mod.main([
         "--config-file", str(conf),
@@ -235,17 +233,10 @@ def test_cli_dns_dedup_threshold_from_conf(tmp_path: Path, monkeypatch):
     conf.write_text("DNS_DEDUP_REFRESH_THRESHOLD=0.75\n")
     captured: dict = {}
 
-    class _FakeDaemon:
-        def __init__(self, **kw):
-            captured.update(kw)
-
-        async def run(self):
-            return 0
-
     import shorewalld.core as core_mod
     from shorewalld import cli as cli_mod
 
-    monkeypatch.setattr(core_mod, "Daemon", _FakeDaemon)
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
     monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
     rc = cli_mod.main(["--config-file", str(conf)])
     assert rc == 0
@@ -258,17 +249,10 @@ def test_cli_batch_window_from_conf(tmp_path: Path, monkeypatch):
     conf.write_text("BATCH_WINDOW_SECONDS=0.050\n")
     captured: dict = {}
 
-    class _FakeDaemon:
-        def __init__(self, **kw):
-            captured.update(kw)
-
-        async def run(self):
-            return 0
-
     import shorewalld.core as core_mod
     from shorewalld import cli as cli_mod
 
-    monkeypatch.setattr(core_mod, "Daemon", _FakeDaemon)
+    monkeypatch.setattr(core_mod, "Daemon", _capture_daemon_config(captured))
     monkeypatch.setattr(cli_mod, "configure_logging", lambda cfg: None)
     rc = cli_mod.main(["--config-file", str(conf)])
     assert rc == 0
