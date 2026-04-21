@@ -281,10 +281,15 @@ Tier semantics:
   `HaFailoverDrillScenario` polls keepalived-MIB state transitions to
   compute real downtime. What remains is the full second-FW-endpoint topology
   (conntrackd sync rules, VRRP exchange, failover orchestration).
-- **Hardware-offload flow-steering tests** — verify that nft flowtable
-  `offload` actually moves flows to hardware. The `flowtable_stagnant` advisor
-  heuristic (fires when `flowtable_*` counter == 0) is a proxy; a real offload
-  verification needs conntrack counter comparison before/after ruleset load.
+- **Hardware-offload flow-steering tests** — infrastructure shipped
+  (`observe_flowtable: bool` in `ThroughputScenario`, `poll_flowtable` concurrent
+  sidecar in `ThroughputRunner`, `_run_flowtable_poll_local` in controller,
+  `flowtable_packets_delta` in `raw`, `flowtable_counter_nonzero` criterion in
+  `summarize()`).  Remaining gap: live test requires through-FW traffic.
+  Current test topology (`wan-native → lan-downstream`) is L2-local and never
+  traverses the FW flowtable.  Operator must add a temporary ACCEPT rule for
+  iperf3 traffic and retarget the scenario to `wan-uplink` before a live run
+  will show non-zero delta.  See `docs/testing/perf-baseline.md`.
 - **pdns extend scripts on test appliances** — the `pdns` SNMP bundle
   (`pdns-all-queries`, `pdns-cache-hits`, `pdns-answers-0-1`) requires
   `extend` lines in `/etc/snmp/snmpd.conf` pointing at pdns-control scripts.

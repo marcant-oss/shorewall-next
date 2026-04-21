@@ -231,7 +231,13 @@ class ThroughputScenario(BaseModel):
     # with the iperf3 client in the controller (not through the agent IPC channel)
     # to ensure the poll overlaps with active flows rather than running sequentially after.
     observe_conntrack: bool = False
-    fw_host: str | None = None  # SSH target for conntrack observation; required when observe_conntrack=True
+    fw_host: str | None = None  # SSH target for conntrack/flowtable observation
+    # observe_flowtable: if True, sample nft flowtable packet counters on fw_host
+    # before and after the iperf3 run and record the delta in
+    # ScenarioResult.raw["flowtable_packets_delta"].  Requires through-FW traffic to
+    # show non-zero: L2-local iperf3 between endpoints on the same broadcast domain
+    # never traverses the FW flowtable.
+    observe_flowtable: bool = False
     test_id: str | None = None
     standard_refs: list[str] = []
     acceptance_criteria: dict[str, Any] = {}
@@ -241,6 +247,10 @@ class ThroughputScenario(BaseModel):
         if self.observe_conntrack and self.fw_host is None:
             raise ValueError(
                 "fw_host must be set when observe_conntrack=True"
+            )
+        if self.observe_flowtable and self.fw_host is None:
+            raise ValueError(
+                "fw_host must be set when observe_flowtable=True"
             )
         return self
 

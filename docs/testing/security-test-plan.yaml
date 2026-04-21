@@ -891,10 +891,13 @@ tests:
     human_ref: security-test-plan.md#nist-sc-7-flowtable-offload
     machine_ref: audit.json[scenarios][].test_id == nist-sc-7-flowtable-offload
   status: partial
-  gap_reason: 'The advisor flowtable_stagnant heuristic fires when flowtable counters
-    stay at zero, providing a proxy signal.  A direct counter comparison before/after
-    ruleset load (hardware-offload verification) is not yet implemented — tracked
-    as "hardware-offload flow-steering tests" in CLAUDE.md open items.
+  gap_reason: 'observe_flowtable infrastructure shipped (scenarios.py poll_flowtable
+    sidecar + controller _run_flowtable_poll_local + config.py field +
+    ThroughputRunner.summarize() criterion evaluation).  flowtable_packets_delta
+    is now emitted and flowtable_counter_nonzero criterion is evaluated.  Remaining
+    gap: live test requires through-FW traffic (wan-native → lan-downstream is L2-local,
+    never traverses the FW flowtable).  Operator must add a temporary ACCEPT rule +
+    retarget to wan-uplink as source before a live run will show non-zero delta.
 
     '
 - test_id: bsi-net-3-2-a2-function-separation

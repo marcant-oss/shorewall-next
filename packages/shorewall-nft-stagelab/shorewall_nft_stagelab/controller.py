@@ -468,7 +468,7 @@ class StagelabController:
                 _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 60.0
             elif cmd.kind in ("run_iperf3_client", "run_tcpkali"):
                 _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 30.0
-            elif cmd.kind == "poll_conntrack":
+            elif cmd.kind in ("poll_conntrack", "poll_flowtable"):
                 _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 30.0
             elif cmd.kind in ("start_http_listener", "stop_http_listener"):
                 # stop_http_listener may carry delay_before_s = hold_s + 2 so
@@ -550,6 +550,67 @@ class StagelabController:
                 "_conntrack_sidecar": True,
             }
 
+        async def _run_flowtable_poll_local(
+            idx: int, cmd
+        ) -> tuple[int, dict]:
+            """Sample nft flowtable packet counters before and after the scenario.
+
+            SSHes to ``fw_host``, runs ``nft -j list ruleset``, extracts the
+            sum of all flowtable ``packets`` counters (all handles), waits
+            ``duration_s`` seconds, samples again, and returns the delta.
+
+            The delta > 0 means at least one flow was offloaded to the flowtable
+            during the scenario.  Requires through-FW traffic — L2-local iperf3
+            between endpoints on the same broadcast domain will always show 0.
+            """
+            import json as _json  # local import: only needed when flowtable is requested
+
+            spec = cmd.spec
+            fw_host: str = spec["fw_host"]
+            duration_s: float = float(spec.get("duration_s", 0))
+
+            async def _sample_flowtable_packets() -> int:
+                """Return total flowtable packet count via SSH nft -j."""
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "ssh", "-A", "-o", "BatchMode=yes",
+                        "-o", "ConnectTimeout=5",
+                        fw_host,
+                        "nft -j list ruleset 2>/dev/null",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    out_bytes, _ = await asyncio.wait_for(
+                        proc.communicate(), timeout=15.0
+                    )
+                    data = _json.loads(out_bytes)
+                    total = 0
+                    for item in data.get("nftables", []):
+                        ft = item.get("flowtable")
+                        if ft and isinstance(ft, dict):
+                            total += int(ft.get("packets", 0))
+                    return total
+                except Exception:  # noqa: BLE001 — soft-fail
+                    return 0
+
+            before = await _sample_flowtable_packets()
+            await asyncio.sleep(duration_s)
+            after = await _sample_flowtable_packets()
+            delta = max(0, after - before)
+
+            log.info(
+                "flowtable sidecar: fw=%r before=%d after=%d delta=%d",
+                fw_host, before, after, delta,
+            )
+            return idx, {
+                "ok": True,
+                "tool": "poll_flowtable",
+                "packets_before": before,
+                "packets_after": after,
+                "packets_delta": delta,
+                "_flowtable_sidecar": True,
+            }
+
         async def _run_host_group(group: list[tuple[int, object]]) -> list[tuple[int, dict]]:
             """Run a host's commands sequentially.
 
@@ -582,6 +643,8 @@ class StagelabController:
                 for idx, cmd in concurrent_cmds:
                     if hasattr(cmd, "kind") and cmd.kind == "poll_conntrack":
                         tasks.append(_run_conntrack_poll_local(idx, cmd))
+                    elif hasattr(cmd, "kind") and cmd.kind == "poll_flowtable":
+                        tasks.append(_run_flowtable_poll_local(idx, cmd))
                     else:
                         # Unknown concurrent kind — fall back to sequential dispatch.
                         tasks.append(_run_one(idx, cmd))

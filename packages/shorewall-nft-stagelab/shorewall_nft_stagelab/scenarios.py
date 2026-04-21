@@ -157,6 +157,19 @@ class ThroughputRunner(Scenario):
             )
             cmds.append(sidecar_cmd)
 
+        if sc.observe_flowtable and sc.fw_host:
+            ft_sidecar_cmd = AgentCommand(
+                endpoint_name=sc.source,
+                kind="poll_flowtable",
+                spec={
+                    "fw_host": sc.fw_host,
+                    "duration_s": sc.duration_s,
+                    "_flowtable_sidecar": True,
+                },
+                concurrent=True,  # sample before + after concurrently with iperf3
+            )
+            cmds.append(ft_sidecar_cmd)
+
         return cmds
 
     def summarize(self, results: list[dict]) -> ScenarioResult:
@@ -166,12 +179,19 @@ class ThroughputRunner(Scenario):
             r for r in results
             if r.get("_conntrack_sidecar") or r.get("tool") == "poll_conntrack"
         ]
+        # Separate flowtable sidecar results.
+        flowtable_sidecar_results = [
+            r for r in results
+            if r.get("_flowtable_sidecar") or r.get("tool") == "poll_flowtable"
+        ]
         # Expect one client result dict (server produces no throughput metric).
         client_results = [
             r for r in results
             if r.get("role") != "server"
             and not r.get("_conntrack_sidecar")
             and r.get("tool") != "poll_conntrack"
+            and not r.get("_flowtable_sidecar")
+            and r.get("tool") != "poll_flowtable"
         ]
         if not client_results:
             client_results = results  # fallback: use all
@@ -214,6 +234,12 @@ class ThroughputRunner(Scenario):
             raw["latency_p99_ms"] = latency_p99_ms
         if sidecar_results:
             raw["conntrack_peak_observed"] = sidecar_results[0].get("peak", 0)
+        if flowtable_sidecar_results:
+            ft_delta = int(flowtable_sidecar_results[0].get("packets_delta", 0))
+            raw["flowtable_packets_delta"] = ft_delta
+            # Evaluate flowtable_counter_nonzero acceptance criterion if requested.
+            if sc.acceptance_criteria.get("flowtable_counter_nonzero") is True:
+                criteria_results["flowtable_counter_nonzero"] = ft_delta > 0
 
         return ScenarioResult(
             scenario_id=sc.id,
