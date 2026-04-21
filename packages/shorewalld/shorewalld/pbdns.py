@@ -32,11 +32,10 @@ from __future__ import annotations
 
 import asyncio
 import struct
-import threading
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 
+from ._ingress_metrics import _IngressMetricsBase
 from .dnstap_bridge import TrackerBridge
 from .logsetup import get_logger
 from .proto import dnsmessage_pb2
@@ -83,85 +82,59 @@ MAX_FRAME_BYTES = 65536
 # ── Metrics ──────────────────────────────────────────────────────────
 
 
-@dataclass
-class PbdnsMetrics:
+class PbdnsMetrics(_IngressMetricsBase):
     """Prometheus counter bundle, exposed via the exporter.
 
     Symmetric with :class:`shorewalld.dnstap.DnstapMetrics`
     so operators can A/B compare the two ingestion paths in a single
     Grafana panel.
+
+    Inherits lock-free ``inc`` / ``snapshot`` / ``set_last_frame_now``
+    from :class:`_IngressMetricsBase`.  All counter names are
+    pre-registered in ``_COUNTER_NAMES`` so that ``inc`` fails fast
+    (``KeyError``) if a developer forgets to add a new name here.
     """
-    frames_accepted_total: int = 0
-    frames_decode_error_total: int = 0
-    frames_dropped_queue_full_total: int = 0
-    frames_by_type_query_total: int = 0
-    frames_by_type_response_total: int = 0
-    frames_by_type_other_total: int = 0
-    frames_by_rcode_noerror_total: int = 0
-    frames_by_rcode_nxdomain_total: int = 0
-    frames_by_rcode_servfail_total: int = 0
-    frames_by_rcode_refused_total: int = 0
-    frames_by_rcode_other_total: int = 0
-    frames_family_v4_total: int = 0
-    frames_family_v6_total: int = 0
-    frames_empty_rrs_total: int = 0
-    bytes_received_total: int = 0
-    connections: int = 0
-    connections_total: int = 0
-    last_frame_mono: float = 0.0
+
     # Two-pass pre-filter counters (mirroring dnstap's skipped_by_type):
     # frames_skipped_by_type_total  — type peek said non-response before
     #     the full ParseFromString.
     # frames_skipped_by_qname_total — type peek passed, but qname peek
     #     showed the qname is not in the tracker allowlist.
-    frames_skipped_by_type_total: int = 0
-    frames_skipped_by_qname_total: int = 0
+    _COUNTER_NAMES: tuple[str, ...] = (
+        "frames_accepted_total",
+        "frames_decode_error_total",
+        "frames_dropped_queue_full_total",
+        "frames_by_type_query_total",
+        "frames_by_type_response_total",
+        "frames_by_type_other_total",
+        "frames_by_rcode_noerror_total",
+        "frames_by_rcode_nxdomain_total",
+        "frames_by_rcode_servfail_total",
+        "frames_by_rcode_refused_total",
+        "frames_by_rcode_other_total",
+        "frames_family_v4_total",
+        "frames_family_v6_total",
+        "frames_empty_rrs_total",
+        "bytes_received_total",
+        "connections",
+        "connections_total",
+        "frames_skipped_by_type_total",
+        "frames_skipped_by_qname_total",
+    )
 
-    _lock: "threading.Lock" = field(default_factory=threading.Lock)
+    def snapshot(self) -> dict[str, float]:  # type: ignore[override]
+        """Return a counter snapshot plus the derived ``last_frame_age_seconds``.
 
-    def inc(self, attr: str, n: int = 1) -> None:
-        with self._lock:
-            setattr(self, attr, getattr(self, attr) + n)
-
-    def set_last_frame_now(self) -> None:
-        with self._lock:
-            self.last_frame_mono = time.monotonic()
-
-    def snapshot(self) -> dict[str, float]:
-        with self._lock:
-            return {
-                "frames_accepted_total": self.frames_accepted_total,
-                "frames_decode_error_total": self.frames_decode_error_total,
-                "frames_dropped_queue_full_total":
-                    self.frames_dropped_queue_full_total,
-                "frames_by_type_query_total": self.frames_by_type_query_total,
-                "frames_by_type_response_total":
-                    self.frames_by_type_response_total,
-                "frames_by_type_other_total": self.frames_by_type_other_total,
-                "frames_by_rcode_noerror_total":
-                    self.frames_by_rcode_noerror_total,
-                "frames_by_rcode_nxdomain_total":
-                    self.frames_by_rcode_nxdomain_total,
-                "frames_by_rcode_servfail_total":
-                    self.frames_by_rcode_servfail_total,
-                "frames_by_rcode_refused_total":
-                    self.frames_by_rcode_refused_total,
-                "frames_by_rcode_other_total":
-                    self.frames_by_rcode_other_total,
-                "frames_family_v4_total": self.frames_family_v4_total,
-                "frames_family_v6_total": self.frames_family_v6_total,
-                "frames_empty_rrs_total": self.frames_empty_rrs_total,
-                "bytes_received_total": self.bytes_received_total,
-                "connections": self.connections,
-                "connections_total": self.connections_total,
-                "last_frame_age_seconds":
-                    (time.monotonic() - self.last_frame_mono)
-                    if self.last_frame_mono else 0.0,
-                "frames_skipped_by_type_total":
-                    self.frames_skipped_by_type_total,
-                "frames_skipped_by_qname_total":
-                    self.frames_skipped_by_qname_total,
-            }
+        Extends the base ``snapshot()`` with a computed gauge so the
+        Prometheus collector does not need to read ``last_frame_mono``
+        directly.
+        """
+        snap: dict[str, float] = dict(self._counters)
+        snap["last_frame_age_seconds"] = (
+            (time.monotonic() - self.last_frame_mono)
+            if self.last_frame_mono else 0.0
+        )
+        return snap
 
 
 # ── Two-pass pre-filter ───────────────────────────────────────────────

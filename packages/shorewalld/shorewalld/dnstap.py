@@ -45,6 +45,7 @@ from typing import Any
 
 from shorewall_nft.nft.netlink import NftError, NftInterface
 
+from ._ingress_metrics import _IngressMetricsBase
 from .dns_wire import extract_qname
 from .exporter import CollectorBase, _MetricFamily
 from .framestream import (
@@ -425,47 +426,31 @@ def parse_dns_response(wire: bytes) -> DnsUpdate | None:
 # ── Metrics + queue bookkeeping ─────────────────────────────────────
 
 
-class DnstapMetrics:
+class DnstapMetrics(_IngressMetricsBase):
     """In-memory counters for the dnstap pipeline.
 
     Exposed to Prometheus by a dedicated collector (registered from
     the daemon when --listen-api is on). Kept separate from the rest
     of the exporter module so the dnstap machinery can operate
     headless in unit tests.
+
+    Inherits lock-free ``inc`` / ``snapshot`` / ``set_last_frame_now``
+    from :class:`_IngressMetricsBase`.  All counter names are
+    pre-registered in ``_COUNTER_NAMES`` so that ``inc`` fails fast
+    (``KeyError``) if a developer forgets to add a new name here.
     """
 
-    def __init__(self) -> None:
-        self.frames_accepted = 0
-        self.frames_decode_error = 0
-        self.frames_dropped_queue_full = 0
-        self.frames_dropped_not_client_response = 0
-        self.frames_dropped_not_a_or_aaaa = 0
-        self.frames_dropped_not_allowlisted = 0
-        self.frames_skipped_by_type = 0
-        self.connections = 0
-        self.workers_busy = 0
-        self._lock = threading.Lock()
-
-    def inc(self, field: str, n: int = 1) -> None:
-        with self._lock:
-            setattr(self, field, getattr(self, field) + n)
-
-    def snapshot(self) -> dict[str, int]:
-        with self._lock:
-            return {
-                "frames_accepted": self.frames_accepted,
-                "frames_decode_error": self.frames_decode_error,
-                "frames_dropped_queue_full": self.frames_dropped_queue_full,
-                "frames_dropped_not_client_response":
-                    self.frames_dropped_not_client_response,
-                "frames_dropped_not_a_or_aaaa":
-                    self.frames_dropped_not_a_or_aaaa,
-                "frames_dropped_not_allowlisted":
-                    self.frames_dropped_not_allowlisted,
-                "frames_skipped_by_type": self.frames_skipped_by_type,
-                "connections": self.connections,
-                "workers_busy": self.workers_busy,
-            }
+    _COUNTER_NAMES: tuple[str, ...] = (
+        "frames_accepted",
+        "frames_decode_error",
+        "frames_dropped_queue_full",
+        "frames_dropped_not_client_response",
+        "frames_dropped_not_a_or_aaaa",
+        "frames_dropped_not_allowlisted",
+        "frames_skipped_by_type",
+        "connections",
+        "workers_busy",
+    )
 
 
 # ── Filter (shorewalld-side qname allowlist) ────────────────────────

@@ -20,6 +20,7 @@ import logging
 import os
 import signal
 import socket
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ from shorewall_nft.nft.dns_sets import (
 from shorewall_nft.nft.netlink import NftInterface
 
 from .control import ControlMetricsCollector, ControlServer
+from .control_handlers import ControlHandlers
 from .discover import ProfileBuilder, resolve_netns_list
 from .dns_pull_resolver import PullResolver, PullResolverMetricsCollector
 from .dns_set_tracker import (
@@ -42,7 +44,7 @@ from .dns_set_tracker import (
 from .dnstap import DnstapMetricsCollector, DnstapServer
 from .dnstap_bridge import BridgeMetricsCollector, TrackerBridge
 from .exporter import NftScraper, ShorewalldRegistry
-from .instance import InstanceConfig, InstanceManager, parse_instance_spec
+from .instance import InstanceManager, parse_instance_spec
 from .iplist.plain import PlainListTracker
 from .iplist.tracker import IpListTracker
 from .nfsets_manager import NfSetsManager
@@ -143,6 +145,8 @@ class Daemon:
         vrrp_snmp_port: int = 161,
         vrrp_snmp_community: str = "public",
         vrrp_snmp_timeout: float = 1.0,
+        dns_dedup_refresh_threshold: float = 0.5,
+        batch_window_seconds: float = 0.010,
     ) -> None:
         self.prom_host = prom_host
         self.prom_port = prom_port
@@ -180,6 +184,10 @@ class Daemon:
         self.vrrp_snmp_port = vrrp_snmp_port
         self.vrrp_snmp_community = vrrp_snmp_community
         self.vrrp_snmp_timeout = vrrp_snmp_timeout
+
+        # DNS-set pipeline tuning knobs.
+        self.dns_dedup_refresh_threshold = dns_dedup_refresh_threshold
+        self.batch_window_seconds = batch_window_seconds
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._shutdown_done = False
@@ -368,7 +376,8 @@ class Daemon:
                 "failed to read allowlist file %s", self.allowlist_file)
             return
 
-        self._tracker = DnsSetTracker()
+        self._tracker = DnsSetTracker(
+            refresh_threshold=self.dns_dedup_refresh_threshold)
         self._tracker.load_registry(registry)
         log.info(
             "dns pipeline: loaded allowlist (%d qnames)",
@@ -425,7 +434,9 @@ class Daemon:
                 log.exception(
                     "router: failed to add netns %r", netns)
 
-        self._set_writer = SetWriter(self._tracker, self._router, loop=loop)
+        self._set_writer = SetWriter(
+            self._tracker, self._router, loop=loop,
+            batch_window_sec=self.batch_window_seconds)
         await self._set_writer.start()
 
         self._tracker_bridge = TrackerBridge(
@@ -588,15 +599,12 @@ class Daemon:
         """Register the refresh-dns handler if both server and resolver exist."""
         if self._control_server is None or self._pull_resolver is None:
             return
-        resolver = self._pull_resolver
-
-        async def _handle_refresh_dns(req: dict) -> dict:
-            hostname = req.get("hostname")
-            n = await resolver.refresh(hostname)
-            return {"ok": True, "rescheduled": n}
-
+        # Rebuild ControlHandlers with the now-available pull resolver
+        # and re-register only the refresh-dns slot so the existing
+        # instance/iplist slots are not overwritten.
+        h = ControlHandlers(pull_resolver=self._pull_resolver)
         self._control_server.register_handler(
-            "refresh-dns", _handle_refresh_dns)
+            "refresh-dns", h.handle_refresh_dns)
 
     async def _start_iplist_tracker(self, netns_list: list[str]) -> None:
         """Start the IP-list tracker for cloud prefix sets."""
@@ -628,7 +636,8 @@ class Daemon:
         """
         assert self._nft is not None
 
-        self._tracker = DnsSetTracker()
+        self._tracker = DnsSetTracker(
+            refresh_threshold=self.dns_dedup_refresh_threshold)
         self._tracker.load_registry(DnsSetRegistry())
 
         loop = asyncio.get_running_loop()
@@ -654,7 +663,9 @@ class Daemon:
         # drops every set-mutating op. WorkerRouter.dispatch() spawns
         # lazily on first use — by then the allowlist is loaded.
 
-        self._set_writer = SetWriter(self._tracker, self._router, loop=loop)
+        self._set_writer = SetWriter(
+            self._tracker, self._router, loop=loop,
+            batch_window_sec=self.batch_window_seconds)
         await self._set_writer.start()
 
         self._tracker_bridge = TrackerBridge(
@@ -843,102 +854,36 @@ class Daemon:
             socket_mode=self.socket_mode,
         )
 
+        # Build the handler object with the subsystem references it needs.
+        handlers = ControlHandlers(
+            instance_mgr=self._instance_manager,
+            iplist_tracker=self._iplist_tracker,
+            pull_resolver=self._pull_resolver,
+            nfsets_hook=self._apply_nfsets_from_instances,
+        )
+
         # Register iplist handlers if the tracker is running.
         if self._iplist_tracker is not None:
-            tracker = self._iplist_tracker
-
-            async def _handle_refresh_iplist(req: dict) -> dict:
-                name = req.get("name")
-                if name:
-                    await tracker.refresh_one(name)
-                else:
-                    await tracker.refresh_all()
-                return {"ok": True}
-
-            async def _handle_iplist_status(_req: dict) -> dict:
-                return {"ok": True, "lists": tracker.status()}
-
             self._control_server.register_handler(
-                "refresh-iplist", _handle_refresh_iplist
+                "refresh-iplist", handlers.handle_refresh_iplist
             )
             self._control_server.register_handler(
-                "iplist-status", _handle_iplist_status
+                "iplist-status", handlers.handle_iplist_status
             )
 
         # Register instance handlers if the manager is running.
         if self._instance_manager is not None:
-            mgr = self._instance_manager
-
-            async def _handle_reload_instance(req: dict) -> dict:
-                name = req.get("name")
-                await mgr.reload(name)
-                return {"ok": True}
-
-            async def _handle_instance_status(_req: dict) -> dict:
-                return {"ok": True, "instances": mgr.status()}
-
-            async def _handle_register_instance(req: dict) -> dict:
-                config_dir = req.get("config_dir")
-                netns = req.get("netns") or ""
-                if not config_dir:
-                    return {"ok": False, "error": "missing 'config_dir'"}
-                dir_path = Path(config_dir)
-                # Client-supplied name wins (from INSTANCE_NAME / CLI);
-                # otherwise derive deterministically.
-                name = (req.get("name") or netns or dir_path.name).strip()
-                allowlist_path = Path(
-                    req.get("allowlist_path")
-                    or (dir_path / "dnsnames.compiled")
-                )
-                nfsets_payload = req.get("nfsets") or None
-                cfg = InstanceConfig(
-                    name=name,
-                    netns=netns,
-                    config_dir=dir_path,
-                    allowlist_path=allowlist_path,
-                    nfsets_payload=nfsets_payload,
-                )
-                dns_payload = None
-                if "dns" in req or "dnsr" in req:
-                    dns_payload = {
-                        k: req[k] for k in ("dns", "dnsr") if k in req
-                    }
-                n = await mgr.register(
-                    cfg,
-                    dns_payload=dns_payload,
-                    nfsets_payload=nfsets_payload,
-                )
-                # Wire nfsets backends (PlainListTracker etc.) after register.
-                await self._apply_nfsets_from_instances()
-                return {"ok": True, "name": cfg.name, "qnames": n}
-
-            async def _handle_deregister_instance(req: dict) -> dict:
-                name = req.get("name")
-                if not name:
-                    config_dir = req.get("config_dir")
-                    netns = req.get("netns") or ""
-                    if config_dir:
-                        from pathlib import Path
-                        name = netns or Path(config_dir).name
-                if not name:
-                    return {
-                        "ok": False,
-                        "error": "missing 'name' or 'config_dir'",
-                    }
-                await mgr.deregister(name)
-                return {"ok": True, "name": name}
-
             self._control_server.register_handler(
-                "reload-instance", _handle_reload_instance
+                "reload-instance", handlers.handle_reload_instance
             )
             self._control_server.register_handler(
-                "instance-status", _handle_instance_status
+                "instance-status", handlers.handle_instance_status
             )
             self._control_server.register_handler(
-                "register-instance", _handle_register_instance
+                "register-instance", handlers.handle_register_instance
             )
             self._control_server.register_handler(
-                "deregister-instance", _handle_deregister_instance
+                "deregister-instance", handlers.handle_deregister_instance
             )
 
         # Seed coordinator — answers request-seed commands from shorewall-nft.
@@ -1119,24 +1064,41 @@ class Daemon:
 
         Tears down the async DNS-pipeline subsystems in reverse wiring
         order, then delegates the synchronous parts to :meth:`_shutdown`.
+
+        Every step is attempted even if earlier steps fail.  Any step
+        failures are aggregated; after all steps run the list is logged
+        as a summary and the process exits with code 1 so monitoring
+        tools do not see a spurious "clean shutdown".
         """
         if self._shutdown_done:
             return
 
+        errors: list[tuple[str, BaseException]] = []
+
+        async def _safe_async(step: str, coro: Any) -> None:
+            try:
+                await coro
+            except BaseException as exc:
+                errors.append((step, exc))
+                log.exception("shutdown step %r failed", step)
+
+        def _safe_sync(step: str, fn: Any) -> None:
+            try:
+                fn()
+            except BaseException as exc:
+                errors.append((step, exc))
+                log.exception("shutdown step %r failed", step)
+
         # Control server: close before tearing down subsystems it references.
         if self._control_server is not None:
-            try:
-                await self._control_server.shutdown()
-            except Exception:
-                log.exception("control server shutdown failed")
+            await _safe_async(
+                "control_server", self._control_server.shutdown())
             self._control_server = None
 
         # Pull resolver.
         if self._pull_resolver is not None:
-            try:
-                await self._pull_resolver.shutdown()
-            except Exception:
-                log.exception("pull resolver shutdown failed")
+            await _safe_async(
+                "pull_resolver", self._pull_resolver.shutdown())
             self._pull_resolver = None
 
         # IP-list tracker.
@@ -1161,50 +1123,33 @@ class Daemon:
 
         # Instance manager.
         if self._instance_manager is not None:
-            try:
-                await self._instance_manager.shutdown()
-            except Exception:
-                log.exception("instance manager shutdown failed")
+            await _safe_async(
+                "instance_manager", self._instance_manager.shutdown())
             self._instance_manager = None
 
         # Peer link: stop sending heartbeats and close the UDP socket.
         if self._peer_link is not None:
-            try:
-                await self._peer_link.stop()
-            except Exception:
-                log.exception("peer link stop failed")
+            await _safe_async("peer_link", self._peer_link.stop())
             self._peer_link = None
 
         # pbdns ingress server.
         if self._pbdns_server is not None:
-            try:
-                await self._pbdns_server.close()
-            except Exception:
-                log.exception("pbdns server close failed")
+            await _safe_async("pbdns_server", self._pbdns_server.close())
             self._pbdns_server = None
 
         # State store: final save before the tracker gets torn down.
         if self._state_store is not None:
-            try:
-                await self._state_store.stop()
-            except Exception:
-                log.exception("state store stop failed")
+            await _safe_async("state_store", self._state_store.stop())
             self._state_store = None
 
         # SetWriter: flush pending batches through the worker router.
         if self._set_writer is not None:
-            try:
-                await self._set_writer.shutdown()
-            except Exception:
-                log.exception("set writer shutdown failed")
+            await _safe_async("set_writer", self._set_writer.shutdown())
             self._set_writer = None
 
         # Worker router: terminate every per-netns fork worker.
         if self._router is not None:
-            try:
-                await self._router.shutdown()
-            except Exception:
-                log.exception("worker router shutdown failed")
+            await _safe_async("worker_router", self._router.shutdown())
             self._router = None
 
         # Drop tracker + bridge references — they own no kernel state.
@@ -1213,6 +1158,16 @@ class Daemon:
 
         # Synchronous subsystems (prom server, profile teardown, …).
         self._shutdown()
+
+        # After all steps: surface aggregated failures so the process
+        # exits non-zero and monitoring sees a failed shutdown.
+        if errors:
+            failed = ", ".join(s for s, _ in errors)
+            log.error(
+                "shorewalld shutdown completed with %d error(s) in: %s",
+                len(errors), failed,
+            )
+            sys.exit(1)
 
     def _shutdown(self) -> None:
         if self._shutdown_done:
