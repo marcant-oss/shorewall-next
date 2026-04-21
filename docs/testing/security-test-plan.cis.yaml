@@ -91,7 +91,7 @@ tests:
       source_role: lan-downstream
       sink_role: wan-uplink
       fw_host: root@192.0.2.70
-      duration_s: 120
+      duration_s: 60
       sysctl_key: net.netfilter.nf_conntrack_tcp_timeout_established
       sysctl_value: 300
       expect_flow_dies: false
