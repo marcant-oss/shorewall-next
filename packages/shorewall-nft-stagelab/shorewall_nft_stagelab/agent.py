@@ -423,7 +423,7 @@ async def handle_run_scenario(
         t0 = time.time()
         proc = await asyncio.to_thread(
             subprocess.run,
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host, cmd],
+            ["ssh", "-A", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host, cmd],
             check=False, text=True, capture_output=True, timeout=60,
         )
         dt = time.time() - t0
@@ -446,7 +446,7 @@ async def handle_run_scenario(
         # operator or reboot restores the default.
         proc = await asyncio.to_thread(
             subprocess.run,
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
+            ["ssh", "-A", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
              "sysctl", "-w", f"{key}={value}"],
             check=False, text=True, capture_output=True, timeout=30,
         )
@@ -468,7 +468,7 @@ async def handle_run_scenario(
         t0 = time.time()
         proc = await asyncio.to_thread(
             subprocess.run,
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
+            ["ssh", "-A", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
              "systemctl", "stop", svc],
             check=False, text=True, capture_output=True, timeout=30,
         )
@@ -486,7 +486,7 @@ async def handle_run_scenario(
         t0 = time.time()
         proc = await asyncio.to_thread(
             subprocess.run,
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
+            ["ssh", "-A", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
              "systemctl", "start", svc],
             check=False, text=True, capture_output=True, timeout=30,
         )
@@ -501,7 +501,7 @@ async def handle_run_scenario(
         fw_host = spec["fw_host"]
         proc = await asyncio.to_thread(
             subprocess.run,
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
+            ["ssh", "-A", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", fw_host,
              "cat", "/proc/sys/net/netfilter/nf_conntrack_count"],
             check=False, text=True, capture_output=True, timeout=10,
         )
@@ -821,7 +821,7 @@ async def _handle_conntrack_overflow_inspect(
     """SSH to fw_host, read conntrack count/max and grep dmesg for table-full messages."""
     fw_host: str = spec["fw_host"]
 
-    ssh_base = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
+    ssh_base = ["ssh", "-A", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
 
     async def _run(argv: list[str], timeout: int = 5) -> tuple[int, str, str]:
         proc = await asyncio.to_thread(
@@ -902,7 +902,7 @@ async def _handle_poll_conntrack(spec: dict[str, Any]) -> dict[str, Any]:
     while asyncio.get_event_loop().time() < deadline:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                "ssh", "-A", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
                 fw_host, "conntrack -L 2>/dev/null | wc -l",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
