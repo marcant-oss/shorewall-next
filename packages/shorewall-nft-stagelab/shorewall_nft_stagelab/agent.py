@@ -4,11 +4,23 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ctypes
+import ctypes.util
 import logging
 import os
 import subprocess
 import sys
 from typing import Any
+
+# ── libc handle (module-level) ────────────────────────────────────────────────
+# Load libc.so.6 once at import time so that preexec_fn closures never call
+# ctypes.CDLL / dlopen() inside the forked child.  dlopen() acquires an
+# internal mutex; in a multithreaded asyncio process, fork() preserves the
+# lock state of whichever thread held the mutex at fork time, leaving the
+# child with a permanently locked dlopen mutex.  Any subsequent ctypes.CDLL()
+# call in preexec_fn would then deadlock or raise SubprocessError.
+_libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+_CLONE_NEWNET = 0x40000000
 
 from shorewall_nft_stagelab import metrics as _metrics
 from shorewall_nft_stagelab import (
@@ -71,25 +83,65 @@ def _exec_in_netns(
 
     Uses an in-process setns() preexec_fn instead of ``ip netns exec``
     so no extra iproute2 fork+exec is needed.  Falls back to
-    ``ip netns exec`` on EPERM (e.g., when the agent runs without
-    CAP_SYS_ADMIN but a setuid ip wrapper is available).
-    """
-    import ctypes
+    ``ip netns exec`` on OSError or SubprocessError (e.g., when the agent
+    runs without CAP_SYS_ADMIN, or when the setns preexec_fn fails for any
+    reason — the fallback is available as long as iproute2 is installed).
 
-    _CLONE_NEWNET = 0x40000000
+    The preexec_fn uses the module-level ``_libc`` handle (loaded at import
+    time) so that dlopen() is never called inside the forked child.  Calling
+    ctypes.CDLL() in a preexec_fn is unsafe in multithreaded processes: fork()
+    preserves the lock state of all mutexes, and if the dlopen lock was held
+    by another thread at fork time, the child inherits a permanently locked
+    mutex — any ctypes.CDLL() call in preexec_fn would then deadlock and
+    Python raises ``SubprocessError: Exception occurred in preexec_fn``.
+
+    A self-pipe is used to propagate the exact exception string from the child
+    so that the error is visible in logs rather than swallowed as the generic
+    ``SubprocessError`` message.
+    """
     ns_path = f"/run/netns/{netns}"
 
+    # Error pipe: preexec_fn writes the exception repr so the parent can log it.
+    # The write end is marked O_CLOEXEC so exec(2) closes it — a successful exec
+    # leaves the parent's read() at EOF, meaning no error.
+    err_r, err_w = os.pipe()
+    _open_fds = [err_r, err_w]
+    try:
+        import fcntl as _fcntl
+        _fcntl.fcntl(err_w, _fcntl.F_SETFD,
+                     _fcntl.fcntl(err_w, _fcntl.F_GETFD) | _fcntl.FD_CLOEXEC)
+    except Exception:  # noqa: BLE001 — best-effort; fall through if fcntl unavailable
+        pass
+
     def _enter_ns() -> None:  # runs in child, post-fork, pre-exec
-        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
-        fd = os.open(ns_path, os.O_RDONLY)
+        # IMPORTANT: use module-level _libc — do NOT call ctypes.CDLL() here.
+        # dlopen() inside a forked child of a multithreaded process can deadlock
+        # when another thread held the dlopen mutex at fork time.
         try:
-            if _libc.setns(fd, _CLONE_NEWNET) != 0:
-                raise OSError(ctypes.get_errno(), "setns failed")
-        finally:
-            os.close(fd)
+            fd = os.open(ns_path, os.O_RDONLY)
+            try:
+                if _libc.setns(fd, _CLONE_NEWNET) != 0:
+                    _errno = ctypes.get_errno()
+                    raise OSError(_errno, f"setns({ns_path!r}): {os.strerror(_errno)}")
+            finally:
+                os.close(fd)
+        except Exception as _exc:  # noqa: BLE001
+            try:
+                os.write(err_w, repr(_exc).encode("utf-8", errors="replace")[:512])
+            except OSError:
+                pass
+            raise
+
+    def _close_open_fds() -> None:
+        for _fd in _open_fds:
+            try:
+                os.close(_fd)
+            except OSError:
+                pass
+        _open_fds.clear()
 
     try:
-        return subprocess.run(
+        result = subprocess.run(
             argv,
             check=check,
             text=text,
@@ -97,7 +149,26 @@ def _exec_in_netns(
             timeout=timeout,
             preexec_fn=_enter_ns,
         )
-    except OSError:
+        _close_open_fds()
+        return result
+    except (OSError, subprocess.SubprocessError) as _exc:
+        # Close write end first so read() returns EOF even if child exited late.
+        _detail = ""
+        try:
+            os.close(err_w)
+            _open_fds.remove(err_w)
+        except (OSError, ValueError):
+            pass
+        try:
+            _detail = os.read(err_r, 512).decode("utf-8", errors="replace").strip()
+        except OSError:
+            pass
+        _close_open_fds()
+        log.debug(
+            "_exec_in_netns: preexec_fn failed for netns=%r: %s%s",
+            netns, _exc,
+            f" (detail: {_detail})" if _detail else "",
+        )
         # Fallback: ip netns exec (available when running as root with iproute2)
         full_argv = ["ip", "netns", "exec", netns] + argv
         return subprocess.run(
@@ -951,17 +1022,15 @@ async def _handle_start_http_listener(
         except Exception:  # noqa: BLE001
             pass
 
-    import ctypes
-
-    _CLONE_NEWNET = 0x40000000
     ns_path = f"/run/netns/{netns}"
 
-    def _enter_ns() -> None:
-        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    def _enter_ns_http() -> None:
+        # Use module-level _libc — do NOT call ctypes.CDLL() here (unsafe in fork).
         fd = os.open(ns_path, os.O_RDONLY)
         try:
             if _libc.setns(fd, _CLONE_NEWNET) != 0:
-                raise OSError(ctypes.get_errno(), "setns failed")
+                errno = ctypes.get_errno()
+                raise OSError(errno, f"setns({ns_path!r}): {os.strerror(errno)}")
         finally:
             os.close(fd)
 
@@ -973,7 +1042,7 @@ async def _handle_start_http_listener(
         argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        preexec_fn=_enter_ns,
+        preexec_fn=_enter_ns_http,
     )
 
     if "http_listeners" not in state:
