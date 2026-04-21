@@ -93,14 +93,24 @@ Zone name (matches all hosts in that zone).
 .IB zone : address
 Zone restricted to a specific address or CIDR prefix.
 .TP
-.IB zone : dns: hostname
+.IB zone : dnst: hostname
 Zone with a DNS-driven nft set for
 .I hostname
-(populated by shorewalld).
+(populated by shorewalld via the tap pipeline).
+Preferred form; see
+.B dns:
+below.
+.TP
+.IB zone : dns: hostname
+Deprecated alias for
+.BR dnst: hostname .
+Both tokens produce identical IR output.  Emits a compile-time warning
+— migrate to
+.BR dnst: .
 .TP
 .IB zone : dnsr: hostname
 Like
-.B dns:
+.B dnst:
 but uses the active pull resolver backend in shorewalld.
 .TP
 .IB zone : nfset: name
@@ -112,14 +122,47 @@ Negated nfset reference — match packets whose address is
 .I not
 in the set.
 .TP
+.IB + setname
+Classic Shorewall ipset reference.
+The set must be declared via a load-sets directive or
+.IR shorewall\-nft\-nfsets (5).
+The column position determines whether
+.I saddr
+or
+.I daddr
+is matched (source column →
+.BR saddr ;
+dest column →
+.BR daddr ).
+.TP
+.IB + setname [ src | dst | src,dst ]
+Bracket flags override the column-position default.
+.B src
+forces source-address matching,
+.B dst
+forces destination-address matching,
+.B src,dst
+emits two sub-matches (both saddr and daddr must be in the set).
+.TP
+.IB +[ set1 , set2 , set3 ]
+AND-multi-set: the packet must match
+.I all
+listed sets simultaneously.
+Without bracket flags the column side applies to every member.
+Negated form
+.BI !+[ set1 , set2 ]
+matches if at least one set does
+.I not
+contain the address.
+.TP
 .B $FW
 Shorthand for the firewall zone.
 .TP
 .B all
 Match any zone.
 .TP
-.B !
-address Negated address.
+.BI ! address
+Negated address.
 
 .SH EXAMPLES
 .PP
@@ -159,6 +202,31 @@ Named nfset reference for a CDN allowlist:
 .RS
 .nf
 ACCEPT   net:nfset:allowlist  loc
+.fi
+.RE
+.PP
+DNS-driven rule using the preferred
+.B dnst:
+prefix:
+.RS
+.nf
+ACCEPT   loc     net:dnst:api.example.com   tcp  443
+.fi
+.RE
+.PP
+Classic ipset with bracket flag — match destination address against a
+blocklist regardless of which column carries the set reference:
+.RS
+.nf
+DROP     +blocklist[src]   fw
+DROP     fw                +blocklist[dst]
+.fi
+.RE
+.PP
+AND-multi-set — packet must be in both sets simultaneously:
+.RS
+.nf
+ACCEPT   +[trusted,vpn-users]   fw   tcp   22
 .fi
 .RE
 

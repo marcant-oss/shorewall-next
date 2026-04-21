@@ -199,3 +199,22 @@ Please note that Shorewall numbers the bands 1-3 whereas PRIO(8) refers to them 
 </div>
 
 If you encounter performance problems after enabling simple traffic shaping, check out [FAQ 97](../reference/FAQ.md#faq97) and [FAQ97a](../reference/FAQ.md#faq97a)
+
+# Applying TC Configuration with shorewall-nft
+
+For complex traffic shaping (`tcdevices` / `tcclasses` / `tcfilters`),
+shorewall-nft provides a native apply path via
+[pyroute2](https://pyroute2.org/) that does not require a `tc(8)` binary:
+
+```
+shorewall-nft apply-tc [DIRECTORY] [--netns NAME] [--dry-run]
+```
+
+The portable fallback that generates a shell script is still available:
+
+```
+shorewall-nft generate-tc [DIRECTORY]
+```
+
+See [Complex Traffic Shaping](traffic_shaping.md#applying-tc-configuration-with-shorewall-nft)
+for full details on both commands.

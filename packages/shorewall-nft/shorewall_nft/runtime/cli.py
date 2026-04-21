@@ -2437,6 +2437,87 @@ def generate_tc(directory, config_dir, config_dir_v4, config_dir_v6,
         click.echo("No TC configuration found.")
 
 
+@cli.command("apply-tc")
+@click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
+@config_options
+@click.option("--netns", default=None, metavar="NAME",
+              help="Apply inside this named network namespace (pyroute2 "
+                   "IPRoute(netns=NAME) — no ip-netns-exec fork).")
+@click.option("--dry-run", "dry_run", is_flag=True, default=False,
+              help="Parse and validate the TC config then print the planned "
+                   "operations as a bulleted list.  Nothing is applied to "
+                   "the kernel.")
+def apply_tc_cmd(directory, config_dir, config_dir_v4, config_dir_v6,
+                 no_auto_v4, no_auto_v6, netns, dry_run):
+    """Apply TC (traffic control) config via pyroute2.
+
+    Reads tcdevices / tcclasses / tcfilters from the config directory
+    and configures kernel qdiscs, classes, and fwmark filters directly
+    via netlink.  No tc(8) binary is required.
+
+    \b
+    Idempotence: existing qdiscs are deleted then re-added before each
+    apply so that re-running the command after a config change is safe.
+
+    \b
+    Netns: --netns binds each netlink socket directly to the target
+    namespace via pyroute2's IPRoute(netns=) constructor.  No
+    ip-netns-exec fork is used.
+    """
+    from shorewall_nft.compiler.tc import apply_tc, parse_tc_config
+    from shorewall_nft.config.parser import load_config
+
+    primary, secondary, skip = _resolve_config_paths(
+        directory, config_dir, config_dir_v4, config_dir_v6,
+        no_auto_v4, no_auto_v6)
+    config = load_config(primary, config6_dir=secondary,
+                         skip_sibling_merge=skip)
+    tc = parse_tc_config(config)
+
+    if not tc.devices and not tc.classes and not tc.filters:
+        click.echo("No TC configuration found.")
+        return
+
+    if dry_run:
+        click.echo("TC apply plan (dry-run — nothing applied):")
+        ns_label = f" [netns={netns}]" if netns else ""
+        for dev in tc.devices:
+            if dev.out_bandwidth:
+                click.echo(
+                    f"  * {dev.interface}{ns_label}: del + add root HTB qdisc"
+                    f" (rate {dev.out_bandwidth}), add root class 1:1")
+            if dev.in_bandwidth:
+                click.echo(
+                    f"  * {dev.interface}{ns_label}: del + add ingress qdisc"
+                    f" (in_bandwidth {dev.in_bandwidth})")
+        for cls in tc.classes:
+            ceil = cls.ceil or cls.rate
+            click.echo(
+                f"  * {cls.interface}{ns_label}: add HTB class 1:{cls.mark}"
+                f" rate={cls.rate} ceil={ceil} prio={cls.priority}")
+        for flt in tc.filters:
+            click.echo(
+                f"  * filter class={flt.tc_class}{ns_label}:"
+                f" add fw filter handle=<mark> -> classid")
+        return
+
+    result = apply_tc(tc, netns=netns)
+
+    ns_label = f" (netns={netns})" if netns else ""
+    if result.failed == 0:
+        click.echo(
+            f"TC apply{ns_label}: {result.applied} operation(s) applied, "
+            f"0 failed.")
+    else:
+        click.echo(
+            f"TC apply{ns_label}: {result.applied} applied, "
+            f"{result.failed} failed.",
+            err=True)
+        for msg in result.errors:
+            click.echo(f"  ERROR: {msg}", err=True)
+        raise SystemExit(1)
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────

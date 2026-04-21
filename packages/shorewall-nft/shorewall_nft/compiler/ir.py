@@ -6,6 +6,7 @@ the nft emitter consumes to produce nft -f scripts.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -29,6 +30,13 @@ from shorewall_nft.nft.nfsets import (
     build_nfset_registry,
     nfset_to_set_name,
 )
+
+_log = logging.getLogger(__name__)
+
+# Rate-limiter for dns: deprecation warnings — one warning per config path
+# (or one global warning when no path is available).  Keys are config-file
+# paths (strings); the sentinel ``"<unknown>"`` covers path-less contexts.
+_DNS_DEPRECATION_WARNED: set[str] = set()
 
 
 class Verdict(Enum):
@@ -61,6 +69,11 @@ class Match:
     field: str      # e.g. "iifname", "ip saddr", "tcp dport", "ct state"
     value: str      # e.g. "eth0", "10.0.0.0/8", "80", "established"
     negate: bool = False
+    # Bracket-flag override (W16): when a classic ipset spec carries an
+    # explicit ``[src]`` / ``[dst]`` flag, the effective match field is
+    # stored here instead of being derived from the column position.
+    # ``None`` means "use the column-position default" (existing behaviour).
+    force_side: str | None = None
 
 
 @dataclass
@@ -618,20 +631,26 @@ def _expand_zone_list(spec: str, zones: ZoneModel) -> list[str]:
 
 
 def _spec_contains_dns_token(spec: str) -> bool:
-    """Cheap test for ``dns:HOSTNAME`` embedded in a raw spec column.
+    """Cheap test for ``dns:HOSTNAME`` or ``dnst:HOSTNAME`` in a raw spec column.
 
     Covers every shape the compiler's rule parser accepts for a
-    DNS-managed address: bare ``dns:host``, zone-prefixed
-    ``net:dns:host``, leading negation ``!dns:host``, and
-    zone-prefixed inner negation ``net:!dns:host``. We only need to
-    know *whether* to run the DNS pre-pass — the rewriter below
-    reconstructs the exact form.
+    DNS-managed address: bare ``dns:host`` / ``dnst:host``,
+    zone-prefixed ``net:dns:host`` / ``net:dnst:host``, leading negation
+    ``!dns:host`` / ``!dnst:host``, and zone-prefixed inner negation
+    ``net:!dns:host`` / ``net:!dnst:host``.
+
+    ``dnst:`` is an alias for ``dns:`` (W13).  The rewriter handles both
+    tokens identically; ``dns:`` additionally emits a deprecation warning.
     """
     return (
         spec.startswith("dns:")
         or spec.startswith("!dns:")
         or ":dns:" in spec
         or ":!dns:" in spec
+        or spec.startswith("dnst:")
+        or spec.startswith("!dnst:")
+        or ":dnst:" in spec
+        or ":!dnst:" in spec
     )
 
 
@@ -640,16 +659,22 @@ def _rewrite_dns_spec(
     registry: DnsSetRegistry,
     family: str,
     dnsr_registry: DnsrRegistry | None = None,
+    config_path: str = "",
 ) -> str:
-    """Replace any ``dns:hostname[,hostname…]`` token in ``spec`` with
-    the compiled set-reference sentinel ``+dns_<sanitised>_<family>``.
+    """Replace any ``dns:hostname[,hostname…]`` or ``dnst:hostname[,hostname…]``
+    token in ``spec`` with the compiled set-reference sentinel
+    ``+dns_<sanitised>_<family>``.
+
+    ``dnst:`` is an alias for ``dns:`` (W13).  Both tokens produce identical
+    IR output.  A one-per-config-path deprecation warning is emitted whenever
+    the older ``dns:`` form is encountered; use ``dnst:`` in new configs.
 
     Supports every negation shape Shorewall accepts:
 
-    * ``dns:host``                — bare
-    * ``!dns:host``               — whole-spec negation
-    * ``net:dns:host``            — zone-prefixed
-    * ``net:!dns:host``           — zone-prefixed with inner negation
+    * ``dns:host`` / ``dnst:host``        — bare
+    * ``!dns:host`` / ``!dnst:host``      — whole-spec negation
+    * ``net:dns:host`` / ``net:dnst:host`` — zone-prefixed
+    * ``net:!dns:host`` / ``net:!dnst:host`` — zone-prefixed inner negation
     * ``<dns:host>`` / ``net:<dns:host>`` — ipv6 angle brackets (rare
       but grammatically valid)
 
@@ -675,16 +700,23 @@ def _rewrite_dns_spec(
     prefix = ""
     body = spec
     sentinel_negate = ""
+    used_legacy_dns = False  # set True when the matched token is dns:, not dnst:
 
     if body.startswith("dns:"):
         host_str = body[4:]
+        used_legacy_dns = True
+    elif body.startswith("dnst:"):
+        host_str = body[5:]
     elif body.startswith("!dns:"):
         sentinel_negate = "!"
         host_str = body[5:]
+        used_legacy_dns = True
+    elif body.startswith("!dnst:"):
+        sentinel_negate = "!"
+        host_str = body[6:]
     else:
-        # ``zone:[!]dns:hostname`` — split off the zone prefix at the
-        # first colon. What follows is either ``dns:host`` or
-        # ``!dns:host``.
+        # ``zone:[!]dns:hostname`` or ``zone:[!]dnst:hostname`` —
+        # split off the zone prefix at the first colon.
         colon = body.find(":")
         if colon < 0:
             return spec
@@ -692,11 +724,28 @@ def _rewrite_dns_spec(
         rest = body[colon + 1:]
         if rest.startswith("dns:"):
             host_str = rest[4:]
+            used_legacy_dns = True
+        elif rest.startswith("dnst:"):
+            host_str = rest[5:]
         elif rest.startswith("!dns:"):
             sentinel_negate = "!"
             host_str = rest[5:]
+            used_legacy_dns = True
+        elif rest.startswith("!dnst:"):
+            sentinel_negate = "!"
+            host_str = rest[6:]
         else:
             return spec
+
+    # Emit one deprecation warning per config path when dns: is used.
+    if used_legacy_dns:
+        key = config_path or "<unknown>"
+        if key not in _DNS_DEPRECATION_WARNED:
+            _DNS_DEPRECATION_WARNED.add(key)
+            _log.warning(
+                "'dns:' prefix is deprecated; use 'dnst:' instead (config: %s)",
+                key,
+            )
 
     # Strip any ipv6 angle brackets — grammatically legal for DNS
     # tokens even though they're nonsensical.
@@ -890,6 +939,180 @@ def _rewrite_nfset_spec(
     return f"{prefix}{sentinel_negate}+{set_name}"
 
 
+# ---------------------------------------------------------------------------
+# W16 — Classic ipsets bracket-flag syntax + AND-multi-set
+# ---------------------------------------------------------------------------
+
+# Matches:  +setname[flags]  OR  +setname  (bare, no brackets)
+# Also handles zone-prefixed and negated forms after the zone/negate prefix
+# has been stripped by the caller.  Only the inner +name[flags] is matched
+# here; the outer zone/negate wrapper is preserved by _rewrite_bracket_spec.
+#
+# Group 1: setname (alphanumeric, hyphens, underscores)
+# Group 2: flags string inside [...] (optional)
+_BRACKET_SET_RE = re.compile(
+    r'^\+([A-Za-z0-9_-]+)(?:\[([A-Za-z,]*)\])?$'
+)
+
+# Matches the AND-multi-set form: +[name1,name2,…] (no brackets on names)
+# Group 1: comma-separated set names
+_AND_MULTISET_RE = re.compile(
+    r'^\+\[([A-Za-z0-9_,\- ]+)\]$'
+)
+
+_VALID_BRACKET_FLAGS: frozenset[str] = frozenset({"src", "dst", "src,dst", "dst,src"})
+
+
+def _normalise_bracket_flags(flags_raw: str, column_side: str) -> list[str]:
+    """Return list of match sides from bracket flags string.
+
+    ``flags_raw`` is the content inside ``[...]``, e.g. ``"src"`` or
+    ``"src,dst"``.  An empty string means "use the column default".
+
+    Returns a list of canonical sides: ``["src"]``, ``["dst"]``, or
+    ``["src", "dst"]`` (for the two-side form).
+
+    Raises :exc:`ValueError` for unrecognised flags.
+    """
+    if not flags_raw:
+        return [column_side]
+
+    normed = flags_raw.lower().strip()
+    if normed not in _VALID_BRACKET_FLAGS:
+        raise ValueError(
+            f"invalid bracket flag {flags_raw!r}; "
+            f"allowed: src, dst, src,dst (got {flags_raw!r})"
+        )
+    # Normalise both orderings of the two-side form
+    if "," in normed:
+        return ["src", "dst"]
+    return [normed]
+
+
+def _spec_contains_bracket_ipset(spec: str) -> bool:
+    """True if *spec* requires the bracket pre-pass.
+
+    Returns True only for specs that carry explicit bracket flags or that
+    are AND-multi-set lists.  Bare ``+setname`` without brackets does NOT
+    trigger this — it is already handled naturally by ``_add_rule`` via the
+    existing ipset-reference path (column position determines the field).
+
+    Covered forms:
+    * ``+setname[src]`` / ``+setname[dst]`` / ``+setname[src,dst]``
+    * ``!+setname[dst]``               — negated bracket
+    * ``zone:+setname[src]``           — zone-prefixed bracket
+    * ``zone:!+setname[src]``          — zone-prefixed negated bracket
+    * ``+[a,b,c]``                     — AND-multi-set
+    * ``!+[a,b]``                      — negated AND-multi-set
+
+    NOT covered (falls through to the normal ipset path):
+    * ``+setname``                     — bare, no bracket — no pre-pass needed
+    """
+    # Strip zone prefix (up to and including first colon, not inside <...>)
+    body = spec
+    if ":" in body and "<" not in body:
+        _, _, rest = body.partition(":")
+        body = rest
+    body = body.lstrip("!")
+    if not body.startswith("+"):
+        return False
+    rest = body[1:]
+    # AND-multi-set: +[...]
+    if rest.startswith("["):
+        return True
+    # Bracket flags: +name[...]
+    return "[" in rest
+
+
+def _rewrite_bracket_spec(
+    spec: str,
+    column_side: str,
+) -> tuple[str, list[tuple[str, str, bool]]]:
+    """Parse a classic ``+setname[flags]`` / ``+[a,b,c]`` spec.
+
+    Returns a 2-tuple:
+    * ``stripped_spec`` — the spec with bracket flags removed (the set
+      sentinel still carries the ``+`` prefix so downstream code that
+      detects ``+name`` sentinels continues to work).  Zone prefix and
+      negation are preserved verbatim.
+    * ``match_infos`` — list of ``(side, set_name, negate)`` tuples
+      describing the Match objects that should be emitted for this spec.
+      ``side`` ∈ ``{"src", "dst"}``; ``set_name`` is bare (no leading
+      ``+``); ``negate`` is True when the spec carried a ``!`` prefix.
+
+    The list has:
+    * One entry for ``+setname`` / ``+setname[src]`` / ``+setname[dst]``
+    * Two entries for ``+setname[src,dst]``
+    * N entries for ``+[a,b,c]`` (one per set name, all same side)
+
+    Raises :exc:`ValueError` for invalid bracket content.
+    """
+    body = spec
+    negate = False
+    zone_prefix = ""
+
+    # Strip zone prefix
+    if ":" in body and "<" not in body:
+        colon = body.index(":")
+        zone_prefix = body[: colon + 1]
+        body = body[colon + 1:]
+
+    # Strip negation
+    if body.startswith("!"):
+        negate = True
+        body = body[1:]
+
+    # AND-multi-set: +[a,b,c]
+    m_and = _AND_MULTISET_RE.match(body)
+    if m_and:
+        names = [n.strip() for n in m_and.group(1).split(",") if n.strip()]
+        if not names:
+            raise ValueError(f"empty AND-multi-set list in {spec!r}")
+        sides = [column_side]  # AND-multi-set uses column_side for all members
+        match_infos = [
+            (side, name, negate) for name in names for side in sides
+        ]
+        # Return a sentinel spec using the first set name (no brackets).
+        # This ensures the recursive _process_rules call does NOT re-fire
+        # the bracket pre-pass (no [...] present), while still providing a
+        # non-empty address part so _add_rule enters the src_addrs / dst_addrs
+        # branch where it reads _bsrc / _bdst for the actual Match objects.
+        first = names[0]
+        sentinel_body = f"+{first}"
+        if negate:
+            sentinel_body = f"!{sentinel_body}"
+        stripped_spec = f"{zone_prefix}{sentinel_body}"
+        return stripped_spec, match_infos
+
+    # Single set with optional bracket flags: +setname[flags]
+    m_bracket = _BRACKET_SET_RE.match(body)
+    if not m_bracket:
+        # Not a bracket form we recognise — return unchanged, no infos
+        return spec, []
+
+    set_name = m_bracket.group(1)
+    # group(2) is None when no brackets present, "" when empty brackets [] used.
+    # Empty brackets are invalid — require at least src or dst.
+    bracket_content = m_bracket.group(2)
+    if bracket_content is not None and bracket_content == "":
+        raise ValueError(
+            f"empty bracket flags in {spec!r}; "
+            f"use [src], [dst], or [src,dst]"
+        )
+    flags_raw = bracket_content if bracket_content is not None else ""
+
+    sides = _normalise_bracket_flags(flags_raw, column_side)
+    match_infos = [(side, set_name, negate) for side in sides]
+
+    # Build the stripped spec (remove bracket portion)
+    stripped_body = f"+{set_name}"
+    if negate:
+        stripped_body = f"!{stripped_body}"
+    stripped_spec = f"{zone_prefix}{stripped_body}"
+
+    return stripped_spec, match_infos
+
+
 def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
                    zones: ZoneModel) -> None:
     """Process firewall rules into chain rules."""
@@ -1002,25 +1225,26 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
         _src_has_dnsr = _spec_contains_dnsr_token(source_spec_raw)
         _dst_has_dnsr = _spec_contains_dnsr_token(dest_spec_raw)
         if _src_has_dns or _dst_has_dns or _src_has_dnsr or _dst_has_dnsr:
+            _cfg_path = line.file or ""
             for family in ("v4", "v6"):
                 new_cols = list(cols)
                 src = _rewrite_dns_spec(
                     source_spec_raw, ir.dns_registry, family,
-                    ir.dnsr_registry)
+                    ir.dnsr_registry, _cfg_path)
                 src = _rewrite_dnsr_spec(
                     src, ir.dns_registry, ir.dnsr_registry, family)
                 new_cols[1] = src
                 if len(new_cols) > 2:
                     dst = _rewrite_dns_spec(
                         dest_spec_raw, ir.dns_registry, family,
-                        ir.dnsr_registry)
+                        ir.dnsr_registry, _cfg_path)
                     dst = _rewrite_dnsr_spec(
                         dst, ir.dns_registry, ir.dnsr_registry, family)
                     new_cols[2] = dst
                 elif _dst_has_dns or _dst_has_dnsr:
                     dst = _rewrite_dns_spec(
                         dest_spec_raw, ir.dns_registry, family,
-                        ir.dnsr_registry)
+                        ir.dnsr_registry, _cfg_path)
                     dst = _rewrite_dnsr_spec(
                         dst, ir.dns_registry, ir.dnsr_registry, family)
                     new_cols.append(dst)
@@ -1034,6 +1258,55 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
                     format_version=line.format_version,
                 )
                 _process_rules(ir, [expanded_line], zones)
+            continue
+
+        # Bracket-flag / AND-multi-set pre-pass (W16).
+        # Runs AFTER nfset + dns pre-passes (those produce +sentinel specs
+        # that start with '+' and never carry bracket flags, so
+        # _spec_contains_bracket_ipset and _rewrite_bracket_spec leave them
+        # untouched — they have no [...] suffix).
+        #
+        # We detect, validate and strip the bracket flags here, then forward
+        # the bracket metadata directly to _add_rule (via the
+        # ``bracket_src_infos`` / ``bracket_dst_infos`` kwargs added in W16)
+        # so the correct Match field is emitted for each set name.
+        _src_has_bracket = _spec_contains_bracket_ipset(source_spec_raw)
+        _dst_has_bracket = _spec_contains_bracket_ipset(dest_spec_raw)
+        if _src_has_bracket or _dst_has_bracket:
+            src_bracket_infos: list[tuple[str, str, bool]] = []
+            dst_bracket_infos: list[tuple[str, str, bool]] = []
+            _bracket_source = source_spec_raw
+            _bracket_dest = dest_spec_raw
+            if _src_has_bracket:
+                _bracket_source, src_bracket_infos = _rewrite_bracket_spec(
+                    source_spec_raw, "src")
+            if _dst_has_bracket:
+                _bracket_dest, dst_bracket_infos = _rewrite_bracket_spec(
+                    dest_spec_raw, "dst")
+            # Build a synthetic line with stripped specs and recurse once so
+            # zone-list expansion and the remaining logic apply normally.
+            new_cols = list(cols)
+            new_cols[1] = _bracket_source
+            if len(new_cols) > 2:
+                new_cols[2] = _bracket_dest
+            else:
+                new_cols.append(_bracket_dest)
+            expanded_line = ConfigLine(
+                columns=new_cols,
+                file=line.file,
+                lineno=line.lineno,
+                comment_tag=line.comment_tag,
+                section=line.section,
+                raw=line.raw,
+                format_version=line.format_version,
+            )
+            # Attach bracket infos as transient attributes so that the
+            # final _add_rule call (at the bottom of the recursive iteration)
+            # can pick them up.  The attribute names are private to this
+            # module; they are never serialised or persisted.
+            expanded_line._bracket_src = src_bracket_infos  # type: ignore[attr-defined]
+            expanded_line._bracket_dst = dst_bracket_infos  # type: ignore[attr-defined]
+            _process_rules(ir, [expanded_line], zones)
             continue
 
         # Expand comma-separated zone lists in SOURCE and DEST.
@@ -1404,6 +1677,19 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             has_v4_addr = False
             has_v6_addr = False
 
+            # W16: bracket-flag metadata from the pre-pass (if any).
+            # These are lists of (side, set_name, negate) produced by
+            # _rewrite_bracket_spec and stored as transient attributes on
+            # the ConfigLine by the bracket pre-pass in _process_rules.
+            _bsrc: list[tuple[str, str, bool]] = getattr(line, "_bracket_src", [])
+            _bdst: list[tuple[str, str, bool]] = getattr(line, "_bracket_dst", [])
+
+            # Map side ("src"/"dst") → (ipv4-field, ipv6-field)
+            _SIDE_FIELD: dict[str, tuple[str, str]] = {
+                "src": ("ip saddr", "ip6 saddr"),
+                "dst": ("ip daddr", "ip6 daddr"),
+            }
+
             if src_addrs:
                 negate = src_addrs.startswith("!")
                 clean_addr = src_addrs.lstrip("!")
@@ -1413,6 +1699,22 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     mac = clean_addr[1:].replace("-", ":").lower()
                     rule.matches.append(
                         Match(field="ether saddr", value=mac, negate=negate))
+                elif _bsrc:
+                    # Bracket-flag metadata present: emit one Match per
+                    # (side, set_name) entry produced by the pre-pass.
+                    for _side, _sname, _neg in _bsrc:
+                        _f4, _f6 = _SIDE_FIELD[_side]
+                        _set_val = f"+{_sname}"
+                        if _set_val.endswith("_v6"):
+                            rule.matches.append(
+                                Match(field=_f6, value=_set_val, negate=_neg,
+                                      force_side=_side))
+                            has_v6_addr = True
+                        else:
+                            rule.matches.append(
+                                Match(field=_f4, value=_set_val, negate=_neg,
+                                      force_side=_side))
+                            has_v4_addr = True
                 elif clean_addr.startswith("+dns_") and clean_addr.endswith("_v6"):
                     # DNS-backed set sentinel produced by the pre-pass
                     # in _process_rules. Force ip6 family; bare name
@@ -1434,7 +1736,22 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             if dst_addrs:
                 negate = dst_addrs.startswith("!")
                 clean_addr = dst_addrs.lstrip("!")
-                if clean_addr.startswith("+dns_") and clean_addr.endswith("_v6"):
+                if _bdst:
+                    # Bracket-flag metadata for DEST column.
+                    for _side, _sname, _neg in _bdst:
+                        _f4, _f6 = _SIDE_FIELD[_side]
+                        _set_val = f"+{_sname}"
+                        if _set_val.endswith("_v6"):
+                            rule.matches.append(
+                                Match(field=_f6, value=_set_val, negate=_neg,
+                                      force_side=_side))
+                            has_v6_addr = True
+                        else:
+                            rule.matches.append(
+                                Match(field=_f4, value=_set_val, negate=_neg,
+                                      force_side=_side))
+                            has_v4_addr = True
+                elif clean_addr.startswith("+dns_") and clean_addr.endswith("_v6"):
                     rule.matches.append(Match(
                         field="ip6 daddr", value=clean_addr, negate=negate))
                     has_v6_addr = True
@@ -1684,6 +2001,21 @@ def _parse_zone_spec(spec: str, zones: ZoneModel) -> tuple[str, str | None]:
     return spec, None
 
 
+def _sentinel_to_addr(zone: str, addr: str | None) -> str | None:
+    """If *zone* is a set-reference sentinel (starts with '+'), return it as the
+    address value.  Otherwise return *addr* unchanged.
+
+    After ``_expand_line_for_tokens`` runs a bare ``nfset:X`` spec through
+    ``_rewrite_spec_for_family``, it becomes ``+nfset_X_vN`` — no zone
+    prefix, no colon.  ``_parse_zone_spec`` then returns
+    ``("+nfset_X_vN", None)``.  This helper promotes the sentinel from the
+    zone slot into the addr slot so callers can use it in a set-match.
+    """
+    if addr is None and zone.startswith("+"):
+        return zone
+    return addr
+
+
 def _add_interface_matches(rule: Rule, src_zone: str, dst_zone: str,
                            zones: ZoneModel) -> None:
     """Add interface matches based on zone definitions."""
@@ -1738,6 +2070,75 @@ def _parse_verdict(action: str) -> Verdict | None:
     return mapping.get(action.upper())
 
 
+# ---------------------------------------------------------------------------
+# Per-table token-expansion helpers (used by the functions below)
+# ---------------------------------------------------------------------------
+
+def _has_set_token(spec: str) -> bool:
+    """True if *spec* contains any nfset:/dns:/dnsr: token."""
+    return (
+        _spec_contains_nfset_token(spec)
+        or _spec_contains_dns_token(spec)
+        or _spec_contains_dnsr_token(spec)
+    )
+
+
+def _rewrite_spec_for_family(spec: str, ir: "FirewallIR", family: str) -> str:
+    """Apply nfset/dns/dnsr rewrites for a single family (v4 or v6).
+
+    Runs nfset → dns → dnsr in order; each rewriter is a no-op when its
+    token type is absent.
+    """
+    if _spec_contains_nfset_token(spec):
+        spec = _rewrite_nfset_spec(spec, ir.nfset_registry, family)
+    if _spec_contains_dns_token(spec):
+        spec = _rewrite_dns_spec(spec, ir.dns_registry, family, ir.dnsr_registry)
+    if _spec_contains_dnsr_token(spec):
+        spec = _rewrite_dnsr_spec(spec, ir.dns_registry, ir.dnsr_registry, family)
+    return spec
+
+
+def _expand_line_for_tokens(
+    line: ConfigLine,
+    src_col: int,
+    dst_col: int | None,
+    ir: "FirewallIR",
+) -> tuple[bool, list[ConfigLine]]:
+    """If *line* carries set/dns tokens, return family-cloned ConfigLines.
+
+    Returns ``(found_tokens, expanded_lines)``.  When *found_tokens* is
+    False the caller should process the original line as normal.  When
+    True the caller should process each expanded line instead and skip
+    the original.
+
+    *src_col* / *dst_col* are the 0-based column indices for SOURCE and
+    DEST.  Pass *dst_col=None* when there is no DEST column.
+    """
+    cols = line.columns
+    src_raw = cols[src_col] if src_col < len(cols) else "-"
+    dst_raw = cols[dst_col] if dst_col is not None and dst_col < len(cols) else "-"
+
+    if not (_has_set_token(src_raw) or _has_set_token(dst_raw)):
+        return False, []
+
+    expanded: list[ConfigLine] = []
+    for family in ("v4", "v6"):
+        new_cols = list(cols)
+        new_cols[src_col] = _rewrite_spec_for_family(src_raw, ir, family)
+        if dst_col is not None and dst_col < len(cols):
+            new_cols[dst_col] = _rewrite_spec_for_family(dst_raw, ir, family)
+        expanded.append(ConfigLine(
+            columns=new_cols,
+            file=line.file,
+            lineno=line.lineno,
+            comment_tag=line.comment_tag,
+            section=line.section,
+            raw=line.raw,
+            format_version=line.format_version,
+        ))
+    return True, expanded
+
+
 def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
                      zones: ZoneModel) -> None:
     """Process notrack rules into raw-priority chains.
@@ -1765,6 +2166,12 @@ def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
         if len(cols) < 3:
             continue
 
+        # nfset/dns/dnsr token pre-pass: clone for v4+v6 when tokens present.
+        found, expanded = _expand_line_for_tokens(line, 0, 1, ir)
+        if found:
+            _process_notrack(ir, expanded, zones)
+            continue
+
         source_spec = cols[0]
         dest_spec = cols[1]
         proto = cols[2] if len(cols) > 2 else None
@@ -1779,6 +2186,7 @@ def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
             sport = None
 
         src_zone, src_addr = _parse_zone_spec(source_spec, zones)
+        src_addr = _sentinel_to_addr(src_zone, src_addr)
 
         # Determine chain: $FW source -> output, else -> prerouting
         fw = zones.firewall_zone
@@ -1798,7 +2206,8 @@ def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
         if src_addr:
             rule.matches.append(Match(field="ip saddr", value=src_addr))
 
-        _, dst_addr = _parse_zone_spec(dest_spec, zones)
+        _dst_zone, dst_addr = _parse_zone_spec(dest_spec, zones)
+        dst_addr = _sentinel_to_addr(_dst_zone, dst_addr)
         if dst_addr and dst_addr != "0.0.0.0/0":
             rule.matches.append(Match(field="ip daddr", value=dst_addr))
 
@@ -1833,6 +2242,12 @@ def _process_conntrack(ir: FirewallIR, conntrack_lines: list[ConfigLine]) -> Non
 
         action = cols[0]
         if not action.startswith("CT:helper:"):
+            continue
+
+        # nfset/dns/dnsr token pre-pass on SOURCE(col 1) + DEST(col 2).
+        found, expanded = _expand_line_for_tokens(line, 1, 2, ir)
+        if found:
+            _process_conntrack(ir, expanded)
             continue
 
         # Parse CT:helper:NAME:POLICY
@@ -1994,6 +2409,12 @@ def _process_blrules(ir: FirewallIR, blrules: list[ConfigLine],
         if not cols:
             continue
 
+        # nfset/dns/dnsr token pre-pass on SOURCE(col 1) + DEST(col 2).
+        found, expanded = _expand_line_for_tokens(line, 1, 2, ir)
+        if found:
+            _process_blrules(ir, expanded, zones)
+            continue
+
         action_str = cols[0]
         source_spec = cols[1] if len(cols) > 1 else "-"
         dest_spec = cols[2] if len(cols) > 2 else "-"
@@ -2018,12 +2439,14 @@ def _process_blrules(ir: FirewallIR, blrules: list[ConfigLine],
         )
 
         if source_spec and source_spec != "-":
-            _, addr = _parse_zone_spec(source_spec, zones)
+            zone, addr = _parse_zone_spec(source_spec, zones)
+            addr = _sentinel_to_addr(zone, addr)
             if addr:
                 rule.matches.append(Match(field="ip saddr", value=addr))
 
         if dest_spec and dest_spec != "-":
-            _, addr = _parse_zone_spec(dest_spec, zones)
+            zone, addr = _parse_zone_spec(dest_spec, zones)
+            addr = _sentinel_to_addr(zone, addr)
             if addr:
                 rule.matches.append(Match(field="ip daddr", value=addr))
 
@@ -2371,6 +2794,14 @@ def _process_ecn(ir: FirewallIR, ecn_lines: list[ConfigLine]) -> None:
         iface = cols[0]
         hosts_raw = cols[1] if len(cols) > 1 and cols[1] != "-" else None
 
+        # nfset/dns/dnsr token pre-pass: the HOST column may carry a set
+        # token instead of a literal CIDR list.  Clone for v4+v6 and recurse.
+        if hosts_raw and _has_set_token(hosts_raw):
+            found, expanded = _expand_line_for_tokens(line, 1, None, ir)
+            if found:
+                _process_ecn(ir, expanded)
+                continue
+
         hosts: list[str | None]
         if hosts_raw:
             hosts = [h.strip() for h in hosts_raw.split(",") if h.strip()]
@@ -2472,6 +2903,13 @@ def _process_arprules(ir: FirewallIR, arprules: list[ConfigLine]) -> None:
         cols = line.columns
         if not cols:
             continue
+
+        # nfset/dns/dnsr token pre-pass on SOURCE(col 1) + DEST(col 2).
+        found, expanded = _expand_line_for_tokens(line, 1, 2, ir)
+        if found:
+            _process_arprules(ir, expanded)
+            continue
+
         action_raw = cols[0]
         source = cols[1] if len(cols) > 1 and cols[1] != "-" else None
         dest = cols[2] if len(cols) > 2 and cols[2] != "-" else None
@@ -2562,6 +3000,13 @@ def _process_rawnat(ir: FirewallIR, rawnat_lines: list[ConfigLine],
         cols = line.columns
         if not cols:
             continue
+
+        # nfset/dns/dnsr token pre-pass on SOURCE(col 1) + DEST(col 2).
+        found, expanded = _expand_line_for_tokens(line, 1, 2, ir)
+        if found:
+            _process_rawnat(ir, expanded, zones)
+            continue
+
         action_raw = cols[0]
         source_spec = cols[1] if len(cols) > 1 and cols[1] != "-" else "all"
         dest_spec = cols[2] if len(cols) > 2 and cols[2] != "-" else "all"
@@ -2592,7 +3037,9 @@ def _process_rawnat(ir: FirewallIR, rawnat_lines: list[ConfigLine],
             continue
 
         src_zone, src_addr = _parse_zone_spec(source_spec, zones)
+        src_addr = _sentinel_to_addr(src_zone, src_addr)
         dst_zone, dst_addr = _parse_zone_spec(dest_spec, zones)
+        dst_addr = _sentinel_to_addr(dst_zone, dst_addr)
 
         chain = (ir.chains["raw-output"] if src_zone == fw
                  else ir.chains["raw-prerouting"])
@@ -2715,6 +3162,13 @@ def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
         cols = line.columns
         if not cols:
             continue
+
+        # nfset/dns/dnsr token pre-pass on SOURCE(col 1) + DEST(col 2).
+        found, expanded = _expand_line_for_tokens(line, 1, 2, ir)
+        if found:
+            _process_stoppedrules(ir, expanded, zones)
+            continue
+
         target_raw = cols[0]
         source_spec = cols[1] if len(cols) > 1 and cols[1] != "-" else "all"
         dest_spec = cols[2] if len(cols) > 2 and cols[2] != "-" else "all"
@@ -2743,7 +3197,9 @@ def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
             continue
 
         src_zone, src_addr = _parse_zone_spec(source_spec, zones)
+        src_addr = _sentinel_to_addr(src_zone, src_addr)
         dst_zone, dst_addr = _parse_zone_spec(dest_spec, zones)
+        dst_addr = _sentinel_to_addr(dst_zone, dst_addr)
 
         is_v6_src = src_addr is not None and _is_ipv6(src_addr)
         is_v6_dst = dst_addr is not None and _is_ipv6(dst_addr)

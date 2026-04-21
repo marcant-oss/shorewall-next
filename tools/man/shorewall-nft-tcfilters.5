@@ -7,10 +7,15 @@ The
 file defines
 .BR tc (8)
 classifier filters that classify packets into traffic classes without relying
-on packet marks.  shorewall-nft generates the corresponding
+on packet marks.  shorewall-nft can apply the corresponding fwmark filter configuration
+directly via
+.BR "shorewall\-nft apply\-tc"
+(preferred — uses pyroute2, no tc(8) binary required) or generate a
+shell script with
 .B tc filter add
 commands via
-.BR "shorewall\-nft generate\-tc" .
+.BR "shorewall\-nft generate\-tc"
+(portable fallback).
 
 For mark-based classification (the recommended approach) use
 .I mangle

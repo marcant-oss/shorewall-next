@@ -5,12 +5,15 @@ shorewall\-nft\-tcdevices \- traffic shaping device declarations for shorewall-n
 The
 .I tcdevices
 file declares the interfaces used for traffic shaping.  shorewall-nft does
-not emit nft rules for traffic shaping directly; instead it generates
+not emit nft rules for traffic shaping directly; instead it can either
+apply the configuration directly via
+.B shorewall\-nft apply\-tc
+(preferred — uses pyroute2, no tc(8) binary required) or generate a
 .BR tc (8)
-commands via
+shell script via
 .B shorewall\-nft generate\-tc
-that configure the kernel qdiscs and classes declared in this file together
-with
+(portable fallback).  Both commands use the qdiscs and classes declared
+in this file together with
 .I tcclasses
 and
 .IR tcfilters .

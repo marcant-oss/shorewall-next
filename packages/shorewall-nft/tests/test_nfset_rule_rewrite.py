@@ -1,17 +1,25 @@
 """Unit tests for nfset token detection, spec rewriting, and rule cloning.
 
+Also covers W13 (dnst: alias + dns: deprecation) tests.
+
 All hostnames use example.com / example.org (RFC 2606).
 All IP addresses use RFC 5737 (198.51.100.x, 203.0.113.x) or RFC 1918.
 """
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from shorewall_nft.compiler.ir import (
+    _spec_contains_dns_token,
     _spec_contains_nfset_token,
+    _rewrite_dns_spec,
     _rewrite_nfset_spec,
+    _DNS_DEPRECATION_WARNED,
 )
+from shorewall_nft.nft.dns_sets import DnsSetRegistry
 from shorewall_nft.nft.nfsets import NfSetRegistry, NfSetEntry
 
 
@@ -232,3 +240,134 @@ class TestPrePassOrdering:
         result = _rewrite_nfset_spec("nfset:mycdn", reg, "v4")
         assert "dns:" not in result
         assert result.startswith("+nfset_")
+
+
+# ---------------------------------------------------------------------------
+# W13 — dnst: alias and dns: deprecation
+# ---------------------------------------------------------------------------
+
+def _dns_reg() -> DnsSetRegistry:
+    return DnsSetRegistry()
+
+
+class TestSpecContainsDnsTokenW13:
+    """_spec_contains_dns_token recognises dnst: in all positional forms."""
+
+    def test_bare_dnst(self):
+        assert _spec_contains_dns_token("dnst:example.org") is True
+
+    def test_negated_dnst(self):
+        assert _spec_contains_dns_token("!dnst:example.org") is True
+
+    def test_zone_prefixed_dnst(self):
+        assert _spec_contains_dns_token("net:dnst:example.org") is True
+
+    def test_zone_prefixed_negated_dnst(self):
+        assert _spec_contains_dns_token("net:!dnst:example.org") is True
+
+    # Original dns: forms must still work (regression)
+    def test_bare_dns_still_detected(self):
+        assert _spec_contains_dns_token("dns:example.org") is True
+
+    def test_negated_dns_still_detected(self):
+        assert _spec_contains_dns_token("!dns:example.org") is True
+
+    def test_zone_prefixed_dns_still_detected(self):
+        assert _spec_contains_dns_token("net:dns:example.org") is True
+
+    def test_no_false_positive_plain_address(self):
+        assert _spec_contains_dns_token("net:198.51.100.1") is False
+
+    def test_no_false_positive_nfset(self):
+        assert _spec_contains_dns_token("nfset:mycdn") is False
+
+
+class TestRewriteDnsSpecW13:
+    """_rewrite_dns_spec produces identical output for dns: and dnst:."""
+
+    def _rewrite(self, spec: str, family: str = "v4") -> str:
+        reg = _dns_reg()
+        return _rewrite_dns_spec(spec, reg, family)
+
+    def test_dnst_bare_v4_parity(self):
+        r_dns = self._rewrite("dns:example.org", "v4")
+        r_dnst = self._rewrite("dnst:example.org", "v4")
+        assert r_dns == r_dnst
+        assert r_dnst.startswith("+dns_")
+        assert r_dnst.endswith("_v4")
+
+    def test_dnst_bare_v6_parity(self):
+        r_dns = self._rewrite("dns:example.org", "v6")
+        r_dnst = self._rewrite("dnst:example.org", "v6")
+        assert r_dns == r_dnst
+        assert r_dnst.endswith("_v6")
+
+    def test_dnst_negated(self):
+        result = self._rewrite("!dnst:example.org")
+        assert result.startswith("!+dns_")
+
+    def test_dnst_zone_prefixed(self):
+        result = self._rewrite("net:dnst:example.org")
+        assert result.startswith("net:+dns_")
+
+    def test_dnst_zone_prefixed_negated(self):
+        result = self._rewrite("net:!dnst:example.org")
+        assert result.startswith("net:!+dns_")
+
+    def test_dns_still_rewrites(self):
+        """Original dns: form must still produce the same sentinel."""
+        result = self._rewrite("dns:example.org")
+        assert result.startswith("+dns_")
+        assert result.endswith("_v4")
+
+
+class TestDnsDeprecationWarning:
+    """dns: emits one warning per config path; dnst: emits none."""
+
+    def setup_method(self):
+        # Clear the rate-limiter between tests so each test gets a clean slate.
+        _DNS_DEPRECATION_WARNED.clear()
+
+    def test_dns_emits_warning_once(self, caplog):
+        reg = _dns_reg()
+        with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.ir"):
+            _rewrite_dns_spec("dns:example.org", reg, "v4",
+                              config_path="/etc/shorewall/rules")
+            _rewrite_dns_spec("dns:example.org", reg, "v4",
+                              config_path="/etc/shorewall/rules")
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING
+                    and "deprecated" in r.message]
+        assert len(warnings) == 1, f"expected 1 warning, got {len(warnings)}"
+
+    def test_dns_warns_per_config_path(self, caplog):
+        """Two different config paths → two separate warnings."""
+        _DNS_DEPRECATION_WARNED.clear()
+        reg = _dns_reg()
+        with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.ir"):
+            _rewrite_dns_spec("dns:example.org", reg, "v4",
+                              config_path="/etc/shorewall/rules")
+            _rewrite_dns_spec("dns:example.org", reg, "v4",
+                              config_path="/etc/shorewall6/rules")
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING
+                    and "deprecated" in r.message]
+        assert len(warnings) == 2
+
+    def test_dnst_emits_no_warning(self, caplog):
+        reg = _dns_reg()
+        with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.ir"):
+            _rewrite_dns_spec("dnst:example.org", reg, "v4",
+                              config_path="/etc/shorewall/rules")
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING
+                    and "deprecated" in r.message]
+        assert len(warnings) == 0
+
+    def test_unknown_path_uses_sentinel(self, caplog):
+        """When config_path is empty the warning fires once for '<unknown>'."""
+        _DNS_DEPRECATION_WARNED.clear()
+        reg = _dns_reg()
+        with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.ir"):
+            _rewrite_dns_spec("dns:example.org", reg, "v4", config_path="")
+            _rewrite_dns_spec("dns:example.org", reg, "v4", config_path="")
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING
+                    and "deprecated" in r.message]
+        assert len(warnings) == 1

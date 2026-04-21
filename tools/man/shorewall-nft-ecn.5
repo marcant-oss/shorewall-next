@@ -43,9 +43,21 @@ eth0        203.0.113.0/24
 .fi
 .RE
 
+.SH NFSET / DNS TOKENS
+The HOST column accepts
+.BR nfset:<name> ,
+.BR dns:<hostname> ,
+and
+.BR dnsr:<hostname>
+tokens — see
+.BR shorewall\-nft\-rules (5)
+and
+.BR shorewall\-nft\-nfsets (5)
+for the full grammar.
 .SH SEE ALSO
 .BR shorewall\-nft (8),
-.BR shorewall\-nft\-interfaces (5)
+.BR shorewall\-nft\-interfaces (5),
+.BR shorewall\-nft\-nfsets (5)
 
 .SH AUTHOR
 André Valentin <avalentin@marcant.net>
