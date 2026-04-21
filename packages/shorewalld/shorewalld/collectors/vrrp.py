@@ -120,14 +120,21 @@ except ImportError:
 # Root: .1.3.6.1.4.1.9586.100.5
 # vrrpInstanceTable: .1.3.6.1.4.1.9586.100.5.2.3.1
 #
-# Columns (as confirmed from snmp_oids.py + stagelab open-items note):
+# Confirmed column layout (KEEPALIVED-MIB.txt, v2.3.4):
+#   .2  vrrpInstanceName
+#   .4  vrrpInstanceState          (0=init 1=backup 2=master 3=fault)
+#   .6  vrrpInstanceVirtualRouterId
+#   .7  vrrpInstanceBasePriority   (configured value, before track adjustments)
+#   .8  vrrpInstanceEffectivePriority (after track-script weight changes)
+#   .9  vrrpInstanceVipsStatus     (1=allSet 2=notAllSet)
+# Note: vrrpInstanceBecomeMaster does NOT exist in the MIB.
 _KA_MIB_INST_TABLE   = "1.3.6.1.4.1.9586.100.5.2.3.1"
 _KA_OID_NAME         = "1.3.6.1.4.1.9586.100.5.2.3.1.2"   # vrrpInstanceName (string)
-_KA_OID_STATE        = "1.3.6.1.4.1.9586.100.5.2.3.1.4"   # vrrpInstanceState (int, 0=init 1=backup 2=master 3=fault)
+_KA_OID_STATE        = "1.3.6.1.4.1.9586.100.5.2.3.1.4"   # vrrpInstanceState (int)
 _KA_OID_VRID         = "1.3.6.1.4.1.9586.100.5.2.3.1.6"   # vrrpInstanceVirtualRouterId (int)
-_KA_OID_EFF_PRIO     = "1.3.6.1.4.1.9586.100.5.2.3.1.7"   # vrrpInstanceEffectivePriority (int)
-_KA_OID_VIPS_STATUS  = "1.3.6.1.4.1.9586.100.5.2.3.1.8"   # vrrpInstanceVipsStatus (int: 1=allSet 2=notAllSet)
-_KA_OID_BECOME_MASTER= "1.3.6.1.4.1.9586.100.5.2.3.1.9"   # vrrpInstanceBecomeMaster (Counter32, transitions-to-master)
+_KA_OID_BASE_PRIO    = "1.3.6.1.4.1.9586.100.5.2.3.1.7"   # vrrpInstanceBasePriority (int)
+_KA_OID_EFF_PRIO     = "1.3.6.1.4.1.9586.100.5.2.3.1.8"   # vrrpInstanceEffectivePriority (int)
+_KA_OID_VIPS_STATUS  = "1.3.6.1.4.1.9586.100.5.2.3.1.9"   # vrrpInstanceVipsStatus (int: 1=allSet 2=notAllSet)
 
 # SNMP state mapping: KEEPALIVED-MIB uses 0=init, 1=backup, 2=master, 3=fault
 # D-Bus uses 1=BACKUP, 2=MASTER, 3=FAULT (no 0=init via D-Bus).
@@ -198,7 +205,7 @@ class VrrpInstance:
     vr_id: int
     family: str             # "ipv4" or "ipv6", or "" in SNMP-only mode
     state: int              # D-Bus: 1=BACKUP, 2=MASTER, 3=FAULT; SNMP: 0=init also possible
-    priority: int           # effective priority (filled by SNMP; 0 if unavailable)
+    priority: int           # base priority (configured value; filled by SNMP; 0 if unavailable)
     effective_priority: int # effective priority after track-script adjustments (SNMP; 0 if unavailable)
     last_transition: float  # 0 — not available via D-Bus or SNMP
     vip_count: int          # VIP count proxy (SNMP vrrpInstanceVipsStatus; 0 if unavailable)
@@ -519,8 +526,7 @@ class VrrpCollector(CollectorBase):
         )
         transitions_fam = _MetricFamily(
             "shorewalld_vrrp_master_transitions_total",
-            "Cumulative transitions-to-MASTER count (vrrpInstanceBecomeMaster; "
-            "0 if SNMP unavailable)",
+            "Cumulative transitions-to-MASTER count (not available via SNMP; always 0)",
             ["bus_name", "instance", "vr_id"],
             mtype="counter",
         )
@@ -571,8 +577,8 @@ async def _snmp_walk_table(
 
     The returned dict maps ``instance_index`` (the OID suffix after the
     column prefix, e.g. ``"1"`` or ``"2"``) to a column-value dict with
-    keys ``name``, ``state``, ``vrid``, ``eff_prio``, ``vips_status``,
-    ``become_master``.
+    keys ``name``, ``state``, ``vrid``, ``base_prio``, ``eff_prio``,
+    ``vips_status``.
 
     Missing or NoSuchObject columns are silently skipped (value stays 0).
     """
@@ -588,12 +594,12 @@ async def _snmp_walk_table(
     # Walk each column OID we care about.
     # Row index is the suffix of the OID after the column prefix.
     col_oids = [
-        (_KA_OID_NAME,          "name"),
-        (_KA_OID_STATE,         "state"),
-        (_KA_OID_VRID,          "vrid"),
-        (_KA_OID_EFF_PRIO,      "eff_prio"),
-        (_KA_OID_VIPS_STATUS,   "vips_status"),
-        (_KA_OID_BECOME_MASTER, "become_master"),
+        (_KA_OID_NAME,        "name"),
+        (_KA_OID_STATE,       "state"),
+        (_KA_OID_VRID,        "vrid"),
+        (_KA_OID_BASE_PRIO,   "base_prio"),
+        (_KA_OID_EFF_PRIO,    "eff_prio"),
+        (_KA_OID_VIPS_STATUS, "vips_status"),
     ]
 
     rows: dict[str, dict[str, object]] = {}
@@ -663,9 +669,9 @@ def _build_instances_from_snmp(
             continue
         state = _coerce_snmp_int(cols.get("state"), 0)
         vrid = _coerce_snmp_int(cols.get("vrid"), 0)
+        base_prio = _coerce_snmp_int(cols.get("base_prio"), 0)
         eff_prio = _coerce_snmp_int(cols.get("eff_prio"), 0)
         vips_status = _coerce_snmp_int(cols.get("vips_status"), 0)
-        become_master = _coerce_snmp_int(cols.get("become_master"), 0)
         instances.append(VrrpInstance(
             bus_name="",
             vrrp_name=name,
@@ -673,11 +679,10 @@ def _build_instances_from_snmp(
             vr_id=vrid,
             family="",
             state=state,
-            priority=eff_prio,
+            priority=base_prio,
             effective_priority=eff_prio,
             last_transition=0.0,
             vip_count=vips_status,
-            master_transitions=become_master,
         ))
     return instances
 
@@ -706,9 +711,9 @@ def _merge_snmp_into_instances(
         if cols is None:
             merged.append(inst)
             continue
+        base_prio = _coerce_snmp_int(cols.get("base_prio"), 0)
         eff_prio = _coerce_snmp_int(cols.get("eff_prio"), 0)
         vips_status = _coerce_snmp_int(cols.get("vips_status"), 0)
-        become_master = _coerce_snmp_int(cols.get("become_master"), 0)
         merged.append(VrrpInstance(
             bus_name=inst.bus_name,
             vrrp_name=inst.vrrp_name,
@@ -716,11 +721,10 @@ def _merge_snmp_into_instances(
             vr_id=inst.vr_id,
             family=inst.family,
             state=inst.state,
-            priority=eff_prio,
+            priority=base_prio,
             effective_priority=eff_prio,
             last_transition=inst.last_transition,
             vip_count=vips_status,
-            master_transitions=become_master,
         ))
     return merged
 
