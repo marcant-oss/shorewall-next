@@ -14,6 +14,7 @@ No real keepalived or D-Bus daemon is used.  All tests are offline.
 """
 from __future__ import annotations
 
+import pytest
 from unittest.mock import MagicMock, patch
 
 # Import via shorewalld.exporter which is the safe re-export path that
@@ -278,6 +279,7 @@ def _make_fake_connection(bus_names: list[str], instances: list[VrrpInstance]):
     return conn
 
 
+@pytest.mark.integration_dbus
 class TestVrrpCollectorHappyPath:
     """Mocked D-Bus returns two instances; verify metric output."""
 

@@ -60,6 +60,7 @@ filterwarnings = [
 ]
 markers = [
     "bench: performance benchmarks (skipped by default; run with -m bench)",
+    "integration_dbus: live D-Bus + keepalived integration tests (skipped by default; run with -m integration_dbus)",
 ]
 
 [tool.setuptools.packages.find]
