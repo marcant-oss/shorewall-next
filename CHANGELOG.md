@@ -167,6 +167,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ChildCrashedError`, `NetnsForkTimeout`) with full exception propagation
   across the fork boundary. See `docs/architecture/netns-fork.md`.
   Commit `7447ef8c7`.
+- **No more `ip netns exec` shell-outs**: every netns-bound operation in
+  `shorewall-nft` (nft apply, load, monitor trace, EPERM fallbacks) and
+  `shorewall-nft-simlab` (topology sysctl writes, rule loads, flowtable
+  queries, monitor trace) now runs through `run_in_netns_fork` (one-shot
+  fork+setns+libnftables) or the `_in_netns()` context manager (long-lived
+  Popen). The `iproute2` binary is no longer a runtime dependency for these
+  code paths. 10 call sites migrated; 28 new regression tests;
+  `grep '"ip", "netns", "exec"'` returns CLEAN across live code (remaining
+  occurrences are operator-instruction strings in `_flush_print()` output).
+  Commit `fd2e66a72`.
+- **Large-payload IPC hardening** (`run_in_netns_fork`): result pipe drained
+  concurrently via `select` + EINTR-retry; pipe buffer bumped to 1 MiB where
+  `cap_sys_resource` is held; `BrokenPipeError`/`EPIPE` handled gracefully;
+  `MemoryError` on pickle caught with payload-size context. Commit `dd25a36f8`.
+- **`PersistentNetnsWorker`** switched from `SOCK_SEQPACKET` to `SOCK_STREAM`:
+  eliminates the effective per-datagram EMSGSIZE cap (~200 KiB–1 MiB depending
+  on socket buffer) that previously caused large nft-set dumps to fail.
+  Existing `[uint32 length][payload]` framing + exact-read loop unchanged.
+  Commit `dd25a36f8`.
+- **Zero-copy large-payload transfer via `memfd_create(2)` + `mmap`**: payloads
+  ≥ 4 MiB (configurable via `large_payload_threshold` kwarg) are routed
+  through an anonymous, sealed memfd rather than the inline pickle pipe.
+  Sealed with `F_SEAL_WRITE | F_SEAL_SHRINK | F_SEAL_GROW`; last-fd-close
+  auto-frees pages; no filesystem touch. Kernels < 3.17 / Python < 3.8 raise
+  a clear `RuntimeError`; inline pipe + persistent worker continue to work.
+  Commit `dd25a36f8`.
+- **`run_nft_in_netns_zc(netns, script, *, check_only, timeout) → NftResult`**:
+  specialised helper that ships the nft script via zero-copy memfd and streams
+  stdout/stderr from the child via two drain-pipe threads. Scales cleanly to
+  multi-hundred-MB scripts (e.g. bulk ip-list loads). Use for one-off apply
+  paths; `run_in_netns_fork` stays the generic Python-RPC entry point.
+  Commit `dd25a36f8`.
+- **Pickle protocol 5 out-of-band buffers**: `bytes`/`bytearray`/`memoryview`
+  values ≥ 4 MiB embedded in `run_in_netns_fork` args/return are routed
+  through individual memfds. Python's C pickler bypasses `buffer_callback` for
+  immutable `bytes`, so the primitive pre-walks containers and wraps oversized
+  payloads in `pickle.PickleBuffer`. Commit `dd25a36f8`.
 
 ### Changed (W12–W21)
 
@@ -176,6 +213,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same-name-different-backend rows no longer raise `ValueError`.
 - `Match` dataclass gains `force_side: str | None = None` for bracket-override
   rendering in the emitter.
+- `shorewall-nft-netkit` `netns_fork.py` now ships three IPC paths (inline pickle
+  pipe ≤ 4 MiB; out-of-band memfd ≥ 4 MiB; specialised `run_nft_in_netns_zc`
+  stdin/stdout-style path for nft dispatch). Public API of `run_in_netns_fork`
+  and `PersistentNetnsWorker` is unchanged; internal transport reworked.
+  `PersistentNetnsWorker` socket type changed from `SOCK_SEQPACKET` to
+  `SOCK_STREAM`. Commits `dd25a36f8`.
+
+### Removed (W12–W21)
+
+- **`iproute2` binary** no longer required by `shorewall-nft` or
+  `shorewall-nft-simlab` for named-netns operations. Operator-visible
+  diagnostic prints still suggest `ip netns exec` for human inspection —
+  that is intentional. Commit `fd2e66a72`.
 
 ### Deprecated (W13)
 

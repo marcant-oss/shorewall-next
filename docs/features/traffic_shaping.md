@@ -1100,7 +1100,9 @@ Options:
 
 - `--netns NAME` — apply inside a named network namespace.  pyroute2's
   `IPRoute(netns=NAME)` is used to bind the netlink socket directly to the
-  target namespace; no `ip netns exec` fork is performed.
+  target namespace; no `ip netns exec` fork is performed.  The implementation
+  uses pyroute2 throughout — no shell-out to `tc` or `ip netns exec` occurs
+  on any code path.
 - `--dry-run` — print the planned operations as a bulleted list without
   applying anything to the kernel.
 

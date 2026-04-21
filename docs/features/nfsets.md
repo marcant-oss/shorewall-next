@@ -361,6 +361,11 @@ new capacity.
 
 ## Large-set operational tuning (shorewalld)
 
+Very large set payloads — including `ip-list-plain` sources with millions of
+entries — are transferred to the target netns via zero-copy
+`memfd_create(2)` IPC (Linux ≥ 3.17); no operator tuning is required to
+handle multi-hundred-MB scripts safely.
+
 For sets approaching or exceeding 100k elements, shorewalld exposes five
 environment variables that govern the apply path. All have sensible
 defaults; operators only tune them if the Prometheus metrics indicate a
