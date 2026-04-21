@@ -116,7 +116,7 @@ tests:
     maps_to_scenario:
       id: cis-5-4-2-outbound-coverage
       kind: rule_coverage_matrix
-      source_role: lan-downstream
+      source_role: wan-uplink
       zone_subnets:
         lan: "10.0.10.0/24"
         wan: "203.0.113.0/24"

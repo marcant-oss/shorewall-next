@@ -460,9 +460,18 @@ class StagelabController:
                 },
             )
             log.debug("→ host %r: kind=%r", host_name, cmd.kind)
+            # For iperf3 server the agent timeout = spec.duration_s + 30 s.
+            # Add another 30 s safety margin so the controller does not give up
+            # before the agent finishes cleaning up the subprocess.
+            if cmd.kind == "run_iperf3_server":
+                _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 60.0
+            elif cmd.kind in ("run_iperf3_client", "run_tcpkali"):
+                _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 30.0
+            else:
+                _cmd_timeout = 120.0
             try:
                 await conn.channel.send(msg)
-                response = await asyncio.wait_for(conn.channel.recv(), timeout=120.0)
+                response = await asyncio.wait_for(conn.channel.recv(), timeout=_cmd_timeout)
             except asyncio.TimeoutError:
                 log.error("host %r timed out on RUN_SCENARIO kind=%r", host_name, cmd.kind)
                 return idx, {"ok": False, "error": "timeout"}
