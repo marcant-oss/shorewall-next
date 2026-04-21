@@ -32,7 +32,6 @@ enables all server-grade features absent from the AlmaLinux 10 BaseOS package:
   - JSON health-check responses
   - PCRE-based host/service filtering
   - FW mark support
-  - eBPF acceleration (if supported by kernel and libbpf-devel)
   - systemd watchdog / sd_notify integration
 
 Install paths mirror the distro package (/usr/sbin/keepalived,
@@ -50,21 +49,11 @@ to work unchanged.
 %build
 # Configure flags: enable every server-grade feature available on AL10.
 #
-# eBPF notes:
-#   AL10 ships libbpf-devel from BaseOS (libbpf 2.0.x), so --enable-ebpf
-#   should work.  If it fails at configure time (missing BPF kernel headers),
-#   the CI job falls back to --disable-ebpf automatically (see the configure
-#   invocation below).
-#
-# If libbpf-devel is unavailable or the BPF selftest fails, change the line
-# below to --disable-ebpf and add:
-#   # TODO: enable when AL10 ships libbpf-devel
-configure_ebpf="--enable-ebpf"
-if ! pkg-config --exists libbpf 2>/dev/null; then
-    echo "WARNING: libbpf not found via pkg-config — disabling eBPF"
-    configure_ebpf="--disable-ebpf"
-fi
-
+# NOTE: --enable-ebpf is NOT a valid configure option in keepalived v2.3.4.
+# The upstream tree has no eBPF/XDP support yet (configure.ac has no such
+# flag, zero BPF source files).  Do not re-add this flag until upstream
+# adds real support.  See docs/testing/keepalived-features-roadmap.md for
+# the deferral rationale.
 %configure \
     --prefix=/usr \
     --sysconfdir=/etc \
@@ -84,8 +73,7 @@ fi
     --enable-regex \
     --enable-pcre \
     --enable-fwmark \
-    --enable-systemd \
-    "$configure_ebpf"
+    --enable-systemd
 
 %make_build
 
@@ -180,6 +168,5 @@ fi
 * Mon Apr 20 2026 André Valentin <avalentin@marcant.net> - 2.3.4-1
 - Initial keepalived-marcant build: keepalived 2.3.4 upstream with
   --enable-dbus, --enable-nftables, --enable-bfd, full SNMP (VRRP MIB,
-  RFC v2c/v3, checker), libipset, JSON, PCRE, FW mark, systemd watchdog,
-  and eBPF (auto-detected, falls back to --disable-ebpf if libbpf absent).
+  RFC v2c/v3, checker), libipset, JSON, PCRE, FW mark, systemd watchdog.
   Conflicts:/Provides: keepalived so operators can install either but not both.
