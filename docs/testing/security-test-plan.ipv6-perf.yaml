@@ -69,7 +69,7 @@ tests:
       kind: throughput
       proto: tcp
       family: ipv4
-      source_role: wan-uplink
+      source_role: wan-native
       sink_role: lan-downstream
       duration_s: 30
       parallel: 4
