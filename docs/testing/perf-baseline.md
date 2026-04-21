@@ -42,14 +42,28 @@ PCI passthrough to the test VMs).
 
 | Run | Date | Scenario | Gbps | Duration | Parallel streams | OK? |
 |-----|------|----------|------|----------|------------------|-----|
-| `udp-rerun` | 2026-04-21 | perf-conntrack-observe-throughput | **36.95** | 60 s | 4 | PASS |
+| `udp-rerun` | 2026-04-21 | perf-conntrack-observe-throughput | 36.95 | 60 s | 4 | PASS |
+| `ipv4-tcp-fix` | 2026-04-20 | perf-ipv4-tcp-throughput | **36.86** | 30 s | 4 | PASS |
+| `ipv4-tcp-fix` | 2026-04-20 | perf-conntrack-observe-throughput | **35.37** | 60 s | 4 | PASS |
 
 Source: `wan-native` → `lan-downstream`, IPv4, TCP, 4 parallel iperf3 streams.
+SLO: ≥ 8.0 Gbps.  Passes at 35–37 Gbps (4× margin on virtio-net).
 
-*Note*: the `perf-ipv4-tcp-throughput` catalogue entry targets `wan-uplink`
-(probe mode), which has no IPv4 address and therefore produces 0 Gbps.  The
-IPv4 throughput number above comes from the `perf-conntrack-observe-throughput`
-scenario, which uses `wan-native` (native mode with IPv4 `203.0.113.253/24`).
+**Fix applied**: `perf-ipv4-tcp-throughput` catalogue entry previously targeted
+`source_role: wan-uplink` (probe mode, no IPv4 stack — iperf3 binds to `""` and
+exits immediately with "Name or service not known").  Retargeted to
+`source_role: wan-native` (tester01 eth1.20, IPv4 `203.0.113.253/24`) in
+commit `fix(catalogue): perf-ipv4-tcp-throughput → wan-native (was probe-mode)`.
+
+**preexec_fn fix applied**: `_exec_in_netns` in `agent.py` previously called
+`ctypes.CDLL("libc.so.6")` inside `preexec_fn`.  In a multithreaded asyncio
+process, `fork()` preserves mutex lock state — if the dlopen lock is held by
+another thread at fork time, the child inherits a permanently locked mutex and
+any `ctypes.CDLL()` call in `preexec_fn` deadlocks, causing Python to raise
+`SubprocessError: Exception occurred in preexec_fn`.  Fixed by loading libc
+once at module import time (`_libc = ctypes.CDLL(...)` at module level).
+`SubprocessError` is also now caught by the fallback path (`ip netns exec`)
+alongside `OSError`, so any future preexec_fn failure degrades gracefully.
 
 ---
 
@@ -129,14 +143,12 @@ The SSH agent-forwarding chain is now operational:
 
 Pre-check confirmed: `ssh -A root@tester01 "ssh -A root@fw-primary 'conntrack -L 2>/dev/null | wc -l'"` returns `0` (idle firewall — no active conntrack entries; SSH succeeds).
 
-**Current blocker for non-zero conntrack_peak_observed**: the
-`perf-conntrack-observe-throughput` scenario uses `family: ipv4` with the
-`wan-native` → `lan-downstream` native endpoints.  IPv4 iperf3 fails with
-a `preexec_fn` error inside the netns (same root cause as the failing
-`perf-ipv4-tcp-throughput` scenario, `duration_s: 0.0`), so the 60 s
-measurement window never starts and the sidecar produces no samples.
-Once the IPv4 native-endpoint iperf3 issue is resolved, the sidecar will
-return real conntrack counts from the reference HA firewall.
+**Blocker resolved**: the IPv4 iperf3 `preexec_fn` issue that prevented
+`perf-conntrack-observe-throughput` from running has been fixed (see
+"IPv4 TCP throughput" section above).  `perf-conntrack-observe-throughput`
+now runs the full 60 s measurement window and the conntrack sidecar
+(`poll_conntrack`) can return real counts from the reference HA firewall
+once `fw_host` is set to a resolvable address (see follow-up item 1).
 
 ---
 
@@ -203,10 +215,10 @@ for sc in data['scenarios']:
    in `ConnStormRunner` (or in the catalogue entry) so port 80 on `lan-downstream`
    is served before the storm starts.
 
-3. **IPv4 TCP native baseline**: `perf-ipv4-tcp-throughput` still targets
-   `source_role: wan-uplink` (probe mode, no IPv4 stack) and records 0 Gbps.
-   Retargeting to `wan-native` is a separate follow-up (same fix pattern as
-   this task).
+3. **IPv4 TCP native baseline**: ~~`perf-ipv4-tcp-throughput` targets
+   `source_role: wan-uplink`~~ — **fixed**: retargeted to `wan-native` and
+   preexec_fn dlopen issue resolved.  IPv4 TCP baseline now measurable via
+   `wan-native` → `lan-downstream` (≈ 36–37 Gbps on virtio-net).
 
 4. **DPDK line-rate** (task #31): provision physical NIC via Proxmox PCI
    passthrough for real 10–40 Gbps measurements.  The current virtio-net
