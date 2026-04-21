@@ -1,0 +1,193 @@
+# stagelab-dpdk-example.yaml — DPDK line-rate test config for the reference HA firewall.
+#
+# PREREQUISITES (task #31 gate):
+#   1. Physical NICs with IOMMU-enabled PCI passthrough on both test hosts.
+#      Virtio-net NICs (used by the AlmaLinux 10 test VM at 192.168.4.73) are
+#      NOT suitable — they cannot reach line-rate in DPDK poll-mode.
+#   2. TRex staged at /opt/trex/v3.08 on both test hosts:
+#        tools/setup-remote-test-host.sh root@<host> --role stagelab-agent-dpdk
+#   3. Hugepages allocated (STAGELAB_HUGEPAGES=2048 in the agent environment):
+#        STAGELAB_HUGEPAGES=2048 tools/setup-remote-test-host.sh root@<host> \
+#          --role stagelab-agent-dpdk
+#   4. PCI addresses adjusted to match physical NICs (lspci, dpdk-devbind --status).
+#      Placeholder addresses below: 0000:00:00.0 / 0000:00:00.1
+#      Replace with actual domain:bus:device.function (all lowercase hex).
+#   5. Both test hosts must be in the same VLAN trunk carrying the traffic zones
+#      under test (see tools/stagelab-lab-base.yaml for topology reference).
+#   6. dos_target_allowlist must be populated with the sink endpoint's IP before
+#      running any dos_syn_flood / dos_half_open scenario.
+#
+# STATUS: Scenarios in this file are DEFERRED until task #31 is resolved.
+#         The config validates cleanly (stagelab validate) against the schema;
+#         actual runs will fail with "TRex binary not found" on the test VM.
+#
+# TOPOLOGY:
+#   fw-tester-dpdk-01 — DPDK client side (TRex TX), pci_addr A + B
+#   fw-tester-dpdk-02 — DPDK server side (TRex RX), pci_addr A + B
+#   DUT — the reference HA firewall (external, not managed by this config)
+#
+# SNMP community string: set STAGELAB_SNMP_COMMUNITY_MON before running.
+
+hosts:
+  - name: fw-tester-dpdk-01
+    address: root@203.0.113.10      # RFC 5737 placeholder — replace with actual host
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3, 4, 5]
+    hugepages_gib: 8                # 2048 x 4M pages = 8 GiB
+
+  - name: fw-tester-dpdk-02
+    address: root@203.0.113.11      # RFC 5737 placeholder — replace with actual host
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3, 4, 5]
+    hugepages_gib: 8
+
+dut:
+  kind: external                    # reference HA firewall is outside stagelab scope
+
+endpoints:
+  # --- DPDK client side (fw-tester-dpdk-01) ---
+  - name: dpdk-wan-src
+    host: fw-tester-dpdk-01
+    mode: dpdk
+    pci_addr: "0000:00:00.0"        # PLACEHOLDER: replace with physical NIC PCI address
+    dpdk_cores: [2, 3]
+    hugepages_gib: 4
+    trex_role: client
+    role: wan-dpdk                  # catalogue fragments reference this via source_role: wan-dpdk
+
+  - name: dpdk-wan-src-b
+    host: fw-tester-dpdk-01
+    mode: dpdk
+    pci_addr: "0000:00:00.1"        # PLACEHOLDER: second NIC port for bidirectional tests
+    dpdk_cores: [4, 5]
+    hugepages_gib: 4
+    trex_role: client
+
+  # --- DPDK server side (fw-tester-dpdk-02) ---
+  - name: dpdk-lan-sink
+    host: fw-tester-dpdk-02
+    mode: dpdk
+    pci_addr: "0000:00:00.0"        # PLACEHOLDER: replace with physical NIC PCI address
+    dpdk_cores: [2, 3]
+    hugepages_gib: 4
+    trex_role: server
+    role: lan-dpdk                  # catalogue fragments reference this via sink_role: lan-dpdk
+
+  - name: dpdk-lan-sink-b
+    host: fw-tester-dpdk-02
+    mode: dpdk
+    pci_addr: "0000:00:00.1"        # PLACEHOLDER: second NIC port
+    dpdk_cores: [4, 5]
+    hugepages_gib: 4
+    trex_role: server
+
+# ---------------------------------------------------------------------------
+# Scenarios
+# ---------------------------------------------------------------------------
+
+scenarios:
+
+  # --- S1: IPv4 TRex STL IMIX at 10 Gbps ---
+  # Stateless L2/L3 traffic mix (IMIX: 64/512/1500B in 7:4:1 ratio).
+  # Validates raw forwarding throughput without conntrack overhead.
+  - id: dpdk-ipv4-stl-10gbps
+    kind: throughput_dpdk
+    source: dpdk-wan-src
+    sink: dpdk-lan-sink
+    proto: udp
+    duration_s: 30
+    multiplier: "10gbps"
+    packet_size_b: 64               # 64B worst-case for pps stress; use 0 for IMIX pcap
+    test_id: perf-dpdk-ipv4-line-rate-stl
+    standard_refs: [nist-800-53-sc-7]
+    acceptance_criteria:
+      packet_loss_ratio_max: 0.001  # <= 0.1% loss
+
+  # --- S2: IPv4 TRex STL at 40 Gbps (line-rate capable NICs only) ---
+  # Increase multiplier to 40gbps once the NIC and switchport are confirmed 40G.
+  - id: dpdk-ipv4-stl-40gbps
+    kind: throughput_dpdk
+    source: dpdk-wan-src
+    sink: dpdk-lan-sink
+    proto: udp
+    duration_s: 30
+    multiplier: "40gbps"
+    packet_size_b: 64
+    acceptance_criteria:
+      packet_loss_ratio_max: 0.001
+
+  # --- S3: IPv4 TRex ASTF — 1M concurrent HTTP sessions ---
+  # Stateful test: TRex generates SYN, server responds, connections held for
+  # the ASTF profile's keepalive duration.  Validates conntrack at 1M sessions.
+  # Requires vsftpd / nginx on the sink side — see ASTF profile for details.
+  - id: dpdk-ipv4-astf-1m-sessions
+    kind: conn_storm_astf
+    source: dpdk-wan-src
+    sink: dpdk-lan-sink
+    profile_py: "/opt/trex/v3.08/automation/trex_control_plane/interactive/trex/examples/astf/http_simple.py"
+    duration_s: 60
+    multiplier: 1.0
+    expect_min_concurrent: 1000000
+    test_id: perf-dpdk-ipv4-astf-1m-sessions
+    standard_refs: [nist-800-53-sc-5]
+    acceptance_criteria:
+      concurrent_sessions_min: 1000000
+      kernel_error_count: 0
+
+  # --- S4: SYN flood DoS at 50 000 pps through the firewall ---
+  # Exercises the firewall's SYN-flood mitigation path.
+  # SAFETY: dos_target_allowlist must include the sink's IP; rate_pps <=
+  # STAGELAB_DOS_RATE_CAP_PPS (default 100 000).
+  - id: dpdk-dos-syn-flood
+    kind: dos_syn_flood
+    source: dpdk-wan-src
+    sink: dpdk-lan-sink
+    duration_s: 10
+    rate_pps: 50000
+    src_ip_range: 100.64.0.0/10     # CGN range: spoofed, unreachable from sink
+    dst_port_range: "80,443"
+    expect_max_passed_ratio: 0.05   # <= 5% of SYNs must reach the sink
+    baseline_window_s: 10.0
+    dos_window_s: 10.0
+    test_id: nist-sc-5-dos-syn
+    standard_refs: [nist-800-53-sc-5]
+    acceptance_criteria:
+      passed_ratio_max: 0.05
+
+  # --- S5: Half-open TCP connection flood ---
+  # Sends SYN but never completes the handshake.  Conntrack half-open entries
+  # must not exhaust the table.
+  - id: dpdk-dos-half-open
+    kind: dos_half_open
+    source: dpdk-wan-src
+    sink: dpdk-lan-sink
+    duration_s: 30
+    target_conns: 500000
+    open_rate_per_s: 20000
+    dst_port: 80
+    test_id: nist-sc-5-dos-half-open
+    standard_refs: [nist-800-53-sc-5]
+    acceptance_criteria:
+      conntrack_table_usage_peak_ratio_max: 0.95
+      recovery_within_s: 30
+
+# ---------------------------------------------------------------------------
+# DoS safety allowlist — required for dos_syn_flood / dos_half_open
+# ---------------------------------------------------------------------------
+# Uncomment and populate before running DoS scenarios:
+# dos_target_allowlist:
+#   - 203.0.113.0/24    # replace with the actual sink endpoint IP/subnet
+
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+metrics:
+  poll_interval_s: 2
+  collect: [nft_counters, conntrack_stats, nic_ethtool]
+
+# ---------------------------------------------------------------------------
+# Report
+# ---------------------------------------------------------------------------
+report:
+  output_dir: /tmp/stagelab-dpdk-reports
+  keep_pcaps: failed_only
