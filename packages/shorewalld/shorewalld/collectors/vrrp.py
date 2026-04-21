@@ -80,6 +80,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import logging
+import select
 import time
 from dataclasses import dataclass
 
@@ -149,6 +150,14 @@ _DBUS_IFACE = "org.freedesktop.DBus"
 
 _KA_INSTANCE_IFACE = "org.keepalived.Vrrp1.Instance"
 _KA_INSTANCE_ROOT = "/org/keepalived/Vrrp1/Instance"
+_KA_SIGNAL_VRRP_STATUS_CHANGE = "VrrpStatusChange"
+
+# AddMatch rule to receive all VrrpStatusChange signals from all instances.
+_KA_SIGNAL_MATCH_RULE = (
+    "type='signal',"
+    "interface='org.keepalived.Vrrp1.Instance',"
+    "member='VrrpStatusChange'"
+)
 
 _PROPS_IFACE = "org.freedesktop.DBus.Properties"
 _INTROSPECT_IFACE = "org.freedesktop.DBus.Introspectable"
@@ -279,6 +288,12 @@ class VrrpCollector(CollectorBase):
         self._cache: list[VrrpInstance] = []
         # Persistent error counts (never reset — monotone counters).
         self._errors: dict[str, int] = {r: 0 for r in _REASONS}
+        # Signal-listener connection (persistent between scrapes).
+        # Kept open to accumulate VrrpStatusChange signals without polling.
+        self._sig_conn: object | None = None
+        # (bus_name, nic, vrid, family) → Unix timestamp of last observed
+        # VrrpStatusChange signal.
+        self._last_transition: dict[tuple, float] = {}
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -312,8 +327,117 @@ class VrrpCollector(CollectorBase):
         self._cache_ts = now
         return fresh
 
+    def _ensure_signal_connection(self) -> bool:
+        """Open (or re-open) the persistent signal-listener connection.
+
+        Calls ``AddMatch`` on ``org.freedesktop.DBus`` to subscribe to all
+        ``VrrpStatusChange`` signals.  Returns ``True`` on success, ``False``
+        on failure (``_sig_conn`` is set to ``None`` on failure).
+
+        No-op if ``_sig_conn`` is already open.
+        """
+        if self._sig_conn is not None:
+            return True
+        if not _jeepney_available:
+            return False
+        try:
+            conn = open_dbus_connection(bus=self._bus_path, enable_fds=False)
+        except Exception as exc:
+            log.debug("vrrp signal: cannot open signal connection: %s", exc)
+            self._sig_conn = None
+            return False
+        # Register match rule so the bus delivers VrrpStatusChange to us.
+        try:
+            add_match_msg = new_method_call(
+                DBusAddress(_DBUS_PATH, bus_name=_DBUS_SERVICE, interface=_DBUS_IFACE),
+                "AddMatch",
+                "s",
+                (_KA_SIGNAL_MATCH_RULE,),
+            )
+            conn.send_and_get_reply(add_match_msg, timeout=_DBUS_TIMEOUT)
+        except Exception as exc:
+            log.debug("vrrp signal: AddMatch failed: %s", exc)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._sig_conn = None
+            return False
+        self._sig_conn = conn
+        log.debug("vrrp signal: signal connection established")
+        return True
+
+    def _drain_signals(self, sig_conn: object) -> None:
+        """Drain all pending VrrpStatusChange signals from ``sig_conn``.
+
+        Uses ``select.select`` with a zero timeout to avoid blocking when
+        no messages are pending.  Never calls ``receive()`` without first
+        confirming the socket is readable.
+
+        Updates ``self._last_transition[(bus_name, nic, vrid, family)]``
+        with ``time.time()`` for every valid signal received.
+        """
+        # Import HeaderFields here; the module-level import guard ensures
+        # jeepney is available before this method is ever called.
+        from jeepney.low_level import HeaderFields  # type: ignore[import-untyped]
+
+        try:
+            sock_fd = sig_conn.sock.fileno()  # type: ignore[union-attr]
+        except Exception as exc:
+            log.debug("vrrp signal: cannot get socket fd: %s", exc)
+            return
+
+        while True:
+            try:
+                readable, _, _ = select.select([sock_fd], [], [], 0.0)
+            except Exception as exc:
+                log.debug("vrrp signal: select error: %s", exc)
+                break
+            if not readable:
+                break  # no messages pending
+            try:
+                msg = sig_conn.receive()  # type: ignore[union-attr]
+            except Exception as exc:
+                # Connection broken — propagate to caller
+                raise
+
+            # Only process signals with the right member name.
+            fields = msg.header.fields
+            member = fields.get(HeaderFields.member, "")
+            if member != _KA_SIGNAL_VRRP_STATUS_CHANGE:
+                continue
+
+            obj_path = fields.get(HeaderFields.path, "")
+            sender = fields.get(HeaderFields.sender, "")
+            parsed = _parse_obj_path(obj_path)
+            if parsed is None:
+                log.debug("vrrp signal: cannot parse path %r", obj_path)
+                continue
+            nic, vr_id, family = parsed
+            key = (sender, nic, vr_id, family)
+            self._last_transition[key] = time.time()
+            log.debug(
+                "vrrp signal: VrrpStatusChange from %r path=%r → key=%r",
+                sender, obj_path, key,
+            )
+
     def _scrape(self) -> list[VrrpInstance]:
         """Attempt D-Bus scrape; fall back to SNMP-only if D-Bus is down."""
+        # Drain pending VrrpStatusChange signals before the GetAll sweep so
+        # that last_transition reflects the most recent state changes.
+        if _jeepney_available:
+            self._ensure_signal_connection()
+            if self._sig_conn is not None:
+                try:
+                    self._drain_signals(self._sig_conn)
+                except Exception as exc:
+                    log.debug("vrrp signal: drain error — closing signal conn: %s", exc)
+                    try:
+                        self._sig_conn.close()  # type: ignore[union-attr]
+                    except Exception:
+                        pass
+                    self._sig_conn = None
+
         dbus_instances: list[VrrpInstance] | None = None
         dbus_failed = False
 
@@ -424,6 +548,27 @@ class VrrpCollector(CollectorBase):
             for path in paths:
                 inst = self._read_instance(conn, bus_name, path)
                 if inst is not None:
+                    # Enrich last_transition from drained signal timestamps.
+                    # The signal sender is the bus unique name (e.g. ":1.42"),
+                    # but we key by bus_name (well-known name) for correlation.
+                    # Try well-known name first; fall back to 0.0 if absent.
+                    ts = self._last_transition.get(
+                        (bus_name, inst.nic, inst.vr_id, inst.family), 0.0
+                    )
+                    if ts != 0.0:
+                        inst = VrrpInstance(
+                            bus_name=inst.bus_name,
+                            vrrp_name=inst.vrrp_name,
+                            nic=inst.nic,
+                            vr_id=inst.vr_id,
+                            family=inst.family,
+                            state=inst.state,
+                            priority=inst.priority,
+                            effective_priority=inst.effective_priority,
+                            last_transition=ts,
+                            vip_count=inst.vip_count,
+                            master_transitions=inst.master_transitions,
+                        )
                     instances.append(inst)
 
         return instances

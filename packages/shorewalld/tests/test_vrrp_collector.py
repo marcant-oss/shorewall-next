@@ -14,6 +14,7 @@ No real keepalived or D-Bus daemon is used.  All tests are offline.
 """
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock, patch
 
 # Import via shorewalld.exporter which is the safe re-export path that
@@ -332,37 +333,53 @@ class TestVrrpCollectorTtlCache:
     def test_cache_prevents_second_scrape(self):
         bus_names = ["org.keepalived.Vrrp1"]
         fake_conn = _make_fake_connection(bus_names, _FAKE_INSTANCES)
-        open_conn_calls: list[int] = []
+        scrape_conn_calls: list[int] = []
+        signal_conn_calls: list[int] = []
+        call_counter = [0]
 
         def fake_open(**kwargs):
-            open_conn_calls.append(1)
+            call_counter[0] += 1
+            # First call is the persistent signal connection; subsequent calls
+            # are per-scrape connections (one per _scrape() invocation).
+            if call_counter[0] == 1:
+                signal_conn_calls.append(1)
+            else:
+                scrape_conn_calls.append(1)
             return fake_conn
 
         with patch("shorewalld.collectors.vrrp.open_dbus_connection",
                    side_effect=fake_open):
-            c = VrrpCollector(cache_ttl=60.0)
-            c.collect()
-            c.collect()  # second call within TTL
+            with patch("select.select", return_value=([], [], [])):
+                c = VrrpCollector(cache_ttl=60.0)
+                c.collect()
+                c.collect()  # second call within TTL — uses cached result
 
-        # open_dbus_connection should have been called exactly once.
-        assert len(open_conn_calls) == 1
+        # Signal connection opened once; scrape connection opened once (cache hit
+        # on second collect() call prevents a second scrape connection).
+        assert len(signal_conn_calls) == 1
+        assert len(scrape_conn_calls) == 1
 
     def test_cache_expires_triggers_new_scrape(self):
         bus_names = ["org.keepalived.Vrrp1"]
         fake_conn = _make_fake_connection(bus_names, _FAKE_INSTANCES)
-        open_conn_calls: list[int] = []
+        scrape_conn_calls: list[int] = []
+        call_counter = [0]
 
         def fake_open(**kwargs):
-            open_conn_calls.append(1)
+            call_counter[0] += 1
+            if call_counter[0] > 1:
+                scrape_conn_calls.append(1)
             return fake_conn
 
         with patch("shorewalld.collectors.vrrp.open_dbus_connection",
                    side_effect=fake_open):
-            c = VrrpCollector(cache_ttl=0.0)  # zero TTL = always expire
-            c.collect()
-            c.collect()
+            with patch("select.select", return_value=([], [], [])):
+                c = VrrpCollector(cache_ttl=0.0)  # zero TTL = always expire
+                c.collect()
+                c.collect()
 
-        assert len(open_conn_calls) == 2
+        # Two scrape connections (one per expired-cache collect call).
+        assert len(scrape_conn_calls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -416,3 +433,113 @@ class TestVrrpCollectorGlobFilter:
         # Error counter family present but state family has no samples
         state = _get_family(families, "shorewalld_vrrp_state")
         assert len(state.samples) == 0
+
+
+# ---------------------------------------------------------------------------
+# VrrpStatusChange signal subscription tests
+# ---------------------------------------------------------------------------
+
+class TestVrrpStatusChange:
+    """Unit tests for the in-scrape VrrpStatusChange signal drain."""
+
+    def _make_status_change_signal(
+        self,
+        sender: str,
+        obj_path: str,
+        new_state: int = 2,
+        old_state: int = 1,
+    ) -> MagicMock:
+        """Build a minimal fake jeepney message that looks like a VrrpStatusChange signal."""
+        from jeepney.low_level import HeaderFields
+
+        fields: dict = {
+            HeaderFields.member: "VrrpStatusChange",
+            HeaderFields.path: obj_path,
+            HeaderFields.sender: sender,
+            HeaderFields.interface: "org.keepalived.Vrrp1.Instance",
+        }
+        msg = MagicMock()
+        msg.header.fields = fields
+        msg.body = ((new_state, old_state),)
+        return msg
+
+    def test_drain_signals_updates_last_transition(self):
+        """A VrrpStatusChange signal for eth0/51/IPv4 must update _last_transition."""
+        from unittest.mock import patch as _patch
+
+        sender = "org.keepalived.Vrrp1"
+        obj_path = "/org/keepalived/Vrrp1/Instance/eth0/51/IPv4"
+        signal = self._make_status_change_signal(sender, obj_path)
+
+        sig_conn = MagicMock()
+        # select.select returns readable once, then empty to stop the loop.
+        sig_conn.sock.fileno.return_value = 99
+        sig_conn.receive.return_value = signal
+
+        # select_results: first call → readable (fd 99), second call → empty.
+        select_results = [([99], [], []), ([], [], [])]
+        select_iter = iter(select_results)
+
+        with _patch("select.select", side_effect=lambda *a, **kw: next(select_iter)):
+            c = VrrpCollector()
+            before = time.time()
+            c._drain_signals(sig_conn)
+            after = time.time()
+
+        key = (sender, "eth0", 51, "ipv4")
+        assert key in c._last_transition
+        ts = c._last_transition[key]
+        assert before <= ts <= after
+
+    def test_drain_signals_stops_when_socket_empty(self):
+        """When select.select returns empty immediately, receive() must never be called."""
+        from unittest.mock import patch as _patch
+
+        sig_conn = MagicMock()
+        sig_conn.sock.fileno.return_value = 99
+
+        with _patch("select.select", return_value=([], [], [])):
+            c = VrrpCollector()
+            c._drain_signals(sig_conn)
+
+        sig_conn.receive.assert_not_called()
+
+    def test_broken_signal_conn_gracefully_handled(self):
+        """If _drain_signals raises (connection reset), _sig_conn is set to None
+        and _scrape() still returns instances from the main GetAll connection."""
+        from unittest.mock import patch as _patch
+
+        # Signal connection: socket readable but receive raises ConnectionResetError.
+        sig_conn = MagicMock()
+        sig_conn.sock.fileno.return_value = 99
+        sig_conn.receive.side_effect = ConnectionResetError("connection reset")
+
+        # Main scrape connection: normal fake.
+        bus_names = ["org.keepalived.Vrrp1"]
+        fake_main_conn = _make_fake_connection(bus_names, _FAKE_INSTANCES)
+
+        open_conn_calls = []
+
+        def fake_open(**kwargs):
+            open_conn_calls.append(kwargs)
+            return fake_main_conn
+
+        def fake_ensure_signal(self_inner):
+            # Pre-plant the broken connection so _scrape sees it.
+            self_inner._sig_conn = sig_conn
+            return True
+
+        with _patch("select.select", return_value=([99], [], [])):
+            with _patch("shorewalld.collectors.vrrp.open_dbus_connection",
+                        side_effect=fake_open):
+                with _patch.object(
+                    VrrpCollector, "_ensure_signal_connection",
+                    fake_ensure_signal,
+                ):
+                    c = VrrpCollector(cache_ttl=-1.0)
+                    instances = c.snapshot()
+
+        # The broken signal connection must have been cleared.
+        assert c._sig_conn is None
+        # Main scrape must still return instances.
+        assert len(instances) == 2
