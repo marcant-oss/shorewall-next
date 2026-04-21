@@ -470,6 +470,11 @@ class StagelabController:
                 _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 30.0
             elif cmd.kind == "poll_conntrack":
                 _cmd_timeout = float(cmd.spec.get("duration_s", 60)) + 30.0
+            elif cmd.kind in ("start_http_listener", "stop_http_listener"):
+                # stop_http_listener may carry delay_before_s = hold_s + 2 so
+                # the listener stays up for the full storm duration before being
+                # torn down.  Timeout must cover that delay plus cleanup margin.
+                _cmd_timeout = float(cmd.spec.get("delay_before_s", 0)) + 30.0
             else:
                 _cmd_timeout = 120.0
             try:

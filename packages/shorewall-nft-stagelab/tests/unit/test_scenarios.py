@@ -117,11 +117,15 @@ def test_conn_storm_plan_three_commands():
     assert storm_cmd.spec["connect_rate"] == 200
     assert storm_cmd.spec["duration_s"] == 5
 
-    # 3) HTTP listener stop on sink
+    # 3) HTTP listener stop on sink — must wait for the storm to finish
     assert stop_cmd.kind == "stop_http_listener"
     assert stop_cmd.endpoint_name == "sink"
     assert stop_cmd.spec["port"] == 80
     assert stop_cmd.spec["_http_sidecar"] is True
+    # delay_before_s = hold_s + 2 so the listener stays up for the storm.
+    # Without this the sink group (start→stop, sequential) stops the listener
+    # immediately after starting it, killing it before the storm can connect.
+    assert stop_cmd.spec["delay_before_s"] == 5 + 2  # hold_s + 2
 
 
 def test_conn_storm_plan_custom_target_port():

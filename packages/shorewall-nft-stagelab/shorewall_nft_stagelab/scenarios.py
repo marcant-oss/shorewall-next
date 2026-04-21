@@ -287,6 +287,13 @@ class ConnStormRunner(Scenario):
                 "port": port,
                 "_http_sidecar": True,
                 "scenario_id": sc.id,
+                # Delay stop until the storm is done.  Without this, the sink
+                # host group (start → stop, sequential) fires stop immediately
+                # after start — the HTTP listener dies before the storm connects.
+                # The storm group on the source host runs concurrently; it takes
+                # hold_s + 1 s (delay_before_s=1).  We wait hold_s + 2 s before
+                # stopping so the listener stays up for the full storm duration.
+                "delay_before_s": sc.hold_s + 2,
             },
         )
         cmds: list[AgentCommand] = [start_cmd, storm_cmd, stop_cmd]
