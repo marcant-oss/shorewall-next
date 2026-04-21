@@ -1,17 +1,13 @@
-# nfsets — Deferred Features and Open Items
+# nfsets — Roadmap (Shipped + Deferred Items)
 
 **Audience**: developers
-**Scope**: Backlog of planned but not-yet-implemented nfsets capabilities and the shorewalld metric-surface audit items deferred from W7b (2026-04-19). Use this file as the entry point when picking up follow-on nfsets work.
+**Scope**: Backlog of planned nfsets capabilities and the shorewalld metric-surface audit items deferred from W7b (2026-04-19). N1–N5 and N6 are now fully shipped (W12–W21, 2026-04-21). Use this file as the entry point when picking up follow-on nfsets work.
 
 ---
 
 ## Table of contents
 
-- [N1 — SRV record resolution (`dnstype=srv`)](#n1--srv-record-resolution-dnstypesrv)
-- [N2 — Inline `dns:` → `dnst:` rename](#n2--inline-dns--dnst-rename)
-- [N3 — `nfset:` in Masq and tcrules](#n3--nfset-in-masq-and-tcrules)
-- [N4 — `zone:dnst:` pseudo-zone behaviour](#n4--zonednst-pseudo-zone-behaviour)
-- [N5 — Per-set nft flags optimisation](#n5--per-set-nft-flags-optimisation)
+- [Shipped items (N1–N6)](#shipped-items-n1n6)
 - [M1 — Metric unsafe-rename backlog (P1 security audit)](#m1--metric-unsafe-rename-backlog-p1-security-audit)
 - [M2 — shorewalld security hardening (P1 audit)](#m2--shorewalld-security-hardening-p1-audit)
 - [M3 — shorewalld extensibility (P3 audit)](#m3--shorewalld-extensibility-p3-audit)
@@ -19,88 +15,67 @@
 
 ---
 
-## N1 — SRV record resolution (`dnstype=srv`)
+## Shipped items (N1–N6)
 
-**Rationale**: SRV records encode service endpoints (host + port). Resolving them into an nft set
-requires a different data model — sets would need to carry port numbers, which nft `type ipv4_addr`
-sets cannot hold directly. A concrete use case (e.g. filtering XMPP federation or Kubernetes
-service endpoints) should drive this before adding the complexity.
+All N-items from the original deferred list are now implemented. History preserved below for roadmap readers.
 
-**Acceptance criteria**:
-- `dnstype=srv` parses without error and emits a set of type `ipv4_addr . inet_service` (concat set).
-- shorewalld's `DnsSetTracker` resolves SRV targets and populates the combined set.
-- Man page and `docs/features/nfsets.md` document the concat-set syntax.
-- At least one unit test covers SRV resolution and set population.
-
-**Current state**: Option keyword is documented as "tracked, not implemented". No code exists.
+| Item | Description | Commit |
+|------|-------------|--------|
+| N1 | SRV record resolution (`dnstype=srv`) | `0555dba54` |
+| N2 | Inline `dns:` → `dnst:` rename (alias + deprecation) | `fad2459be` |
+| N3 | `nfset:` / `dns:` / `dnst:` tokens in Masq, tcrules, and all per-table files | `fad2459be` |
+| N4 | `<zone>:dnst:` pseudo-zone (clarified as part of dnst: alias rollout) | `fad2459be` |
+| N5 | Per-set nft flags optimisation (per-group, not registry-wide) | `0555dba54` |
+| N6 | Additive multi-backend per nfset name (same name, different backend coexist) | `0555dba54` |
 
 ---
 
-## N2 — Inline `dns:` → `dnst:` rename
+### N1 — SRV record resolution (`dnstype=srv`) — SHIPPED `0555dba54`
 
-**Rationale**: The inline `dns:hostname` syntax predates nfsets. The intended rename to `dnst:`
-would make it unambiguous (dnstap-backed inline set) and free `dns:` as a future generic prefix.
-Deferred because the rename is a breaking change for any user of inline DNS sets in rules files.
-
-**Acceptance criteria**:
-- `dnst:hostname` is accepted everywhere `dns:hostname` is accepted.
-- `dns:hostname` continues to work (backwards-compatible alias) with a deprecation warning in the
-  compiler output.
-- `docs/features/nfsets.md` updated; `CHANGELOG.md` notes the alias.
-- A future wave can remove `dns:` support after a stated deprecation period.
-
-**Current state**: Not started. The zone-token parser in `shorewall_nft/config/parser.py` would be
-the primary touch point.
+**What shipped**: `DnsrGroup.dnstype` field; `PullResolver._resolve_qname` dispatches `"srv"` queries,
+extracts `.target` dnames, recursively resolves A+AAAA. TTL = min(srv_ttl, child_ttl).
+`MAX_SRV_TARGETS = 32` hard cap per RRset. 30 new tests (12 bridge + 18 pull-resolver SRV scenarios).
 
 ---
 
-## N3 — `nfset:` in Masq and tcrules
+### N2 — Inline `dns:` → `dnst:` rename — SHIPPED `fad2459be`
 
-**Rationale**: The `MASQUERADE` and `tcrules` address-parsing code was not updated when `nfset:`
-support was added to `rules`. Operators writing masquerade exclusions or traffic-class rules
-cannot currently reference named sets there.
-
-**Acceptance criteria**:
-- `nfset:<name>` parses without error in the `SOURCE` and `DEST` columns of `masq` and `tcrules`.
-- The compiler emits correct nft `@nfset_<name>_v4` / `@nfset_<name>_v6` references in the
-  appropriate chains.
-- Simlab test covering a masquerade exclusion via nfset.
-
-**Current state**: Not started. Use inline `dns:hostname` as a workaround.
+**What shipped**: `dnst:` accepted everywhere `dns:` is accepted. `dns:` continues to work
+as a deprecated alias with a compile-time `WARNING` logged once per config file.
+Zone-prefixed `<zone>:dnst:name` and negated `!dnst:name` forms inherit automatically.
 
 ---
 
-## N4 — `zone:dnst:` pseudo-zone behaviour
+### N3 — `nfset:` in Masq and tcrules — SHIPPED `fad2459be`
 
-**Rationale**: `zone:dnsr:` is implemented (resolves to the resolver-backend set namespace).
-`zone:dnst:` was reserved for the dnstap-backed inline-set namespace but has not been fully
-documented or stabilised.
-
-**Acceptance criteria**:
-- `zone:dnst:hostname` resolves in rules to the `dns_<sanitized>_v4/v6` sets populated via
-  dnstap, parallel to how `zone:dnsr:` resolves for resolver-backed sets.
-- Documented in `docs/features/nfsets.md` under "Referencing sets in rules".
-- Unit test confirms the zone-token expands to the correct set name.
-
-**Current state**: Token reserved; do not use in production configs until this item is closed.
-See also [N2](#n2--inline-dns--dnst-rename) — the two items share the same naming cleanup.
+**What shipped**: `nfset:` / `dns:` / `dnsr:` / `dnst:` tokens accepted in SOURCE column of
+`masq` and `dnat`; SOURCE + DEST columns of `tcrules` / `mangle`; all of `blrules`,
+`stoppedrules`, `notrack`, `conntrack`, `rawnat`, `ecn`, `arprules`, `accounting`.
+Explicitly rejected on Masq ADDRESS and DNAT TARGET columns (with a clear `ValueError`).
 
 ---
 
-## N5 — Per-set nft flags optimisation
+### N4 — `zone:dnst:` pseudo-zone behaviour — SHIPPED `fad2459be`
 
-**Rationale**: The current compiler selects nft flags (`timeout` vs `interval` vs both) at the
-registry level — all sets sharing an nfset name get the same flags. A pure DNS set only needs
-`flags timeout`; mixed DNS+ip-list sets need both. Per-set selection would allow tighter kernel
-set declarations and is noted as a `TODO` in `shorewall_nft/nft/nfsets.py`.
+**What shipped**: `<zone>:dnst:hostname` resolves in rules to the `dns_<sanitized>_v4/v6`
+sets populated via dnstap — parallel to `zone:dnsr:` for resolver-backed sets.
+Documented in `shorewall-nft-rules.5` as part of the `dnst:` alias rollout.
 
-**Acceptance criteria**:
-- Each emitted nft set carries only the flags its backend mix requires.
-- Regression test: a registry with one DNS-only and one ip-list-only entry emits two sets with
-  different flags.
+---
 
-**Current state**: `TODO` comment in `nfsets.py:447`. Low priority — the current behaviour is
-correct, just slightly over-declared for pure-DNS sets.
+### N5 — Per-set nft flags optimisation — SHIPPED `0555dba54`
+
+**What shipped**: `emit_nfset_declarations` groups entries by `(name, family)` and computes
+flags per group. Pure-DNS → `flags timeout`. Pure-iplist → `flags interval`.
+Mixed → `flags timeout, interval`. The `TODO` comment in `nfsets.py` is removed.
+
+---
+
+### N6 — Additive multi-backend per nfset name — SHIPPED `0555dba54`
+
+**What shipped**: `build_nfset_registry` merge key changed from `name` to `(name, backend)`.
+Same-name rows with different backends coexist in `registry.entries`; `set_names` deduplicates.
+Each backend-specific tracker feeds its own pipeline; all write to the same nft set name.
 
 ---
 

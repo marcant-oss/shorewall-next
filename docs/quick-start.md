@@ -196,7 +196,7 @@ and keeps nft sets in sync:
 
 ```
 # /etc/shorewall46/rules
-ACCEPT    fw    net:dns:github.com    tcp    443
+ACCEPT    fw    net:dnst:github.com    tcp    443
 ```
 
 Requires the `shorewalld` companion daemon. See [shorewalld](shorewalld/index.md).

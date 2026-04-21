@@ -121,6 +121,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after an agent SIGKILL. Diagnostics: EOF on the readiness pipe now
   reports `child exited code N` / `signal N`.
 
+### Added (W12–W21 nfsets close-out + classic ipsets syntax compat + TC pyroute2)
+
+- **SRV-record resolution (`nfsets` `resolver` backend, `dnstype=srv`)** —
+  shorewalld queries SRV records, extracts targets, and recursively resolves
+  A+AAAA records for each target. `MAX_SRV_TARGETS = 32` hard cap per RRset;
+  per-target exceptions are isolated so one bad target does not abort the
+  whole set. TTL is `min(srv_ttl, child_ttl)`. Commit `0555dba54`.
+- **Additive multi-backend per nfset name** — two config rows with the same
+  `name` but different `backend` coexist without error; the resulting nft set
+  is populated by multiple shorewalld trackers simultaneously (e.g. `dnstap`
+  + `ip-list-plain` writing to the same set). `build_nfset_registry` merge key
+  changed from `name` to `(name, backend)`. Commit `0555dba54`.
+- **Per-set nft flags** — flags are now computed per `(name, family)` group
+  rather than registry-wide. Pure-DNS groups get `flags timeout`; pure-iplist
+  groups get `flags interval`; mixed groups get `flags timeout, interval`.
+  Commit `0555dba54`.
+- **`dnst:` inline prefix** — preferred alias for `dns:` in rule columns;
+  zone-prefixed (`<zone>:dnst:name`), negated (`!dnst:name`), and
+  multi-host (`dnst:a,b,c`) forms are fully supported. `dns:` continues
+  to work as a deprecated alias with a one-shot warning per config file.
+  Commit `fad2459be`.
+- **Classic ipsets `+setname[…]` / `+[…]` syntax** — `+setname[src]` /
+  `+setname[dst]` / `+setname[src,dst]` bracket-flag overrides instruct the
+  emitter which match side to use. `+[set1,set2]` AND-multi-set semantics
+  (packet must match all listed sets — distinct from nfsets comma which is
+  OR-clone). Negation, zone-prefix, and brackets compose freely.
+  Commit `fad2459be`.
+- **`nfset:` / `dns:` / `dnsr:` / `dnst:` tokens in all per-table files** —
+  tokens are now accepted in `masq` (SOURCE column), `dnat` (SOURCE column),
+  `tcrules` / `mangle` (SOURCE + DEST), `blrules`, `stoppedrules`, `notrack`,
+  `conntrack`, `rawnat`, `ecn`, `arprules`, `accounting` (where nftables
+  itself supports `saddr`/`daddr` set matching). Tokens are explicitly
+  rejected on Masq ADDRESS and DNAT TARGET columns with a clear error.
+  Commit `fad2459be`.
+- **`shorewall-nft apply-tc`** — native pyroute2-backed TC apply path (HTB
+  root qdisc + classes, fwmark filters, ingress qdisc). No shell-out to
+  `tc` or `ip netns exec`. `generate-tc` is preserved as a portable
+  shell-script fallback. Commit `fad2459be`.
+- **`shorewall-nft-netkit` `run_in_netns_fork` / `PersistentNetnsWorker`** —
+  shared primitive encapsulating the fork+setns+libnftables pattern used
+  by shorewalld's `ParentWorker`. `run_in_netns_fork` checks pickleability
+  pre-fork; `PersistentNetnsWorker` uses a SEQPACKET socketpair for hot
+  paths. `NetnsForkError` hierarchy (`NetnsNotFoundError`, `NetnsSetnsError`,
+  `ChildCrashedError`, `NetnsForkTimeout`) with full exception propagation
+  across the fork boundary. See `docs/architecture/netns-fork.md`.
+  Commit `7447ef8c7`.
+
+### Changed (W12–W21)
+
+- `DnsrGroup` gains `dnstype: str | None = None`. Internal API; no
+  operator-visible impact unless out-of-tree consumers import it directly.
+- `build_nfset_registry` merge key changed from `name` to `(name, backend)`;
+  same-name-different-backend rows no longer raise `ValueError`.
+- `Match` dataclass gains `force_side: str | None = None` for bracket-override
+  rendering in the emitter.
+
+### Deprecated (W13)
+
+- Inline `dns:<hostname>` prefix in rule columns — use `dnst:` instead.
+  Compile-time `WARNING` logged once per config file on `dns:` use.
+  Removal scheduled for a future major release; no hard timeline yet.
+
 ## [1.10.0] - 2026-04-20
 
 ### Added (security-test-plan feature)
