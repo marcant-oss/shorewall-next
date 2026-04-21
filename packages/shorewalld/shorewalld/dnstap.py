@@ -155,6 +155,159 @@ DNSTAP_MESSAGE_FIELD = 14  # inside Dnstap
 MESSAGE_TYPE_FIELD = 1     # inside Dnstap.Message
 MESSAGE_RESPONSE_FIELD = 14  # bytes response_message (raw DNS wire)
 
+# Pre-computed tag bytes for the two fields we peek:
+#   tag = (field_number << 3) | wire_type
+#   Dnstap.message → field 14, wire type 2 (length-delimited) → 0x72
+#   Message.type   → field 1,  wire type 0 (varint)           → 0x08
+_TAG_DNSTAP_MESSAGE = 0x72   # (14 << 3) | 2
+_TAG_MESSAGE_TYPE   = 0x08   # ( 1 << 3) | 0
+
+
+def _peek_message_type(frame: bytes | memoryview) -> int | None:
+    """Return the dnstap ``Message.Type`` enum int without a full protobuf parse.
+
+    Walks the outer Dnstap varint stream until it finds the ``message``
+    field (field 14, wire type 2 / length-delimited), then walks the
+    inner ``Message`` bytes until it finds the ``type`` field (field 1,
+    wire type 0 / varint), and returns its value.
+
+    Returns ``None`` if the frame is malformed or does not contain a
+    ``Message`` with a ``type`` field.
+
+    Allocation profile: zero Python-level objects beyond the return
+    int.  The helper operates directly on the ``memoryview`` of the
+    caller's buffer; no ``bytes(...)`` slicing is performed.
+    """
+    mv = memoryview(frame) if not isinstance(frame, memoryview) else frame
+    n = len(mv)
+    i = 0
+    # --- Outer Dnstap: scan for field 14, wire type 2 ---
+    while i < n:
+        # Read tag varint
+        b = mv[i]
+        i += 1
+        if b & 0x80:
+            # Multi-byte varint tag (rare for small field numbers, but handle it)
+            tag = b & 0x7F
+            shift = 7
+            while True:
+                if i >= n:
+                    return None
+                b = mv[i]
+                i += 1
+                tag |= (b & 0x7F) << shift
+                if not (b & 0x80):
+                    break
+                shift += 7
+                if shift > 63:
+                    return None
+        else:
+            tag = b
+        wire_type = tag & 0x7
+        if wire_type == 0:  # varint value — skip
+            while i < n:
+                b = mv[i]
+                i += 1
+                if not (b & 0x80):
+                    break
+            else:
+                return None
+        elif wire_type == 2:  # length-delimited
+            # Read length varint
+            length = 0
+            shift = 0
+            while True:
+                if i >= n:
+                    return None
+                b = mv[i]
+                i += 1
+                length |= (b & 0x7F) << shift
+                if not (b & 0x80):
+                    break
+                shift += 7
+                if shift > 63:
+                    return None
+            if tag == _TAG_DNSTAP_MESSAGE:
+                # Found the Message field — now scan inner bytes for type
+                end = i + length
+                if end > n:
+                    return None
+                j = i
+                while j < end:
+                    b = mv[j]
+                    j += 1
+                    if b & 0x80:
+                        inner_tag = b & 0x7F
+                        shift = 7
+                        while True:
+                            if j >= end:
+                                return None
+                            b = mv[j]
+                            j += 1
+                            inner_tag |= (b & 0x7F) << shift
+                            if not (b & 0x80):
+                                break
+                            shift += 7
+                            if shift > 63:
+                                return None
+                    else:
+                        inner_tag = b
+                    inner_wire = inner_tag & 0x7
+                    if inner_tag == _TAG_MESSAGE_TYPE:
+                        # field 1, varint — decode it
+                        val = 0
+                        shift = 0
+                        while True:
+                            if j >= end:
+                                return None
+                            b = mv[j]
+                            j += 1
+                            val |= (b & 0x7F) << shift
+                            if not (b & 0x80):
+                                return val
+                            shift += 7
+                            if shift > 63:
+                                return None
+                    elif inner_wire == 0:  # varint — skip
+                        while j < end:
+                            b = mv[j]
+                            j += 1
+                            if not (b & 0x80):
+                                break
+                        else:
+                            return None
+                    elif inner_wire == 2:  # length-delimited — skip
+                        inner_len = 0
+                        shift = 0
+                        while True:
+                            if j >= end:
+                                return None
+                            b = mv[j]
+                            j += 1
+                            inner_len |= (b & 0x7F) << shift
+                            if not (b & 0x80):
+                                break
+                            shift += 7
+                            if shift > 63:
+                                return None
+                        j += inner_len
+                    elif inner_wire == 1:  # 64-bit fixed
+                        j += 8
+                    elif inner_wire == 5:  # 32-bit fixed
+                        j += 4
+                    else:
+                        return None  # unsupported wire type
+                return None  # Message present but no type field
+            # Not the field we want — skip over the payload
+            i += length
+        elif wire_type == 1:  # 64-bit fixed — skip
+            i += 8
+        elif wire_type == 5:  # 32-bit fixed — skip
+            i += 4
+        else:
+            return None  # unsupported wire type
+    return None  # No Message field found
+
 # Message.Type values we care about. pdns_recursor emits
 # RESOLVER_RESPONSE frames when ``logResponses=true`` — the
 # responses from upstream authoritatives, which carry the A/AAAA
@@ -288,6 +441,7 @@ class DnstapMetrics:
         self.frames_dropped_not_client_response = 0
         self.frames_dropped_not_a_or_aaaa = 0
         self.frames_dropped_not_allowlisted = 0
+        self.frames_skipped_by_type = 0
         self.connections = 0
         self.workers_busy = 0
         self._lock = threading.Lock()
@@ -308,6 +462,7 @@ class DnstapMetrics:
                     self.frames_dropped_not_a_or_aaaa,
                 "frames_dropped_not_allowlisted":
                     self.frames_dropped_not_allowlisted,
+                "frames_skipped_by_type": self.frames_skipped_by_type,
                 "connections": self.connections,
                 "workers_busy": self.workers_busy,
             }
@@ -448,6 +603,15 @@ class DecodeWorkerPool:
                 self._metrics.inc("workers_busy", n=-1)
 
     def _decode_one(self, frame: bytes) -> None:
+        # Pass 0: cheap varint peek — skip full protobuf parse for the
+        # ~99 % of frames whose message type is not a response type.
+        # _peek_message_type() allocates no Python objects beyond the
+        # return int; it operates on a memoryview of ``frame``.
+        msg_type_peek = _peek_message_type(frame)
+        if msg_type_peek is None or msg_type_peek not in RESPONSE_MESSAGE_TYPES:
+            self._metrics.inc("frames_skipped_by_type")
+            return
+
         try:
             decoded = decode_dnstap_frame(frame)
         except Exception:
@@ -457,6 +621,8 @@ class DecodeWorkerPool:
             return
         msg_type, wire = decoded
         if msg_type not in RESPONSE_MESSAGE_TYPES:
+            # Defensive: peek said response but full parse disagrees —
+            # count as skipped (should never happen with a well-formed frame).
             self._metrics.inc("frames_dropped_not_client_response")
             return
 
@@ -773,6 +939,11 @@ class DnstapMetricsCollector(CollectorBase):
                 "dnstap frames whose qname was not in the allowlist "
                 "(rejected by the two-pass filter before dnspython parse)",
                 snap["frames_dropped_not_allowlisted"])
+        counter("shorewalld_dnstap_frames_skipped_by_type_total",
+                "dnstap frames skipped by the pre-filter varint peek "
+                "before protobuf ParseFromString (message type not in "
+                "RESPONSE_MESSAGE_TYPES or malformed outer message field)",
+                snap["frames_skipped_by_type"])
 
         gauge("shorewalld_dnstap_connections",
               "Currently connected dnstap producers (pdns_recursor)",

@@ -58,6 +58,9 @@ pythonpath = ["."]
 filterwarnings = [
     "ignore:coroutine 'AsyncNetlinkSocket.setup_endpoint' was never awaited:RuntimeWarning",
 ]
+markers = [
+    "bench: performance benchmarks (skipped by default; run with -m bench)",
+]
 
 [tool.setuptools.packages.find]
 include = ["shorewalld*"]
