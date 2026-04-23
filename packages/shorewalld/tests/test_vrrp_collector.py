@@ -14,6 +14,7 @@ No real keepalived or D-Bus daemon is used.  All tests are offline.
 """
 from __future__ import annotations
 
+import pytest
 import time
 from unittest.mock import MagicMock, patch
 
@@ -279,6 +280,7 @@ def _make_fake_connection(bus_names: list[str], instances: list[VrrpInstance]):
     return conn
 
 
+@pytest.mark.integration_dbus
 class TestVrrpCollectorHappyPath:
     """Mocked D-Bus returns two instances; verify metric output."""
 

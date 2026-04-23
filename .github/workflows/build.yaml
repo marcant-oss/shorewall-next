@@ -127,6 +127,108 @@ jobs:
             packages/shorewall-nft-stagelab/tests/integration/test_agent_runtime.py \
             -v
 
+  integration-vrrp:
+    name: Integration tests (keepalived D-Bus)
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y keepalived dbus-x11 dbus-user-session iproute2
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            -e "packages/shorewall-nft-netkit[dev]" \
+            -e "packages/shorewall-nft[dev]" \
+            -e "packages/shorewalld[dev]"
+
+      - name: Verify keepalived D-Bus support
+        run: |
+          # Confirm the Debian keepalived package includes the D-Bus policy file
+          # and was built with --enable-dbus.  The policy file registers the
+          # org.keepalived.Vrrp1 well-known name on the system bus.
+          if dpkg -L keepalived | grep -q "org.keepalived"; then
+            echo "keepalived D-Bus policy file present"
+          else
+            echo "WARNING: keepalived D-Bus policy file not found in package"
+            dpkg -L keepalived | grep -i dbus || true
+          fi
+          keepalived --version 2>&1 | head -5
+
+      - name: Create dummy interfaces for keepalived
+        run: |
+          sudo ip link add dummy0 type dummy
+          sudo ip link set dummy0 up
+          sudo ip link add dummy1 type dummy
+          sudo ip link set dummy1 up
+
+      - name: Write keepalived.conf
+        run: |
+          sudo tee /etc/keepalived/keepalived.conf > /dev/null <<'EOF'
+          vrrp_instance VI_MASTER {
+              state MASTER
+              interface dummy0
+              virtual_router_id 51
+              priority 150
+              advert_int 1
+              virtual_ipaddress {
+                  192.0.2.1/32
+              }
+          }
+          vrrp_instance VI_BACKUP {
+              state BACKUP
+              interface dummy1
+              virtual_router_id 10
+              priority 50
+              advert_int 1
+              virtual_ipaddress {
+                  192.0.2.2/32
+              }
+          }
+          EOF
+
+      - name: Start dbus system daemon
+        run: |
+          # GitHub ubuntu-latest runners do NOT run a system dbus by default.
+          # Start one explicitly so keepalived can register on the system bus.
+          sudo mkdir -p /run/dbus
+          sudo dbus-daemon --system --fork
+          # Give dbus-daemon a moment to bind the socket.
+          sleep 1
+          test -S /run/dbus/system_bus_socket && echo "system bus socket present"
+
+      - name: Start keepalived with D-Bus enabled
+        run: |
+          sudo keepalived --dbus --no-syslog --log-detail &
+          # Wait for keepalived to initialise and register on D-Bus.
+          sleep 5
+          # Verify registration on the system bus.
+          sudo busctl --system list 2>/dev/null | grep -i keepalived \
+            || dbus-send --system --dest=org.freedesktop.DBus \
+                         --type=method_call --print-reply \
+                         /org/freedesktop/DBus org.freedesktop.DBus.ListNames \
+               2>/dev/null | grep -i keepalived \
+            || echo "keepalived not yet visible on bus — tests may auto-skip"
+
+      - name: Run live D-Bus integration tests
+        run: |
+          pytest -m integration_dbus \
+            packages/shorewalld/tests/test_vrrp_live_dbus.py \
+            packages/shorewalld/tests/test_vrrp_collector.py \
+            -v
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
