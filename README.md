@@ -1,4 +1,14 @@
-# shorewall-nft
+# shorewall-nft — monorepo (archived)
+
+> **This repository has been split into separate repos under
+> [github.com/marcant-oss](https://github.com/marcant-oss):**
+>
+> | Repo | Inhalt |
+> |------|--------|
+> | [marcant-oss/shorewall-nft](https://github.com/marcant-oss/shorewall-nft) | Core compiler + shorewalld |
+> | [marcant-oss/shorewall-nft-netkit](https://github.com/marcant-oss/shorewall-nft-netkit) | Shared netns/packet primitives |
+> | [marcant-oss/shorewall-nft-simlab](https://github.com/marcant-oss/shorewall-nft-simlab) | Packet-level simulation lab |
+> | [marcant-oss/shorewall-nft-stagelab](https://github.com/marcant-oss/shorewall-nft-stagelab) | Bridge-lab, DPDK, perf validation |
 
 nftables-native firewall compiler with Shorewall-compatible configuration.
 
